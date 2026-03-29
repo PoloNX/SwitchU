@@ -329,8 +329,8 @@ void WiiUMenuApp::buildGrid() {
 
     SidebarManager::Actions sidebarActions;
 #ifndef SWITCHU_HOMEBREW
-    sidebarActions.onAlbum       = [this]() { m_launcher.launchAlbum(); };
-    sidebarActions.onMiiEditor   = [this]() { m_launcher.launchMiiEditor(); };
+    sidebarActions.onAlbum       = [this]() { m_launcher.launchAlbum(); svcSleepThread(300000000ull); svcExitProcess(); };
+    sidebarActions.onMiiEditor   = [this]() { m_launcher.launchMiiEditor(); svcSleepThread(300000000ull); svcExitProcess(); };
     sidebarActions.onControllers = [this]() { m_launcher.launchControllerPairing(); };
 #else
     sidebarActions.onAlbum       = [this]() { m_audio.playSfx(Sfx::Activate); };

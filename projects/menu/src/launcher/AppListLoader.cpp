@@ -17,7 +17,7 @@
 namespace {
 
 constexpr int kIconUploadSize   = 256;
-constexpr int kMaxIconTextures  = 150;
+constexpr int kMaxIconTextures  = 100;
 
 void decodeIcons(std::vector<PendingApp>& apps) {
     DebugLog::log("[loader] decoding %d icons on worker threads...", (int)apps.size());
