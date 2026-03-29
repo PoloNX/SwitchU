@@ -56,7 +56,7 @@ public:
     static constexpr int FB_HEIGHT = 720;
     static constexpr int NUM_FB    = 2;
 
-    static constexpr int MAX_TEXTURES   = 1024;
+    static constexpr int MAX_TEXTURES   = 2048;
     static constexpr int MAX_SAMPLERS   = 16;
     static constexpr int MAX_VERTICES   = 65536;
     static constexpr int VTX_BUF_SIZE   = MAX_VERTICES * 32;
@@ -112,7 +112,7 @@ public:
     dk::UniqueMemBlock allocImageMemory(uint32_t size);
     void freeImageMemory(uint32_t size);
 
-    static constexpr uint64_t kDefaultImageBudget = 16u * 1024u * 1024u;
+    static constexpr uint64_t kDefaultImageBudget = 64u * 1024u * 1024u;
     uint64_t imageMemoryUsed() const { return m_imageMemUsed; }
 
     bool uploadTexture(dk::Image& dst, const void* pixels, uint32_t size, uint32_t width, uint32_t height);

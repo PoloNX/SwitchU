@@ -45,5 +45,9 @@ toolchain("devkita64")
         -- ── libnx (always needed for switch.specs / <switch.h>) ──
         toolchain:add("includedirs", path.join(LIBNX, "include"))
         toolchain:add("linkdirs", path.join(LIBNX, "lib"))
+		
+		local PORTLIBS = path.join(DEVKITPRO, "portlibs", "switch")
+        toolchain:add("includedirs", path.join(PORTLIBS, "include"))
+        toolchain:add("linkdirs", path.join(PORTLIBS, "lib"))
     end)
 toolchain_end()

@@ -17,7 +17,7 @@
 namespace {
 
 constexpr int kIconUploadSize   = 256;
-constexpr int kMaxIconTextures  = 60;
+constexpr int kMaxIconTextures  = 150;
 
 void decodeIcons(std::vector<PendingApp>& apps) {
     DebugLog::log("[loader] decoding %d icons on worker threads...", (int)apps.size());
@@ -74,10 +74,8 @@ void decodeIcons(std::vector<PendingApp>& apps) {
             }
         }
     };
-    constexpr int NUM_WORKERS = 3;
-    std::thread workers[NUM_WORKERS];
-    for (int t = 0; t < NUM_WORKERS; ++t) workers[t] = std::thread(workerFn);
-    for (int t = 0; t < NUM_WORKERS; ++t) workers[t].join();
+    // plugging your memory leak <3 ~Arch
+    workerFn();
     DebugLog::log("[loader] decode done");
 }
 
