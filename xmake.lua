@@ -5,7 +5,6 @@ set_xmakever("2.8.0")
 set_project("SwitchU")
 
 add_repositories("switch-repo https://github.com/PoloNX/switch-repo.git")
-add_includedirs("C:/devkitPro/portlibs/switch/include")
 
 includes("toolchain/*.lua")
 add_rules("mode.debug", "mode.release")
