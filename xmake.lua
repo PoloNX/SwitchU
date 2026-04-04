@@ -5,6 +5,7 @@ set_xmakever("2.8.0")
 set_project("SwitchU")
 
 add_repositories("switch-repo https://github.com/PoloNX/switch-repo.git")
+add_includedirs("C:/devkitPro/portlibs/switch/include")
 
 includes("toolchain/*.lua")
 add_rules("mode.debug", "mode.release")
@@ -120,6 +121,7 @@ target("SwitchU")
     add_files("projects/menu/src/launcher/*.cpp")
     add_files("projects/menu/src/bluetooth/*.cpp")
 
+    add_includedirs("projects/common/include", {public = false})
     add_includedirs("projects/menu/src", {public = false})
 
     add_cxxflags("-fno-rtti", "-fexceptions", {force = true})
