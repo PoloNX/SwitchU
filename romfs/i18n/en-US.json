@@ -23,6 +23,7 @@
       "sleep": "Sleep",
       "music": "Music",
       "theme": "Theme",
+      "storage": "Storage",
       "about": "About"
     },
     "system": {
@@ -162,6 +163,39 @@
       "next_track": "Next Track",
       "track_changed": "Track changed"
     },
+    "storage": {
+      "internal": "System Memory",
+      "internal_desc": "Shows used system memory and free space.",
+      "internal_unavailable": "Unable to query internal storage.",
+      "sd": "microSD Card",
+      "sd_desc": "Shows used microSD storage and free space.",
+      "sd_unavailable": "No microSD card detected or access denied.",
+      "available": "Available",
+      "state_installed": "Installed",
+      "state_corrupt": "Corrupt",
+      "state_unknown": "Unknown",
+      "installed_section": "Installed Software",
+      "empty_library": "No installed games found",
+      "select_game": "Installed Game",
+      "select_game_desc": "Choose a title to uninstall from the system.",
+      "uninstall_game": "Uninstall Selected Game",
+      "uninstall_game_desc": "Permanently delete the selected title from the system.",
+      "uninstall_confirm_title": "Uninstall Game",
+      "uninstall_confirm_msg": "Delete %s from the system?",
+      "uninstall_success_title": "Uninstall Complete",
+      "uninstall_success": "Uninstalled successfully.",
+      "uninstall_failed_title": "Uninstall Failed",
+      "uninstall_failed": "Failed to uninstall the selected title.",
+      "location_internal": "Internal",
+      "location_sd": "microSD",
+      "location_system": "System",
+      "size_unknown": "Unknown size",
+      "capacity": "Capacity",
+      "used": "Used",
+      "summary": "Summary",
+      "details": "Details",
+      "delete": "Delete"
+    },
     "about": {
       "version": "Version",
       "author": "Author",
@@ -204,6 +238,7 @@
   },
   "button": {
     "ok": "OK",
-    "cancel": "Cancel"
+    "cancel": "Cancel",
+    "delete": "Delete"
   }
 }

@@ -114,6 +114,8 @@ void SettingsScreen::buildTabs() {
     m_tabs.clear();
     DebugLog::log("[settings]   SystemTab...");
     m_tabs.push_back(settings::tabs::SystemTab::build(*this));
+    DebugLog::log("[settings]   StorageTab...");
+    m_tabs.push_back(settings::tabs::StorageTab::build(*this));
     DebugLog::log("[settings]   AudioTab...");
     m_tabs.push_back(settings::tabs::AudioTab::build(*this));
     DebugLog::log("[settings]   DisplayTab...");
@@ -203,9 +205,18 @@ std::shared_ptr<nxui::Box> SettingsScreen::makeItemWidget(SettingItem& item) {
 }
 
 void SettingsScreen::rebuildCurrentTab() {
+    int oldTab = m_tabIndex;
     int oldFocus = m_contentIdx;
     float oldScroll = m_scrollTarget;
-    rebuildContentItems();
+
+    buildTabs();
+
+    if (!m_tabs.empty()) {
+        m_tabIndex = std::clamp(oldTab, 0, (int)m_tabs.size() - 1);
+    } else {
+        m_tabIndex = 0;
+    }
+
     clampContentIdx();
     if (focusableCount() > 0)
         m_contentIdx = std::clamp(oldFocus, 0, focusableCount() - 1);
@@ -218,6 +229,14 @@ void SettingsScreen::rebuildCurrentTab() {
 void SettingsScreen::requestDialog(const std::string& title, const std::string& msg,
                                    std::vector<DialogButtonDef> buttons) {
     if (m_dialogRequestCb) m_dialogRequestCb(title, msg, std::move(buttons));
+}
+
+void SettingsScreen::requestToast(const std::string& msg, float holdSeconds) {
+    if (msg.empty()) return;
+    m_toastText = msg;
+    m_trackToastHold = std::max(0.f, holdSeconds);
+    m_trackToastFading = false;
+    m_trackToastAnim.setImmediate(1.f);
 }
 
 
@@ -1175,8 +1194,8 @@ void SettingsScreen::drawDropdown(nxui::Renderer& ren, const nxui::Rect& panel, 
         y += (items[i].type == ItemType::Section) ? kSectionHeight : kRowHeight;
     float rowH = (item.type == ItemType::Section) ? kSectionHeight : kRowHeight;
 
-    float ctrlX = cr.x + cr.width * 0.55f;
-    float ctrlW = cr.width * 0.42f;
+    float ctrlX = cr.x + cr.width * 0.40f;
+    float ctrlW = cr.width * 0.60f;
 
     int total = (int)item.options.size();
     int visible = std::min(total, 6);
@@ -1225,10 +1244,25 @@ void SettingsScreen::drawDropdown(nxui::Renderer& ren, const nxui::Rect& panel, 
         }
 
         nxui::Color tc = (idx == item.intVal) ? m_theme->textPrimary : m_theme->textSecondary;
-        nxui::Vec2 tsz = m_smallFont->measure(item.options[idx]);
+        std::string displayText = item.options[idx];
+        float maxWidth = std::max(0.f, rr.width - 16.f);
+        if (!displayText.empty()) {
+            nxui::Vec2 tsz = m_smallFont->measure(displayText);
+            if (tsz.x > maxWidth) {
+                std::string ellipsis = "...";
+                while (!displayText.empty()) {
+                    displayText.pop_back();
+                    tsz = m_smallFont->measure(displayText + ellipsis);
+                    if (tsz.x <= maxWidth || displayText.empty())
+                        break;
+                }
+                displayText += ellipsis;
+            }
+        }
+        nxui::Vec2 tsz = m_smallFont->measure(displayText);
         float tx = rr.x + 10.f;
         float ty = rr.y + (rr.height - tsz.y * 0.7f) * 0.5f;
-        ren.drawText(item.options[idx], {tx, ty}, m_smallFont, tc.withAlpha(opacity * open), 0.76f);
+        ren.drawText(displayText, {tx, ty}, m_smallFont, tc.withAlpha(opacity * open), 0.76f);
     }
 
     ren.popClipRect();
@@ -1237,10 +1271,21 @@ void SettingsScreen::drawDropdown(nxui::Renderer& ren, const nxui::Rect& panel, 
 void SettingsScreen::drawTrackChangedToast(nxui::Renderer& ren, const nxui::Rect& panel, float opacity) {
     if (!m_smallFont || !m_theme) return;
     float t = m_trackToastAnim.value();
-    if (t <= 0.01f) return;
+    if (t <= 0.01f || m_toastText.empty()) return;
 
+    std::string displayText = m_toastText;
+    float maxTextWidth = 420.f - 40.f;
+    nxui::Vec2 tsz = m_smallFont->measure(displayText);
+    if (tsz.x * 0.78f > maxTextWidth) {
+        while (!displayText.empty() && m_smallFont->measure(displayText + "...").x * 0.78f > maxTextWidth)
+            displayText.pop_back();
+        displayText += "...";
+        tsz = m_smallFont->measure(displayText);
+    }
+
+    float textWidth = std::min(maxTextWidth, tsz.x * 0.78f);
     float scale = 0.96f + 0.04f * t;
-    float w = 220.f * scale;
+    float w = std::clamp(textWidth + 40.f, 220.f, 420.f) * scale;
     float h = 40.f * scale;
     float x = panel.right() - 24.f - w;
     float y = panel.y + 18.f;
@@ -1254,11 +1299,9 @@ void SettingsScreen::drawTrackChangedToast(nxui::Renderer& ren, const nxui::Rect
     ren.drawRoundedRect(r, bg, 10.f);
     ren.drawRoundedRectOutline(r, bd, 10.f, 1.5f);
 
-    const std::string txt = nxui::I18n::instance().tr("settings.music.track_changed", "Track changed");
-    nxui::Vec2 sz = m_smallFont->measure(txt);
     float tx = r.x + 12.f;
-    float ty = r.y + (r.height - sz.y * 0.72f) * 0.5f;
-    ren.drawText(txt, {tx, ty}, m_smallFont, m_theme->textPrimary.withAlpha(t * opacity), 0.78f);
+    float ty = r.y + (r.height - tsz.y * 0.72f) * 0.5f;
+    ren.drawText(displayText, {tx, ty}, m_smallFont, m_theme->textPrimary.withAlpha(t * opacity), 0.78f);
 }
 
 void SettingsScreen::drawColorPicker(nxui::Renderer& ren, const nxui::Rect& panel, float opacity) {

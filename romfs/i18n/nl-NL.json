@@ -23,6 +23,7 @@
       "sleep": "Slaapstand",
       "music": "Muziek",
       "theme": "Thema",
+      "storage": "Opslag",
       "about": "Over"
     },
     "system": {
@@ -162,6 +163,39 @@
       "next_track": "Volgend nummer",
       "track_changed": "Nummer gewijzigd"
     },
+    "storage": {
+      "internal": "Systeemgeheugen",
+      "internal_desc": "Toont gebruikt systeemgeheugen en vrije opslagruimte.",
+      "internal_unavailable": "Kan interne opslag niet opvragen.",
+      "sd": "microSD-kaart",
+      "sd_desc": "Toont gebruikt microSD-opslag en vrije opslagruimte.",
+      "sd_unavailable": "Geen microSD-kaart gedetecteerd of toegang geweigerd.",
+      "available": "Beschikbaar",
+      "state_installed": "Geïnstalleerd",
+      "state_corrupt": "Beschadigd",
+      "state_unknown": "Onbekend",
+      "installed_section": "Geïnstalleerde software",
+      "empty_library": "Geen geïnstalleerde games gevonden",
+      "select_game": "Geïnstalleerd spel",
+      "select_game_desc": "Selecteer een titel om details te bekijken of te verwijderen.",
+      "uninstall_game": "Geselecteerd spel verwijderen",
+      "uninstall_game_desc": "Verwijdert de geselecteerde titel permanent van het systeem.",
+      "uninstall_confirm_title": "Spel verwijderen",
+      "uninstall_confirm_msg": "Verwijder %s van het systeem?",
+      "uninstall_success_title": "Verwijderen voltooid",
+      "uninstall_success": "Succesvol verwijderd.",
+      "uninstall_failed_title": "Verwijderen mislukt",
+      "uninstall_failed": "Het geselecteerde titel kon niet worden verwijderd.",
+      "location_internal": "Intern",
+      "location_sd": "microSD",
+      "location_system": "Systeem",
+      "size_unknown": "Onbekende grootte",
+      "capacity": "Capaciteit",
+      "used": "Gebruikt",
+      "summary": "Samenvatting",
+      "details": "Details",
+      "delete": "Verwijderen"
+    },
     "about": {
       "version": "Versie",
       "author": "Auteur",
@@ -204,6 +238,7 @@
   },
   "button": {
     "ok": "OK",
-    "cancel": "Annuleren"
+    "cancel": "Annuleren",
+    "delete": "Verwijderen"
   }
 }

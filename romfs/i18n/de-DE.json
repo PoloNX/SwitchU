@@ -23,6 +23,7 @@
       "sleep": "Standby-Modus",
       "music": "Musik",
       "theme": "Design",
+      "storage": "Speicher",
       "about": "Info"
     },
     "system": {
@@ -162,6 +163,39 @@
       "next_track": "Nächster Titel",
       "track_changed": "Titel geändert"
     },
+    "storage": {
+      "internal": "Systemspeicher",
+      "internal_desc": "Zeigt den verwendeten Systemspeicher und den freien Speicherplatz an.",
+      "internal_unavailable": "Der interne Speicher konnte nicht abgefragt werden.",
+      "sd": "microSD-Karte",
+      "sd_desc": "Zeigt den verwendeten Speicher der microSD-Karte und den freien Speicherplatz an.",
+      "sd_unavailable": "Keine microSD-Karte erkannt oder Zugriff verweigert.",
+      "available": "Verfügbar",
+      "state_installed": "Installiert",
+      "state_corrupt": "Beschädigt",
+      "state_unknown": "Unbekannt",
+      "installed_section": "Installierte Software",
+      "empty_library": "Keine installierten Spiele gefunden",
+      "select_game": "Installiertes Spiel",
+      "select_game_desc": "Wähle einen Titel zum Anzeigen oder Deinstallieren aus.",
+      "uninstall_game": "Ausgewähltes Spiel deinstallieren",
+      "uninstall_game_desc": "Löscht den ausgewählten Titel dauerhaft vom System.",
+      "uninstall_confirm_title": "Spiel deinstallieren",
+      "uninstall_confirm_msg": "%s vom System entfernen?",
+      "uninstall_success_title": "Deinstallation abgeschlossen",
+      "uninstall_success": "Erfolgreich deinstalliert.",
+      "uninstall_failed_title": "Deinstallation fehlgeschlagen",
+      "uninstall_failed": "Der ausgewählte Titel konnte nicht deinstalliert werden.",
+      "location_internal": "Intern",
+      "location_sd": "microSD",
+      "location_system": "System",
+      "size_unknown": "Unbekannte Größe",
+      "capacity": "Kapazität",
+      "used": "Verwendet",
+      "summary": "Zusammenfassung",
+      "details": "Details",
+      "delete": "Löschen"
+    },
     "about": {
       "version": "Version",
       "author": "Autor",
@@ -204,6 +238,7 @@
   },
   "button": {
     "ok": "OK",
-    "cancel": "Abbrechen"
+    "cancel": "Abbrechen",
+    "delete": "Löschen"
   }
 }

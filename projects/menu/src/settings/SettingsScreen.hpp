@@ -55,6 +55,7 @@ public:
     void onDialogRequest(DialogRequestCb cb) { m_dialogRequestCb = std::move(cb); }
     void requestDialog(const std::string& title, const std::string& msg,
                        std::vector<DialogButtonDef> buttons);
+    void requestToast(const std::string& msg, float holdSeconds = 2.5f);
 
     using ThemeToggleCb = std::function<void(bool dark)>;
     using BoolCb = std::function<void(bool)>;
@@ -109,7 +110,7 @@ public:
     void updateThemeSliders(const ThemeColorSet& colors);
     void updateThemePresetList(const std::vector<std::string>& names, const std::string& activeName);
 
-    enum class ItemType { Info, Toggle, Slider, Selector, Action, Section, ColorPicker };
+    enum class ItemType { Info, Toggle, Slider, Progress, Selector, Action, Section, ColorPicker };
 
     struct SettingItem {
         std::string label;
@@ -224,6 +225,7 @@ private:
     nxui::AnimatedFloat m_trackToastAnim;
     float m_trackToastHold = 0.f;
     bool  m_trackToastFading = false;
+    std::string m_toastText;
     float m_uiTime = 0.f;
 
     int   m_tabSwitchDir    = 0;

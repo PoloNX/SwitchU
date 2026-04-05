@@ -23,6 +23,7 @@
       "sleep": "Veille",
       "music": "Musique",
       "theme": "Thème",
+      "storage": "Stockage",
       "about": "À propos"
     },
     "system": {
@@ -162,6 +163,39 @@
       "next_track": "Piste suivante",
       "track_changed": "Piste changée"
     },
+    "storage": {
+      "internal": "Mémoire système",
+      "internal_desc": "Affiche la mémoire système utilisée et l'espace libre.",
+      "internal_unavailable": "Impossible de lire le stockage interne.",
+      "sd": "Carte microSD",
+      "sd_desc": "Affiche le stockage utilisé sur la carte microSD et l'espace libre.",
+      "sd_unavailable": "Aucune carte microSD détectée ou accès refusé.",
+      "available": "Disponible",
+      "state_installed": "Installé",
+      "state_corrupt": "Corrompu",
+      "state_unknown": "Inconnu",
+      "installed_section": "Logiciels installés",
+      "empty_library": "Aucun jeu installé trouvé",
+      "select_game": "Jeu installé",
+      "select_game_desc": "Sélectionnez un titre pour afficher les détails ou le désinstaller.",
+      "uninstall_game": "Désinstaller le jeu sélectionné",
+      "uninstall_game_desc": "Supprime définitivement le titre sélectionné du système.",
+      "uninstall_confirm_title": "Désinstaller le jeu",
+      "uninstall_confirm_msg": "Supprimer %s du système ?",
+      "uninstall_success_title": "Désinstallation terminée",
+      "uninstall_success": "Désinstallation réussie.",
+      "uninstall_failed_title": "Échec de la désinstallation",
+      "uninstall_failed": "Impossible de désinstaller le titre sélectionné.",
+      "location_internal": "Interne",
+      "location_sd": "microSD",
+      "location_system": "Système",
+      "size_unknown": "Taille inconnue",
+      "capacity": "Capacité",
+      "used": "Utilisé",
+      "summary": "Résumé",
+      "details": "Détails",
+      "delete": "Supprimer"
+    },
     "about": {
       "version": "Version",
       "author": "Auteur",
@@ -204,6 +238,7 @@
   },
   "button": {
     "ok": "OK",
-    "cancel": "Annuler"
+    "cancel": "Annuler",
+    "delete": "Supprimer"
   }
 }

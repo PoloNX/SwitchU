@@ -261,6 +261,66 @@ private:
     std::shared_ptr<nxui::Label> m_pct;
 };
 
+class ProgressRowWidget final : public SettingRowBase {
+public:
+    ProgressRowWidget(SettingsScreen::SettingItem& item, const SettingWidgetContext& ctx)
+        : SettingRowBase(item, ctx) {
+        m_track = std::make_shared<nxui::GlassBox>(nxui::Axis::ROW);
+        m_track->setAlignItems(nxui::AlignItems::CENTER);
+        m_track->setJustifyContent(nxui::JustifyContent::FLEX_START);
+        m_track->setGap(0.f);
+        m_track->setPadding(0.f);
+        m_track->setCornerRadius(6.f);
+        m_track->setBorderWidth(0.f);
+
+        m_fill = std::make_shared<nxui::GlassBox>();
+        m_fill->setCornerRadius(4.f);
+        m_fill->setBorderWidth(0.f);
+        m_track->addChild(m_fill);
+
+        m_pct = std::make_shared<nxui::Label>("0%");
+        m_pct->setScale(0.72f);
+        m_pct->setHAlign(nxui::Label::HAlign::Right);
+        m_pct->setVAlign(nxui::Label::VAlign::Center);
+        m_pct->setMarginLeft(10.f);
+
+        m_right->addChild(m_track);
+        m_right->addChild(m_pct);
+    }
+protected:
+    void syncRight() override {
+        nxui::Font* smallFont = (m_ctx.smallFont && *m_ctx.smallFont) ? *m_ctx.smallFont : nullptr;
+        const nxui::Theme* theme = (m_ctx.theme && *m_ctx.theme) ? *m_ctx.theme : nullptr;
+
+        float t = std::clamp(m_item.floatVal, 0.f, 1.f);
+        float rightW = std::max(170.f, rect().width * 0.42f);
+        float pctW = 44.f;
+        float trackW = std::clamp(rightW - pctW - 10.f, 110.f, 260.f);
+        float fillW = trackW * t;
+
+        m_track->setSize(trackW, 12.f);
+        m_fill->setSize(fillW, 12.f);
+        if (theme) {
+            m_track->setBaseColor(nxui::Color(0.3f, 0.3f, 0.35f, 0.5f * opacity()));
+            m_fill->setBaseColor(theme->cursorNormal.withAlpha(0.9f * opacity()));
+            m_pct->setTextColor(theme->textPrimary.withAlpha(opacity()));
+        }
+
+        int pct = (int)std::round(t * 100.f);
+        m_pct->setText(std::to_string(pct) + "%");
+        if (smallFont) m_pct->setFont(smallFont);
+        m_pct->setSize(pctW, rect().height);
+
+        m_track->layout();
+        m_right->setSize(rightW, rect().height);
+    }
+
+private:
+    std::shared_ptr<nxui::GlassBox> m_track;
+    std::shared_ptr<nxui::GlassBox> m_fill;
+    std::shared_ptr<nxui::Label> m_pct;
+};
+
 class SelectorRowWidget final : public SettingRowBase {
 public:
     SelectorRowWidget(SettingsScreen::SettingItem& item, const SettingWidgetContext& ctx)
@@ -273,13 +333,13 @@ public:
 
         m_value = std::make_shared<nxui::Label>("");
         m_value->setScale(0.76f);
-    m_value->setGrow(1.f);
-    m_value->setHAlign(nxui::Label::HAlign::Left);
-    m_value->setVAlign(nxui::Label::VAlign::Center);
+        m_value->setGrow(1.f);
+        m_value->setHAlign(nxui::Label::HAlign::Left);
+        m_value->setVAlign(nxui::Label::VAlign::Center);
         m_chev = std::make_shared<nxui::Label>("v");
         m_chev->setScale(0.76f);
-    m_chev->setHAlign(nxui::Label::HAlign::Right);
-    m_chev->setVAlign(nxui::Label::VAlign::Center);
+        m_chev->setHAlign(nxui::Label::HAlign::Right);
+        m_chev->setVAlign(nxui::Label::VAlign::Center);
         m_chev->setMarginLeft(12.f);
 
         m_pill->addChild(m_value);
@@ -304,13 +364,13 @@ protected:
             m_value->setTextColor(theme->textPrimary.withAlpha(opacity()));
             m_chev->setTextColor(theme->textPrimary.withAlpha(opacity()));
         }
-        float w = std::max(150.f, rect().width * 0.34f);
+        float w = std::max(190.f, rect().width * 0.45f);
         float h = std::max(30.f, rect().height - 16.f);
         m_pill->setSize(w, h);
         m_value->setSize(std::max(0.f, w - 34.f), h);
         m_chev->setSize(22.f, h);
         m_pill->layout();
-        m_right->setSize(std::max(160.f, rect().width * 0.42f), rect().height);
+        m_right->setSize(std::max(220.f, rect().width * 0.50f), rect().height);
     }
 private:
     std::shared_ptr<nxui::GlassBox> m_pill;
@@ -416,6 +476,7 @@ std::shared_ptr<nxui::Box> createSettingItemWidget(SettingsScreen::SettingItem& 
         case IT::Info:        return std::make_shared<InfoRowWidget>(item, ctx);
         case IT::Toggle:      return std::make_shared<ToggleRowWidget>(item, ctx);
         case IT::Slider:      return std::make_shared<SliderRowWidget>(item, ctx);
+        case IT::Progress:    return std::make_shared<ProgressRowWidget>(item, ctx);
         case IT::Selector:    return std::make_shared<SelectorRowWidget>(item, ctx);
         case IT::Action:      return std::make_shared<ActionRowWidget>(item, ctx);
         case IT::ColorPicker: return std::make_shared<ColorPickerRowWidget>(item, ctx);

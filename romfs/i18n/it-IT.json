@@ -23,6 +23,7 @@
       "sleep": "Sospensione",
       "music": "Musica",
       "theme": "Tema",
+      "storage": "Archiviazione",
       "about": "Info"
     },
     "system": {
@@ -162,6 +163,39 @@
       "next_track": "Traccia successiva",
       "track_changed": "Traccia cambiata"
     },
+    "storage": {
+      "internal": "Memoria di sistema",
+      "internal_desc": "Mostra la memoria di sistema utilizzata e lo spazio disponibile.",
+      "internal_unavailable": "Impossibile interrogare lo spazio di archiviazione interno.",
+      "sd": "Scheda microSD",
+      "sd_desc": "Mostra lo spazio utilizzato sulla microSD e lo spazio disponibile.",
+      "sd_unavailable": "Nessuna scheda microSD rilevata o accesso negato.",
+      "available": "Disponibile",
+      "state_installed": "Installato",
+      "state_corrupt": "Corrotto",
+      "state_unknown": "Sconosciuto",
+      "installed_section": "Software installato",
+      "empty_library": "Nessun gioco installato trovato",
+      "select_game": "Gioco installato",
+      "select_game_desc": "Seleziona un titolo per visualizzare i dettagli o disinstallarlo.",
+      "uninstall_game": "Disinstalla il gioco selezionato",
+      "uninstall_game_desc": "Elimina definitivamente il titolo selezionato dal sistema.",
+      "uninstall_confirm_title": "Disinstalla gioco",
+      "uninstall_confirm_msg": "Eliminare %s dal sistema?",
+      "uninstall_success_title": "Disinstallazione completata",
+      "uninstall_success": "Disinstallazione completata con successo.",
+      "uninstall_failed_title": "Disinstallazione fallita",
+      "uninstall_failed": "Impossibile disinstallare il titolo selezionato.",
+      "location_internal": "Interno",
+      "location_sd": "microSD",
+      "location_system": "Sistema",
+      "size_unknown": "Dimensione sconosciuta",
+      "capacity": "Capacità",
+      "used": "Usato",
+      "summary": "Riepilogo",
+      "details": "Dettagli",
+      "delete": "Elimina"
+    },
     "about": {
       "version": "Versione",
       "author": "Autore",
@@ -204,6 +238,7 @@
   },
   "button": {
     "ok": "OK",
-    "cancel": "Annulla"
+    "cancel": "Annulla",
+    "delete": "Elimina"
   }
 }

@@ -23,6 +23,7 @@
       "sleep": "Modo de Descanso",
       "music": "Música",
       "theme": "Tema",
+      "storage": "Armazenamento",
       "about": "Sobre"
     },
     "system": {
@@ -162,6 +163,39 @@
       "next_track": "Próxima Faixa",
       "track_changed": "Faixa alterada"
     },
+    "storage": {
+      "internal": "Memória do sistema",
+      "internal_desc": "Mostra a memória do sistema usada e o espaço livre.",
+      "internal_unavailable": "Não foi possível consultar o armazenamento interno.",
+      "sd": "Cartão microSD",
+      "sd_desc": "Mostra o armazenamento usado no microSD e o espaço livre.",
+      "sd_unavailable": "Nenhum cartão microSD detectado ou acesso negado.",
+      "available": "Disponível",
+      "state_installed": "Instalado",
+      "state_corrupt": "Corrompido",
+      "state_unknown": "Desconhecido",
+      "installed_section": "Software instalado",
+      "empty_library": "Nenhum jogo instalado encontrado",
+      "select_game": "Jogo instalado",
+      "select_game_desc": "Selecione um título para ver detalhes ou desinstalar.",
+      "uninstall_game": "Desinstalar jogo selecionado",
+      "uninstall_game_desc": "Exclui permanentemente o título selecionado do sistema.",
+      "uninstall_confirm_title": "Desinstalar jogo",
+      "uninstall_confirm_msg": "Excluir %s do sistema?",
+      "uninstall_success_title": "Desinstalação concluída",
+      "uninstall_success": "Desinstalado com sucesso.",
+      "uninstall_failed_title": "Falha na desinstalação",
+      "uninstall_failed": "Não foi possível desinstalar o título selecionado.",
+      "location_internal": "Interno",
+      "location_sd": "microSD",
+      "location_system": "Sistema",
+      "size_unknown": "Tamanho desconhecido",
+      "capacity": "Capacidade",
+      "used": "Usado",
+      "summary": "Resumo",
+      "details": "Detalhes",
+      "delete": "Excluir"
+    },
     "about": {
       "version": "Versão",
       "author": "Autor",
@@ -204,6 +238,7 @@
   },
   "button": {
     "ok": "OK",
-    "cancel": "Cancelar"
+    "cancel": "Cancelar",
+    "delete": "Excluir"
   }
 }

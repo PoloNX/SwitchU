@@ -23,6 +23,7 @@
       "sleep": "Сон",
       "music": "Музыка",
       "theme": "Тема",
+      "storage": "Хранилище",
       "about": "О программе"
     },
     "system": {
@@ -162,6 +163,39 @@
       "next_track": "Следующий трек",
       "track_changed": "Трек изменён"
     },
+    "storage": {
+      "internal": "Системная память",
+      "internal_desc": "Показывает используемую системную память и свободное место.",
+      "internal_unavailable": "Не удалось получить данные о внутреннем хранилище.",
+      "sd": "microSD-карта",
+      "sd_desc": "Показывает используемое хранилище microSD и свободное место.",
+      "sd_unavailable": "microSD-карта не найдена или доступ запрещён.",
+      "available": "Доступно",
+      "state_installed": "Установлено",
+      "state_corrupt": "Испорчено",
+      "state_unknown": "Неизвестно",
+      "installed_section": "Установленное ПО",
+      "empty_library": "Установленные игры не найдены",
+      "select_game": "Установленная игра",
+      "select_game_desc": "Выберите игру для просмотра сведений или удаления.",
+      "uninstall_game": "Удалить выбранную игру",
+      "uninstall_game_desc": "Безвозвратно удаляет выбранную игру из системы.",
+      "uninstall_confirm_title": "Удалить игру",
+      "uninstall_confirm_msg": "Удалить %s из системы?",
+      "uninstall_success_title": "Удаление завершено",
+      "uninstall_success": "Успешно удалено.",
+      "uninstall_failed_title": "Не удалось удалить",
+      "uninstall_failed": "Не удалось удалить выбранную игру.",
+      "location_internal": "Внутренняя",
+      "location_sd": "microSD",
+      "location_system": "Система",
+      "size_unknown": "Неизвестный размер",
+      "capacity": "Ёмкость",
+      "used": "Использовано",
+      "summary": "Сводка",
+      "details": "Подробности",
+      "delete": "Удалить"
+    },
     "about": {
       "version": "Версия",
       "author": "Автор",
@@ -204,6 +238,7 @@
   },
   "button": {
     "ok": "OK",
-    "cancel": "Отмена"
+    "cancel": "Отмена",
+    "delete": "Удалить"
   }
 }

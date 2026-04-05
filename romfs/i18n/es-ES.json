@@ -23,6 +23,7 @@
       "sleep": "Suspender",
       "music": "Música",
       "theme": "Tema",
+      "storage": "Almacenamiento",
       "about": "Acerca de"
     },
     "system": {
@@ -162,6 +163,39 @@
       "next_track": "Siguiente pista",
       "track_changed": "Pista cambiada"
     },
+    "storage": {
+      "internal": "Memoria del sistema",
+      "internal_desc": "Muestra la memoria del sistema utilizada y el espacio libre.",
+      "internal_unavailable": "No se puede consultar el almacenamiento interno.",
+      "sd": "Tarjeta microSD",
+      "sd_desc": "Muestra el almacenamiento de la tarjeta microSD utilizado y el espacio libre.",
+      "sd_unavailable": "No se detectó ninguna tarjeta microSD o se denegó el acceso.",
+      "available": "Disponible",
+      "state_installed": "Instalado",
+      "state_corrupt": "Dañado",
+      "state_unknown": "Desconocido",
+      "installed_section": "Software instalado",
+      "empty_library": "No se encontraron juegos instalados",
+      "select_game": "Juego instalado",
+      "select_game_desc": "Elige un título para desinstalar del sistema.",
+      "uninstall_game": "Desinstalar juego seleccionado",
+      "uninstall_game_desc": "Elimina permanentemente el título seleccionado del sistema.",
+      "uninstall_confirm_title": "Desinstalar Juego",
+      "uninstall_confirm_msg": "¿Eliminar %s del sistema?",
+      "uninstall_success_title": "Desinstalación Completada",
+      "uninstall_success": "Desinstalado exitosamente.",
+      "uninstall_failed_title": "Desinstalación Fallida",
+      "uninstall_failed": "No se pudo desinstalar el título seleccionado.",
+      "location_internal": "Interno",
+      "location_sd": "microSD",
+      "location_system": "Sistema",
+      "size_unknown": "Tamaño desconocido",
+      "capacity": "Capacidad",
+      "used": "Usado",
+      "summary": "Resumen",
+      "details": "Detalles",
+      "delete": "Eliminar"
+    },
     "about": {
       "version": "Versión",
       "author": "Autor",
@@ -204,6 +238,7 @@
   },
   "button": {
     "ok": "OK",
-    "cancel": "Cancelar"
+    "cancel": "Cancelar",
+    "delete": "Eliminar"
   }
 }
