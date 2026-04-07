@@ -56,7 +56,7 @@ private:
         nxui::Texture texture;
         int appIndex = -1;   // which app currently occupies this slot (-1 = free)
     };
-    std::vector<TexSlot> m_pool;
+    std::vector<std::unique_ptr<TexSlot>> m_pool;
 
     // Maps app index → pool slot index (-1 = not loaded).
     std::vector<int> m_appToSlot;

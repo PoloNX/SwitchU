@@ -16,6 +16,9 @@ public:
     void setTexture(nxui::Texture* tex) { m_tex = tex; }
     nxui::Texture* texture() const      { return m_tex; }
 
+    void setGameCardTexture(nxui::Texture* tex) { m_gameCardTex = tex; }
+    nxui::Texture* gameCardTexture() const      { return m_gameCardTex; }
+
     void setTitleId(uint64_t id)  { m_titleId = id; }
     uint64_t titleId() const      { return m_titleId; }
 
@@ -42,6 +45,7 @@ protected:
 private:
     std::string m_title;
     nxui::Texture*    m_tex = nullptr;
+    nxui::Texture*    m_gameCardTex = nullptr;
     uint64_t    m_titleId = 0;
     bool        m_focused = false;
     bool        m_suspended = false;

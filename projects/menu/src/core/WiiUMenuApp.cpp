@@ -141,6 +141,9 @@ void WiiUMenuApp::loadResources() {
     m_fontNormal.load(app().gpu(), app().renderer(), fontPath, 24);
     m_fontSmall.load(app().gpu(), app().renderer(), fontPath, 18);
 
+    std::string gameCardPath = std::string(SD_ASSETS) + "/icons/gamecard.png";
+    m_gameCardTex.loadFromFile(app().gpu(), app().renderer(), gameCardPath);
+
     m_appLoader.load(m_model, m_iconStreamer);
 }
 
@@ -152,6 +155,7 @@ std::shared_ptr<GlossyIcon> WiiUMenuApp::makeIcon(const AppEntry& entry) {
     // Texture is set by IconStreamer::onPageChanged() — not here.
     icon->setCornerRadius(m_theme.iconCornerRadius);
     icon->setIsGameCard(entry.isGameCard());
+    icon->setGameCardTexture(&m_gameCardTex);
     icon->setNotLaunchable(!entry.isLaunchable());
 
 #ifndef SWITCHU_HOMEBREW

@@ -110,12 +110,12 @@ void IconStreamer::onPageChanged(int currentPage, int iconsPerPage,
 
     // 1. Evict textures outside the new visible range.
     for (int i = 0; i < (int)m_pool.size(); ++i) {
-        int app = m_pool[i].appIndex;
+        int app = m_pool[i]->appIndex;
         if (app >= 0 && (app < startApp || app >= endApp)) {
             if (app < (int)allIcons.size())
                 allIcons[app]->setTexture(nullptr);
             m_appToSlot[app] = -1;
-            m_pool[i].appIndex = -1;
+            m_pool[i]->appIndex = -1;
             m_freeSlots.push_back(i);
         }
     }
@@ -183,10 +183,10 @@ void IconStreamer::onPageChanged(int currentPage, int iconsPerPage,
             m_freeSlots.pop_back();
         } else {
             poolIdx = (int)m_pool.size();
-            m_pool.emplace_back();
+            m_pool.emplace_back(std::make_unique<TexSlot>());
         }
 
-        auto& slot = m_pool[poolIdx];
+        auto& slot = *m_pool[poolIdx];
         if (slot.texture.loadFromPixels(gpu, ren, d.rgba, d.w, d.h)) {
             slot.appIndex = d.appIndex;
             m_appToSlot[d.appIndex] = poolIdx;
@@ -204,7 +204,7 @@ void IconStreamer::forceReload(int currentPage, int iconsPerPage,
                                 const std::vector<std::shared_ptr<GlossyIcon>>& allIcons)
 {
     // Throw away all loaded state so onPageChanged re-does everything.
-    for (auto& slot : m_pool) slot.appIndex = -1;
+    for (auto& slot : m_pool) slot->appIndex = -1;
     m_freeSlots.clear();
     for (int i = 0; i < (int)m_pool.size(); ++i) m_freeSlots.push_back(i);
     std::fill(m_appToSlot.begin(), m_appToSlot.end(), -1);

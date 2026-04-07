@@ -64,16 +64,33 @@ void GlossyIcon::onRender(nxui::Renderer& ren) {
     }
 
     if (m_isGameCard && !m_notLaunchable && s > 0.5f) {
-        float badgeW = 22.f * s;
-        float badgeH = 16.f * s;
-        float badgeX = r.x + 6.f * s;
+        float badgeW = 66.f * s;
+        float badgeH = 48.f * s;
+        float badgeX = r.x + 1.f * s;
         float badgeY = r.y + 6.f * s;
-        ren.drawRoundedRect({badgeX, badgeY, badgeW, badgeH},
-                            nxui::Color(0.15f, 0.15f, 0.15f, 0.85f * a), 3.f * s);
-        float cardInset = 3.f * s;
-        ren.drawRoundedRect({badgeX + cardInset, badgeY + cardInset,
-                             badgeW - cardInset*2, badgeH - cardInset*2},
-                            nxui::Color(0.95f, 0.75f, 0.2f, 0.9f * a), 2.f * s);
+
+        if (m_gameCardTex && m_gameCardTex->valid()) {
+            float cardInset = 1.f * s;
+            float maxW = badgeW - cardInset * 2;
+            float maxH = badgeH - cardInset * 2;
+            float aspect = (float)m_gameCardTex->width() / (float)m_gameCardTex->height();
+            float texW = maxW;
+            float texH = maxH;
+            if (aspect > maxW / maxH) {
+                texH = maxW / aspect;
+            } else {
+                texW = maxH * aspect;
+            }
+            float texX = badgeX + (badgeW - texW) * 0.5f;
+            float texY = badgeY + (badgeH - texH) * 0.5f;
+            ren.drawTextureRounded(m_gameCardTex, {texX, texY, texW, texH}, 2.f * s,
+                                   nxui::Color::white().withAlpha(0.98f * a));
+        } else {
+            float cardInset = 4.f * s;
+            ren.drawRoundedRect({badgeX + cardInset, badgeY + cardInset,
+                                 badgeW - cardInset*2, badgeH - cardInset*2},
+                                nxui::Color(0.95f, 0.75f, 0.2f, 0.9f * a), 2.f * s);
+        }
     }
 
     if (m_suspended && s > 0.5f) {
