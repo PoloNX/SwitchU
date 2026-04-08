@@ -1,6 +1,9 @@
 #include "TabBuilders.hpp"
 #include <nxui/core/I18n.hpp>
 #include <switch.h>
+#ifndef SWITCHU_HOMEBREW
+#include <nxtc.h>
+#endif
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -130,9 +133,36 @@ std::string formatAppDetails(const std::string& location,
     return result;
 }
 
-std::string titleForApplication(uint64_t titleId) {
+enum class AppState {
+    Installed,
+    Corrupt,
+    Unknown,
+};
+
+struct AppControlInfo {
+    std::string title;
+    AppState state;
+};
+
+AppControlInfo queryApplicationControlInfo(uint64_t titleId) {
+    AppControlInfo info;
+
+#ifndef SWITCHU_HOMEBREW
+    NxTitleCacheApplicationMetadata* meta = nxtcGetApplicationMetadataEntryById(titleId);
+    if (meta) {
+        if (meta->name && meta->name[0] != '\0')
+            info.title = meta->name;
+        else
+            info.title = std::string();
+        info.state = AppState::Installed;
+        nxtcFreeApplicationMetadata(&meta);
+        if (!info.title.empty())
+            return info;
+    }
+#endif
+
     NsApplicationControlData controlData{};
-    u64 actualSize = 0;
+    size_t actualSize = 0;
     if (R_SUCCEEDED(nsGetApplicationControlData(NsApplicationControlSource_Storage,
                                                titleId,
                                                &controlData,
@@ -141,36 +171,37 @@ std::string titleForApplication(uint64_t titleId) {
         NacpLanguageEntry* entry = nullptr;
         if (R_SUCCEEDED(nacpGetLanguageEntry(&controlData.nacp, &entry)) &&
             entry && entry->name[0] != '\0') {
-            return entry->name;
+            info.title = entry->name;
+        } else {
+            for (int i = 0; i < 16; ++i) {
+                if (controlData.nacp.lang[i].name[0] != '\0') {
+                    info.title = controlData.nacp.lang[i].name;
+                    break;
+                }
+            }
         }
-        for (int i = 0; i < 16; ++i) {
-            if (controlData.nacp.lang[i].name[0] != '\0')
-                return controlData.nacp.lang[i].name;
+        info.state = AppState::Installed;
+        if (info.title.empty()) {
+            char buffer[32];
+            std::snprintf(buffer, sizeof(buffer), "%016llX", (unsigned long long)titleId);
+            info.title = buffer;
         }
+        return info;
     }
 
     char buffer[32];
     std::snprintf(buffer, sizeof(buffer), "%016llX", (unsigned long long)titleId);
-    return buffer;
+    info.title = buffer;
+    info.state = AppState::Corrupt;
+    return info;
 }
 
-enum class AppState {
-    Installed,
-    Corrupt,
-    Unknown,
-};
+std::string titleForApplication(uint64_t titleId) {
+    return queryApplicationControlInfo(titleId).title;
+}
 
 AppState queryApplicationState(uint64_t titleId) {
-    NsApplicationControlData controlData{};
-    size_t actualSize = 0;
-    if (R_SUCCEEDED(nsGetApplicationControlData(NsApplicationControlSource_Storage,
-                                               titleId,
-                                               &controlData,
-                                               sizeof(controlData),
-                                               &actualSize))) {
-        return AppState::Installed;
-    }
-    return AppState::Corrupt;
+    return queryApplicationControlInfo(titleId).state;
 }
 
 std::string appStateLabel(const nxui::I18n& i18n, AppState state) {
@@ -287,9 +318,10 @@ SettingsScreen::Tab settings::tabs::StorageTab::build(SettingsScreen& screen) {
             uint64_t titleId = records[i].application_id;
             AppEntry app;
             app.titleId = titleId;
-            app.title = titleForApplication(titleId);
+            auto controlInfo = queryApplicationControlInfo(titleId);
+            app.title = std::move(controlInfo.title);
+            app.state = controlInfo.state;
             app.location = applicationStorageLocation(titleId, i18n);
-            app.state = queryApplicationState(titleId);
             uint64_t sizeBytes = queryApplicationSize(titleId);
             if (sizeBytes > 0) {
                 app.sizeText = formatBytes(sizeBytes);
