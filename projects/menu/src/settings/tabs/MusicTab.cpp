@@ -67,11 +67,9 @@ SettingsScreen::Tab settings::tabs::MusicTab::build(SettingsScreen& screen) {
     {
         SettingItem it; it.label = i18n.tr("settings.music.next_track", "Next Track"); it.type = ItemType::Action;
         it.anim01 = 0.f;
-        it.onChange = [&screen](SettingItem&) {
+        it.onChange = [&screen, &i18n](SettingItem&) {
             if (screen.m_nextTrackCb) screen.m_nextTrackCb();
-            screen.m_trackToastHold = 3.0f;
-            screen.m_trackToastFading = false;
-            screen.m_trackToastAnim.setImmediate(1.f);
+            screen.requestToast(i18n.tr("settings.music.next_track", "Next Track"), 3.0f);
         };
         t.items.push_back(std::move(it));
     }

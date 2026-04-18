@@ -224,6 +224,9 @@ void SettingsScreen::rebuildCurrentTab() {
         m_contentIdx = 0;
     m_scrollTarget = oldScroll;
     m_scrollY = oldScroll;
+
+    rebuildTabBar();
+    rebuildContentItems();
 }
 
 void SettingsScreen::requestDialog(const std::string& title, const std::string& msg,
