@@ -113,6 +113,8 @@ private:
 
     nxui::Texture m_gameCardTex;
 
+    nxui::Texture m_gameCardTex;
+
     std::shared_ptr<nxui::Box> m_bgLayer;
     std::shared_ptr<nxui::Box> m_contentLayer;
     std::shared_ptr<nxui::Box> m_overlayLayer;

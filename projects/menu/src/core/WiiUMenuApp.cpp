@@ -1103,6 +1103,11 @@ void WiiUMenuApp::finalizeRefresh() {
     m_fontNormal.clearCache();
     m_fontSmall.clearCache();
     app().gpu().resetImagePool();
+    // Reset the slot so loadFromFile calls registerTexture() instead of
+    // updateTexture(), preventing loadUsers() from reusing the same slot.
+    m_gameCardTex = nxui::Texture{};
+    m_gameCardTex.loadFromFile(app().gpu(), app().renderer(),
+                               std::string(SD_ASSETS) + "/icons/gamecard.png");
     m_userSelect->loadUsers(app().gpu(), app().renderer());
 
     m_appLoader.finalize(m_model, m_iconStreamer);
