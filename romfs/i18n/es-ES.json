@@ -2,7 +2,9 @@
   "common": {
     "auto": "Auto",
     "na": "N/A",
-    "active": "Activo"
+    "active": "Activo",
+    "version": "Versión",
+    "size": "Tamaño"
   },
   "sidebar": {
     "album": "Álbum",
@@ -236,9 +238,29 @@
     "no_contents": "Faltan los datos del juego.",
     "cannot_launch": "Este juego no se puede iniciar."
   },
+  "dialog": {
+    "sleep": {
+      "title": "Suspender",
+      "message": "¿Poner la consola en modo de suspensión?"
+    },
+    "miiverse": {
+      "title": "Miiverse",
+      "message": "Se está desarrollando una recreación de miiverse, pero aún no está lista. ¡Estad atentos!"
+    }
+  },
+  "hint": {
+    "confirm": "Confirmar",
+    "select": "Seleccionar",
+    "back": "Atrás",
+    "prev_page": "Página ant",
+    "next_page": "Página sig",
+    "close": "Cerrar",
+    "exit": "Salir"
+  },
   "button": {
     "ok": "OK",
     "cancel": "Cancelar",
-    "delete": "Eliminar"
+    "delete": "Eliminar",
+    "sleep": "Suspender"
   }
 }

@@ -2,7 +2,9 @@
   "common": {
     "auto": "Auto",
     "na": "N/B",
-    "active": "Actief"
+    "active": "Actief",
+    "version": "Versie",
+    "size": "Grootte"
   },
   "sidebar": {
     "album": "Album",
@@ -236,9 +238,29 @@
     "no_contents": "Spelgegevens ontbreken.",
     "cannot_launch": "Dit spel kan niet worden gestart."
   },
+  "dialog": {
+    "sleep": {
+      "title": "Slaapstand",
+      "message": "De console in slaapstand zetten?"
+    },
+    "miiverse": {
+      "title": "Miiverse",
+      "message": "Een recreatie van miiverse is in ontwikkeling, maar nog niet klaar. Blijf op de hoogte!"
+    }
+  },
+  "hint": {
+    "confirm": "Bevestigen",
+    "select": "Selecteren",
+    "back": "Terug",
+    "prev_page": "Vorige pagina",
+    "next_page": "Volgende pagina",
+    "close": "Sluiten",
+    "exit": "Afsluiten"
+  },
   "button": {
     "ok": "OK",
     "cancel": "Annuleren",
-    "delete": "Verwijderen"
+    "delete": "Verwijderen",
+    "sleep": "Slaapstand"
   }
 }

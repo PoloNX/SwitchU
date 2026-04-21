@@ -89,18 +89,22 @@ void Widget::addDirectionAction(FocusDirection dir, std::function<void()> cb) {
         case FocusDirection::LEFT:
             addAction(static_cast<uint64_t>(Button::DLeft), cb);
             addAction(static_cast<uint64_t>(Button::LStickL), cb);
+            addAction(static_cast<uint64_t>(Button::RStickL), cb);
             break;
         case FocusDirection::RIGHT:
             addAction(static_cast<uint64_t>(Button::DRight), cb);
             addAction(static_cast<uint64_t>(Button::LStickR), cb);
+            addAction(static_cast<uint64_t>(Button::RStickR), cb);
             break;
         case FocusDirection::UP:
             addAction(static_cast<uint64_t>(Button::DUp), cb);
             addAction(static_cast<uint64_t>(Button::LStickU), cb);
+            addAction(static_cast<uint64_t>(Button::RStickU), cb);
             break;
         case FocusDirection::DOWN:
             addAction(static_cast<uint64_t>(Button::DDown), cb);
             addAction(static_cast<uint64_t>(Button::LStickD), cb);
+            addAction(static_cast<uint64_t>(Button::RStickD), cb);
             break;
     }
 }

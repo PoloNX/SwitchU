@@ -100,8 +100,8 @@ public:
     /// Returns true if the action existed and was triggered.
     bool fireAction(uint64_t button) const;
 
-    /// Convenience: register a callback for a focus direction (D-pad + left stick).
-    /// Registers actions for both the D-pad button and the corresponding stick direction.
+    /// Convenience: register a callback for a focus direction (D-pad + both sticks).
+    /// Registers actions for the D-pad button and both stick directions.
     void addDirectionAction(FocusDirection dir, std::function<void()> cb);
 
     // Legacy activation callback (also triggered by Button::A action)

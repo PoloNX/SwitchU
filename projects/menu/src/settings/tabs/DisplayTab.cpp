@@ -63,6 +63,48 @@ SettingsScreen::Tab settings::tabs::DisplayTab::build(SettingsScreen& screen) {
     }
 
     {
+        SettingItem it; it.label = i18n.tr("settings.audio.tv_resolution", "TV Resolution"); it.type = ItemType::Selector;
+        it.description = i18n.tr("settings.audio.tv_resolution_desc", "Adjust HDMI resolution. Auto uses recommended value.");
+        it.options = {
+            i18n.tr("common.auto", "Auto"),
+            i18n.tr("settings.audio.res_720p", "720p"),
+            i18n.tr("settings.audio.res_1080p", "1080p")
+        };
+        SetSysTvSettings tv{};
+        if (R_SUCCEEDED(setsysGetTvSettings(&tv)))
+            it.intVal = std::clamp((int)tv.tv_resolution, 0, 2);
+        it.onChange = [](SettingItem& self) {
+            SetSysTvSettings tv{};
+            if (R_SUCCEEDED(setsysGetTvSettings(&tv))) {
+                tv.tv_resolution = (s32)self.intVal;
+                setsysSetTvSettings(&tv);
+            }
+        };
+        t.items.push_back(std::move(it));
+    }
+
+    {
+        SettingItem it; it.label = i18n.tr("settings.audio.hdmi_rgb_range", "HDMI RGB Range"); it.type = ItemType::Selector;
+        it.description = i18n.tr("settings.audio.hdmi_rgb_range_desc", "Full for PC monitors, Limited for most TVs.");
+        it.options = {
+            i18n.tr("common.auto", "Auto"),
+            i18n.tr("settings.audio.full", "Full"),
+            i18n.tr("settings.audio.limited", "Limited")
+        };
+        SetSysTvSettings tv{};
+        if (R_SUCCEEDED(setsysGetTvSettings(&tv)))
+            it.intVal = std::clamp((int)tv.rgb_range, 0, 2);
+        it.onChange = [](SettingItem& self) {
+            SetSysTvSettings tv{};
+            if (R_SUCCEEDED(setsysGetTvSettings(&tv))) {
+                tv.rgb_range = (s32)self.intVal;
+                setsysSetTvSettings(&tv);
+            }
+        };
+        t.items.push_back(std::move(it));
+    }
+
+    {
         SettingItem it; it.label = i18n.tr("settings.display.tv_screen_size", "TV Screen Size"); it.type = ItemType::Slider;
         it.description = i18n.tr("settings.display.tv_screen_size_desc", "Adjust overscan so the full image is visible.");
         SetSysTvSettings tv{};

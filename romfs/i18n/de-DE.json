@@ -2,7 +2,9 @@
   "common": {
     "auto": "Auto",
     "na": "N/A",
-    "active": "Aktiv"
+    "active": "Aktiv",
+    "version": "Version",
+    "size": "Größe"
   },
   "sidebar": {
     "album": "Album",
@@ -236,9 +238,29 @@
     "no_contents": "Spieldaten fehlen.",
     "cannot_launch": "Dieses Spiel kann nicht gestartet werden."
   },
+  "dialog": {
+    "sleep": {
+      "title": "Ruhezustand",
+      "message": "Konsole in den Ruhezustand versetzen?"
+    },
+    "miiverse": {
+      "title": "Miiverse",
+      "message": "Eine Nachbildung von miiverse wird entwickelt, ist aber noch nicht fertig. Bleib dran!"
+    }
+  },
+  "hint": {
+    "confirm": "Bestätigen",
+    "select": "Auswählen",
+    "back": "Zurück",
+    "prev_page": "Vorherige Seite",
+    "next_page": "Nächste Seite",
+    "close": "Schließen",
+    "exit": "Beenden"
+  },
   "button": {
     "ok": "OK",
     "cancel": "Abbrechen",
-    "delete": "Löschen"
+    "delete": "Löschen",
+    "sleep": "Ruhezustand"
   }
 }

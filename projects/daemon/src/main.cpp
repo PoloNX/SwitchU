@@ -293,22 +293,22 @@ static void handleAppletMessages() {
             appletStartSleepSequence(true);
             break;
             case 26:
-            switchu::FileLog::log("[ae] -> Wakeup");
+        switchu::FileLog::log("[ae] -> Wakeup");
             if (daemon::app::isRunning() && !daemon::menu_la::isActive()) {
-                Result rc = daemon::app::resume();
-                if (R_FAILED(rc)) {
-                    switchu::FileLog::log("[ae] wake resume FAIL: 0x%X", rc);
-                    appletRequestToGetForeground();
-                }
-            } else {
-                appletRequestToGetForeground();
-            }
-            if (daemon::menu_la::isActive()) {
-                pushNotification(smi::MenuMessage::WakeUp);
-            } else if (!daemon::app::isRunning()) {
-                daemon::menu_la::launch(smi::MenuStartMode::MainMenu, buildSystemStatus());
-            }
-            break;
+            Result rc = daemon::app::resume();
+        if (R_FAILED(rc)) {
+            switchu::FileLog::log("[ae] wake resume FAIL: 0x%X", rc);
+            appletRequestToGetForeground();
+        }
+        } else if (!daemon::app::isRunning()) {
+            appletRequestToGetForeground();
+        }
+        if (daemon::menu_la::isActive()) {
+            pushNotification(smi::MenuMessage::WakeUp);
+        } else if (!daemon::app::isRunning()) {
+            daemon::menu_la::launch(smi::MenuStartMode::MainMenu, buildSystemStatus());
+        }
+        break;
         }
     }
 }

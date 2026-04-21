@@ -66,12 +66,32 @@ SettingsScreen::Tab settings::tabs::InternetTab::build(SettingsScreen& screen) {
     {
         SettingItem it; it.label = i18n.tr("settings.internet.wifi", "WiFi"); it.type = ItemType::Toggle;
         it.description = i18n.tr("settings.internet.wifi_desc", "Enable or disable the wireless LAN radio.");
-        bool val = true;
-        setsysGetWirelessLanEnableFlag(&val);
+        bool val = false;
+        if (R_FAILED(setsysGetWirelessLanEnableFlag(&val))) {
+            DebugLog::log("[internet] setsysGetWirelessLanEnableFlag failed");
+            val = false;
+        }
         it.boolVal = val;
         it.anim01 = val ? 1.f : 0.f;
         it.onChange = [](SettingItem& self) {
-            setsysSetWirelessLanEnableFlag(self.boolVal);
+            bool desired = self.boolVal;
+            Result rc = setsysSetWirelessLanEnableFlag(desired);
+            if (R_FAILED(rc)) {
+                DebugLog::log("[internet] setsysSetWirelessLanEnableFlag failed: 0x%x", rc);
+                self.boolVal = !desired;
+                self.anim01 = self.boolVal ? 1.f : 0.f;
+            } else {
+                bool actual = false;
+                if (R_FAILED(setsysGetWirelessLanEnableFlag(&actual))) {
+                    DebugLog::log("[internet] setsysGetWirelessLanEnableFlag failed after set");
+                    actual = desired;
+                }
+                if (actual != desired) {
+                    DebugLog::log("[internet] setsysSetWirelessLanEnableFlag mismatch: desired=%d actual=%d", desired, actual);
+                    self.boolVal = actual;
+                    self.anim01 = actual ? 1.f : 0.f;
+                }
+            }
         };
         t.items.push_back(std::move(it));
     }
@@ -79,12 +99,21 @@ SettingsScreen::Tab settings::tabs::InternetTab::build(SettingsScreen& screen) {
     {
         SettingItem it; it.label = i18n.tr("settings.internet.auto_app_download", "Auto App Download"); it.type = ItemType::Toggle;
         it.description = i18n.tr("settings.internet.auto_app_download_desc", "Automatically download updates for installed games.");
-        bool val = true;
-        setsysGetAutomaticApplicationDownloadFlag(&val);
+        bool val = false;
+        if (R_FAILED(setsysGetAutomaticApplicationDownloadFlag(&val))) {
+            DebugLog::log("[internet] setsysGetAutomaticApplicationDownloadFlag failed");
+            val = false;
+        }
         it.boolVal = val;
         it.anim01 = val ? 1.f : 0.f;
         it.onChange = [](SettingItem& self) {
-            setsysSetAutomaticApplicationDownloadFlag(self.boolVal);
+            bool desired = self.boolVal;
+            Result rc = setsysSetAutomaticApplicationDownloadFlag(desired);
+            if (R_FAILED(rc)) {
+                DebugLog::log("[internet] setsysSetAutomaticApplicationDownloadFlag failed: 0x%x", rc);
+                self.boolVal = !desired;
+                self.anim01 = self.boolVal ? 1.f : 0.f;
+            }
         };
         t.items.push_back(std::move(it));
     }

@@ -12,12 +12,12 @@
 #include "widgets/DateTimeWidget.hpp"
 #include "widgets/BatteryWidget.hpp"
 #include "widgets/TitlePillWidget.hpp"
+#include "widgets/PageIndicator.hpp"
 #include "core/AudioManager.hpp"
 #include "widgets/LaunchAnimation.hpp"
 #include "widgets/UserSelectScreen.hpp"
 #include "widgets/OverlayDialog.hpp"
-#include "widgets/AppletButton.hpp"
-#include "widgets/PageIndicator.hpp"
+#include "widgets/GameInfoPanel.hpp"
 #include "settings/SettingsScreen.hpp"
 #include "core/Config.hpp"
 #include "core/ThemePreset.hpp"
@@ -63,6 +63,7 @@ public:
 
 private:
     void loadResources();
+    void renderButtonHints(nxui::Renderer& ren);
     void buildGrid();
     void applyTheme();
     void applyUiLanguage();
@@ -108,6 +109,7 @@ private:
     std::shared_ptr<UserSelectScreen>  m_userSelect;
     std::shared_ptr<OverlayDialog>     m_dialog;
     std::shared_ptr<SettingsScreen>    m_settings;
+    std::shared_ptr<GameInfoPanel>    m_gameInfoPanel;
 
     nxui::Texture m_gameCardTex;
 
@@ -149,6 +151,7 @@ private:
     AppConfig m_config;
     bool m_settingsNeedRefresh        = false;
     nxui::Widget* m_dialogReturnFocus = nullptr;
+    nxui::Widget* m_gameInfoReturnFocus = nullptr;
     bool m_dialogWasActive            = false;
     bool m_suppressNextNavigateSfx    = false;
     bool m_pendingNetConnect          = false;

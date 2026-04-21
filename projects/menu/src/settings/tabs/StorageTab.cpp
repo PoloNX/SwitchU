@@ -50,16 +50,17 @@ uint64_t queryApplicationSize(uint64_t titleId) {
     if (R_FAILED(nsCalculateApplicationOccupiedSize(titleId, &occ)))
         return 0;
 
-    uint64_t bestSize = 0;
+    uint64_t totalSize = 0;
     for (size_t offset = 0; offset + sizeof(uint64_t) <= sizeof(occ.unk_x0); offset += sizeof(uint64_t)) {
-        uint64_t candidate = 0;
-        std::memcpy(&candidate, &occ.unk_x0[offset], sizeof(candidate));
-        if (candidate > bestSize && candidate < (1ull << 40)) {
-            bestSize = candidate;
+        uint64_t value = 0;
+        std::memcpy(&value, &occ.unk_x0[offset], sizeof(value));
+        // Only count reasonable size values (less than 1TB to filter out garbage)
+        if (value > 0 && value < (1ull << 40)) {
+            totalSize += value;
         }
     }
 
-    return bestSize;
+    return totalSize;
 }
 
 std::string storageLocationLabel(const nxui::I18n& i18n, u8 storageId);

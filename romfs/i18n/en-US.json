@@ -2,7 +2,9 @@
   "common": {
     "auto": "Auto",
     "na": "N/A",
-    "active": "Active"
+    "active": "Active",
+    "version": "Version",
+    "size": "Size"
   },
   "sidebar": {
     "album": "Album",
@@ -236,9 +238,29 @@
     "no_contents": "Game data is missing.",
     "cannot_launch": "This game cannot be launched."
   },
+  "dialog": {
+    "sleep": {
+      "title": "Sleep",
+      "message": "Put the console into sleep mode?"
+    },
+    "miiverse": {
+      "title": "Miiverse",
+      "message": "A miiverse recreation is in development, but not ready yet. Stay tuned!"
+    }
+  },
+  "hint": {
+    "confirm": "Confirm",
+    "select": "Select",
+    "back": "Back",
+    "prev_page": "Prev page",
+    "next_page": "Next page",
+    "close": "Close",
+    "exit": "Exit"
+  },
   "button": {
     "ok": "OK",
     "cancel": "Cancel",
-    "delete": "Delete"
+    "delete": "Delete",
+    "sleep": "Sleep"
   }
 }

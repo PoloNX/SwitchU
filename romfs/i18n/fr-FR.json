@@ -2,7 +2,9 @@
   "common": {
     "auto": "Auto",
     "na": "N/A",
-    "active": "Actif"
+    "active": "Actif",
+    "version": "Version",
+    "size": "Taille"
   },
   "sidebar": {
     "album": "Album",
@@ -236,9 +238,29 @@
     "no_contents": "Les données du jeu sont manquantes.",
     "cannot_launch": "Ce jeu ne peut pas être lancé."
   },
+  "dialog": {
+    "sleep": {
+      "title": "Veille",
+      "message": "Mettre la console en mode veille ?"
+    },
+    "miiverse": {
+      "title": "Miiverse",
+      "message": "Une recréation de miiverse est en développement, mais n'est pas encore prête. Restez à l'écoute !"
+    }
+  },
+  "hint": {
+    "confirm": "Confirmer",
+    "select": "Sélectionner",
+    "back": "Retour",
+    "prev_page": "Page précédente",
+    "next_page": "Page suivante",
+    "close": "Fermer",
+    "exit": "Quitter"
+  },
   "button": {
     "ok": "OK",
     "cancel": "Annuler",
-    "delete": "Supprimer"
+    "delete": "Supprimer",
+    "sleep": "Veille"
   }
 }

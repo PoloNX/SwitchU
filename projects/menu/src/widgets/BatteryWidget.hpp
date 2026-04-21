@@ -19,6 +19,7 @@ private:
     nxui::Font* m_font = nullptr;
     float m_level   = -1.f;
     bool  m_charging = false;
+    bool  m_btEnabled = false;
     float m_timer    = 0.f;
     nxui::Color m_textColor {1.f, 1.f, 1.f, 1.f};
 };

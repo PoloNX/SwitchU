@@ -1,5 +1,6 @@
 #include "TabBuilders.hpp"
 #include "bluetooth/BluetoothManager.hpp"
+#include "core/DebugLog.hpp"
 #include <nxui/core/I18n.hpp>
 #include <switch.h>
 #include <cstdio>
@@ -169,12 +170,32 @@ SettingsScreen::Tab settings::tabs::BluetoothTab::build(SettingsScreen& screen) 
         SettingItem it;
         it.label = i18n.tr("settings.bluetooth.bluetooth", "Bluetooth");
         it.type = ItemType::Toggle;
-        bool val = true;
-        setsysGetBluetoothEnableFlag(&val);
+        bool val = false;
+        if (R_FAILED(setsysGetBluetoothEnableFlag(&val))) {
+            DebugLog::log("[bt] setsysGetBluetoothEnableFlag failed");
+            val = false;
+        }
         it.boolVal = val;
         it.anim01 = val ? 1.f : 0.f;
         it.onChange = [](SettingItem& self) {
-            setsysSetBluetoothEnableFlag(self.boolVal);
+            bool desired = self.boolVal;
+            Result rc = setsysSetBluetoothEnableFlag(desired);
+            if (R_FAILED(rc)) {
+                DebugLog::log("[bt] setsysSetBluetoothEnableFlag failed: 0x%x", rc);
+                self.boolVal = !desired;
+                self.anim01 = self.boolVal ? 1.f : 0.f;
+            } else {
+                bool actual = false;
+                if (R_FAILED(setsysGetBluetoothEnableFlag(&actual))) {
+                    DebugLog::log("[bt] setsysGetBluetoothEnableFlag failed after set");
+                    actual = desired;
+                }
+                if (actual != desired) {
+                    DebugLog::log("[bt] setsysSetBluetoothEnableFlag mismatch: desired=%d actual=%d", desired, actual);
+                    self.boolVal = actual;
+                    self.anim01 = actual ? 1.f : 0.f;
+                }
+            }
         };
         t.items.push_back(std::move(it));
     }
@@ -183,12 +204,21 @@ SettingsScreen::Tab settings::tabs::BluetoothTab::build(SettingsScreen& screen) 
         SettingItem it;
         it.label = i18n.tr("settings.bluetooth.afh", "Bluetooth AFH");
         it.type = ItemType::Toggle;
-        bool val = true;
-        setsysGetBluetoothAfhEnableFlag(&val);
+        bool val = false;
+        if (R_FAILED(setsysGetBluetoothAfhEnableFlag(&val))) {
+            DebugLog::log("[bt] setsysGetBluetoothAfhEnableFlag failed");
+            val = false;
+        }
         it.boolVal = val;
         it.anim01 = val ? 1.f : 0.f;
         it.onChange = [](SettingItem& self) {
-            setsysSetBluetoothAfhEnableFlag(self.boolVal);
+            bool desired = self.boolVal;
+            Result rc = setsysSetBluetoothAfhEnableFlag(desired);
+            if (R_FAILED(rc)) {
+                DebugLog::log("[bt] setsysSetBluetoothAfhEnableFlag failed: 0x%x", rc);
+                self.boolVal = !desired;
+                self.anim01 = self.boolVal ? 1.f : 0.f;
+            }
         };
         t.items.push_back(std::move(it));
     }

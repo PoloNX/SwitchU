@@ -24,6 +24,59 @@
 #include <sys/stat.h>
 
 
+static std::string buttonLetter(nxui::Button button) {
+    switch (button) {
+        case nxui::Button::A: return "A";
+        case nxui::Button::B: return "B";
+        case nxui::Button::X: return "X";
+        case nxui::Button::Y: return "Y";
+        case nxui::Button::Plus: return "+";
+        case nxui::Button::Minus: return "-";
+        case nxui::Button::L: return "L";
+        case nxui::Button::R: return "R";
+        case nxui::Button::ZL: return "ZL";
+        case nxui::Button::ZR: return "ZR";
+        default: return "";
+    }
+}
+
+// Declaracion antes, no static para visibilidad
+void drawButtonHint(nxui::Renderer& ren, nxui::Font& font,
+                           const nxui::Rect& rect,
+                           const std::string& buttonText,
+                           const std::string& actionLabel)
+{
+    const float corner = rect.height * 0.5f;
+    const nxui::Color bg(0.06f, 0.08f, 0.12f, 0.42f);
+    const nxui::Color border(1.f, 1.f, 1.f, 0.14f);
+    const nxui::Color shine(1.f, 1.f, 1.f, 0.10f);
+    const nxui::Color circleBg(1.f, 1.f, 1.f, 0.95f);
+    const nxui::Color circleBorder(0.f, 0.f, 0.f, 0.14f);
+    const nxui::Color textColor(1.f, 1.f, 1.f, 0.92f);
+    const nxui::Color buttonTextColor(0.12f, 0.12f, 0.12f, 1.f);
+
+    ren.drawRoundedRect(rect, bg, corner);
+    ren.drawRoundedRectOutline(rect, border, corner, 1.2f);
+
+    float iconSize = rect.height - 18.f;
+    nxui::Rect circleRect = { rect.x + 12.f, rect.y + (rect.height - iconSize) * 0.5f, iconSize, iconSize };
+    float circleRadius = circleRect.width * 0.5f;
+    ren.drawCircle({circleRect.x + circleRadius, circleRect.y + circleRadius}, circleRadius, circleBg, 32);
+    ren.drawCircle({circleRect.x + circleRadius, circleRect.y + circleRadius}, circleRadius - 2.f, nxui::Color(0.f, 0.f, 0.f, 0.02f), 32);
+    ren.drawRoundedRectOutline(circleRect.expanded(1.f), circleBorder, circleRadius + 1.f, 1.1f);
+
+    auto buttonSize = font.measure(buttonText);
+    float bx = circleRect.x + (circleRect.width - buttonSize.x) * 0.5f;
+    float by = circleRect.y + (circleRect.height - buttonSize.y) * 0.5f;
+    font.draw(ren, buttonText, {bx, by}, buttonTextColor, 1.f);
+
+    auto labelSize = font.measure(actionLabel);
+    float tx = circleRect.x + circleRect.width + 10.f;
+    float ty = rect.y + (rect.height - labelSize.y) * 0.5f;
+    font.draw(ren, actionLabel, {tx, ty}, textColor, 1.f);
+}
+
+
 WiiUMenuApp::WiiUMenuApp() {}
 WiiUMenuApp::~WiiUMenuApp() {
     rootBox().clearChildren();
@@ -365,34 +418,34 @@ void WiiUMenuApp::buildGrid() {
         if (!m_dialog) return;
         m_audio.playSfx(Sfx::ModalShow);
         m_dialogReturnFocus = focusManager().current();
+        auto& i18n = nxui::I18n::instance();
         m_dialog->show(
-            "Sleep",
-            "Put the console into sleep mode?",
-            {
-                {"Cancel", [this]() {  }, true},
-                {"Sleep", [this]() {
+            i18n.tr("dialog.sleep.title", "Sleep"),
+            i18n.tr("dialog.sleep.message", "Put the console into sleep mode?"),
+            {{i18n.tr("button.cancel", "Cancel"), [this]() {  }, true},
+             {i18n.tr("button.sleep", "Sleep"), [this]() {
 #ifndef SWITCHU_HOMEBREW
-                    m_audio.playSfx(Sfx::ConfirmPositive);
-                    m_launcher.enterSleep();
+                 m_audio.playSfx(Sfx::ConfirmPositive);
+                 m_launcher.enterSleep();
 #else
-                    m_audio.playSfx(Sfx::ConfirmPositive);
-                    app().requestExit();
+                 m_audio.playSfx(Sfx::ConfirmPositive);
+                 app().requestExit();
 #endif
-                }, true}
-            },
+             }, true}},
             1,
             {}
         );
         focusManager().setFocus(m_dialog.get());
     };
     sidebarActions.onMiiverse = [this]() {
-        m_audio.playSfx(Sfx::ModalShow);
         if (!m_dialog) return;
+        m_audio.playSfx(Sfx::ModalShow);
         m_dialogReturnFocus = focusManager().current();
+        auto& i18n = nxui::I18n::instance();
         m_dialog->show(
-            "Miiverse",
-            "A miiverse recreation is in development, but not ready yet. Stay tuned!",
-            {{"OK", [this]() { }, true}},
+            i18n.tr("dialog.miiverse.title", "Miiverse"),
+            i18n.tr("dialog.miiverse.message", "A miiverse recreation is in development, but not ready yet. Stay tuned!"),
+            {{i18n.tr("button.ok", "OK"), [this]() { }, true}},
             0,
             {}
         );
@@ -547,10 +600,27 @@ void WiiUMenuApp::createSettings() {
     if (m_settings) return;
 
     m_settings = std::make_shared<SettingsScreen>();
-    if (m_overlayLayer) m_overlayLayer->addChild(m_settings);
+    m_gameInfoPanel = std::make_shared<GameInfoPanel>();
+    if (m_overlayLayer) {
+        m_overlayLayer->addChild(m_settings);
+        m_overlayLayer->addChild(m_gameInfoPanel);
+    }
     m_settings->setFont(&m_fontNormal);
     m_settings->setSmallFont(&m_fontSmall);
     m_settings->setTheme(&m_theme);
+    m_gameInfoPanel->setFont(&m_fontNormal);
+    m_gameInfoPanel->setSmallFont(&m_fontSmall);
+    m_gameInfoPanel->setTheme(&m_theme);
+    m_gameInfoPanel->setI18n(&nxui::I18n::instance());
+    m_gameInfoPanel->onCloseSfx([this]() {
+        m_audio.playSfx(Sfx::ModalHide);
+    });
+    m_gameInfoPanel->onClosed([this]() {
+        if (isCurrentFocusableWidget(m_gameInfoReturnFocus)) {
+            focusManager().setFocus(m_gameInfoReturnFocus);
+        }
+        m_gameInfoReturnFocus = nullptr;
+    });
     m_settings->setMusicState(m_audio.isPlaying(), m_audio.volume(), m_audio.sfxVolume());
     m_settings->setWireframeState(m_showWireframe);
     m_settings->setUiLanguageOverride(m_config.uiLanguageOverride);
@@ -813,6 +883,7 @@ nxui::Widget* WiiUMenuApp::focusRoot() {
     if (m_launchAnim && m_launchAnim->isPlaying()) return nullptr;
     if (m_dialog && m_dialog->isActive()) return m_dialog.get();
     if (m_settings && m_settings->isActive()) return m_settings.get();
+    if (m_gameInfoPanel && m_gameInfoPanel->isActive()) return m_gameInfoPanel.get();
     if (m_userSelect && m_userSelect->isActive()) return m_userSelect.get();
     return &rootBox();
 }
@@ -821,6 +892,9 @@ void WiiUMenuApp::wireGlobalActions() {
     auto& root = rootBox();
 
     root.addAction(static_cast<uint64_t>(nxui::Button::L), [this]() {
+        // Block L when game info panel is active
+        if (m_gameInfoPanel && m_gameInfoPanel->isActive()) return;
+        
         int p = m_grid->currentPage() - 1;
         if (p >= 0 && !m_grid->isTransitioning()) {
             m_grid->startWaveTransition(p);
@@ -828,6 +902,9 @@ void WiiUMenuApp::wireGlobalActions() {
         }
     });
     root.addAction(static_cast<uint64_t>(nxui::Button::R), [this]() {
+        // Block R when game info panel is active
+        if (m_gameInfoPanel && m_gameInfoPanel->isActive()) return;
+        
         int p = m_grid->currentPage() + 1;
         if (p < m_grid->totalPages() && !m_grid->isTransitioning()) {
             m_grid->startWaveTransition(p);
@@ -846,6 +923,9 @@ void WiiUMenuApp::wireGlobalActions() {
 
 #ifndef SWITCHU_HOMEBREW
     root.addAction(static_cast<uint64_t>(nxui::Button::X), [this]() {
+        // Block X when game info panel is active
+        if (m_gameInfoPanel && m_gameInfoPanel->isActive()) return;
+        
         if (m_launcher.suspendedTitleId() == 0) return;
         auto* cur = focusManager().current();
         if (!cur || cur->tag() != "glossy_icon") return;
@@ -877,6 +957,17 @@ void WiiUMenuApp::wireGlobalActions() {
             {}
         );
         focusManager().setFocus(m_dialog.get());
+    });
+
+    root.addAction(static_cast<uint64_t>(nxui::Button::Plus), [this]() {
+        auto* cur = focusManager().current();
+        if (!cur || cur->tag() != "glossy_icon") return;
+        auto* icon = static_cast<GlossyIcon*>(cur);
+        m_gameInfoPanel->setGame(icon);
+        m_gameInfoPanel->show();
+        m_gameInfoReturnFocus = cur;
+        focusManager().setFocus(m_gameInfoPanel.get());
+        m_audio.playSfx(Sfx::ModalShow);
     });
 #endif
 }
@@ -916,6 +1007,53 @@ void WiiUMenuApp::handleTouch() {
 void WiiUMenuApp::handleSystemAction(SysAction a) {
     switch (a) {
         case SysAction::HomeButton:
+            if (m_settings && m_settings->isActive()) {
+                DebugLog::log("[pump] HomeButton -> close settings");
+                m_settings->hide();
+                return;
+            }
+
+            if (m_dialog && m_dialog->isActive()) {
+                DebugLog::log("[pump] HomeButton -> close dialog");
+                m_dialog->hide();
+                return;
+            }
+
+            if (m_userSelect && m_userSelect->isActive()) {
+                DebugLog::log("[pump] HomeButton -> close user select");
+                m_userSelect->hide();
+                return;
+            }
+
+            if (m_launcher.suspendedTitleId() != 0 &&
+                m_launcher.isAppSuspended(m_launcher.suspendedTitleId()) &&
+                !(m_launchAnim && m_launchAnim->isPlaying()))
+            {
+                DebugLog::log("[pump] HomeButton -> resume suspended app");
+                GlossyIcon* suspendedIcon = nullptr;
+                uint64_t suspendedTid = m_launcher.suspendedTitleId();
+                for (auto& ic : m_grid->allIcons()) {
+                    if (ic->titleId() == suspendedTid) {
+                        suspendedIcon = static_cast<GlossyIcon*>(ic.get());
+                        break;
+                    }
+                }
+
+                if (suspendedIcon) {
+                    m_audio.playSfx(Sfx::LaunchGame);
+                    nxui::Rect fr = suspendedIcon->focusRect();
+                    const nxui::Texture* tex = suspendedIcon->texture();
+                    float cr = suspendedIcon->cornerRadius();
+                    nxui::Color base = m_theme.panelBase;
+                    nxui::Color bord = m_theme.panelBorder;
+                    m_launchAnim->start(fr, tex, cr, base, bord, 0, {}, nullptr,
+                        [this]() { m_launcher.resumeApplication(); });
+                } else {
+                    m_launcher.resumeApplication();
+                }
+                return;
+            }
+
             DebugLog::log("[pump] HomeButton -> UI update");
             m_launcher.setAppHasForeground(false);
             m_showLoadingScreen = false;
@@ -1018,17 +1156,33 @@ void WiiUMenuApp::finalizeRefresh() {
         if (!m_dialog) return;
         m_audio.playSfx(Sfx::ModalShow);
         m_dialogReturnFocus = focusManager().current();
-        m_dialog->show("Sleep", "Put the console into sleep mode?",
-            {{"Cancel", [this]() {}, true}, {"Sleep", [this]() { m_audio.playSfx(Sfx::ConfirmPositive); m_launcher.enterSleep(); }, true}},
+        auto& i18n = nxui::I18n::instance();
+        m_dialog->show(
+            i18n.tr("dialog.sleep.title", "Sleep"),
+            i18n.tr("dialog.sleep.message", "Put the console into sleep mode?"),
+            {{i18n.tr("button.cancel", "Cancel"), [this]() {}, true},
+             {i18n.tr("button.sleep", "Sleep"), [this]() {
+#ifndef SWITCHU_HOMEBREW
+                 m_audio.playSfx(Sfx::ConfirmPositive);
+                 m_launcher.enterSleep();
+#else
+                 m_audio.playSfx(Sfx::ConfirmPositive);
+                 app().requestExit();
+#endif
+             }, true}},
             1, {});
         focusManager().setFocus(m_dialog.get());
     };
     actions.onMiiverse = [this]() {
-        m_audio.playSfx(Sfx::ModalShow);
         if (!m_dialog) return;
+        m_audio.playSfx(Sfx::ModalShow);
         m_dialogReturnFocus = focusManager().current();
-        m_dialog->show("Miiverse", "A miiverse recreation is in development, but not ready yet. Stay tuned!",
-            {{"OK", [this]() {}, true}}, 0, {});
+        auto& i18n = nxui::I18n::instance();
+        m_dialog->show(
+            i18n.tr("dialog.miiverse.title", "Miiverse"),
+            i18n.tr("dialog.miiverse.message", "A miiverse recreation is in development, but not ready yet. Stay tuned!"),
+            {{i18n.tr("button.ok", "OK"), [this]() {}, true}},
+            0, {});
         focusManager().setFocus(m_dialog.get());
     };
 
@@ -1118,6 +1272,9 @@ void WiiUMenuApp::applyTheme() {
     if (m_settings)
         m_settings->setTheme(&m_theme);
 
+    if (m_gameInfoPanel)
+        m_gameInfoPanel->setTheme(&m_theme);
+
     m_sidebar.applyTheme(m_theme);
 }
 
@@ -1192,11 +1349,11 @@ void WiiUMenuApp::onUpdate(float dt) {
                 m_suspended = false;
             } else {
                 return;
-            }
+                }
         } else {
             m_sysMsg.pump();
             return;
-        }
+            }
 #else
         return;
 #endif
@@ -1346,12 +1503,13 @@ void WiiUMenuApp::onUpdate(float dt) {
         m_loadingScreenFrames = 0;
     }
 
-    if (!m_launchAnim->isPlaying()
-        && !(m_dialog && m_dialog->isActive())
-        && !(m_settings && m_settings->isActive())
-        && !(m_userSelect && m_userSelect->isActive()))
-    {
-        handleTouch();
+        if (!m_launchAnim->isPlaying()
+            && !(m_dialog && m_dialog->isActive())
+            && !(m_settings && m_settings->isActive())
+            && !(m_gameInfoPanel && m_gameInfoPanel->isActive())
+            && !(m_userSelect && m_userSelect->isActive()))
+        {
+            handleTouch();
     }
 
     bool dialogActiveNow = (m_dialog && m_dialog->isActive());
@@ -1360,6 +1518,16 @@ void WiiUMenuApp::onUpdate(float dt) {
 
     if (m_settings && m_settings->isActive())
         m_settings->handleTouch(app().input());
+
+    if (m_gameInfoPanel && m_gameInfoPanel->isActive()) {
+        m_gameInfoPanel->handleTouch(app().input());
+        
+        // Handle B button to close panel
+        if (app().input().isDown(nxui::Button::B)) {
+            m_gameInfoPanel->hide();
+            m_audio.playSfx(Sfx::ModalHide);
+        }
+    }
 
     if (m_dialogWasActive && !dialogActiveNow) {
         if (isCurrentFocusableWidget(m_dialogReturnFocus)) {
@@ -1411,6 +1579,8 @@ void WiiUMenuApp::onRender(nxui::Renderer& ren) {
     m_pageIndicator->setPageCount(m_grid->totalPages());
     m_pageIndicator->setCurrentPage(m_grid->currentPage());
 
+    renderButtonHints(ren);
+
     if (m_showDebugOverlay) {
         nxui::Rect logBg = {0, 0, 500, 720};
         ren.drawRect(logBg, nxui::Color(0, 0, 0, 0.75f));
@@ -1421,6 +1591,79 @@ void WiiUMenuApp::onRender(nxui::Renderer& ren) {
             y += 22.f;
             if (y > 700.f) break;
         }
+    }
+}
+
+void WiiUMenuApp::renderButtonHints(nxui::Renderer& ren) {
+    if (m_showLoadingScreen)
+        return;
+    if (m_launchAnim && m_launchAnim->isPlaying())
+        return;
+
+    struct Hint { std::string button; std::string label; };
+    std::vector<Hint> hints;
+    auto& i18n = nxui::I18n::instance();
+    auto addHint = [&](const std::string& button, const std::string& label) {
+        // The Minus button remains active for toggling the debug overlay,
+        // but we do not show a visual hint for it on the main UI.
+        if (button == buttonLetter(nxui::Button::Minus))
+            return;
+        if (!button.empty() && !label.empty())
+            hints.push_back({button, label});
+    };
+
+    bool dialogActive = m_dialog && m_dialog->isActive();
+    bool settingsActive = m_settings && m_settings->isActive();
+    bool userSelectActive = m_userSelect && m_userSelect->isActive();
+    bool gameInfoActive = m_gameInfoPanel && m_gameInfoPanel->isActive();
+
+    if (dialogActive) {
+        addHint(buttonLetter(nxui::Button::A), i18n.tr("hint.confirm", "Confirm"));
+        addHint(buttonLetter(nxui::Button::B), i18n.tr("button.cancel", "Cancel"));
+    } else if (userSelectActive) {
+        addHint(buttonLetter(nxui::Button::A), i18n.tr("hint.select", "Select"));
+        addHint(buttonLetter(nxui::Button::B), i18n.tr("button.cancel", "Cancel"));
+    } else if (settingsActive) {
+        addHint(buttonLetter(nxui::Button::B), i18n.tr("hint.back", "Back"));
+        addHint(buttonLetter(nxui::Button::A), i18n.tr("hint.select", "Select"));
+    } else if (gameInfoActive) {
+        addHint(buttonLetter(nxui::Button::B), i18n.tr("hint.back", "Back"));
+    } else {
+        addHint(buttonLetter(nxui::Button::A), i18n.tr("hint.select", "Select"));
+
+        if (m_grid && m_grid->totalPages() > 0) {
+            if (m_grid->currentPage() > 0)
+                addHint(buttonLetter(nxui::Button::L), i18n.tr("hint.prev_page", "Prev page"));
+            if (m_grid->currentPage() < m_grid->totalPages() - 1)
+                addHint(buttonLetter(nxui::Button::R), i18n.tr("hint.next_page", "Next page"));
+        }
+
+#ifndef SWITCHU_HOMEBREW
+        auto* cur = focusManager().current();
+        if (cur && cur->tag() == "glossy_icon") {
+            auto* icon = static_cast<GlossyIcon*>(cur);
+            if (m_launcher.isAppSuspended(icon->titleId()))
+                addHint(buttonLetter(nxui::Button::X), i18n.tr("hint.close", "Close"));
+        }
+#else
+        addHint(buttonLetter(nxui::Button::Plus), i18n.tr("hint.exit", "Exit"));
+#endif
+    }
+
+    if (hints.empty())
+        return;
+
+    const float hintHeight = 48.f;
+    const float hintY = 720.f - hintHeight - 16.f;
+    float x = 1280.f - 24.f;
+
+    for (int i = (int)hints.size() - 1; i >= 0; --i) {
+        const auto& hint = hints[i];
+        auto labelSize = m_fontSmall.measure(hint.label);
+        float width = hintHeight + 12.f + labelSize.x + 14.f;
+        x -= width;
+        drawButtonHint(ren, m_fontSmall, {x, hintY, width, hintHeight}, hint.button, hint.label);
+        x -= 10.f;
     }
 }
 
