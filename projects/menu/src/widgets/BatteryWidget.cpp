@@ -70,43 +70,32 @@ void BatteryWidget::onContentRender(nxui::Renderer& ren) {
         ren.drawTriangle(p6, p7, p8, boltColor);
     }
 
-// 1. Configuración de Layout y Color
-float btX = bx + bw + boltGap + boltW + btGap;
-float btY = by + (bh - iconSize) * 0.5f;
+    float btX = bx + bw + boltGap + boltW + btGap;
+    float btY = by + (bh - iconSize) * 0.5f;
 
-nxui::Color btColor = m_btEnabled
-    ? nxui::Color(0.0f, 0.5f, 1.0f, op) // Azul Bluetooth puro
-    : m_textColor.withAlpha(0.25f * op);
+    nxui::Color btColor = m_btEnabled
+        ? nxui::Color(0.0f, 0.5f, 1.0f, op)
+        : m_textColor.withAlpha(0.25f * op);
 
-// 2. Parámetros de Geometría (Maximizados)
-float cx = btX + iconSize * 0.5f; // Eje vertical
-float cy = btY + iconSize * 0.5f; // Centro horizontal
+    float cx = btX + iconSize * 0.5f;
+    float cy = btY + iconSize * 0.5f;
 
-// Definimos los límites para que el icono sea lo más grande posible dentro de iconSize
-float h = iconSize * 0.5f;   // Radio vertical (ocupa todo el alto)
-float w = iconSize * 0.35f;  // Ancho de las alas
-float lw = iconSize * 0.12f; // Grosor de línea dinámico (muy importante para la visibilidad)
+    float h = iconSize * 0.5f; 
+    float w = iconSize * 0.35f;
+    float lw = iconSize * 0.12f;
 
-// Coordenadas de los nodos rúnicos
-float top = cy - h;
-float bot = cy + h;
-float midTop = cy - h * 0.45f;
-float midBot = cy + h * 0.45f;
+    float top = cy - h;
+    float bot = cy + h;
+    float midTop = cy - h * 0.45f;
+    float midBot = cy + h * 0.45f;
 
-// --- DIBUJO DETALLADO ---
+    ren.drawLine({cx, top}, {cx, bot}, btColor, lw);
 
-// A. Espina Dorsal (La línea vertical central es la base)
-ren.drawLine({cx, top}, {cx, bot}, btColor, lw);
+    ren.drawLine({cx - w, midTop}, {cx + w, midBot}, btColor, lw);
+    ren.drawLine({cx + w, midBot}, {cx, bot}, btColor, lw);
 
-// B. Trazo Superior (Cola Izquierda -> Pico Derecho -> Punto Inferior)
-// Este trazo forma la mitad superior del logo
-ren.drawLine({cx - w, midTop}, {cx + w, midBot}, btColor, lw);
-ren.drawLine({cx + w, midBot}, {cx, bot}, btColor, lw);
-
-// C. Trazo Inferior (Cola Izquierda -> Pico Derecho -> Punto Superior)
-// Este trazo forma la mitad inferior y cruza con el anterior en el centro exacto
-ren.drawLine({cx - w, midBot}, {cx + w, midTop}, btColor, lw);
-ren.drawLine({cx + w, midTop}, {cx, top}, btColor, lw);
+    ren.drawLine({cx - w, midBot}, {cx + w, midTop}, btColor, lw);
+    ren.drawLine({cx + w, midTop}, {cx, top}, btColor, lw);
 
     if (m_font) {
         char buf[16];
