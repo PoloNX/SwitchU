@@ -163,12 +163,6 @@ static bool sendViewFlagsUpdates() {
     s32 recordCount = 0;
     nsListApplicationRecord(records, 1024, 0, &recordCount);
 
-    if (recordCount != g_lastRecordCount) {
-        switchu::FileLog::log("[views] title count changed %d -> %d, full reload needed",
-                              g_lastRecordCount, recordCount);
-        return true;
-    }
-
     static switchu::ns::ExtApplicationView views[1024] = {};
     if (recordCount > 0) {
         uint64_t tids[1024];
@@ -177,8 +171,26 @@ static bool sendViewFlagsUpdates() {
         Result rc = switchu::ns::queryApplicationViews(tids, recordCount, views);
         if (R_FAILED(rc)) {
             switchu::FileLog::log("[views] queryApplicationViews FAIL: 0x%X", rc);
-            return false;
+            std::memset(views, 0, sizeof(views));
         }
+    }
+
+    if (recordCount != g_lastRecordCount) {
+        const s32 prevCount = g_lastRecordCount;
+        switchu::FileLog::log("[views] title count changed %d -> %d, full reload needed",
+                              g_lastRecordCount, recordCount);
+
+        for (s32 i = 0; i < recordCount && i < 1024; ++i) {
+            g_lastRecordTids[i] = records[i].application_id;
+            g_lastViewFlags[i]  = views[i].flags;
+        }
+        for (s32 i = recordCount; i < prevCount && i < 1024; ++i) {
+            g_lastRecordTids[i] = 0;
+            g_lastViewFlags[i]  = 0;
+        }
+        g_lastRecordCount = recordCount;
+
+        return true;
     }
 
     int pushed = 0;

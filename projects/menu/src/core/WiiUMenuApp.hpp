@@ -146,6 +146,8 @@ private:
     int  m_touchHitIndex     = -1;
     bool m_touchOnFocused    = false;
     int  m_deferredRefreshFrames = 0;
+    bool m_refreshQueued         = false;
+    int  m_refreshCooldownFrames = 0;
     int  m_loadingScreenFrames   = 0;
     bool m_asyncRefreshPending   = false;
     int  m_refreshPrevPage       = 0;

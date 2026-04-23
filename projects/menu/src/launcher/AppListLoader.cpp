@@ -155,7 +155,6 @@ void AppListLoader::load(GridModel& model, IconStreamer& streamer) {
     fetchApps();
     registerEntries(m_pending, model, streamer);
     m_pending.clear();
-    m_pending.shrink_to_fit();
 }
 
 
@@ -179,5 +178,4 @@ void AppListLoader::finalize(GridModel& model, IconStreamer& streamer) {
 
     registerEntries(m_pending, model, streamer);
     m_pending.clear();
-    m_pending.shrink_to_fit();
 }

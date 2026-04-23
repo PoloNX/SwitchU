@@ -9,7 +9,6 @@
 #include <nxtc.h>
 #endif
 #ifdef SWITCHU_MENU
-#include "ipc_client.hpp"
 #include "smi_commands.hpp"
 #endif
 #include <cstdio>
@@ -137,38 +136,7 @@ bool WiiUMenuApp::onCreate() {
 
 #ifndef SWITCHU_HOMEBREW
     m_sysMsg.setCallback([this](SysAction a) { handleSystemAction(a); });
-    DebugLog::log("[init] connecting IPC client...");
-    switchu::menu::ipc::connect();
-    switchu::menu::ipc::onMessage(switchu::smi::MenuMessage::HomeRequest,
-        [this](const switchu::smi::MenuMessageContext&) {
-            m_sysMsg.pushAction(SysAction::HomeButton);
-        });
-    switchu::menu::ipc::onMessage(switchu::smi::MenuMessage::ApplicationExited,
-        [this](const switchu::smi::MenuMessageContext&) {
-            DebugLog::log("[ipc] ApplicationExited");
-            m_launcher.setAppRunning(false);
-            m_launcher.setAppHasForeground(false);
-            m_launcher.setSuspendedTitleId(0);
-            m_sysMsg.pushAction(SysAction::HomeButton);
-        });
-    switchu::menu::ipc::onMessage(switchu::smi::MenuMessage::ApplicationSuspended,
-        [this](const switchu::smi::MenuMessageContext& ctx) {
-            DebugLog::log("[ipc] ApplicationSuspended tid=0x%016lX", ctx.app_id);
-            m_launcher.setAppRunning(true);
-            m_launcher.setAppHasForeground(false);
-            m_launcher.setSuspendedTitleId(ctx.app_id);
-            m_sysMsg.pushAction(SysAction::HomeButton);
-        });
-    switchu::menu::ipc::onMessage(switchu::smi::MenuMessage::AppRecordsChanged,
-        [this](const switchu::smi::MenuMessageContext&) {
-            DebugLog::log("[ipc] AppRecordsChanged");
-            m_deferredRefreshFrames = 3;
-        });
-    switchu::menu::ipc::onMessage(switchu::smi::MenuMessage::GameCardMountFailure,
-        [this](const switchu::smi::MenuMessageContext& ctx) {
-            DebugLog::log("[ipc] GameCardMountFailure rc=0x%X", ctx.gc_mount_failure.mount_rc);
-            m_deferredRefreshFrames = 3;
-        });
+    DebugLog::log("[init] async notifications via AppletStorage only");
     switchu::menu::smi_cmd::menuReady();
 #endif
 
@@ -184,7 +152,6 @@ void WiiUMenuApp::onDestroy() {
 #ifndef SWITCHU_HOMEBREW
     switchu::menu::smi_cmd::menuClosing();
     switchu::menu::smi_cmd::drainAllResponses();
-    switchu::menu::ipc::disconnect();
 #endif
     m_audio.shutdown();
 }
@@ -1078,7 +1045,8 @@ void WiiUMenuApp::refreshAppList() {
     DebugLog::log("[refresh] starting async app list fetch");
 
     if (m_asyncRefreshPending) {
-        DebugLog::log("[refresh] already in progress, skipping");
+        DebugLog::log("[refresh] already in progress, queueing another pass");
+        m_refreshQueued = true;
         return;
     }
 
@@ -1087,6 +1055,7 @@ void WiiUMenuApp::refreshAppList() {
 
     m_refreshPrevPage = m_grid ? m_grid->currentPage() : 0;
     m_asyncRefreshPending = true;
+    m_refreshQueued = false;
 
     m_appLoader.startAsync(m_threadPool);
 }
@@ -1099,16 +1068,6 @@ void WiiUMenuApp::finalizeRefresh() {
     m_grid->clearChildren();
     m_model.clear();
     m_iconStreamer.clear();
-    app().renderer().resetTextureSlots();
-    m_fontNormal.clearCache();
-    m_fontSmall.clearCache();
-    app().gpu().resetImagePool();
-    // Reset the slot so loadFromFile calls registerTexture() instead of
-    // updateTexture(), preventing loadUsers() from reusing the same slot.
-    m_gameCardTex = nxui::Texture{};
-    m_gameCardTex.loadFromFile(app().gpu(), app().renderer(),
-                               std::string(SD_ASSETS) + "/icons/gamecard.png");
-    m_userSelect->loadUsers(app().gpu(), app().renderer());
 
     m_appLoader.finalize(m_model, m_iconStreamer);
     DebugLog::log("[refresh] found %d apps", m_model.count());
@@ -1468,7 +1427,8 @@ void WiiUMenuApp::onUpdate(float dt) {
                 break;
             case switchu::smi::MenuMessage::AppRecordsChanged:
             case switchu::smi::MenuMessage::GameCardMountFailure:
-                m_deferredRefreshFrames = 3;
+                m_refreshQueued = true;
+                m_deferredRefreshFrames = std::max(m_deferredRefreshFrames, 3);
                 break;
             case switchu::smi::MenuMessage::AppViewFlagsUpdate: {
                 uint64_t tid = notif.app_id;
@@ -1494,8 +1454,13 @@ void WiiUMenuApp::onUpdate(float dt) {
 #endif
 
     m_sysMsg.pump();
-    if (m_deferredRefreshFrames > 0 && --m_deferredRefreshFrames == 0) {
-        DebugLog::log("[update] deferred refresh triggered, calling refreshAppList");
+    if (m_refreshCooldownFrames > 0)
+        --m_refreshCooldownFrames;
+    if (m_deferredRefreshFrames > 0)
+        --m_deferredRefreshFrames;
+    if (m_refreshQueued && m_deferredRefreshFrames == 0 &&
+        !m_asyncRefreshPending && m_refreshCooldownFrames == 0) {
+        DebugLog::log("[update] deferred refresh triggered, starting refreshAppList");
         refreshAppList();
     }
     if (m_asyncRefreshPending && m_appLoader.isReady()) {
