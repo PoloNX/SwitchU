@@ -1,6 +1,7 @@
 #include <nxui/core/Renderer.hpp>
 #include <nxui/core/Texture.hpp>
 #include <nxui/core/Font.hpp>
+#include <algorithm>
 #include <cstring>
 #include <cstdio>
 #include <cmath>
@@ -19,8 +20,13 @@ static void ortho(float* m, float w, float h) {
 
 Renderer::Renderer(GpuDevice& gpu) : m_gpu(gpu) {
     m_clipStack.reserve(8);
+    resetLiquidGlassSettings();
 }
 Renderer::~Renderer() {}
+
+void Renderer::resetLiquidGlassSettings() {
+    m_liquidGlassSettings = LiquidGlassSettings{};
+}
 
 bool Renderer::initialize() {
     std::printf("[Renderer] Loading shaders...\n");
@@ -88,14 +94,20 @@ void Renderer::loadShaders() {
     loadDksh(m_vertShaders[(int)ShaderProgram::Basic], (s_shaderBasePath + "basic_vsh.dksh").c_str());
     loadDksh(m_fragShaders[(int)ShaderProgram::Basic], (s_shaderBasePath + "basic_fsh.dksh").c_str());
 
-    loadDksh(m_vertShaders[(int)ShaderProgram::BlurH], (s_shaderBasePath + "pass_vsh.dksh").c_str());
+    loadDksh(m_vertShaders[(int)ShaderProgram::Backdrop], (s_shaderBasePath + "basic_vsh.dksh").c_str());
+    loadDksh(m_fragShaders[(int)ShaderProgram::Backdrop], (s_shaderBasePath + "backdrop_fsh.dksh").c_str());
+
+    loadDksh(m_vertShaders[(int)ShaderProgram::BlurH], (s_shaderBasePath + "blur_pass_vsh.dksh").c_str());
     loadDksh(m_fragShaders[(int)ShaderProgram::BlurH], (s_shaderBasePath + "blur_h_fsh.dksh").c_str());
 
-    loadDksh(m_vertShaders[(int)ShaderProgram::BlurV], (s_shaderBasePath + "pass_vsh.dksh").c_str());
+    loadDksh(m_vertShaders[(int)ShaderProgram::BlurV], (s_shaderBasePath + "blur_pass_vsh.dksh").c_str());
     loadDksh(m_fragShaders[(int)ShaderProgram::BlurV], (s_shaderBasePath + "blur_v_fsh.dksh").c_str());
 
     loadDksh(m_vertShaders[(int)ShaderProgram::Wave], (s_shaderBasePath + "pass_vsh.dksh").c_str());
     loadDksh(m_fragShaders[(int)ShaderProgram::Wave], (s_shaderBasePath + "wave_fsh.dksh").c_str());
+
+    loadDksh(m_vertShaders[(int)ShaderProgram::LiquidGlass], (s_shaderBasePath + "pass_vsh.dksh").c_str());
+    loadDksh(m_fragShaders[(int)ShaderProgram::LiquidGlass], (s_shaderBasePath + "liquid_glass_fsh.dksh").c_str());
 
     loadDksh(m_vertShaders[(int)ShaderProgram::Gradient], (s_shaderBasePath + "basic_vsh.dksh").c_str());
     loadDksh(m_fragShaders[(int)ShaderProgram::Gradient], (s_shaderBasePath + "gradient_fsh.dksh").c_str());
@@ -189,6 +201,7 @@ void Renderer::beginFrame() {
     m_texturing  = false;
     m_curShader  = ShaderProgram::Basic;
     m_clipStack.clear();
+    m_reusableOffscreenCaptureValid = false;
 
     auto cmd = m_gpu.cmdBuf();
 
@@ -286,7 +299,7 @@ void Renderer::flush() {
     m_vtxBatchStart = m_vtxCount;
 }
 
-// ─── Render target switching ────────────────────────────────
+// Render target switching
 
 void Renderer::bindRenderTarget(int offscreenIdx) {
     flush();
@@ -328,27 +341,211 @@ void Renderer::restoreRenderTarget() {
     updateProjection();
 }
 
-void Renderer::captureToOffscreen() {
+void Renderer::captureToOffscreen(bool reuseIfValid) {
+    if (reuseIfValid && m_reusableOffscreenCaptureValid) {
+        return;
+    }
+
     flush();
     auto cmd = m_gpu.cmdBuf();
     int slot = m_gpu.slot();
 
+    // Ensure all current framebuffer writes are visible to the 2D blit engine
+    // before we capture the scene behind the glass widget.
+    cmd.barrier(DkBarrier_Full, DkInvalidateFlags_Image);
+
     dk::ImageView src{m_gpu.fbImage(slot)};
     dk::ImageView dst{m_gpu.offscreenImage(0)};
-    cmd.blitImage(src, {0, 0, (uint32_t)m_gpu.width(), (uint32_t)m_gpu.height()},
-                  dst, {0, 0, (uint32_t)m_gpu.width() / 2, (uint32_t)m_gpu.height() / 2}, 0);
+    DkImageRect srcRect{
+        0,
+        0,
+        0,
+        (uint32_t)m_gpu.width(),
+        (uint32_t)m_gpu.height(),
+        1,
+    };
+    DkImageRect dstRect{
+        0,
+        0,
+        0,
+        (uint32_t)m_gpu.width() / 2,
+        (uint32_t)m_gpu.height() / 2,
+        1,
+    };
+    cmd.blitImage(src, srcRect, dst, dstRect, 0);
 
     // Barrier: ensure the blit completes before subsequent reads of offscreen 0
+    cmd.barrier(DkBarrier_Full, DkInvalidateFlags_Image);
+
+    m_reusableOffscreenCaptureValid = reuseIfValid;
+}
+
+void Renderer::copyOffscreen(int srcTarget, int dstTarget) {
+    if (!m_gpu.offscreenReady()) return;
+    if (srcTarget < 0 || srcTarget >= GpuDevice::NUM_OFFSCREEN) return;
+    if (dstTarget < 0 || dstTarget >= GpuDevice::NUM_OFFSCREEN) return;
+    if (srcTarget == dstTarget) return;
+
+    flush();
+
+    auto cmd = m_gpu.cmdBuf();
+    cmd.barrier(DkBarrier_Full, DkInvalidateFlags_Image);
+
+    dk::ImageView src{m_gpu.offscreenImage(srcTarget)};
+    dk::ImageView dst{m_gpu.offscreenImage(dstTarget)};
+    DkImageRect rect{
+        0,
+        0,
+        0,
+        (uint32_t)m_gpu.width() / 2,
+        (uint32_t)m_gpu.height() / 2,
+        1,
+    };
+    cmd.blitImage(src, rect, dst, rect, 0);
     cmd.barrier(DkBarrier_Full, DkInvalidateFlags_Image);
 }
 
 void Renderer::drawOffscreen(int target, const Rect& dest, const Color& tint) {
+    useShader(ShaderProgram::Backdrop);
     bindTexture(m_offDescSlot[target]);
     addQuad(dest.x, dest.y, dest.right(), dest.bottom(), 0, 0, 1, 1, tint);
+    flush();
+    useShader(ShaderProgram::Basic);
+}
+
+void Renderer::drawOffscreenRounded(int target, const Rect& dest, float radius, const Color& tint) {
+    if (target < 0 || target >= GpuDevice::NUM_OFFSCREEN) return;
+    useShader(ShaderProgram::Backdrop);
+    if (radius <= 0.f) {
+        float u0 = dest.x / (float)m_gpu.width();
+        float v0 = dest.y / (float)m_gpu.height();
+        float u1 = dest.right() / (float)m_gpu.width();
+        float v1 = dest.bottom() / (float)m_gpu.height();
+        bindTexture(m_offDescSlot[target]);
+        addQuad(dest.x, dest.y, dest.right(), dest.bottom(), u0, v0, u1, v1, tint);
+        flush();
+        useShader(ShaderProgram::Basic);
+        return;
+    }
+
+    float rad = std::min(radius, std::min(dest.width, dest.height) * 0.5f);
+    bindTexture(m_offDescSlot[target]);
+
+    float cx = dest.x + dest.width * 0.5f;
+    float cy = dest.y + dest.height * 0.5f;
+
+    auto toUV = [&](float px, float py) -> Vec2 {
+        return {
+            px / (float)m_gpu.width(),
+            py / (float)m_gpu.height(),
+        };
+    };
+
+    constexpr int segs = 8;
+    constexpr int maxPts = (segs + 1) * 4;
+    const float pi2 = 3.14159265f * 0.5f;
+
+    struct { float cx, cy; float a0; } corners[4] = {
+        {dest.right() - rad, dest.y + rad,          0},
+        {dest.x + rad,       dest.y + rad,          pi2},
+        {dest.x + rad,       dest.bottom() - rad,   pi2 * 2},
+        {dest.right() - rad, dest.bottom() - rad,   pi2 * 3},
+    };
+
+    Vec2 pts[maxPts];
+    int ptCount = 0;
+    for (auto& cn : corners) {
+        for (int i = 0; i <= segs; ++i) {
+            float a = cn.a0 + pi2 * i / segs;
+            pts[ptCount++] = {cn.cx + std::cos(a) * rad,
+                              cn.cy - std::sin(a) * rad};
+        }
+    }
+
+    Vec2 cuv = toUV(cx, cy);
+    for (int i = 0; i < ptCount; ++i) {
+        auto& p0 = pts[i];
+        auto& p1 = pts[(i + 1) % ptCount];
+        Vec2 uv0 = toUV(p0.x, p0.y);
+        Vec2 uv1 = toUV(p1.x, p1.y);
+        addVertex(cx,  cy,  cuv.x, cuv.y, tint);
+        addVertex(p0.x, p0.y, uv0.x, uv0.y, tint);
+        addVertex(p1.x, p1.y, uv1.x, uv1.y, tint);
+    }
+
+    flush();
+    useShader(ShaderProgram::Basic);
+}
+
+void Renderer::drawLiquidGlass(int target, const Rect& panelRect, float radius,
+                               const Color& tint, float opacity, float shade) {
+    if (opacity <= 0.01f || target < 0 || target >= GpuDevice::NUM_OFFSCREEN) return;
+    if (!m_gpu.offscreenReady()) {
+        drawRoundedRect(panelRect, tint.withAlpha(tint.a * opacity), radius);
+        return;
+    }
+
+    useShader(ShaderProgram::LiquidGlass);
+
+    const auto& lg = m_liquidGlassSettings;
+    auto clamp01 = [](float value) {
+        return std::clamp(value, 0.0f, 1.0f);
+    };
+
+    FsUniforms fs = {};
+    fs.useTexture = 1;
+    fs.param1 = lg.refractionIntensity;
+    fs.param2 = lg.blurIntensity;
+    fs.param3 = lg.noiseIntensity;
+
+    fs.extra[0] = lg.glowIntensity;
+    fs.extra[1] = lg.saturation;
+    fs.extra[2] = clamp01(lg.opacityMultiplier);
+    fs.extra[3] = lg.roughness;
+
+    fs.extra[4] = lg.animSpeed;
+    fs.extra[5] = lg.time;
+    fs.extra[6] = lg.powerFactor;
+    fs.extra[7] = lg.fPower;
+
+    fs.extra[8] = lg.refA;
+    fs.extra[9] = lg.refB;
+    fs.extra[10] = lg.refC;
+    fs.extra[11] = lg.refD;
+
+    fs.extra[12] = lg.glowWeight;
+    fs.extra[13] = lg.glowBias;
+    fs.extra[14] = lg.glowEdge0;
+    fs.extra[15] = lg.glowEdge1;
+
+    fs.extra[16] = tint.r * lg.tintBoost.r;
+    fs.extra[17] = tint.g * lg.tintBoost.g;
+    fs.extra[18] = tint.b * lg.tintBoost.b;
+    fs.extra[19] = tint.a * lg.tintBoost.a;
+
+    fs.extra[20] = panelRect.x;
+    fs.extra[21] = panelRect.y;
+    fs.extra[22] = panelRect.width;
+    fs.extra[23] = panelRect.height;
+
+    fs.extra[24] = (float)m_gpu.width();
+    fs.extra[25] = (float)m_gpu.height();
+    fs.extra[26] = clamp01(shade);
+    fs.extra[27] = 0.0f;
+
+    pushFsUniforms(fs);
+    bindTexture(m_offDescSlot[target]);
+    addQuad(panelRect.x, panelRect.y, panelRect.right(), panelRect.bottom(), 0, 0, 1, 1,
+            Color::white().withAlpha(opacity));
+    flush();
+
+    useShader(ShaderProgram::Basic);
 }
 
 void Renderer::applyBlur(float radius, int passes) {
     if (!m_gpu.offscreenReady()) return;
+
+    m_reusableOffscreenCaptureValid = false;
 
     constexpr float offW = (float)(GpuDevice::FB_WIDTH / 2);
     constexpr float offH = (float)(GpuDevice::FB_HEIGHT / 2);
@@ -365,7 +562,7 @@ void Renderer::applyBlur(float radius, int passes) {
         fs.param3 = 1.f / offH;
         pushFsUniforms(fs);
         bindTexture(m_offDescSlot[0]);
-        addQuad(0, 0, offW, offH, 0, 0, 1, 1, Color::white());
+        addQuad(-1.f, -1.f, 1.f, 1.f, 0, 0, 1, 1, Color::white());
         flush();
         m_gpu.cmdBuf().barrier(DkBarrier_Full, DkInvalidateFlags_Image);
 
@@ -375,7 +572,7 @@ void Renderer::applyBlur(float radius, int passes) {
         useShader(ShaderProgram::BlurV);
         pushFsUniforms(fs);
         bindTexture(m_offDescSlot[1]);
-        addQuad(0, 0, offW, offH, 0, 0, 1, 1, Color::white());
+        addQuad(-1.f, -1.f, 1.f, 1.f, 0, 0, 1, 1, Color::white());
         flush();
         m_gpu.cmdBuf().barrier(DkBarrier_Full, DkInvalidateFlags_Image);
     }
@@ -404,7 +601,7 @@ void Renderer::applyWave(float time, float amplitude, float frequency) {
 }
 
 
-// ─── Geometry emission ──────────────────────────────────────
+// Geometry emission
 
 void Renderer::addVertex(float x, float y, float u, float v, const Color& c) {
     if (m_vtxCount >= GpuDevice::MAX_VERTICES) {

@@ -9,6 +9,7 @@
 #include <string>
 #include <future>
 #include <cstdint>
+#include <functional>
 
 struct PendingApp {
     std::string         id;
@@ -20,6 +21,8 @@ struct PendingApp {
 
 class AppListLoader {
 public:
+    using PendingTransform = std::function<void(std::vector<PendingApp>&)>;
+
     // Streaming path: fetch apps and hand compressed icon data to the streamer.
     void load(GridModel& model, IconStreamer& streamer);
 
@@ -29,9 +32,14 @@ public:
 
     void finalize(GridModel& model, IconStreamer& streamer);
 
+    void setPendingTransform(PendingTransform transform) {
+        m_pendingTransform = std::move(transform);
+    }
+
 private:
     void fetchApps();
 
     std::future<void>       m_future;
     std::vector<PendingApp> m_pending;
+    PendingTransform        m_pendingTransform;
 };

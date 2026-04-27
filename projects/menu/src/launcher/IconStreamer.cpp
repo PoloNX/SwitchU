@@ -28,6 +28,28 @@ void IconStreamer::clear() {
     m_lastPage = -1;
 }
 
+bool IconStreamer::swapIndices(int a, int b) {
+    if (a < 0 || b < 0 || a >= (int)m_compressed.size() || b >= (int)m_compressed.size())
+        return false;
+    if (a == b)
+        return true;
+
+    std::swap(m_compressed[a], m_compressed[b]);
+
+    if (a < (int)m_appToSlot.size() && b < (int)m_appToSlot.size()) {
+        int slotA = m_appToSlot[a];
+        int slotB = m_appToSlot[b];
+        std::swap(m_appToSlot[a], m_appToSlot[b]);
+
+        if (slotA >= 0 && slotA < (int)m_pool.size())
+            m_pool[slotA]->appIndex = b;
+        if (slotB >= 0 && slotB < (int)m_pool.size())
+            m_pool[slotB]->appIndex = a;
+    }
+
+    return true;
+}
+
 // ---------------------------------------------------------------------------
 // Decode a single compressed icon to RGBA, downscaling to kIconSize if needed.
 // ---------------------------------------------------------------------------

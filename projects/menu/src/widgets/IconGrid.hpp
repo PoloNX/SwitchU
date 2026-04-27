@@ -32,6 +32,10 @@ public:
 
     int hitTest(float screenX, float screenY) const;
 
+    int focusedGlobalIndex() const;
+    bool focusGlobalIndex(int idx);
+    bool swapSlots(int a, int b);
+
     void startAppearAnimation();
 
     void startWaveTransition(int targetPage);

@@ -1,21 +1,186 @@
 #include "SettingsScreen.hpp"
+#include "SettingsGlassTuning.hpp"
 #include "SettingItemWidgets.hpp"
 #include "tabs/TabBuilders.hpp"
 #include "core/DebugLog.hpp"
 #include <nxui/core/I18n.hpp>
 #include <nxui/core/Renderer.hpp>
+#include <nxui/widgets/GlassBox.hpp>
+#include <nxui/widgets/Label.hpp>
 #include <switch.h>
 #include <cstdio>
 #include <cstring>
 #include <algorithm>
 #include <cmath>
+static constexpr float kSettingsBlurRadius = 6.0f;
+static constexpr int kSettingsBlurIter = 1;
 
+namespace {
 
-static float easeOutCubic(float t) { float f = 1.f - t; return 1.f - f * f * f; }
-static float easeInCubic(float t)  { return t * t * t; }
+static constexpr float kTabRailInset = 14.f;
+static constexpr float kTabCardGap = 10.f;
+static constexpr float kContentCardInsetX = 18.f;
+static constexpr float kContentCardInsetY = 8.f;
+static constexpr int kSettingsBackdropCacheTarget = 2;
+
+class SettingsTabWidget final : public nxui::GlassBox {
+public:
+    explicit SettingsTabWidget(const std::string& text)
+        : nxui::GlassBox(nxui::Axis::ROW) {
+        setAlignItems(nxui::AlignItems::CENTER);
+        setJustifyContent(nxui::JustifyContent::FLEX_START);
+        setPadding(0.f, 22.f, 0.f, 22.f);
+        setCornerRadius(18.f);
+        setBorderWidth(1.f);
+        setWireframeEnabled(false);
+
+        m_label = std::make_shared<nxui::Label>(text);
+        m_label->setGrow(1.f);
+        m_label->setHAlign(nxui::Label::HAlign::Left);
+        m_label->setVAlign(nxui::Label::VAlign::Center);
+        addChild(m_label);
+    }
+
+    void sync(const std::string& text,
+              nxui::Font* font,
+              const nxui::Theme* theme,
+              bool selected,
+              bool focused,
+              float uiTime,
+              float accentWidth) {
+        m_selected = selected;
+        m_focused = focused;
+        m_accentWidth = accentWidth;
+        m_accentColor = theme ? theme->cursorNormal : nxui::Color::white();
+
+        if (font) {
+            m_label->setFont(font);
+        }
+        m_label->setText(text);
+
+        float breathe = selected ? (0.5f + 0.5f * std::sin(uiTime * 4.6f)) : 0.f;
+        float textScale = selected ? (0.83f + 0.018f * breathe) : 0.79f;
+        m_label->setScale(textScale);
+        m_label->setSize(std::max(0.f, rect().width - 36.f), rect().height);
+
+        if (theme) {
+            nxui::Color textColor = selected ? theme->textPrimary : theme->textSecondary;
+            nxui::Color baseColor = theme->panelBase.withAlpha(selected ? 0.12f : 0.025f);
+            nxui::Color borderColor = selected
+                ? theme->cursorNormal.withAlpha(focused ? 0.54f : 0.34f)
+                : theme->panelBorder.withAlpha(focused ? 0.18f : 0.08f);
+            nxui::Color hiColor = theme->panelHighlight.withAlpha(selected ? 0.08f : 0.015f);
+
+            setBaseColor(baseColor);
+            setBorderColor(borderColor);
+            setHighlightColor(hiColor);
+            setBorderWidth(selected || focused ? 1.2f : 1.f);
+            setScale(selected ? (1.01f + 0.01f * breathe) : 1.f);
+
+            m_label->setTextColor(textColor.withAlpha(opacity()));
+        }
+
+        layout();
+    }
+
+protected:
+    void onRender(nxui::Renderer& ren) override {
+        nxui::GlassBox::onRender(ren);
+
+        if (!m_selected || opacity() <= 0.01f)
+            return;
+
+        nxui::Rect r = rect();
+        float accentH = std::max(16.f, r.height * 0.46f);
+        float accentY = r.y + (r.height - accentH) * 0.5f;
+        float accentW = std::clamp(m_accentWidth, 2.f, std::max(2.f, r.width * 0.12f));
+        nxui::Rect accent = {r.x + 8.f, accentY, accentW, accentH};
+        ren.drawRoundedRect(accent, m_accentColor.withAlpha(0.92f * opacity()), 2.f);
+
+        nxui::Rect underline = {r.x + 16.f, r.bottom() - 5.f, std::max(24.f, r.width - 32.f), 2.f};
+        ren.drawRoundedRect(underline, m_accentColor.withAlpha(0.18f * opacity()), 1.f);
+    }
+
+private:
+    std::shared_ptr<nxui::Label> m_label;
+    bool m_selected = false;
+    bool m_focused = false;
+    float m_accentWidth = 3.f;
+    nxui::Color m_accentColor = nxui::Color::white();
+};
+
+class SettingsItemCard final : public nxui::GlassBox {
+public:
+    SettingsItemCard(SettingsScreen::SettingItem& item,
+                     std::shared_ptr<nxui::Box> content)
+        : nxui::GlassBox(nxui::Axis::ROW)
+        , m_item(item)
+        , m_content(std::move(content)) {
+        setAlignItems(nxui::AlignItems::CENTER);
+        setJustifyContent(nxui::JustifyContent::FLEX_START);
+        setWireframeEnabled(false);
+        addChild(m_content);
+    }
+
+    void sync(const nxui::Theme* theme, bool selected, float alpha) {
+        const bool isSection = (m_item.type == SettingsScreen::ItemType::Section);
+        const bool isActionLike = m_item.type == SettingsScreen::ItemType::Action
+            || m_item.type == SettingsScreen::ItemType::Selector
+            || m_item.type == SettingsScreen::ItemType::ColorPicker;
+
+        setCornerRadius(isSection ? 14.f : 18.f);
+        setBorderWidth(isSection ? 0.f : 1.f);
+        setScale(selected ? 1.008f : 1.f);
+
+        if (theme) {
+            float baseAlpha = isSection ? 0.0f
+                : selected ? 0.14f
+                : isActionLike ? 0.045f
+                : m_item.focusable() ? 0.025f : 0.012f;
+            float borderAlpha = isSection ? 0.0f
+                : selected ? 0.44f
+                : isActionLike ? 0.16f : 0.09f;
+            float hiAlpha = selected ? 0.08f : (isSection ? 0.0f : 0.015f);
+
+            setBaseColor(theme->panelBase.withAlpha(baseAlpha));
+            setBorderColor((selected ? theme->cursorNormal : theme->panelBorder).withAlpha(borderAlpha));
+            setHighlightColor(theme->panelHighlight.withAlpha(hiAlpha));
+        }
+
+        float insetX = isSection ? 6.f : 14.f;
+        float insetY = isSection ? 4.f : 6.f;
+        m_content->setRect({
+            rect().x + insetX,
+            rect().y + insetY,
+            std::max(0.f, rect().width - insetX * 2.f),
+            std::max(0.f, rect().height - insetY * 2.f)
+        });
+        m_content->setOpacity(alpha);
+    }
+
+private:
+    SettingsScreen::SettingItem& m_item;
+    std::shared_ptr<nxui::Box> m_content;
+};
+
+} // namespace
 
 
 SettingsScreen::SettingsScreen() {
+    setFrameworkTouchEnabled(false);
+    setRect({kPanelMargin, kPanelMargin,
+             1280.f - 2.f * kPanelMargin, 720.f - 2.f * kPanelMargin});
+    setVisible(false);
+    setOpacity(0.001f);
+    setScale(0.92f);
+    setCornerRadius(kPanelRadius);
+    setLiquidGlassEnabled(false);
+    setForceLiquidGlass(false);
+    setBlurEnabled(false);
+    setBlurRadius(kSettingsBlurRadius);
+    setBlurPasses(kSettingsBlurIter);
+    setPanelOpacity(0.82f);
+
     m_focusCursor.setBorderWidth(2.6f);
     m_focusCursor.setCornerRadius(10.f);
     m_tabGlowY.setImmediate(0.f);
@@ -29,13 +194,13 @@ SettingsScreen::SettingsScreen() {
     m_contentSlideAnim.setImmediate(1.f);
     m_tabAccentW.setImmediate(3.f);
 
-    m_tabBar = std::make_shared<nxui::Box>(nxui::Axis::COLUMN);
+    m_tabBar = std::make_shared<nxui::GlassBox>(nxui::Axis::COLUMN);
     m_tabBar->setTag("tabBar");
-    addChild(m_tabBar);
+    m_tabBar->setWireframeEnabled(false);
 
-    m_tabContent = std::make_shared<nxui::Box>(nxui::Axis::COLUMN);
+    m_tabContent = std::make_shared<nxui::GlassBox>(nxui::Axis::COLUMN);
     m_tabContent->setTag("tabContent");
-    addChild(m_tabContent);
+    m_tabContent->setWireframeEnabled(false);
 
     rebuildTabBar();
     rebuildContentItems();
@@ -48,9 +213,23 @@ SettingsScreen::~SettingsScreen() {
     nxui::I18n::instance().removeLanguageChangedListener(m_i18nListenerId);
 }
 
+void SettingsScreen::setTheme(const nxui::Theme* t) {
+    m_theme = t;
+    if (!m_theme)
+        return;
+
+    setBaseColor(m_theme->panelBase.withAlpha(std::clamp(m_theme->panelBase.a * 0.72f, 0.12f, 0.30f)));
+    setBorderColor(m_theme->panelBorder.withAlpha(std::clamp(m_theme->panelBorder.a * 0.92f, 0.14f, 0.42f)));
+    setHighlightColor(m_theme->panelHighlight.withAlpha(std::clamp(m_theme->panelHighlight.a * 0.92f, 0.05f, 0.18f)));
+    setLiquidGlassShade(m_theme->mode == nxui::ThemeMode::Dark ? 0.08f : -0.03f);
+    invalidateBackdropCache();
+}
+
 void SettingsScreen::show() {
     if (m_active) return;
     DebugLog::log("[settings] show()");
+    if (m_tabs.empty())
+        warmup();
     m_active    = true;
     m_animating = true;
     m_showing   = true;
@@ -72,17 +251,19 @@ void SettingsScreen::show() {
     m_colorPickerRawIdx = -1;
     m_colorPickerSlider = 0;
     m_colorPickerAnim.setImmediate(0.f);
+    m_touchDirectControl = false;
+    m_ignoreInitialTouchRelease = true;
     m_trackToastAnim.setImmediate(0.f);
     m_trackToastHold = 0.f;
     m_trackToastFading = false;
     m_contentSlideAnim.setImmediate(1.f);
     m_tabAccentW.setImmediate(3.f);
-
-    m_deferBuild = true;
-    m_tabs.clear();
     if (m_tabBar) rebuildTabBar();
     if (m_tabContent) rebuildContentItems();
+    invalidateBackdropCache();
 
+    setVisible(true);
+    syncPanelState(0.f);
     setFocusable(true);
     setupActions();
 }
@@ -109,70 +290,22 @@ void SettingsScreen::hide() {
 }
 
 
-void SettingsScreen::buildTabs() {
-    DebugLog::log("[settings] buildTabs() start");
-    m_tabs.clear();
-    DebugLog::log("[settings]   SystemTab...");
-    m_tabs.push_back(settings::tabs::SystemTab::build(*this));
-    DebugLog::log("[settings]   StorageTab...");
-    m_tabs.push_back(settings::tabs::StorageTab::build(*this));
-    DebugLog::log("[settings]   AudioTab...");
-    m_tabs.push_back(settings::tabs::AudioTab::build(*this));
-    DebugLog::log("[settings]   DisplayTab...");
-    m_tabs.push_back(settings::tabs::DisplayTab::build(*this));
-    DebugLog::log("[settings]   InternetTab...");
-    m_tabs.push_back(settings::tabs::InternetTab::build(*this));
-    DebugLog::log("[settings]   ControllersTab...");
-    m_tabs.push_back(settings::tabs::ControllersTab::build(*this));
-    DebugLog::log("[settings]   BluetoothTab...");
-    m_tabs.push_back(settings::tabs::BluetoothTab::build(*this));
-    DebugLog::log("[settings]   SleepTab...");
-    m_tabs.push_back(settings::tabs::SleepTab::build(*this));
-    DebugLog::log("[settings]   MusicTab...");
-    m_tabs.push_back(settings::tabs::MusicTab::build(*this));
-    DebugLog::log("[settings]   ThemeTab...");
-    m_tabs.push_back(settings::tabs::ThemeTab::build(*this));
-    DebugLog::log("[settings]   AboutTab...");
-    m_tabs.push_back(settings::tabs::AboutTab::build(*this));
-    DebugLog::log("[settings] buildTabs() done (%d tabs)", (int)m_tabs.size());
-
-    if (m_tabBar) rebuildTabBar();
-    if (m_tabContent) rebuildContentItems();
-}
-
-void SettingsScreen::refreshTranslations() {
-    DebugLog::log("[settings] refreshTranslations()");
-    int oldTab = m_tabIndex;
-    int oldContent = m_contentIdx;
-
-    buildTabs();
-
-    if (!m_tabs.empty()) {
-        m_tabIndex = std::clamp(oldTab, 0, (int)m_tabs.size() - 1);
-    } else {
-        m_tabIndex = 0;
-    }
-
-    clampContentIdx();
-    if (focusableCount() > 0)
-        m_contentIdx = std::clamp(oldContent, 0, focusableCount() - 1);
-    else
-        m_contentIdx = 0;
-
-    rebuildTabBar();
-    rebuildContentItems();
-}
-
 void SettingsScreen::rebuildTabBar() {
     m_tabBar->clearChildren();
     nxui::Rect tr = tabsRect();
     m_tabBar->setRect(tr);
 
+    float tabX = tr.x + kTabRailInset;
+    float tabY = tr.y + kTabRailInset;
+    float tabW = std::max(0.f, tr.width - kTabRailInset * 2.f);
+    float tabH = kTabRowHeight - kTabCardGap;
+
     for (int i = 0; i < (int)m_tabs.size(); ++i) {
-        auto tabBox = std::make_shared<nxui::Box>();
+        auto tabBox = std::make_shared<SettingsTabWidget>(m_tabs[i].name);
         tabBox->setTag(m_tabs[i].name);
-        tabBox->setRect({tr.x, tr.y + i * kTabRowHeight, tr.width, kTabRowHeight});
+        tabBox->setRect({tabX, tabY, tabW, tabH});
         m_tabBar->addChild(tabBox);
+        tabY += tabH + kTabCardGap;
     }
 }
 
@@ -183,16 +316,29 @@ void SettingsScreen::rebuildContentItems() {
 
     if (m_tabIndex < 0 || m_tabIndex >= (int)m_tabs.size()) return;
     auto& items = m_tabs[m_tabIndex].items;
-    DebugLog::log("[settings] rebuildContent tab=%d items=%d", m_tabIndex, (int)items.size());
+    auto& cache = m_cachedTabContentWidgets[(size_t)m_tabIndex];
+    DebugLog::log("[settings] rebuildContent tab=%d items=%d cache=%s",
+                  m_tabIndex, (int)items.size(), cache.empty() ? "miss" : "hit");
 
-    float y = 0.f;
-    for (int i = 0; i < (int)items.size(); ++i) {
-        float h = (items[i].type == ItemType::Section) ? kSectionHeight : kRowHeight;
-        auto itemBox = makeItemWidget(items[i]);
-        itemBox->setTag(items[i].label);
-        itemBox->setRect({0, y, cr.width, h});
+    if (cache.empty()) {
+        cache.reserve(items.size());
+
+        float y = 0.f;
+        for (int i = 0; i < (int)items.size(); ++i) {
+            float h = (items[i].type == ItemType::Section) ? kSectionHeight : kRowHeight;
+            float insetY = (items[i].type == ItemType::Section) ? 1.f : kContentCardInsetY;
+            float cardH = std::max(0.f, h - (items[i].type == ItemType::Section ? 2.f : 6.f));
+            auto itemBox = makeItemWidget(items[i]);
+            itemBox->setTag(items[i].label);
+            itemBox->setRect({cr.x + kContentCardInsetX, cr.y + y + insetY,
+                              std::max(0.f, cr.width - kContentCardInsetX * 2.f), cardH});
+            cache.push_back(itemBox);
+            y += h;
+        }
+    }
+
+    for (auto& itemBox : cache) {
         m_tabContent->addChild(itemBox);
-        y += h;
     }
 }
 
@@ -201,802 +347,15 @@ std::shared_ptr<nxui::Box> SettingsScreen::makeItemWidget(SettingItem& item) {
     ctx.font = &m_font;
     ctx.smallFont = &m_smallFont;
     ctx.theme = &m_theme;
-    return settings::widgets::createSettingItemWidget(item, ctx);
+    auto content = settings::widgets::createSettingItemWidget(item, ctx);
+    return std::make_shared<SettingsItemCard>(item, content);
 }
-
-void SettingsScreen::rebuildCurrentTab() {
-    int oldTab = m_tabIndex;
-    int oldFocus = m_contentIdx;
-    float oldScroll = m_scrollTarget;
-
-    buildTabs();
-
-    if (!m_tabs.empty()) {
-        m_tabIndex = std::clamp(oldTab, 0, (int)m_tabs.size() - 1);
-    } else {
-        m_tabIndex = 0;
-    }
-
-    clampContentIdx();
-    if (focusableCount() > 0)
-        m_contentIdx = std::clamp(oldFocus, 0, focusableCount() - 1);
-    else
-        m_contentIdx = 0;
-    m_scrollTarget = oldScroll;
-    m_scrollY = oldScroll;
-
-    rebuildTabBar();
-    rebuildContentItems();
-}
-
-void SettingsScreen::requestDialog(const std::string& title, const std::string& msg,
-                                   std::vector<DialogButtonDef> buttons) {
-    if (m_dialogRequestCb) m_dialogRequestCb(title, msg, std::move(buttons));
-}
-
-void SettingsScreen::requestToast(const std::string& msg, float holdSeconds) {
-    if (msg.empty()) return;
-    m_toastText = msg;
-    m_trackToastHold = std::max(0.f, holdSeconds);
-    m_trackToastFading = false;
-    m_trackToastAnim.setImmediate(1.f);
-}
-
-
-
-void SettingsScreen::updateThemeSliders(const ThemeColorSet& colors) {
-    m_themeColors = colors;
-
-    int themeTabIdx = (int)m_tabs.size() - 1;
-    if (themeTabIdx < 0 || themeTabIdx >= (int)m_tabs.size()) return;
-    auto& items = m_tabs[themeTabIdx].items;
-
-    struct ColorMapping { int idx; float h, s, l; };
-    ColorMapping mappings[] = {
-        { 2, colors.accentH, colors.accentS, colors.accentL },
-        { 3, colors.bgH,     colors.bgS,     colors.bgL     },
-        { 4, colors.bgAccH,  colors.bgAccS,  colors.bgAccL  },
-        { 5, colors.shapeH,  colors.shapeS,  colors.shapeL  },
-    };
-
-    for (auto& m : mappings) {
-        if (m.idx < (int)items.size() && items[m.idx].type == ItemType::ColorPicker) {
-            items[m.idx].colorH = m.h;
-            items[m.idx].colorS = m.s;
-            items[m.idx].colorL = m.l;
-        }
-    }
-}
-
-void SettingsScreen::updateThemePresetList(const std::vector<std::string>& names,
-                                            const std::string& activeName) {
-    m_themePresetNames = names;
-    m_themePresetName = activeName;
-
-    int themeTabIdx = (int)m_tabs.size() - 1;
-    if (themeTabIdx < 0 || themeTabIdx >= (int)m_tabs.size()) return;
-    auto& items = m_tabs[themeTabIdx].items;
-
-    if (!items.empty() && items[0].type == ItemType::Selector) {
-        items[0].options = names;
-        for (int i = 0; i < (int)names.size(); ++i) {
-            if (names[i] == activeName) {
-                items[0].intVal = i;
-                break;
-            }
-        }
-    }
-}
-
-
-int SettingsScreen::focusableCount() const {
-    if (m_tabIndex < 0 || m_tabIndex >= (int)m_tabs.size()) return 0;
-    int n = 0;
-    for (auto& it : m_tabs[m_tabIndex].items)
-        if (it.focusable()) ++n;
-    return n;
-}
-
-int SettingsScreen::rawIndexFromFocusable(int focIdx) const {
-    if (m_tabIndex < 0 || m_tabIndex >= (int)m_tabs.size()) return 0;
-    auto& items = m_tabs[m_tabIndex].items;
-    int cnt = 0;
-    for (int i = 0; i < (int)items.size(); ++i) {
-        if (items[i].focusable()) {
-            if (cnt == focIdx) return i;
-            ++cnt;
-        }
-    }
-    return 0;
-}
-
-void SettingsScreen::clampContentIdx() {
-    int fc = focusableCount();
-    if (fc <= 0) m_contentIdx = 0;
-    else m_contentIdx = std::clamp(m_contentIdx, 0, fc - 1);
-}
-
-
-void SettingsScreen::setupActions() {
-    clearActions();
-    addAction(static_cast<uint64_t>(nxui::Button::B), [this]() { onPressB(); });
-    addAction(static_cast<uint64_t>(nxui::Button::A), [this]() { onPressA(); });
-    addDirectionAction(nxui::FocusDirection::UP,    [this]() { onNavUp(); });
-    addDirectionAction(nxui::FocusDirection::DOWN,  [this]() { onNavDown(); });
-    addDirectionAction(nxui::FocusDirection::LEFT,  [this]() { onNavLeft(); });
-    addDirectionAction(nxui::FocusDirection::RIGHT, [this]() { onNavRight(); });
-}
-
-void SettingsScreen::onPressB() {
-    if (!m_active || m_animating) return;
-    DebugLog::log("[settings] B (focus=%d dd=%d cp=%d)", (int)m_focusArea, m_dropdownOpen ? 1 : 0, m_colorPickerOpen ? 1 : 0);
-
-    if (m_colorPickerOpen) {
-        m_colorPickerOpen = false;
-        m_colorPickerRawIdx = -1;
-        m_colorPickerAnim.set(0.f, 0.10f, nxui::Easing::outCubic);
+void SettingsScreen::onRender(nxui::Renderer& ren) {
+    if (!m_active && !m_animating)
         return;
-    }
-    if (m_dropdownOpen) {
-        m_dropdownOpen = false;
-        m_dropdownRawIdx = -1;
-        m_dropdownAnim.set(0.f, 0.10f, nxui::Easing::outCubic);
-        return;
-    }
-    if (m_focusArea == FocusArea::Content) {
-        m_focusArea = FocusArea::Tabs;
-        if (m_navSfxCb) m_navSfxCb();
-        return;
-    }
-    hide();
-}
 
-void SettingsScreen::onPressA() {
-    if (!m_active || m_animating) return;
-    DebugLog::log("[settings] A (focus=%d tab=%d ci=%d dd=%d)",
-                  (int)m_focusArea, m_tabIndex, m_contentIdx, m_dropdownOpen ? 1 : 0);
-
-    if (m_focusArea == FocusArea::Tabs) {
-        if (focusableCount() > 0) {
-            m_focusArea = FocusArea::Content;
-            m_contentIdx = 0;
-            if (m_navSfxCb) m_navSfxCb();
-        }
-        return;
-    }
-
-    auto& items = m_tabs[m_tabIndex].items;
-    int rawIdx = rawIndexFromFocusable(m_contentIdx);
-    auto& item = items[rawIdx];
-
-    if (m_colorPickerOpen) {
-        m_colorPickerOpen = false;
-        m_colorPickerRawIdx = -1;
-        m_colorPickerAnim.set(0.f, 0.10f, nxui::Easing::outCubic);
-        return;
-    }
-
-    if (m_dropdownOpen) {
-        if (m_dropdownRawIdx >= 0 && m_dropdownRawIdx < (int)items.size()
-            && items[m_dropdownRawIdx].type == ItemType::Selector) {
-            auto& sel = items[m_dropdownRawIdx];
-            int n = std::max(1, (int)sel.options.size());
-            sel.intVal = std::clamp(m_dropdownHover, 0, n - 1);
-            if (sel.onChange) sel.onChange(sel);
-            if (m_activateSfxCb) m_activateSfxCb();
-        }
-        m_dropdownOpen = false;
-        m_dropdownRawIdx = -1;
-        m_dropdownAnim.set(0.f, 0.10f, nxui::Easing::outCubic);
-        return;
-    }
-
-    if (item.type == ItemType::Toggle) {
-        item.boolVal = !item.boolVal;
-        if (item.onChange) item.onChange(item);
-        if (m_toggleSfxCb) m_toggleSfxCb(item.boolVal);
-    } else if (item.type == ItemType::Selector) {
-        m_dropdownOpen = true;
-        m_dropdownRawIdx = rawIdx;
-        m_dropdownHover = std::clamp(item.intVal, 0, std::max(0, (int)item.options.size() - 1));
-        m_dropdownAnim.set(1.f, 0.14f, nxui::Easing::outCubic);
-        if (m_activateSfxCb) m_activateSfxCb();
-    } else if (item.type == ItemType::Action) {
-        if (item.onChange) item.onChange(item);
-        if (m_activateSfxCb) m_activateSfxCb();
-    } else if (item.type == ItemType::ColorPicker) {
-        m_colorPickerOpen = true;
-        m_colorPickerRawIdx = rawIdx;
-        m_colorPickerSlider = 0;
-        m_colorPickerAnim.set(1.f, 0.18f, nxui::Easing::outCubic);
-        if (m_activateSfxCb) m_activateSfxCb();
-    }
-}
-
-void SettingsScreen::onNavUp() {
-    if (!m_active || m_animating) return;
-    DebugLog::log("[settings] Up (focus=%d tab=%d ci=%d)",
-                  (int)m_focusArea, m_tabIndex, m_contentIdx);
-
-    if (m_focusArea == FocusArea::Tabs) {
-        if (m_tabIndex > 0) {
-            m_tabSwitchDir = -1;
-            --m_tabIndex;
-            m_contentIdx = 0;
-            m_scrollY = 0;
-            m_scrollTarget = 0;
-            m_tabReveal.setImmediate(0.f);
-            m_tabReveal.set(1.f, 0.24f, nxui::Easing::outCubic);
-            m_contentSlideAnim.setImmediate(0.f);
-            m_contentSlideAnim.set(1.f, 0.28f, nxui::Easing::outCubic);
-            m_tabAccentW.setImmediate(1.f);
-            m_tabAccentW.set(3.f, 0.32f, nxui::Easing::outExpo);
-            m_dropdownOpen = false;
-            m_dropdownRawIdx = -1;
-            m_dropdownAnim.setImmediate(0.f);
-            m_colorPickerOpen = false;
-            m_colorPickerRawIdx = -1;
-            m_colorPickerAnim.setImmediate(0.f);
-            rebuildContentItems();
-            if (m_navSfxCb) m_navSfxCb();
-        }
-        return;
-    }
-
-    if (m_colorPickerOpen) {
-        if (m_colorPickerSlider > 0) {
-            --m_colorPickerSlider;
-            if (m_navSfxCb) m_navSfxCb();
-        }
-        return;
-    }
-
-    if (m_dropdownOpen) {
-        auto& items = m_tabs[m_tabIndex].items;
-        if (m_dropdownRawIdx >= 0 && m_dropdownRawIdx < (int)items.size()
-            && items[m_dropdownRawIdx].type == ItemType::Selector) {
-            int n = std::max(1, (int)items[m_dropdownRawIdx].options.size());
-            m_dropdownHover = (m_dropdownHover + n - 1) % n;
-            if (m_navSfxCb) m_navSfxCb();
-        }
-        return;
-    }
-
-    if (m_contentIdx > 0) {
-        --m_contentIdx;
-        if (m_navSfxCb) m_navSfxCb();
-        scrollToFocused();
-    }
-}
-
-void SettingsScreen::onNavDown() {
-    if (!m_active || m_animating) return;
-    DebugLog::log("[settings] Down (focus=%d tab=%d ci=%d)",
-                  (int)m_focusArea, m_tabIndex, m_contentIdx);
-
-    if (m_focusArea == FocusArea::Tabs) {
-        if (m_tabIndex < (int)m_tabs.size() - 1) {
-            m_tabSwitchDir = 1;
-            ++m_tabIndex;
-            m_contentIdx = 0;
-            m_scrollY = 0;
-            m_scrollTarget = 0;
-            m_tabReveal.setImmediate(0.f);
-            m_tabReveal.set(1.f, 0.24f, nxui::Easing::outCubic);
-            m_contentSlideAnim.setImmediate(0.f);
-            m_contentSlideAnim.set(1.f, 0.28f, nxui::Easing::outCubic);
-            m_tabAccentW.setImmediate(1.f);
-            m_tabAccentW.set(3.f, 0.32f, nxui::Easing::outExpo);
-            m_dropdownOpen = false;
-            m_dropdownRawIdx = -1;
-            m_dropdownAnim.setImmediate(0.f);
-            m_colorPickerOpen = false;
-            m_colorPickerRawIdx = -1;
-            m_colorPickerAnim.setImmediate(0.f);
-            rebuildContentItems();
-            if (m_navSfxCb) m_navSfxCb();
-        }
-        return;
-    }
-
-    if (m_colorPickerOpen) {
-        if (m_colorPickerSlider < 2) {
-            ++m_colorPickerSlider;
-            if (m_navSfxCb) m_navSfxCb();
-        }
-        return;
-    }
-
-    if (m_dropdownOpen) {
-        auto& items = m_tabs[m_tabIndex].items;
-        if (m_dropdownRawIdx >= 0 && m_dropdownRawIdx < (int)items.size()
-            && items[m_dropdownRawIdx].type == ItemType::Selector) {
-            int n = std::max(1, (int)items[m_dropdownRawIdx].options.size());
-            m_dropdownHover = (m_dropdownHover + 1) % n;
-            if (m_navSfxCb) m_navSfxCb();
-        }
-        return;
-    }
-
-    if (m_contentIdx < focusableCount() - 1) {
-        ++m_contentIdx;
-        if (m_navSfxCb) m_navSfxCb();
-        scrollToFocused();
-    }
-}
-
-void SettingsScreen::onNavLeft() {
-    if (!m_active || m_animating) return;
-    DebugLog::log("[settings] Left (focus=%d)", (int)m_focusArea);
-
-    if (m_colorPickerOpen) {
-        auto& items = m_tabs[m_tabIndex].items;
-        if (m_colorPickerRawIdx >= 0 && m_colorPickerRawIdx < (int)items.size()) {
-            auto& item = items[m_colorPickerRawIdx];
-            float* vals[3] = { &item.colorH, &item.colorS, &item.colorL };
-            float step = (m_colorPickerSlider == 0) ? (1.f / 36.f) : 0.05f;
-            *vals[m_colorPickerSlider] = std::clamp(*vals[m_colorPickerSlider] - step, 0.f, 1.f);
-            if (item.onChange) item.onChange(item);
-            if (m_sliderSfxCb) m_sliderSfxCb(false);
-        }
-        return;
-    }
-
-    if (m_dropdownOpen) {
-        m_dropdownOpen = false;
-        m_dropdownRawIdx = -1;
-        m_dropdownAnim.set(0.f, 0.10f, nxui::Easing::outCubic);
-        return;
-    }
-
-    if (m_focusArea == FocusArea::Tabs) return;
-
-    auto& items = m_tabs[m_tabIndex].items;
-    int rawIdx = rawIndexFromFocusable(m_contentIdx);
-    auto& item = items[rawIdx];
-
-    if (item.type == ItemType::Slider) {
-        item.floatVal = std::clamp(std::round((item.floatVal - 0.05f) * 20.f) / 20.f, 0.f, 1.f);
-        if (item.onChange) item.onChange(item);
-        if (m_sliderSfxCb) m_sliderSfxCb(false);
-    } else {
-        m_focusArea = FocusArea::Tabs;
-        if (m_navSfxCb) m_navSfxCb();
-    }
-}
-
-void SettingsScreen::onNavRight() {
-    if (!m_active || m_animating) return;
-    DebugLog::log("[settings] Right (focus=%d)", (int)m_focusArea);
-
-    if (m_colorPickerOpen) {
-        auto& items = m_tabs[m_tabIndex].items;
-        if (m_colorPickerRawIdx >= 0 && m_colorPickerRawIdx < (int)items.size()) {
-            auto& item = items[m_colorPickerRawIdx];
-            float* vals[3] = { &item.colorH, &item.colorS, &item.colorL };
-            float step = (m_colorPickerSlider == 0) ? (1.f / 36.f) : 0.05f;
-            *vals[m_colorPickerSlider] = std::clamp(*vals[m_colorPickerSlider] + step, 0.f, 1.f);
-            if (item.onChange) item.onChange(item);
-            if (m_sliderSfxCb) m_sliderSfxCb(true);
-        }
-        return;
-    }
-
-    if (m_dropdownOpen) {
-        m_dropdownOpen = false;
-        m_dropdownRawIdx = -1;
-        m_dropdownAnim.set(0.f, 0.10f, nxui::Easing::outCubic);
-        return;
-    }
-
-    if (m_focusArea == FocusArea::Tabs) {
-        if (focusableCount() > 0) {
-            m_focusArea = FocusArea::Content;
-            m_contentIdx = 0;
-            if (m_navSfxCb) m_navSfxCb();
-        }
-        return;
-    }
-
-    auto& items = m_tabs[m_tabIndex].items;
-    int rawIdx = rawIndexFromFocusable(m_contentIdx);
-    auto& item = items[rawIdx];
-
-    if (item.type == ItemType::Slider) {
-        item.floatVal = std::clamp(std::round((item.floatVal + 0.05f) * 20.f) / 20.f, 0.f, 1.f);
-        if (item.onChange) item.onChange(item);
-        if (m_sliderSfxCb) m_sliderSfxCb(true);
-    } else if (item.type == ItemType::Selector) {
-        m_dropdownOpen = true;
-        m_dropdownRawIdx = rawIdx;
-        m_dropdownHover = std::clamp(item.intVal, 0, std::max(0, (int)item.options.size() - 1));
-        m_dropdownAnim.set(1.f, 0.14f, nxui::Easing::outCubic);
-        if (m_activateSfxCb) m_activateSfxCb();
-    } else if (item.type == ItemType::Action) {
-        if (item.onChange) item.onChange(item);
-        if (m_activateSfxCb) m_activateSfxCb();
-    }
-}
-
-void SettingsScreen::scrollToFocused() {
-    if (m_tabIndex < 0 || m_tabIndex >= (int)m_tabs.size()) return;
-    auto& items = m_tabs[m_tabIndex].items;
-    nxui::Rect cr = contentRect();
-    float itemY = 0;
-    int foc = 0;
-    for (auto& it : items) {
-        float h = it.type == ItemType::Section ? kSectionHeight : kRowHeight;
-        if (it.focusable()) {
-            if (foc == m_contentIdx) break;
-            ++foc;
-        }
-        itemY += h;
-    }
-    if (itemY - m_scrollTarget < 0)
-        m_scrollTarget = itemY;
-    if (itemY + kRowHeight - m_scrollTarget > cr.height)
-        m_scrollTarget = itemY + kRowHeight - cr.height;
-}
-
-void SettingsScreen::handleTouch(nxui::Input& input) {
-    if (!m_active || m_animating) return;
-
-    nxui::Rect panel = panelRect();
-    nxui::Rect tr = tabsRect(panel);
-    nxui::Rect cr = contentRect(panel);
-
-    if (input.touchDown()) {
-        float tx = input.touchX();
-        float ty = input.touchY();
-        m_touchTarget = TouchTarget::None;
-        m_touchHitIndex = -1;
-        m_touchOnSelected = false;
-
-        // Check dropdown first if open
-        if (m_dropdownOpen && m_dropdownRawIdx >= 0 && m_tabIndex >= 0 && m_tabIndex < (int)m_tabs.size()) {
-            auto& items = m_tabs[m_tabIndex].items;
-            if (m_dropdownRawIdx < (int)items.size()) {
-                auto& item = items[m_dropdownRawIdx];
-                int total = (int)item.options.size();
-                int visible = std::min(total, 6);
-                float optH = 36.f;
-                float listH = visible * optH + 10.f;
-
-                float y = cr.y - m_scrollY;
-                for (int i = 0; i < m_dropdownRawIdx; ++i)
-                    y += (items[i].type == ItemType::Section) ? kSectionHeight : kRowHeight;
-                float rowH = kRowHeight;
-
-                float ctrlX = cr.x + cr.width * 0.55f;
-                float ctrlW = cr.width * 0.42f;
-                float dy = y + rowH + 6.f;
-                if (dy + listH > cr.bottom() - 4.f)
-                    dy = y - listH - 6.f;
-
-                nxui::Rect dropRect = { ctrlX, dy, ctrlW, listH };
-                if (dropRect.contains(tx, ty)) {
-                    m_touchTarget = TouchTarget::Dropdown;
-                    int start = 0;
-                    if (total > visible)
-                        start = std::clamp(m_dropdownHover - visible / 2, 0, total - visible);
-                    float localY = ty - dy - 5.f;
-                    int idx = start + (int)(localY / optH);
-                    idx = std::clamp(idx, 0, total - 1);
-                    m_touchHitIndex = idx;
-                    m_touchOnSelected = (idx == m_dropdownHover);
-                    return;
-                }
-            }
-        }
-
-        // Check color picker if open
-        if (m_colorPickerOpen) {
-            m_touchTarget = TouchTarget::ColorPicker;
-            return;
-        }
-
-        // Check tabs
-        if (tr.contains(tx, ty)) {
-            m_touchTarget = TouchTarget::Tab;
-            int idx = (int)((ty - tr.y) / kTabRowHeight);
-            idx = std::clamp(idx, 0, (int)m_tabs.size() - 1);
-            m_touchHitIndex = idx;
-            m_touchOnSelected = (idx == m_tabIndex && m_focusArea == FocusArea::Tabs);
-            return;
-        }
-
-        // Check content items
-        if (cr.contains(tx, ty) && m_tabIndex >= 0 && m_tabIndex < (int)m_tabs.size()) {
-            auto& items = m_tabs[m_tabIndex].items;
-            float y = cr.y - m_scrollY;
-            int focIdx = 0;
-            for (int i = 0; i < (int)items.size(); ++i) {
-                float h = (items[i].type == ItemType::Section) ? kSectionHeight : kRowHeight;
-                if (items[i].focusable()) {
-                    nxui::Rect itemRect = { cr.x, y, cr.width, h };
-                    if (itemRect.contains(tx, ty) && y >= cr.y && y + h <= cr.bottom()) {
-                        m_touchTarget = TouchTarget::Content;
-                        m_touchHitIndex = focIdx;
-                        m_touchOnSelected = (focIdx == m_contentIdx && m_focusArea == FocusArea::Content);
-                        return;
-                    }
-                    ++focIdx;
-                }
-                y += h;
-            }
-        }
-    }
-
-    if (input.touchUp()) {
-        float dx = std::abs(input.touchDeltaX());
-        float dy = std::abs(input.touchDeltaY());
-        constexpr float kTapThreshold = 20.f;
-
-        if (dx < kTapThreshold && dy < kTapThreshold) {
-            switch (m_touchTarget) {
-            case TouchTarget::Tab:
-                if (m_touchHitIndex >= 0 && m_touchHitIndex < (int)m_tabs.size()) {
-                    if (m_touchOnSelected) {
-                        // Tap on selected tab: enter content
-                        if (focusableCount() > 0) {
-                            m_focusArea = FocusArea::Content;
-                            m_contentIdx = 0;
-                            if (m_navSfxCb) m_navSfxCb();
-                        }
-                    } else {
-                        // Tap on different tab: switch to it
-                        m_focusArea = FocusArea::Tabs;
-                        if (m_tabIndex != m_touchHitIndex) {
-                            m_tabSwitchDir = (m_touchHitIndex > m_tabIndex) ? 1 : -1;
-                            m_tabIndex = m_touchHitIndex;
-                            m_contentIdx = 0;
-                            m_scrollY = 0;
-                            m_scrollTarget = 0;
-                            m_tabReveal.setImmediate(0.f);
-                            m_tabReveal.set(1.f, 0.24f, nxui::Easing::outCubic);
-                            m_contentSlideAnim.setImmediate(0.f);
-                            m_contentSlideAnim.set(1.f, 0.28f, nxui::Easing::outCubic);
-                            m_tabAccentW.setImmediate(1.f);
-                            m_tabAccentW.set(3.f, 0.32f, nxui::Easing::outExpo);
-                            m_dropdownOpen = false;
-                            m_dropdownRawIdx = -1;
-                            m_dropdownAnim.setImmediate(0.f);
-                            m_colorPickerOpen = false;
-                            m_colorPickerRawIdx = -1;
-                            m_colorPickerAnim.setImmediate(0.f);
-                            rebuildContentItems();
-                        }
-                        if (m_navSfxCb) m_navSfxCb();
-                    }
-                }
-                break;
-
-            case TouchTarget::Content:
-                if (m_touchHitIndex >= 0 && m_touchHitIndex < focusableCount()) {
-                    if (m_touchOnSelected) {
-                        // Tap on selected item: activate
-                        onPressA();
-                    } else {
-                        // Tap on different item: select it
-                        m_focusArea = FocusArea::Content;
-                        m_contentIdx = m_touchHitIndex;
-                        scrollToFocused();
-                        if (m_navSfxCb) m_navSfxCb();
-                    }
-                }
-                break;
-
-            case TouchTarget::Dropdown:
-                if (m_touchHitIndex >= 0) {
-                    if (m_touchOnSelected) {
-                        // Tap on selected dropdown option: select it
-                        if (m_dropdownRawIdx >= 0 && m_tabIndex >= 0 && m_tabIndex < (int)m_tabs.size()) {
-                            auto& items = m_tabs[m_tabIndex].items;
-                            if (m_dropdownRawIdx < (int)items.size()) {
-                                auto& sel = items[m_dropdownRawIdx];
-                                int n = std::max(1, (int)sel.options.size());
-                                sel.intVal = std::clamp(m_dropdownHover, 0, n - 1);
-                                if (sel.onChange) sel.onChange(sel);
-                                if (m_activateSfxCb) m_activateSfxCb();
-                            }
-                        }
-                        m_dropdownOpen = false;
-                        m_dropdownRawIdx = -1;
-                        m_dropdownAnim.set(0.f, 0.10f, nxui::Easing::outCubic);
-                    } else {
-                        // Tap on different dropdown option: hover it
-                        m_dropdownHover = m_touchHitIndex;
-                        if (m_navSfxCb) m_navSfxCb();
-                    }
-                }
-                break;
-
-            case TouchTarget::ColorPicker:
-                // Close color picker on tap
-                m_colorPickerOpen = false;
-                m_colorPickerRawIdx = -1;
-                m_colorPickerAnim.set(0.f, 0.10f, nxui::Easing::outCubic);
-                break;
-
-            case TouchTarget::None:
-                // Tap outside: close dropdowns/pickers or go back
-                if (m_dropdownOpen) {
-                    m_dropdownOpen = false;
-                    m_dropdownRawIdx = -1;
-                    m_dropdownAnim.set(0.f, 0.10f, nxui::Easing::outCubic);
-                } else if (m_colorPickerOpen) {
-                    m_colorPickerOpen = false;
-                    m_colorPickerRawIdx = -1;
-                    m_colorPickerAnim.set(0.f, 0.10f, nxui::Easing::outCubic);
-                } else if (!panel.contains(input.touchX(), input.touchY())) {
-                    // Tap outside panel: close settings
-                    hide();
-                }
-                break;
-            }
-        }
-
-        m_touchTarget = TouchTarget::None;
-        m_touchHitIndex = -1;
-        m_touchOnSelected = false;
-    }
-}
-
-
-void SettingsScreen::update(float dt) {
-    if (m_deferredRefresh) {
-        m_deferredRefresh = false;
-        refreshTranslations();
-    }
-
-    if (m_deferBuild) {
-        m_deferBuild = false;
-        buildTabs();
-    }
-
-    if (m_animating) {
-        m_animT += dt / kAnimDuration;
-        if (m_animT >= 1.f) {
-            m_animT = 1.f;
-            m_animating = false;
-            if (!m_showing) {
-                m_active = false;
-                if (m_closedCb) m_closedCb();
-            }
-        }
-    }
-    m_scrollY += (m_scrollTarget - m_scrollY) * std::min(1.f, dt * 14.f);
-    m_uiTime += dt;
-
-    if (m_active && !m_animating && m_tabIndex >= 0 && m_tabIndex < (int)m_tabs.size()) {
-        auto& tab = m_tabs[m_tabIndex];
-        if (tab.onUpdate) tab.onUpdate(tab, *this);
-    }
-
-    m_focusCursor.update(dt);
-    m_tabReveal.update(std::min(dt, 0.03f));
-    m_dropdownAnim.update(dt);
-    m_colorPickerAnim.update(dt);
-    m_trackToastAnim.update(dt);
-    m_contentSlideAnim.update(std::min(dt, 0.03f));
-    m_tabAccentW.update(std::min(dt, 0.03f));
-
-    if (m_trackToastHold > 0.f) {
-        m_trackToastHold -= dt;
-        if (m_trackToastHold <= 0.f) {
-            m_trackToastHold = 0.f;
-            if (!m_trackToastFading) {
-                m_trackToastAnim.set(0.f, 0.35f, nxui::Easing::outCubic);
-                m_trackToastFading = true;
-            }
-        }
-    }
-
-    for (auto& tab : m_tabs) {
-        for (auto& item : tab.items) {
-            if (item.type == ItemType::Toggle) {
-                float target = item.boolVal ? 1.f : 0.f;
-                item.anim01 += (target - item.anim01) * std::min(1.f, dt * 14.f);
-                if (std::abs(target - item.anim01) < 0.0015f)
-                    item.anim01 = target;
-            } else if (item.type == ItemType::Slider) {
-                float target = std::clamp(item.floatVal, 0.f, 1.f);
-                item.anim01 += (target - item.anim01) * std::min(1.f, dt * 18.f);
-                if (std::abs(target - item.anim01) < 0.0015f)
-                    item.anim01 = target;
-            } else if (item.type == ItemType::Action) {
-                float target = (m_trackToastAnim.value() > 0.05f) ? 1.f : 0.f;
-                item.anim01 += (target - item.anim01) * std::min(1.f, dt * 16.f);
-                if (std::abs(target - item.anim01) < 0.0015f)
-                    item.anim01 = target;
-            }
-        }
-    }
-
-    nxui::Rect p = panelRect();
-    nxui::Rect tr = tabsRect(p);
-    nxui::Rect cr = contentRect(p);
-
-    float tabTargetY = tr.y + m_tabIndex * kTabRowHeight;
-    m_tabGlowY.set(tabTargetY, 0.18f, nxui::Easing::outCubic);
-
-    if (m_tabIndex >= 0 && m_tabIndex < (int)m_tabs.size()) {
-        auto& items = m_tabs[m_tabIndex].items;
-        float y = cr.y - m_scrollY;
-        int foc = 0;
-        for (auto& it : items) {
-            float h = it.type == ItemType::Section ? kSectionHeight : kRowHeight;
-            if (it.focusable()) {
-                if (foc == m_contentIdx) {
-                    m_contentGlowY.set(y, 0.14f, nxui::Easing::outCubic);
-                    break;
-                }
-                ++foc;
-            }
-            y += h;
-        }
-    }
-
-    for (auto& c : children()) c->update(dt);
-}
-
-
-nxui::Rect SettingsScreen::panelRect() const {
-    return { kPanelMargin, kPanelMargin,
-             1280.f - 2 * kPanelMargin, 720.f - 2 * kPanelMargin };
-}
-
-nxui::Rect SettingsScreen::panelRect(float scale) const {
-    nxui::Rect p = panelRect();
-    if (scale < 1.f) {
-        float w = p.width  * scale;
-        float h = p.height * scale;
-        p.x += (p.width  - w) * 0.5f;
-        p.y += (p.height - h) * 0.5f;
-        p.width = w;
-        p.height = h;
-    }
-    return p;
-}
-
-nxui::Rect SettingsScreen::tabsRect() const {
-    nxui::Rect p = panelRect();
-    return tabsRect(p);
-}
-
-nxui::Rect SettingsScreen::tabsRect(const nxui::Rect& p) const {
-    return { p.x + kInnerPad, p.y + kInnerPad, kTabWidth, p.height - 2 * kInnerPad };
-}
-
-nxui::Rect SettingsScreen::contentRect() const {
-    nxui::Rect p = panelRect();
-    return contentRect(p);
-}
-
-nxui::Rect SettingsScreen::contentRect(const nxui::Rect& p) const {
-    float left = p.x + kInnerPad + kTabWidth + kInnerPad;
-    return { left, p.y + kInnerPad,
-             p.right() - kInnerPad - left, p.height - 2 * kInnerPad };
-}
-
-float SettingsScreen::contentTotalHeight() const {
-    if (m_tabIndex < 0 || m_tabIndex >= (int)m_tabs.size()) return 0;
-    float h = 0;
-    for (auto& it : m_tabs[m_tabIndex].items)
-        h += (it.type == ItemType::Section ? kSectionHeight : kRowHeight);
-    return h;
-}
-
-
-void SettingsScreen::render(nxui::Renderer& ren) {
-    if (!m_active && !m_animating) return;
-
-    float t = m_animT;
-    float eased = m_showing ? easeOutCubic(t) : 1.f - easeInCubic(t);
-
-    float opacity = eased;
-    float scale   = 0.92f + 0.08f * eased;
-    nxui::Rect p  = panelRect(scale);
+    float opacity = visibilityProgress();
+    nxui::Rect p = panelRect(scale());
 
     if (m_theme)
         m_focusCursor.setColor(m_theme->cursorNormal);
@@ -1005,18 +364,53 @@ void SettingsScreen::render(nxui::Renderer& ren) {
     if (m_tabBar) m_tabBar->setRect(tabsRect(p));
     if (m_tabContent) m_tabContent->setRect(contentRect(p));
 
-    drawBackground(ren, opacity * 0.55f);
-    drawPanel(ren, p, opacity);
+    const auto& tuning = settings::debug::settingsGlassTuning();
+    bool needsBackdropRefresh = !m_backdropCacheValid
+        || std::abs(m_cachedPreBlurRadius - tuning.preBlurRadius) > 0.001f
+        || m_cachedBlurIterations != tuning.blurIterations;
 
-    float textOp = m_showing ? opacity : opacity * opacity;
+    if (opacity > 0.01f) {
+        if (needsBackdropRefresh) {
+            ren.captureToOffscreen(false);
+            if (tuning.blurIterations > 0 && tuning.preBlurRadius > 0.001f) {
+                ren.applyBlur(tuning.preBlurRadius, tuning.blurIterations);
+            }
+            ren.copyOffscreen(0, kSettingsBackdropCacheTarget);
+            m_backdropCacheValid = true;
+            m_cachedPreBlurRadius = tuning.preBlurRadius;
+            m_cachedBlurIterations = tuning.blurIterations;
+        }
+    }
 
-    ren.pushClipRect(p);
-    drawTabs(ren, p, textOp);
-    drawContent(ren, p, textOp);
-    drawDropdown(ren, p, textOp);
-    drawColorPicker(ren, p, textOp);
-    drawTrackChangedToast(ren, p, textOp);
-    ren.popClipRect();
+    drawBackground(ren, p, opacity * 0.72f);
+
+    if (opacity > 0.01f) {
+        nxui::LiquidGlassSettings savedGlass = ren.liquidGlassSettings();
+        auto& glass = ren.liquidGlassSettings();
+        glass.refractionIntensity = std::clamp(tuning.refractionIntensity, 0.0f, 1.5f);
+        glass.blurIntensity = std::max(0.0f, tuning.shaderBlurIntensity);
+        glass.noiseIntensity = 0.0f;
+        glass.glowIntensity = std::max(0.0f, tuning.glowIntensity);
+        glass.saturation = std::max(0.0f, tuning.saturation);
+        glass.opacityMultiplier = 1.0f;
+        glass.roughness = std::max(0.0f, tuning.roughness);
+        glass.powerFactor = std::max(1.001f, tuning.powerFactor);
+
+        nxui::Color glassTint = m_theme
+            ? m_theme->panelBase.withAlpha(m_theme->mode == nxui::ThemeMode::Dark
+                ? std::clamp(tuning.tintAlphaDark, 0.0f, 1.0f)
+                : std::clamp(tuning.tintAlphaLight, 0.0f, 1.0f))
+            : m_base.withAlpha(0.14f);
+        nxui::Rect glassRect = p.shrunk(std::max(0.0f, tuning.inset));
+        float glassRadius = std::max(12.0f, kPanelRadius - std::max(0.0f, tuning.inset) * 0.5f);
+
+        ren.drawLiquidGlass(kSettingsBackdropCacheTarget, glassRect, glassRadius, glassTint, opacity,
+                            std::clamp(tuning.shade, 0.0f, 1.0f));
+
+        ren.liquidGlassSettings() = savedGlass;
+    }
+
+    onContentRender(ren);
 
     if (ren.boxWireframeEnabled()) {
         syncDebugWireframeRects(p);
@@ -1027,6 +421,20 @@ void SettingsScreen::render(nxui::Renderer& ren) {
     m_focusCursor.render(ren);
 }
 
+void SettingsScreen::onContentRender(nxui::Renderer& ren) {
+    float opacity = visibilityProgress();
+    nxui::Rect p = panelRect(scale());
+    float textOp = m_showing ? opacity : opacity * opacity;
+
+    ren.pushClipRect(p);
+    drawTabs(ren, p, textOp);
+    drawContent(ren, p, textOp);
+    drawDropdown(ren, p, textOp);
+    drawColorPicker(ren, p, textOp);
+    drawTrackChangedToast(ren, p, textOp);
+    ren.popClipRect();
+}
+
 void SettingsScreen::syncDebugWireframeRects(const nxui::Rect& panel) {
     if (!m_tabBar || !m_tabContent) return;
 
@@ -1035,8 +443,12 @@ void SettingsScreen::syncDebugWireframeRects(const nxui::Rect& panel) {
 
     m_tabBar->setRect(tr);
     auto& tabChildren = m_tabBar->children();
+    float tabY = tr.y + kTabRailInset;
+    float tabW = std::max(0.f, tr.width - kTabRailInset * 2.f);
+    float tabH = kTabRowHeight - kTabCardGap;
     for (int i = 0; i < (int)tabChildren.size(); ++i) {
-        tabChildren[i]->setRect({tr.x, tr.y + i * kTabRowHeight, tr.width, kTabRowHeight});
+        tabChildren[i]->setRect({tr.x + kTabRailInset, tabY, tabW, tabH});
+        tabY += tabH + kTabCardGap;
     }
 
     m_tabContent->setRect(cr);
@@ -1052,86 +464,70 @@ void SettingsScreen::syncDebugWireframeRects(const nxui::Rect& panel) {
     int n = std::min((int)itemChildren.size(), (int)items.size());
     for (int i = 0; i < n; ++i) {
         float h = (items[i].type == ItemType::Section) ? kSectionHeight : kRowHeight;
-        itemChildren[i]->setRect({cr.x, y, cr.width, h});
+        float insetY = (items[i].type == ItemType::Section) ? 1.f : kContentCardInsetY;
+        float cardH = std::max(0.f, h - (items[i].type == ItemType::Section ? 2.f : 6.f));
+        itemChildren[i]->setRect({cr.x + kContentCardInsetX, y + insetY,
+                                  std::max(0.f, cr.width - kContentCardInsetX * 2.f), cardH});
         y += h;
     }
 }
 
-void SettingsScreen::drawBackground(nxui::Renderer& ren, float opacity) {
-    ren.drawRect({0, 0, 1280, 720}, nxui::Color(0, 0, 0, opacity));
-}
+void SettingsScreen::drawBackground(nxui::Renderer& ren, const nxui::Rect& panel, float opacity) {
+    if (!m_theme || opacity <= 0.01f)
+        return;
 
-void SettingsScreen::drawPanel(nxui::Renderer& ren, const nxui::Rect& p, float opacity) {
-    if (!m_theme) return;
+    nxui::Rect screen = {0.f, 0.f, (float)ren.width(), (float)ren.height()};
+    nxui::Color scrim = nxui::Color::lerp(m_theme->background, nxui::Color::black(),
+                                          m_theme->mode == nxui::ThemeMode::Dark ? 0.72f : 0.28f)
+        .withAlpha((m_theme->mode == nxui::ThemeMode::Dark ? 0.14f : 0.10f) * opacity);
 
-    setVisible(true);
-    setRect(p);
-    setScale(1.f);
-    setCornerRadius(kPanelRadius);
-    setBorderWidth(1.f);
-    setBaseColor(m_theme->panelBase);
-    setBorderColor(m_theme->panelBorder);
-    setHighlightColor(m_theme->panelHighlight);
-    setBackingEnabled(true);
-    setBackingColor(nxui::Color(
-        m_theme->panelBase.r, m_theme->panelBase.g, m_theme->panelBase.b, 1.f));
-    setPanelOpacity(opacity);
-    setOpacity(1.f);
-    nxui::GlassPanel::onRender(ren);
-
-    float sepX = p.x + kInnerPad + kTabWidth + kInnerPad * 0.5f;
-    float sepTop = p.y + kInnerPad + 4;
-    float sepBot = p.bottom() - kInnerPad - 4;
-    ren.drawLine({sepX, sepTop}, {sepX, sepBot},
-                 m_theme->panelBorder.withAlpha(0.3f * opacity), 1.f);
+    ren.drawRect(screen, scrim);
 }
 
 void SettingsScreen::drawTabs(nxui::Renderer& ren, const nxui::Rect& panel, float opacity) {
-    if (!m_font || !m_theme) return;
+    if (!m_font || !m_theme || !m_tabBar) return;
     nxui::Rect tr = tabsRect(panel);
+    auto* tabPanel = static_cast<nxui::GlassBox*>(m_tabBar.get());
 
-    {
-        float pulse = 0.9f + 0.1f * (std::sin(m_uiTime * 4.2f) * 0.5f + 0.5f);
-        nxui::Rect selRow = { tr.x, m_tabGlowY.value(), tr.width, kTabRowHeight };
-        nxui::Color sel = m_theme->cursorNormal.withAlpha(0.16f * pulse * opacity);
-        ren.drawRoundedRect(selRow.shrunk(2.f), sel, 10.f);
+    tabPanel->setRect(tr);
+    tabPanel->setOpacity(opacity);
+    tabPanel->setCornerRadius(24.f);
+    tabPanel->setBorderWidth(1.f);
+    tabPanel->setBaseColor(m_theme->panelBase.withAlpha(m_theme->mode == nxui::ThemeMode::Dark ? 0.08f : 0.10f));
+    tabPanel->setBorderColor(m_theme->panelBorder.withAlpha(0.14f));
+    tabPanel->setHighlightColor(m_theme->panelHighlight.withAlpha(0.03f));
+    tabPanel->setPanelOpacity(1.f);
+
+    auto& tabChildren = m_tabBar->children();
+    float reveal = std::clamp(m_tabReveal.value(), 0.f, 1.f);
+    float tabY = tr.y + kTabRailInset;
+    float tabW = std::max(0.f, tr.width - kTabRailInset * 2.f);
+    float tabH = kTabRowHeight - kTabCardGap;
+
+    for (int i = 0; i < (int)tabChildren.size() && i < (int)m_tabs.size(); ++i) {
+        float delay = std::min(0.45f, i * 0.04f);
+        float local = std::clamp((reveal - delay) / 0.24f, 0.f, 1.f);
+        float rowOpacity = opacity * local;
+        float rowYOffset = (1.f - local) * 8.f;
+
+        auto* tab = static_cast<SettingsTabWidget*>(tabChildren[i].get());
+        tab->setRect({tr.x + kTabRailInset, tabY + rowYOffset, tabW, tabH});
+        tab->setOpacity(rowOpacity);
+        tab->sync(m_tabs[i].name,
+                  m_font,
+                  m_theme,
+                  i == m_tabIndex,
+                  m_focusArea == FocusArea::Tabs && i == m_tabIndex,
+                  m_uiTime,
+                  m_tabAccentW.value());
+        tabY += tabH + kTabCardGap;
     }
 
-    if (m_focusArea == FocusArea::Tabs) {
-        nxui::Rect cur = { tr.x, m_tabGlowY.value(), tr.width, kTabRowHeight };
-        m_focusCursor.moveTo(cur.shrunk(2.f), 10.f, 0.08f);
+    if (m_focusArea == FocusArea::Tabs && m_tabIndex >= 0 && m_tabIndex < (int)tabChildren.size()) {
+        m_focusCursor.moveTo(tabChildren[m_tabIndex]->rect().expanded(1.f), 16.f, 0.08f);
     }
 
-    for (int i = 0; i < (int)m_tabs.size(); ++i) {
-        float y = tr.y + i * kTabRowHeight;
-        nxui::Rect row = { tr.x, y, tr.width, kTabRowHeight };
-
-        bool selected = (i == m_tabIndex);
-
-        nxui::Color textCol = selected ? m_theme->textPrimary : m_theme->textSecondary;
-        nxui::Vec2 sz = m_font->measure(m_tabs[i].name);
-        float tx = row.x + 14.f;
-        float breathe = selected ? (0.5f + 0.5f * std::sin(m_uiTime * 4.6f)) : 0.f;
-        float scale = selected ? (0.88f + 0.018f * breathe) : 0.84f;
-        tx += selected ? (1.2f * breathe) : 0.f;
-        float ty = row.y + (row.height - sz.y * scale) * 0.5f;
-        ren.drawText(m_tabs[i].name, {tx, ty}, m_font, textCol.withAlpha(opacity), scale);
-
-        if (selected) {
-            float accentW = m_tabAccentW.value();
-            float accentH = kTabRowHeight * 0.48f;
-            float accentY = row.y + (row.height - accentH) * 0.5f;
-            nxui::Rect accent = { row.x + 2.f, accentY, accentW, accentH };
-            ren.drawRoundedRect(accent,
-                                m_theme->cursorNormal.withAlpha(0.85f * opacity),
-                                1.5f);
-
-            nxui::Rect underline = { row.x + 10.f, row.bottom() - 6.f, row.width - 20.f, 2.f };
-            ren.drawRoundedRect(underline,
-                                m_theme->cursorNormal.withAlpha((0.22f + 0.10f * breathe) * opacity),
-                                1.f);
-        }
-    }
+    m_tabBar->render(ren);
 }
 
 void SettingsScreen::drawContent(nxui::Renderer& ren, const nxui::Rect& panel, float opacity) {
@@ -1140,28 +536,27 @@ void SettingsScreen::drawContent(nxui::Renderer& ren, const nxui::Rect& panel, f
     if (!m_tabContent) return;
 
     nxui::Rect cr = contentRect(panel);
-
-    if (m_focusArea == FocusArea::Content && focusableCount() > 0) {
-        float pulse = 0.86f + 0.14f * (std::sin(m_uiTime * 4.8f) * 0.5f + 0.5f);
-        nxui::Rect glowRow = { cr.x, m_contentGlowY.value(), cr.width, kRowHeight };
-        nxui::Color glow = m_theme->cursorNormal.withAlpha(0.12f * pulse * opacity);
-        ren.drawRoundedRect(glowRow.shrunk(1.f), glow, 8.f);
-    }
-
-    if (m_focusArea == FocusArea::Content && focusableCount() > 0) {
-        nxui::Rect cur = { cr.x, m_contentGlowY.value(), cr.width, kRowHeight };
-        m_focusCursor.moveTo(cur.shrunk(1.f), 8.f, 0.08f);
-    }
+    auto* contentPanel = static_cast<nxui::GlassBox*>(m_tabContent.get());
+    contentPanel->setRect(cr);
+    contentPanel->setOpacity(opacity);
+    contentPanel->setCornerRadius(26.f);
+    contentPanel->setBorderWidth(1.f);
+    contentPanel->setBaseColor(m_theme->panelBase.withAlpha(m_theme->mode == nxui::ThemeMode::Dark ? 0.06f : 0.08f));
+    contentPanel->setBorderColor(m_theme->panelBorder.withAlpha(0.12f));
+    contentPanel->setHighlightColor(m_theme->panelHighlight.withAlpha(0.03f));
+    contentPanel->setPanelOpacity(1.f);
 
     auto& items = m_tabs[m_tabIndex].items;
     auto& itemChildren = m_tabContent->children();
+    int focusedRawIdx = (m_focusArea == FocusArea::Content && focusableCount() > 0)
+        ? rawIndexFromFocusable(m_contentIdx) : -1;
 
     float slideT = std::clamp(m_contentSlideAnim.value(), 0.f, 1.f);
     float slideOffset = (1.f - slideT) * 24.f * (float)m_tabSwitchDir;
     float slideOpacity = opacity * slideT;
     float reveal = std::clamp(m_tabReveal.value(), 0.f, 1.f);
 
-    float y = cr.y - m_scrollY + slideOffset;
+    float y = cr.y + 14.f - m_scrollY + slideOffset;
     int n = std::min((int)itemChildren.size(), (int)items.size());
     for (int i = 0; i < n; ++i) {
         float h = (items[i].type == ItemType::Section) ? kSectionHeight : kRowHeight;
@@ -1169,8 +564,24 @@ void SettingsScreen::drawContent(nxui::Renderer& ren, const nxui::Rect& panel, f
         float local = std::clamp((reveal - delay) / 0.28f, 0.f, 1.f);
         float rowOpacity = slideOpacity * local;
         float rowYOffset = (1.f - local) * 10.f;
-        itemChildren[i]->setRect({cr.x, y + rowYOffset, cr.width, h});
+        float insetY = (items[i].type == ItemType::Section) ? 1.f : kContentCardInsetY;
+        float cardH = std::max(0.f, h - (items[i].type == ItemType::Section ? 2.f : 6.f));
+
+        itemChildren[i]->setRect({cr.x + kContentCardInsetX,
+                                  y + rowYOffset + insetY,
+                                  std::max(0.f, cr.width - kContentCardInsetX * 2.f),
+                                  cardH});
         itemChildren[i]->setOpacity(rowOpacity);
+
+        auto* card = static_cast<SettingsItemCard*>(itemChildren[i].get());
+        bool selected = (i == focusedRawIdx);
+        card->sync(m_theme, selected, rowOpacity);
+
+        if (selected) {
+            m_focusCursor.moveTo(itemChildren[i]->rect().expanded(1.f),
+                                 items[i].type == ItemType::Section ? 14.f : 18.f,
+                                 0.08f);
+        }
         y += h;
     }
 
@@ -1202,7 +613,7 @@ void SettingsScreen::drawDropdown(nxui::Renderer& ren, const nxui::Rect& panel, 
 
     int total = (int)item.options.size();
     int visible = std::min(total, 6);
-    float optH = 36.f;
+    float optH = 42.f;
     float listH = visible * optH + 10.f;
 
     int start = 0;

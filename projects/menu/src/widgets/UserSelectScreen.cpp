@@ -10,6 +10,10 @@
 #include <cstdio>
 #include <algorithm>
 
+UserSelectScreen::UserSelectScreen() {
+    setFrameworkTouchEnabled(false);
+}
+
 
 bool UserSelectScreen::loadUsers(nxui::GpuDevice& gpu, nxui::Renderer& ren) {
     m_users.clear();
@@ -69,6 +73,7 @@ void UserSelectScreen::show(SelectCallback onSelect, CancelCallback onCancel) {
     m_onCancel = std::move(onCancel);
     m_active   = true;
     m_animatingOut = false;
+    m_ignoreInitialTouchRelease = true;
     m_overlayAlpha.setImmediate(0.f);
     m_panelScale.setImmediate(0.85f);
     m_overlayAlpha.set(1.f, 0.2f, nxui::Easing::outExpo);
@@ -126,6 +131,9 @@ void UserSelectScreen::handleTouch(nxui::Input& input) {
     if (n == 0) return;
 
     if (input.touchDown()) {
+        if (m_ignoreInitialTouchRelease)
+            m_ignoreInitialTouchRelease = false;
+
         float tx = input.touchX();
         float ty = input.touchY();
         m_touchHitAvatar = -1;
@@ -142,6 +150,13 @@ void UserSelectScreen::handleTouch(nxui::Input& input) {
     }
 
     if (input.touchUp()) {
+        if (m_ignoreInitialTouchRelease) {
+            m_ignoreInitialTouchRelease = false;
+            m_touchHitAvatar = -1;
+            m_touchOnSelected = false;
+            return;
+        }
+
         float dx = std::abs(input.touchDeltaX());
         float dy = std::abs(input.touchDeltaY());
         if (dx < 20.f && dy < 20.f) {

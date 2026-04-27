@@ -129,9 +129,12 @@ void SidebarManager::update(float dt, nxui::Widget* focusedWidget) {
 
 void SidebarManager::applyTheme(const nxui::Theme& theme) {
     auto apply = [&](std::shared_ptr<AppletButton>& btn) {
-        btn->setBaseColor(theme.panelBase);
+        btn->setBaseColor(theme.iconDefault);
         btn->setBorderColor(theme.panelBorder);
         btn->setHighlightColor(theme.panelHighlight);
+        btn->setLiquidGlassEnabled(true);
+        btn->setBlurEnabled(false);
+        btn->setBorderWidth(0.f);
     };
     for (auto& btn : m_leftButtons)  apply(btn);
     for (auto& btn : m_rightButtons) apply(btn);

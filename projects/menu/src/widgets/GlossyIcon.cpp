@@ -9,6 +9,8 @@ GlossyIcon::GlossyIcon() {
     m_appearOpacity.setImmediate(0.f);
     setCornerRadius(16.f);
     setPadding(8.f);
+    setLiquidGlassEnabled(true);
+    setBlurEnabled(false);
 }
 
 void GlossyIcon::startAppear(float delay) {
@@ -17,6 +19,14 @@ void GlossyIcon::startAppear(float delay) {
     m_appearing   = true;
     m_animScale.setImmediate(0.f);
     m_appearOpacity.setImmediate(0.f);
+}
+
+void GlossyIcon::forceVisible() {
+    m_appearing = false;
+    m_appearDelay = 0.f;
+    m_appearTimer = 0.f;
+    m_animScale.setImmediate(1.f);
+    m_appearOpacity.setImmediate(1.f);
 }
 
 void GlossyIcon::onContentUpdate(float dt) {
@@ -34,11 +44,14 @@ void GlossyIcon::onContentUpdate(float dt) {
 }
 
 void GlossyIcon::onRender(nxui::Renderer& ren) {
-    float s = m_animScale.value();
+    float externalScale = scale();
+    float s = m_animScale.value() * externalScale;
     float a = m_appearOpacity.value();
     if (s < 0.01f || a < 0.01f) return;
 
     setScale(s);
+    float savedShade = liquidGlassShade();
+    setLiquidGlassShade(m_notLaunchable ? 0.58f : 0.0f);
 
     float savedOp = m_opacity;
     m_opacity = a * savedOp;
@@ -46,6 +59,8 @@ void GlossyIcon::onRender(nxui::Renderer& ren) {
     nxui::GlassWidget::onRender(ren);
 
     m_opacity = savedOp;
+    setLiquidGlassShade(savedShade);
+    setScale(externalScale);
 
     nxui::Rect r = m_rect;
     if (s < 1.f) {
@@ -57,11 +72,6 @@ void GlossyIcon::onRender(nxui::Renderer& ren) {
         r.height = h;
     }
     float rad = cornerRadius();
-
-    if (m_notLaunchable && s > 0.5f) {
-        nxui::Color dimColor(0.f, 0.f, 0.f, 0.55f * a);
-        ren.drawRoundedRect(r, dimColor, rad);
-    }
 
     if (m_isGameCard && !m_notLaunchable && s > 0.5f) {
         float badgeW = 66.f * s;
@@ -134,7 +144,12 @@ void GlossyIcon::onContentRender(nxui::Renderer& ren) {
 
     float inset = 8.f * s;
     nxui::Rect texRect = r.shrunk(inset);
-    ren.drawTextureRounded(m_tex, texRect, rad - 3.f,
-                           nxui::Color::white().withAlpha(m_opacity));
+    nxui::Color iconTint = nxui::Color::white().withAlpha(m_opacity);
+    if (m_notLaunchable) {
+        iconTint.r = 0.80f;
+        iconTint.g = 0.80f;
+        iconTint.b = 0.80f;
+    }
+    ren.drawTextureRounded(m_tex, texRect, rad - 3.f, iconTint);
 }
 

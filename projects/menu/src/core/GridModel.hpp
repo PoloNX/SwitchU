@@ -3,6 +3,7 @@
 #include <switchu/ns_ext.hpp>
 #include <string>
 #include <vector>
+#include <utility>
 
 
 struct AppEntry {
@@ -50,7 +51,17 @@ public:
     void addEntry(AppEntry e) { m_entries.push_back(std::move(e)); }
     int  count() const { return (int)m_entries.size(); }
     const AppEntry& at(int i) const { return m_entries[i]; }
+    AppEntry& at(int i) { return m_entries[i]; }
     const std::vector<AppEntry>& entries() const { return m_entries; }
+
+    bool swapEntries(int a, int b) {
+        if (a < 0 || b < 0 || a >= (int)m_entries.size() || b >= (int)m_entries.size())
+            return false;
+        if (a == b)
+            return true;
+        std::swap(m_entries[a], m_entries[b]);
+        return true;
+    }
 
     const AppEntry* findByTitleId(uint64_t titleId) const {
         for (const auto& e : m_entries)

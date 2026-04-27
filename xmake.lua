@@ -1,7 +1,3 @@
--- ──────────────────────────────────────────────────────────────────────────────
--- SwitchU — xmake build
--- ──────────────────────────────────────────────────────────────────────────────
-set_xmakever("2.8.0")
 set_project("SwitchU")
 
 add_repositories("switch-repo https://github.com/PoloNX/switch-repo.git")
@@ -9,12 +5,14 @@ add_repositories("switch-repo https://github.com/PoloNX/switch-repo.git")
 includes("toolchain/*.lua")
 add_rules("mode.debug", "mode.release")
 
-add_requires("libsdl", "libsdl_mixer", "libsdl_ttf", "zlib", "libwebp", {configs = {toolchains = "devkita64"}})
+add_requires("libsdl", "libsdl_mixer", "libsdl_ttf", "zlib", "libwebp", "nlohmann_json", "fmt", {configs = {toolchains = "devkita64"}})
 if get_config("backend") ~= "sdl2" then
     add_requires("deko3d", {configs = {toolchains = "devkita64"}})
+    if is_mode("debug") then
+        add_requires("imgui", {configs = {toolchains = "devkita64"}})
+    end
 end
 
--- ── Options ──────────────────────────────────────────────────────────────────
 option("homebrew")
     set_default(false)
     set_showmenu(true)
@@ -28,7 +26,6 @@ option("backend")
     set_values("deko3d", "sdl2")
 option_end()
 
--- ── Static library: nxui ─────────────────────────────────────────────────────
 target("nxui")
     set_kind("static")
     if not is_plat("cross") then return end
@@ -36,7 +33,6 @@ target("nxui")
     set_toolchains("devkita64")
     set_languages("c++20")
 
-    -- Backend-independent sources
     add_files("lib/nxui/src/core/Application.cpp")
     add_files("lib/nxui/src/core/Animation.cpp")
     add_files("lib/nxui/src/core/I18n.cpp")
@@ -45,7 +41,6 @@ target("nxui")
     add_files("lib/nxui/src/widgets/*.cpp")
     add_files("lib/nxui/src/focus/*.cpp")
 
-    -- Backend-specific sources
     if get_config("backend") == "sdl2" then
         add_defines("NXUI_BACKEND_SDL2", {public = true})
         add_files("lib/nxui/src/core/GpuDevice_sdl2.cpp")
@@ -77,7 +72,6 @@ target("nxui")
     on_install(function(target) end)
 target_end()
 
--- ── Static library: libnxtc ──────────────────────────────────────────────────
 target("nxtc")
     set_kind("static")
     if not is_plat("cross") then return end
@@ -95,8 +89,6 @@ target("nxtc")
     on_install(function(target) end)
 target_end()
 
-
--- ── Homebrew (monolithic NRO) — original single-binary build ─────────────────
 target("SwitchU")
     set_kind("binary")
     if not is_plat("cross") then return end
@@ -123,6 +115,14 @@ target("SwitchU")
     add_includedirs("projects/common/include", {public = false})
     add_includedirs("projects/menu/src", {public = false})
 
+    add_packages("nlohmann_json", "fmt")
+
+    if is_mode("debug") and get_config("backend") ~= "sdl2" then
+        add_files("projects/menu/src/debug/DebugImGuiOverlay.cpp")
+        add_packages("imgui")
+        add_defines("SWITCHU_DEBUG_UI")
+    end
+
     add_cxxflags("-fno-rtti", "-fexceptions", {force = true})
     if get_config("backend") == "sdl2" then
         add_packages("libsdl", "libsdl_mixer", "libsdl_ttf", "zlib", "libwebp")
@@ -147,11 +147,6 @@ target("SwitchU")
     set_values("switch.format",  "nro")
 target_end()
 
--- ══════════════════════════════════════════════════════════════════════════════
--- Two-applet mode (non-homebrew):  daemon  +  menu
--- ══════════════════════════════════════════════════════════════════════════════
-
--- ── Daemon (system applet, qlaunch replacement) ──────────────────────────────
 target("switchu-daemon")
     set_kind("binary")
     if not is_plat("cross") then return end
@@ -186,7 +181,6 @@ target("switchu-daemon")
     set_values("switch.format",  "nsp")
 target_end()
 
--- ── Menu (library applet, hijacking eShop) ───────────────────────────────────
 target("switchu-menu")
     set_kind("binary")
     if not is_plat("cross") then return end
@@ -211,6 +205,14 @@ target("switchu-menu")
     add_includedirs("projects/menu/src",         {public = false})
     add_includedirs("lib/libnxtc/include",       {public = false})
 
+    add_packages("nlohmann_json", "fmt")
+
+    if is_mode("debug") and get_config("backend") ~= "sdl2" then
+        add_files("projects/menu/src/debug/DebugImGuiOverlay.cpp")
+        add_packages("imgui")
+        add_defines("SWITCHU_DEBUG_UI")
+    end
+
     add_cxxflags("-fno-rtti", "-fexceptions", {force = true})
     if get_config("backend") == "sdl2" then
         add_packages("libsdl", "libsdl_mixer", "libsdl_ttf", "zlib", "libwebp")
@@ -234,5 +236,5 @@ target("switchu-menu")
     set_values("switch.tid",     "010000000000100B")
     set_values("switch.json",    "projects/menu/menu.json")
     set_values("switch.format",  "nsp")
-    set_values("switch.assets_dir", "SwitchU")   -- SD assets → sdmc:/switch/SwitchU/
+    set_values("switch.assets_dir", "SwitchU")
 target_end()

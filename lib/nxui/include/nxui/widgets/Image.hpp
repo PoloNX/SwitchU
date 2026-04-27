@@ -13,7 +13,7 @@ class Image : public Box {
 public:
     Image() = default;
 
-    // ── Texture source ───────────────────────────────────────
+    // Texture source
 
     /// Set an externally managed texture (Image does NOT own it).
     void setTexture(Texture* tex) { m_externalTex = tex; }
@@ -32,7 +32,7 @@ public:
     /// Get the underlying texture (owned or external).
     const Texture* texture() const;
 
-    // ── Display options ──────────────────────────────────────
+    // Display options
 
     void setTint(const Color& c)       { m_tint = c; }
     const Color& tint() const          { return m_tint; }

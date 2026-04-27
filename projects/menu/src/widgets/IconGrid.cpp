@@ -34,6 +34,8 @@ void IconGrid::setPage(int page) {
 }
 
 void IconGrid::layoutPage() {
+    nxui::Widget* prevFocused = m_focus.current();
+
     clearChildren();
     int start = m_page * iconsPerPage();
     int end   = std::min(start + iconsPerPage(), (int)m_allIcons.size());
@@ -49,10 +51,59 @@ void IconGrid::layoutPage() {
         float y = m_originY + row * (m_cellH + m_padY);
         icon->setRect({x, y, m_cellW, m_cellH});
         addChild(icon);
-        fItems.push_back(icon.get());
+        if (icon->isFocusable())
+            fItems.push_back(icon.get());
     }
 
     m_focus.setGrid(fItems, m_cols);
+    if (prevFocused) {
+        for (auto* item : fItems) {
+            if (item == prevFocused) {
+                m_focus.setFocus(prevFocused);
+                break;
+            }
+        }
+    }
+}
+
+int IconGrid::focusedGlobalIndex() const {
+    auto* cur = m_focus.current();
+    if (!cur)
+        return -1;
+    for (int i = 0; i < (int)m_allIcons.size(); ++i) {
+        if (m_allIcons[i].get() == cur)
+            return i;
+    }
+    return -1;
+}
+
+bool IconGrid::focusGlobalIndex(int idx) {
+    if (idx < 0 || idx >= (int)m_allIcons.size())
+        return false;
+    if (!m_allIcons[idx] || !m_allIcons[idx]->isFocusable())
+        return false;
+
+    int perPage = iconsPerPage();
+    if (perPage <= 0)
+        return false;
+
+    int wantedPage = idx / perPage;
+    if (wantedPage != m_page)
+        setPage(wantedPage);
+
+    m_focus.setFocus(m_allIcons[idx].get());
+    return true;
+}
+
+bool IconGrid::swapSlots(int a, int b) {
+    if (a < 0 || b < 0 || a >= (int)m_allIcons.size() || b >= (int)m_allIcons.size())
+        return false;
+    if (a == b)
+        return true;
+
+    std::swap(m_allIcons[a], m_allIcons[b]);
+    layoutPage();
+    return true;
 }
 
 std::vector<GlossyIcon*> IconGrid::pageIcons() const {

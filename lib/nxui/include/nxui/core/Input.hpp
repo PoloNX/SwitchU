@@ -32,6 +32,7 @@ enum class Button : uint64_t {
 class Input {
 public:
     void initialize();
+    void shutdown();
     void update();
 
     bool isDown(Button b)     const;   // Pressed this frame
@@ -56,19 +57,42 @@ public:
     float touchDeltaY()  const { return m_touchY - m_touchStartY; }
     float touchDuration() const;  // seconds since touch began (valid on touchUp)
 
+    bool  virtualPointerEnabled() const { return m_virtualPointerEnabled; }
+    float virtualPointerX() const { return m_virtualPointerX; }
+    float virtualPointerY() const { return m_virtualPointerY; }
+    float virtualPointerSensitivity() const { return m_virtualPointerSensitivity; }
+    void  setVirtualPointerSensitivity(float sensitivity) { m_virtualPointerSensitivity = sensitivity; }
+    bool  pointerConsumesButton(Button b) const {
+        return b == Button::A && m_virtualPointerEnabled;
+    }
+
 private:
+    void recenterVirtualPointer();
+    bool readActiveSixAxisState(HidSixAxisSensorState& out) const;
+
     PadState m_pad{};
+    HidSixAxisSensorHandle m_handheldSixAxisHandle{};
+    HidSixAxisSensorHandle m_fullKeySixAxisHandle{};
+    HidSixAxisSensorHandle m_joyDualSixAxisHandles[2]{};
     uint64_t m_kDown = 0;
     uint64_t m_kUp   = 0;
     uint64_t m_kHeld = 0;
     float m_lx = 0, m_ly = 0;
     float m_rx = 0, m_ry = 0;
+    bool  m_hasHandheldSixAxis = false;
+    bool  m_hasFullKeySixAxis  = false;
+    bool  m_hasJoyDualSixAxis  = false;
+    bool  m_virtualPointerEnabled = false;
+    float m_virtualPointerX = 640.f;
+    float m_virtualPointerY = 360.f;
+    float m_virtualPointerSensitivity = 7000.f;
     bool  m_touching    = false;
     bool  m_wasTouching = false;
     bool  m_touchDown   = false;
     bool  m_touchUp     = false;
     float m_touchX = 0, m_touchY = 0;
     float m_touchStartX = 0, m_touchStartY = 0;
+    uint64_t m_prevUpdateTick = 0;
     uint64_t m_touchStartTick = 0;
 };
 

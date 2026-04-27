@@ -12,9 +12,9 @@ namespace nxui {
  */
 class GlassWidget : public GlassPanel {
 public:
-    GlassWidget() = default;
+    GlassWidget();
 
-    // ── Content geometry ─────────────────────────────────────
+    // Content geometry
     /// Inner rect after removing padding from the widget rect.
     Rect glassContentRect() const;
 

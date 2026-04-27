@@ -39,7 +39,7 @@ void Font::clearCache() {
 }
 
 Texture* Font::getOrRender(GpuDevice& gpu, Renderer& ren, const std::string& text) {
-    // ── Cache hit → promote to front ──────────────────────
+    // Cache hit: promote to the front.
     auto it = m_lruMap.find(text);
     if (it != m_lruMap.end()) {
         // Move to front (most-recently-used)
@@ -47,7 +47,7 @@ Texture* Font::getOrRender(GpuDevice& gpu, Renderer& ren, const std::string& tex
         return &it->second->tex;
     }
 
-    // ── Render the string via SDL_ttf ─────────────────────
+    // Render the string via SDL_ttf.
     SDL_Color white = {255, 255, 255, 255};
     SDL_Surface* surface = TTF_RenderUTF8_Blended(m_font, text.c_str(), white);
     if (!surface) return nullptr;
@@ -60,7 +60,7 @@ Texture* Font::getOrRender(GpuDevice& gpu, Renderer& ren, const std::string& tex
     const uint8_t* pixels = static_cast<const uint8_t*>(rgba->pixels);
     int w = rgba->w, h = rgba->h, pitch = rgba->pitch;
 
-    // ── Evict LRU or insert fresh ─────────────────────────
+    // Evict the LRU entry if needed.
     if (m_lruList.size() >= kMaxCacheEntries) {
         // Recycle the least-recently-used entry.
         // Its Texture already has a descriptor slot and MemBlock;

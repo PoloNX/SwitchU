@@ -1,5 +1,4 @@
 #pragma once
-// ──────────────────────────────────────────────────────────────────────────────
 // ThreadPool — lightweight, reusable worker pool.
 //
 // Usage:
@@ -8,7 +7,6 @@
 //     // ... poll with fut.wait_for(0s) or block with fut.get() ...
 //
 // The pool shuts down cleanly in its destructor (waits for in-flight tasks).
-// ──────────────────────────────────────────────────────────────────────────────
 #include <functional>
 #include <future>
 #include <queue>

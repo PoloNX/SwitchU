@@ -8,6 +8,11 @@ namespace nxui {
 
 namespace {
 
+static bool isTouchInteractive(Widget* node) {
+    return node && node->isVisible()
+        && (node->isFocusable() || !node->actions().empty());
+}
+
 static Widget* findTopHitRecursive(Widget* node, float x, float y) {
     if (!node || !node->isVisible()) return nullptr;
 
@@ -18,7 +23,9 @@ static Widget* findTopHitRecursive(Widget* node, float x, float y) {
             return hit;
     }
 
-    if (node->hitTest(x, y))
+    // Ignore structural layers that cover the screen but don't actually
+    // handle touch, so lower interactive siblings can still be reached.
+    if (node->hitTest(x, y) && isTouchInteractive(node))
         return node;
     return nullptr;
 }
@@ -31,15 +38,6 @@ static bool containsRecursive(Widget* node, Widget* target) {
             return true;
     }
     return false;
-}
-
-static Widget* findInteractiveAncestor(Widget* node) {
-    while (node) {
-        if ((node->isFocusable() && node->isVisible()) || !node->actions().empty())
-            return node;
-        node = node->parent();
-    }
-    return nullptr;
 }
 
 } // namespace
@@ -217,6 +215,7 @@ Widget* FocusManager::findNearest(Widget* from, FocusDirection dir,
             best = c;
         }
     }
+
     return best;
 }
 
@@ -251,8 +250,23 @@ bool FocusManager::navigate(FocusDirection dir, Widget* root) {
     Widget* next = findNearest(cur, dir, focusables);
     if (!next) return false;
 
-    // Update the flat list so index-based queries work
+    // Update the flat list so index-based queries work.
+    // If focusables were reordered (e.g. runtime slot swap), first remap m_index
+    // to the same current widget in the new list so changeFocus() compares against
+    // a coherent index and still emits focus-change callbacks correctly.
+    Widget* prevCur = cur;
     m_items = focusables;
+    if (prevCur) {
+        auto it = std::find(m_items.begin(), m_items.end(), prevCur);
+        if (it != m_items.end()) {
+            m_index = (int)std::distance(m_items.begin(), it);
+        } else {
+            m_index = std::clamp(m_index, 0, std::max(0, (int)m_items.size() - 1));
+        }
+    } else {
+        m_index = std::clamp(m_index, 0, std::max(0, (int)m_items.size() - 1));
+    }
+
     changeFocusTo(next);
     return true;
 }
@@ -297,21 +311,22 @@ bool FocusManager::handleTouch(const Input& input, Widget* root) {
         float tx = input.touchX();
         float ty = input.touchY();
 
-        // Hit-test full visible tree, then resolve to nearest interactive ancestor.
-        Widget* rawHit = findTopHitRecursive(root, tx, ty);
-        m_touchTarget = findInteractiveAncestor(rawHit);
+        // Hit-test the topmost interactive widget while skipping inert layers.
+        m_touchTarget = findTopHitRecursive(root, tx, ty);
         m_touchWasFocused = (m_touchTarget && m_touchTarget == current());
     }
 
     if (input.touchUp() && m_touchTarget) {
         constexpr float kTapThreshold = 20.f;
+        constexpr float kTapMaxDuration = 0.40f;
         float dx = input.touchDeltaX();
         float dy = input.touchDeltaY();
         float dist2 = dx * dx + dy * dy;
+        float duration = input.touchDuration();
 
         bool consumed = false;
 
-        if (dist2 < kTapThreshold * kTapThreshold) {
+        if (dist2 < kTapThreshold * kTapThreshold && duration <= kTapMaxDuration) {
             // Verify the target still belongs to the active tree
             bool valid = containsRecursive(root, m_touchTarget);
             if (valid) {

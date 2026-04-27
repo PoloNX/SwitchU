@@ -153,6 +153,8 @@ void AppListLoader::fetchApps() {
 
 void AppListLoader::load(GridModel& model, IconStreamer& streamer) {
     fetchApps();
+    if (m_pendingTransform)
+        m_pendingTransform(m_pending);
     registerEntries(m_pending, model, streamer);
     m_pending.clear();
 }
@@ -176,6 +178,8 @@ void AppListLoader::finalize(GridModel& model, IconStreamer& streamer) {
     if (m_future.valid())
         m_future.get();
 
+    if (m_pendingTransform)
+        m_pendingTransform(m_pending);
     registerEntries(m_pending, model, streamer);
     m_pending.clear();
 }

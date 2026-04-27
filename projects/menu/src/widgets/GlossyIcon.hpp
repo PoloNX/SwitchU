@@ -32,8 +32,10 @@ public:
     bool isNotLaunchable() const    { return m_notLaunchable; }
 
     void startAppear(float delay);
+    void forceVisible();
 
-    bool isFocusable() const override { return true; }
+    void setFocusable(bool f) { m_focusable = f; }
+    bool isFocusable() const override { return m_focusable; }
     void onFocusGained() override { m_focused = true; }
     void onFocusLost()   override { m_focused = false; }
 
@@ -48,6 +50,7 @@ private:
     nxui::Texture*    m_gameCardTex = nullptr;
     uint64_t    m_titleId = 0;
     bool        m_focused = false;
+    bool        m_focusable = true;
     bool        m_suspended = false;
     bool        m_isGameCard = false;
     bool        m_notLaunchable = false;

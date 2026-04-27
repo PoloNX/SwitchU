@@ -20,7 +20,7 @@ public:
     using SelectCallback = std::function<void(AccountUid uid)>;
     using CancelCallback = std::function<void()>;
 
-    UserSelectScreen() = default;
+    UserSelectScreen();
 
     bool loadUsers(nxui::GpuDevice& gpu, nxui::Renderer& ren);
 
@@ -79,5 +79,6 @@ private:
 
     int m_touchHitAvatar = -1;
     bool m_touchOnSelected = false;
+    bool m_ignoreInitialTouchRelease = false;
 };
 

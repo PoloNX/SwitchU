@@ -34,7 +34,7 @@ public:
     /// Shutdown: activity->onDestroy(), then GPU/Renderer cleanup.
     void shutdown();
 
-    // ── Accessors (for Activity use) ─────────────────────────
+    // Accessors used by Activity
     GpuDevice& gpu()       { return m_gpu; }
     Renderer&  renderer()  { return *m_renderer; }
     Input&     input()     { return m_input; }

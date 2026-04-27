@@ -63,27 +63,6 @@ SettingsScreen::Tab settings::tabs::DisplayTab::build(SettingsScreen& screen) {
     }
 
     {
-        SettingItem it; it.label = i18n.tr("settings.audio.tv_resolution", "TV Resolution"); it.type = ItemType::Selector;
-        it.description = i18n.tr("settings.audio.tv_resolution_desc", "Adjust HDMI resolution. Auto uses recommended value.");
-        it.options = {
-            i18n.tr("common.auto", "Auto"),
-            i18n.tr("settings.audio.res_720p", "720p"),
-            i18n.tr("settings.audio.res_1080p", "1080p")
-        };
-        SetSysTvSettings tv{};
-        if (R_SUCCEEDED(setsysGetTvSettings(&tv)))
-            it.intVal = std::clamp((int)tv.tv_resolution, 0, 2);
-        it.onChange = [](SettingItem& self) {
-            SetSysTvSettings tv{};
-            if (R_SUCCEEDED(setsysGetTvSettings(&tv))) {
-                tv.tv_resolution = (s32)self.intVal;
-                setsysSetTvSettings(&tv);
-            }
-        };
-        t.items.push_back(std::move(it));
-    }
-
-    {
         SettingItem it; it.label = i18n.tr("settings.audio.hdmi_rgb_range", "HDMI RGB Range"); it.type = ItemType::Selector;
         it.description = i18n.tr("settings.audio.hdmi_rgb_range_desc", "Full for PC monitors, Limited for most TVs.");
         it.options = {
@@ -122,6 +101,24 @@ SettingsScreen::Tab settings::tabs::DisplayTab::build(SettingsScreen& screen) {
         };
         t.items.push_back(std::move(it));
     }
+    // {
+    //     SettingItem it; it.label = i18n.tr("settings.display.tv_screen_size", "TV Screen Size"); it.type = ItemType::Slider;
+    //     it.description = i18n.tr("settings.display.tv_screen_size_desc", "Adjust overscan so the full image is visible.");
+    //     SetSysTvSettings tv{};
+    //     if (R_SUCCEEDED(setsysGetTvSettings(&tv)))
+    //         it.floatVal = tv.underscan / 100.f;
+    //     else
+    //         it.floatVal = 1.f;
+    //     it.anim01 = std::clamp(it.floatVal, 0.f, 1.f);
+    //     it.onChange = [](SettingItem& self) {
+    //         SetSysTvSettings tv{};
+    //         if (R_SUCCEEDED(setsysGetTvSettings(&tv))) {
+    //             tv.underscan = (u32)(self.floatVal * 100.f);
+    //             setsysSetTvSettings(&tv);
+    //         }
+    //     };
+    //     t.items.push_back(std::move(it));
+    // }
 
     {
         SettingItem it; it.label = i18n.tr("settings.display.album_storage", "Primary Album Storage"); it.type = ItemType::Selector;
@@ -150,6 +147,36 @@ SettingsScreen::Tab settings::tabs::DisplayTab::build(SettingsScreen& screen) {
         it.onChange = [&screen](SettingItem& self) {
             screen.m_wireframeEnabled = self.boolVal;
             if (screen.m_wireframeCb) screen.m_wireframeCb(self.boolVal);
+        };
+        t.items.push_back(std::move(it));
+    }
+
+    {
+        SettingItem it;
+        it.label = i18n.tr("settings.display.grid_columns", "Home Grid Columns");
+        it.type = ItemType::Selector;
+        it.description = i18n.tr("settings.display.grid_columns_desc", "Number of icon columns per page.");
+        it.options = {"3", "4", "5", "6", "7", "8"};
+        it.intVal = std::clamp(screen.m_gridColumns, 3, 8) - 3;
+        it.onChange = [&screen](SettingItem& self) {
+            int cols = std::clamp(self.intVal + 3, 3, 8);
+            screen.m_gridColumns = cols;
+            if (screen.m_gridColumnsCb) screen.m_gridColumnsCb(cols);
+        };
+        t.items.push_back(std::move(it));
+    }
+
+    {
+        SettingItem it;
+        it.label = i18n.tr("settings.display.grid_rows", "Home Grid Rows");
+        it.type = ItemType::Selector;
+        it.description = i18n.tr("settings.display.grid_rows_desc", "Number of icon rows per page.");
+        it.options = {"2", "3", "4", "5"};
+        it.intVal = std::clamp(screen.m_gridRows, 2, 5) - 2;
+        it.onChange = [&screen](SettingItem& self) {
+            int rows = std::clamp(self.intVal + 2, 2, 5);
+            screen.m_gridRows = rows;
+            if (screen.m_gridRowsCb) screen.m_gridRowsCb(rows);
         };
         t.items.push_back(std::move(it));
     }

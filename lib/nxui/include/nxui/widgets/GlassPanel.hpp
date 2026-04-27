@@ -25,6 +25,13 @@ public:
     void setBlurPasses(int p)         { m_blurPasses = p; }
     bool blurEnabled() const          { return m_blurEnabled; }
 
+    void setLiquidGlassEnabled(bool b) { m_liquidGlassEnabled = b; }
+    bool liquidGlassEnabled() const    { return m_liquidGlassEnabled; }
+    void setForceLiquidGlass(bool b)   { m_forceLiquidGlass = b; }
+    bool forceLiquidGlass() const      { return m_forceLiquidGlass; }
+    void setLiquidGlassShade(float s)  { m_liquidGlassShade = s; }
+    float liquidGlassShade() const     { return m_liquidGlassShade; }
+
     // Opaque backing: draws a fully-opaque rounded rect BEFORE all glass
     // layers so that anything underneath (e.g. a screen dimmer) is blocked.
     void setBackingEnabled(bool b)       { m_backingEnabled = b; }
@@ -46,6 +53,9 @@ protected:
     bool  m_blurEnabled  = false;
     float m_blurRadius   = 2.0f;
     int   m_blurPasses   = 3;
+    bool  m_liquidGlassEnabled = false;
+    bool  m_forceLiquidGlass = false;
+    float m_liquidGlassShade = 0.f;
 
     // Opaque backing
     bool  m_backingEnabled = false;

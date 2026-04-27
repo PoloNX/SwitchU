@@ -26,5 +26,5 @@ void main() {
         result += texture(tex, fragUV + offsetH) * weights[i];
         result += texture(tex, fragUV - offsetH) * weights[i];
     }
-    outColor = result * fragColor;
+    outColor = vec4(result.rgb * fragColor.rgb, 1.0);
 }

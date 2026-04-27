@@ -5,7 +5,7 @@
 
 namespace nxui {
 
-// ── Tree ────────────────────────────────────────────────────
+// Tree
 
 void Widget::addChild(Ptr child) {
     if (!child) return;
@@ -28,7 +28,7 @@ void Widget::clearChildren() {
     m_children.clear();
 }
 
-// ── Content rect ────────────────────────────────────────────
+// Content rect
 
 Rect Widget::contentRect() const {
     return {
@@ -39,7 +39,7 @@ Rect Widget::contentRect() const {
     };
 }
 
-// ── Custom navigation ───────────────────────────────────────
+// Custom navigation
 
 void Widget::setCustomNavigation(FocusDirection dir, Widget* target) {
     m_customNav[static_cast<int>(dir)] = target;
@@ -50,7 +50,7 @@ Widget* Widget::getCustomNavigation(FocusDirection dir) const {
     return (it != m_customNav.end()) ? it->second : nullptr;
 }
 
-// ── Actions ─────────────────────────────────────────────────
+// Actions
 
 void Widget::addAction(uint64_t button, std::function<void()> cb) {
     m_actions[button] = std::move(cb);
@@ -109,7 +109,7 @@ void Widget::addDirectionAction(FocusDirection dir, std::function<void()> cb) {
     }
 }
 
-// ── Focus collection ────────────────────────────────────────
+// Focus collection
 
 void Widget::collectFocusable(std::vector<Widget*>& out) {
     if (!m_visible) return;
@@ -118,7 +118,7 @@ void Widget::collectFocusable(std::vector<Widget*>& out) {
         c->collectFocusable(out);
 }
 
-// ── Lifecycle ───────────────────────────────────────────────
+// Lifecycle
 
 void Widget::update(float dt) {
     if (!m_visible) return;

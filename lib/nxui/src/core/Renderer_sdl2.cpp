@@ -429,13 +429,32 @@ void Renderer::drawText(const std::string& text, const Vec2& pos, Font* font,
     font->draw(*this, text, pos, color, scale);
 }
 
-void Renderer::captureToOffscreen() {
+void Renderer::captureToOffscreen(bool reuseIfValid) {
+    (void)reuseIfValid;
     // No-op: SDL2 backend has no offscreen render targets.
+}
+
+void Renderer::copyOffscreen(int srcTarget, int dstTarget) {
+    (void)srcTarget;
+    (void)dstTarget;
+    // No-op.
 }
 
 void Renderer::drawOffscreen(int target, const Rect& dest, const Color& tint) {
     (void)target; (void)dest; (void)tint;
     // No-op.
+}
+
+void Renderer::drawOffscreenRounded(int target, const Rect& dest, float radius, const Color& tint) {
+    (void)target;
+    drawRoundedRect(dest, tint, radius);
+}
+
+void Renderer::drawLiquidGlass(int target, const Rect& panelRect, float radius,
+                               const Color& tint, float opacity, float shade) {
+    (void)target;
+    (void)shade;
+    drawRoundedRect(panelRect, tint.withAlpha(tint.a * opacity), radius);
 }
 
 void Renderer::applyBlur(float radius, int passes) {

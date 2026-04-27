@@ -101,19 +101,27 @@ void Application::dispatchInput() {
          static_cast<uint64_t>(Button::RStickL) | static_cast<uint64_t>(Button::RStickR) |
          static_cast<uint64_t>(Button::RStickU) | static_cast<uint64_t>(Button::RStickD);
 
-    uint64_t consumed = fm.dispatchActions(m_input, kDpadMask);
+    constexpr uint64_t kA = static_cast<uint64_t>(Button::A);
+    bool pointerConsumesA = m_input.pointerConsumesButton(Button::A);
+    uint64_t actionExcludeMask = kDpadMask;
+    if (pointerConsumesA)
+        actionExcludeMask |= kA;
 
-    // ── A-button auto-activate ──────────────────────────────
+    uint64_t consumed = fm.dispatchActions(m_input, actionExcludeMask);
+
+    // Auto-activate with A.
     // If the focused widget didn't register an explicit addAction(A, ...),
     // fall through to the legacy activate() / setOnActivate() mechanism.
-    constexpr uint64_t kA = static_cast<uint64_t>(Button::A);
-    if (!(consumed & kA) && m_input.isDown(Button::A)) {
+    if (!pointerConsumesA && !(consumed & kA) && m_input.isDown(Button::A)) {
         if (auto* w = fm.current())
             w->activate();
     }
 
-    // ── Touch-based focus navigation ────────────────────────
-    fm.handleTouch(m_input, root);
+    // Touch-based focus navigation.
+    // Some screens own richer touch handling locally (drag/scroll/menus) and
+    // should not also receive the generic focus-manager tap model.
+    if (root->frameworkTouchEnabled())
+        fm.handleTouch(m_input, root);
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -156,6 +164,8 @@ void Application::shutdown() {
     // Clear all pending animations before destroying the activity so that
     // tween callbacks don't fire on already-destroyed widgets.
     AnimationManager::instance().clear();
+
+    m_input.shutdown();
 
     if (m_activity) {
         m_activity->onDestroy();

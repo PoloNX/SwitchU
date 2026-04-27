@@ -11,7 +11,7 @@ public:
     explicit GlassBox(Axis axis) : Box(axis) {}
     GlassBox(Axis axis, JustifyContent jc, AlignItems ai) : Box(axis, jc, ai) {}
 
-    // ── Glass appearance ─────────────────────────────────────
+    // Glass appearance
     void setCornerRadius(float r)       { m_radius = r; }
     float cornerRadius() const          { return m_radius; }
 

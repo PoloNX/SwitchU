@@ -8,29 +8,24 @@
 #include <cmath>
 #include <cstring>
 #include <cstdio>
+#include <fmt/format.h>
 
 namespace {
 
 std::string formatBytes(uint64_t bytes) {
     if (bytes >= 1024ull * 1024ull * 1024ull) {
         double value = bytes / (1024.0 * 1024.0 * 1024.0);
-        char buf[64];
-        std::snprintf(buf, sizeof(buf), "%.2f GB", value);
-        return buf;
+        return fmt::format("{:.2f} GB", value);
     }
     if (bytes >= 1024ull * 1024ull) {
         double value = bytes / (1024.0 * 1024.0);
-        char buf[64];
-        std::snprintf(buf, sizeof(buf), "%.1f MB", value);
-        return buf;
+        return fmt::format("{:.1f} MB", value);
     }
     if (bytes >= 1024ull) {
         double value = bytes / 1024.0;
-        char buf[64];
-        std::snprintf(buf, sizeof(buf), "%.1f KB", value);
-        return buf;
+        return fmt::format("{:.1f} KB", value);
     }
-    return std::to_string(bytes) + " B";
+    return fmt::format("{} B", bytes);
 }
 
 bool queryStorageSize(NcmStorageId storageId, uint64_t& total, uint64_t& freeSpace) {
@@ -99,6 +94,16 @@ std::string formatAppOption(const std::string& title,
     if (!status.empty())
         result += " • " + status;
     return result;
+}
+
+std::string formatMessageWithTitle(const std::string& pattern, const std::string& title) {
+    size_t pos = pattern.find("%s");
+    if (pos == std::string::npos)
+        return pattern;
+
+    std::string fmtPattern = pattern;
+    fmtPattern.replace(pos, 2, "{}");
+    return fmt::format(fmt::runtime(fmtPattern), title);
 }
 
 std::string formatAppPreview(const std::string& title,
@@ -183,16 +188,12 @@ AppControlInfo queryApplicationControlInfo(uint64_t titleId) {
         }
         info.state = AppState::Installed;
         if (info.title.empty()) {
-            char buffer[32];
-            std::snprintf(buffer, sizeof(buffer), "%016llX", (unsigned long long)titleId);
-            info.title = buffer;
+            info.title = fmt::format("{:016X}", titleId);
         }
         return info;
     }
 
-    char buffer[32];
-    std::snprintf(buffer, sizeof(buffer), "%016llX", (unsigned long long)titleId);
-    info.title = buffer;
+    info.title = fmt::format("{:016X}", titleId);
     info.state = AppState::Corrupt;
     return info;
 }
@@ -246,9 +247,10 @@ SettingsScreen::Tab settings::tabs::StorageTab::build(SettingsScreen& screen) {
     uint64_t internalUsed = internalOk ? (internalTotal - internalFree) : 0;
 
     auto makeStorageSummary = [&](const std::string& totalText, const std::string& freeText, const std::string& usedText) {
-        return i18n.tr("settings.storage.capacity", "Capacity") + ": " + totalText
-             + " • " + i18n.tr("settings.storage.available", "Available") + ": " + freeText
-             + " • " + i18n.tr("settings.storage.used", "Used") + ": " + usedText;
+        return fmt::format("{}: {} • {}: {} • {}: {}",
+                           i18n.tr("settings.storage.capacity", "Capacity"), totalText,
+                           i18n.tr("settings.storage.available", "Available"), freeText,
+                           i18n.tr("settings.storage.used", "Used"), usedText);
     };
 
     SettingItem internalBar;
@@ -260,7 +262,7 @@ SettingsScreen::Tab settings::tabs::StorageTab::build(SettingsScreen& screen) {
     internalBar.floatVal = internalOk && internalTotal > 0 ? float((double)internalUsed / internalTotal) : 0.f;
     internalBar.anim01 = internalBar.floatVal;
     internalBar.infoText = internalOk
-        ? formatBytes(internalUsed) + " / " + formatBytes(internalTotal)
+        ? fmt::format("{} / {}", formatBytes(internalUsed), formatBytes(internalTotal))
         : i18n.tr("common.na", "N/A");
     t.items.push_back(std::move(internalBar));
 
@@ -286,7 +288,7 @@ SettingsScreen::Tab settings::tabs::StorageTab::build(SettingsScreen& screen) {
     sdBar.floatVal = sdOk && sdTotal > 0 ? float((double)sdUsed / sdTotal) : 0.f;
     sdBar.anim01 = sdBar.floatVal;
     sdBar.infoText = sdOk
-        ? formatBytes(sdUsed) + " / " + formatBytes(sdTotal)
+        ? fmt::format("{} / {}", formatBytes(sdUsed), formatBytes(sdTotal))
         : i18n.tr("common.na", "N/A");
     t.items.push_back(std::move(sdBar));
 
@@ -389,12 +391,9 @@ SettingsScreen::Tab settings::tabs::StorageTab::build(SettingsScreen& screen) {
     uninstall.onChange = [&screen, appsPtr, selectedIndex, &i18n](SettingItem& /* self */) {
         int index = std::clamp(*selectedIndex, 0, (int)appsPtr->size() - 1);
         const auto app = (*appsPtr)[index];
-        auto message = i18n.tr("settings.storage.uninstall_confirm_msg", "Delete %s from the system?");
-        size_t pos = message.find("%s");
-        if (pos != std::string::npos) {
-            std::string titleText = app.title;
-            message.replace(pos, 2, titleText);
-        }
+        auto message = formatMessageWithTitle(
+            i18n.tr("settings.storage.uninstall_confirm_msg", "Delete %s from the system?"),
+            app.title);
 
         screen.requestDialog(
             i18n.tr("settings.storage.uninstall_confirm_title", "Uninstall Game"),

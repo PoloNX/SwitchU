@@ -35,11 +35,41 @@ struct FsUniforms {
 // Shader program IDs
 enum class ShaderProgram {
     Basic,
+    Backdrop,
     BlurH,
     BlurV,
     Wave,
+    LiquidGlass,
     Gradient,
     Count
+};
+
+struct LiquidGlassSettings {
+    float refractionIntensity = 0.08f;
+    float blurIntensity = 0.65f;
+    float noiseIntensity = 0.0f;
+
+    float glowIntensity = 0.22f;
+    float saturation = 0.96f;
+    float opacityMultiplier = 0.28f;
+    float roughness = 0.015f;
+
+    float animSpeed = 0.0f;
+    float time = 0.0f;
+    float powerFactor = 6.0f;
+    float fPower = 1.0f;
+
+    float refA = 0.7f;
+    float refB = 2.3f;
+    float refC = 5.2f;
+    float refD = 6.9f;
+
+    float glowWeight = 0.14f;
+    float glowBias = -0.02f;
+    float glowEdge0 = 0.12f;
+    float glowEdge1 = -0.08f;
+
+    Color tintBoost {1.f, 1.f, 1.f, 0.8f};
 };
 
 // Renderer
@@ -59,7 +89,7 @@ public:
     void beginFrame();
     void endFrame();
 
-    // ─── 2D Draw API ────────────────────────────────────────
+    // 2D drawing
     void drawRect(const Rect& r, const Color& c);
     void drawRectOutline(const Rect& r, const Color& c, float thickness = 1.f);
     void drawRoundedRect(const Rect& r, const Color& c, float radius);
@@ -73,9 +103,14 @@ public:
     void drawTextureRounded(const Texture* tex, const Rect& dest, float radius, const Color& tint = Color::white());
     void drawText(const std::string& text, const Vec2& pos, Font* font, const Color& color, float scale = 1.f);
 
-    // ─── Post-processing API ────────────────────────────────
-    void captureToOffscreen();
+    // Post-processing
+    void captureToOffscreen(bool reuseIfValid = false);
+    void copyOffscreen(int srcTarget, int dstTarget);
     void drawOffscreen(int target, const Rect& dest, const Color& tint = Color::white());
+    void drawOffscreenRounded(int target, const Rect& dest, float radius,
+                              const Color& tint = Color::white());
+    void drawLiquidGlass(int target, const Rect& panelRect, float radius,
+                         const Color& tint, float opacity = 1.f, float shade = 0.f);
     void applyBlur(float radius = 1.0f, int passes = 2);
     void applyWave(float time, float amplitude, float frequency);
 
@@ -95,6 +130,12 @@ public:
 
     // Flush current batch
     void flush();
+
+    LiquidGlassSettings& liquidGlassSettings() { return m_liquidGlassSettings; }
+    const LiquidGlassSettings& liquidGlassSettings() const { return m_liquidGlassSettings; }
+    void resetLiquidGlassSettings();
+    void setLiquidGlassDebugRawBackdrop(bool enabled) { m_liquidGlassDebugRawBackdrop = enabled; }
+    bool liquidGlassDebugRawBackdrop() const { return m_liquidGlassDebugRawBackdrop; }
 
     // Debug
     uint32_t vertexCount() const { return m_vtxCount; }
@@ -178,6 +219,9 @@ private:
 #endif
 
     bool m_boxWireframeEnabled = false;
+    bool m_liquidGlassDebugRawBackdrop = false;
+    bool m_reusableOffscreenCaptureValid = false;
+    LiquidGlassSettings m_liquidGlassSettings;
 
     static inline std::string s_shaderBasePath = "romfs:/shaders/";
 };

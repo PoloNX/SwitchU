@@ -3,7 +3,7 @@
 
 namespace nxui {
 
-// ── Layout enums (inspired by CSS flexbox) ──────────────────
+// Layout enums inspired by CSS flexbox.
 
 enum class Axis {
     ROW,        // children flow left → right
@@ -51,7 +51,7 @@ public:
     Box(Axis axis, JustifyContent jc) : m_axis(axis), m_justify(jc) {}
     Box(Axis axis, JustifyContent jc, AlignItems ai) : m_axis(axis), m_justify(jc), m_align(ai) {}
 
-    // ── Layout properties ────────────────────────────────────
+    // Layout properties
     void setAxis(Axis a)              { m_axis = a; }
     Axis axis() const                 { return m_axis; }
 

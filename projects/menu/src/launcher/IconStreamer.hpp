@@ -36,6 +36,10 @@ public:
     // Release everything (textures + compressed data).
     void clear();
 
+    // Keep internal compressed data and loaded-slot mappings aligned when
+    // app entries are swapped in the grid model.
+    bool swapIndices(int a, int b);
+
     int  iconCount()         const { return (int)m_compressed.size(); }
     bool hasData(int index)  const { return index >= 0 && index < (int)m_compressed.size() && !m_compressed[index].empty(); }
 

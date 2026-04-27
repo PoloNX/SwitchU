@@ -11,7 +11,7 @@ namespace nxui {
 class Renderer;
 class Input;
 
-// ── Focus direction for spatial navigation ───────────────────
+// Focus direction for spatial navigation.
 enum class FocusDirection { UP, DOWN, LEFT, RIGHT };
 
 class Widget : public std::enable_shared_from_this<Widget> {
@@ -21,20 +21,20 @@ public:
     Widget() = default;
     virtual ~Widget() = default;
 
-    // ── Tree ─────────────────────────────────────────────────
+    // Tree
     void addChild(Ptr child);
     void removeChild(Widget* child);
     void clearChildren();
     const std::vector<Ptr>& children() const { return m_children; }
     Widget* parent() const { return m_parent; }
 
-    // ── Geometry ─────────────────────────────────────────────
+    // Geometry
     void setPosition(float x, float y) { m_rect.x = x; m_rect.y = y; }
     void setSize(float w, float h)     { m_rect.width = w; m_rect.height = h; }
     void setRect(const Rect& r)        { m_rect = r; }
     const Rect& rect() const           { return m_rect; }
 
-    // ── Visibility / opacity ─────────────────────────────────
+    // Visibility and opacity
     void  setVisible(bool v)   { m_visible = v; }
     bool  isVisible() const    { return m_visible; }
     void  setOpacity(float a)  { m_opacity = a; }
@@ -66,7 +66,7 @@ public:
     void  setShrink(float s) { m_shrink = s; }
     float shrink() const     { return m_shrink; }
 
-    // ── Min / Max size constraints ───────────────────────────
+    // Size constraints
     void  setMinWidth(float v)  { m_minWidth = v; }
     void  setMinHeight(float v) { m_minHeight = v; }
     void  setMaxWidth(float v)  { m_maxWidth = v; }
@@ -76,7 +76,7 @@ public:
     float maxWidth()  const { return m_maxWidth; }
     float maxHeight() const { return m_maxHeight; }
 
-    // ── Focus ────────────────────────────────────────────────
+    // Focus
     void setFocusable(bool f)           { m_focusable = f; }
     virtual bool isFocusable() const    { return m_focusable; }
     virtual Rect focusRect()   const    { return m_rect; }
@@ -88,7 +88,7 @@ public:
     void setCustomNavigation(FocusDirection dir, Widget* target);
     Widget* getCustomNavigation(FocusDirection dir) const;
 
-    // ── Actions (input bindings on focused widget) ───────────
+    // Input bindings on the focused widget
     /// Register a callback for a specific button press while this widget has focus.
     /// e.g. btn->addAction(Button::A, [](){ ... });
     void addAction(uint64_t button, std::function<void()> cb);
@@ -108,6 +108,9 @@ public:
     void setOnActivate(std::function<void()> cb) { m_onActivate = std::move(cb); }
     virtual bool activate() { if (m_onActivate) { m_onActivate(); return true; } return false; }
 
+    void setFrameworkTouchEnabled(bool enabled) { m_frameworkTouchEnabled = enabled; }
+    bool frameworkTouchEnabled() const { return m_frameworkTouchEnabled; }
+
     void setTag(const std::string& t) { m_tag = t; }
     const std::string& tag() const    { return m_tag; }
 
@@ -119,13 +122,13 @@ public:
 
     virtual bool isBox() const { return false; }
 
-    // ── Hit test (for touch / picking) ───────────────────────
+    // Hit testing
     bool hitTest(float x, float y) const {
         return x >= m_rect.x && x < m_rect.x + m_rect.width
             && y >= m_rect.y && y < m_rect.y + m_rect.height;
     }
 
-    // ── Collect all focusable descendants (DFS) ──────────────
+    // Collect focusable descendants.
     void collectFocusable(std::vector<Widget*>& out);
 
 protected:
@@ -148,6 +151,7 @@ protected:
     float m_maxHeight = 1e9f;
 
     bool m_focusable = false;
+    bool m_frameworkTouchEnabled = true;
     std::string m_tag;
     std::function<void()> m_onActivate;
     Widget* m_parent = nullptr;

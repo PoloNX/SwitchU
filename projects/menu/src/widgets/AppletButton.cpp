@@ -6,6 +6,9 @@
 AppletButton::AppletButton() {
     setCornerRadius(16.f);
     setPadding(6.f);
+    setLiquidGlassEnabled(true);
+    setBlurEnabled(false);
+    setBorderWidth(0.f);
     m_i18nListenerId = nxui::I18n::instance().addLanguageChangedListener([this]() {
         refreshLocalizedLabel();
     });

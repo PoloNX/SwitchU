@@ -10,6 +10,8 @@ static AppletApplication g_app = {};
 static bool g_running = false;
 static bool g_hasForeground = false;
 static uint64_t g_suspendedTitleId = 0;
+// Some titles are sensitive to forced save-data precreation; keep this off by default.
+static constexpr bool kEnableSaveDataEnsure = false;
 
 inline bool isRunning() { return g_running; }
 inline bool hasForeground() { return g_hasForeground; }
@@ -106,7 +108,11 @@ inline Result launch(uint64_t title_id, AccountUid uid) {
         g_running = false;
     }
 
-    ensureApplicationSaveData(title_id, uid);
+    if (kEnableSaveDataEnsure) {
+        ensureApplicationSaveData(title_id, uid);
+    } else {
+        switchu::FileLog::log("[app] save data precreate skipped for 0x%016lX", title_id);
+    }
 
     Result rc = appletCreateApplication(&g_app, title_id);
     if (R_FAILED(rc)) {
@@ -123,20 +129,30 @@ inline Result launch(uint64_t title_id, AccountUid uid) {
     } userArg = {};
     static_assert(sizeof(userArg) == 0x88);
 
-    userArg.magic       = 0xC79497CA;
-    userArg.is_selected = 1;
-    userArg.uid         = uid;
+    if (accountUidIsValid(&uid)) {
+        userArg.magic       = 0xC79497CA;
+        userArg.is_selected = 1;
+        userArg.uid         = uid;
 
-    AppletStorage st;
-    rc = appletCreateStorage(&st, sizeof(userArg));
-    if (R_SUCCEEDED(rc)) {
-        appletStorageWrite(&st, 0, &userArg, sizeof(userArg));
-        rc = appletApplicationPushLaunchParameter(&g_app,
-            AppletLaunchParameterKind_PreselectedUser, &st);
-        if (R_FAILED(rc)) {
-            switchu::FileLog::log("[app] PushUser FAIL: 0x%X", rc);
+        AppletStorage st;
+        rc = appletCreateStorage(&st, sizeof(userArg));
+        if (R_SUCCEEDED(rc)) {
+            Result writeRc = appletStorageWrite(&st, 0, &userArg, sizeof(userArg));
+            if (R_SUCCEEDED(writeRc)) {
+                Result pushRc = appletApplicationPushLaunchParameter(&g_app,
+                    AppletLaunchParameterKind_PreselectedUser, &st);
+                if (R_FAILED(pushRc)) {
+                    switchu::FileLog::log("[app] PushUser FAIL: 0x%X", pushRc);
+                }
+            } else {
+                switchu::FileLog::log("[app] PushUser storage write FAIL: 0x%X", writeRc);
+            }
             appletStorageClose(&st);
+        } else {
+            switchu::FileLog::log("[app] PushUser storage create FAIL: 0x%X", rc);
         }
+    } else {
+        switchu::FileLog::log("[app] launch without preselected user (invalid uid)");
     }
 
     appletUnlockForeground();

@@ -47,8 +47,7 @@ bool GpuDevice::initialize() {
 
     createFramebuffers();
     createDepthStencil();
-    // Offscreen targets disabled to save GPU memory — blur is not used.
-    // createOffscreenTargets();
+    createOffscreenTargets();
 
     std::array<DkImage const*, NUM_FB> fbArray;
     for (int i = 0; i < NUM_FB; ++i) fbArray[i] = &m_fbImages[i];
@@ -60,7 +59,8 @@ bool GpuDevice::initialize() {
 void GpuDevice::createFramebuffers() {
     dk::ImageLayout fbLayout;
     dk::ImageLayoutMaker{m_dev}
-        .setFlags(DkImageFlags_UsageRender | DkImageFlags_UsagePresent | DkImageFlags_HwCompression)
+        .setFlags(DkImageFlags_UsageRender | DkImageFlags_UsagePresent |
+                  DkImageFlags_Usage2DEngine | DkImageFlags_HwCompression)
         .setFormat(DkImageFormat_RGBA8_Unorm)
         .setDimensions(FB_WIDTH, FB_HEIGHT)
         .initialize(fbLayout);
@@ -103,7 +103,7 @@ void GpuDevice::createOffscreenTargets() {
 
     dk::ImageLayout offLayout;
     dk::ImageLayoutMaker{m_dev}
-        .setFlags(DkImageFlags_UsageRender | DkImageFlags_Usage2DEngine | DkImageFlags_HwCompression)
+        .setFlags(DkImageFlags_UsageRender | DkImageFlags_Usage2DEngine)
         .setFormat(DkImageFormat_RGBA8_Unorm)
         .setDimensions(offW, offH)
         .initialize(offLayout);

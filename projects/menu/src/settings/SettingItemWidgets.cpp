@@ -1,4 +1,5 @@
 #include "SettingItemWidgets.hpp"
+#include "widgets/ActionButtonStyle.hpp"
 
 #include <nxui/widgets/Label.hpp>
 #include <nxui/widgets/GlassBox.hpp>
@@ -27,11 +28,11 @@ public:
         addChild(m_left);
 
         m_label = std::make_shared<nxui::Label>(item.label);
-        m_label->setScale(0.82f);
+        m_label->setScale(0.86f);
         m_left->addChild(m_label);
 
         m_desc = std::make_shared<nxui::Label>(item.description);
-        m_desc->setScale(0.64f);
+        m_desc->setScale(0.68f);
         m_left->addChild(m_desc);
 
         m_right = std::make_shared<nxui::Box>(nxui::Axis::ROW);
@@ -87,7 +88,7 @@ protected:
             m_label->setTextColor(isSection ? theme->textSecondary : theme->textPrimary);
             m_desc->setTextColor(theme->textSecondary);
         }
-        m_label->setScale(isSection ? 0.72f : 0.82f);
+        m_label->setScale(isSection ? 0.76f : 0.86f);
 
         m_label->sizeToFit();
         m_desc->sizeToFit();
@@ -144,16 +145,16 @@ public:
     ToggleRowWidget(SettingsScreen::SettingItem& item, const SettingWidgetContext& ctx)
         : SettingRowBase(item, ctx) {
         m_track = std::make_shared<nxui::GlassBox>(nxui::Axis::ROW);
-        m_track->setSize(50.f, 24.f);
-        m_track->setPadding(3.f);
+        m_track->setSize(64.f, 32.f);
+        m_track->setPadding(4.f);
         m_track->setAlignItems(nxui::AlignItems::CENTER);
         m_track->setJustifyContent(nxui::JustifyContent::FLEX_START);
-        m_track->setCornerRadius(12.f);
+        m_track->setCornerRadius(16.f);
         m_track->setBorderWidth(0.f);
 
         m_knob = std::make_shared<nxui::GlassBox>();
-        m_knob->setSize(18.f, 18.f);
-        m_knob->setCornerRadius(9.f);
+        m_knob->setSize(24.f, 24.f);
+        m_knob->setCornerRadius(12.f);
         m_knob->setBorderWidth(0.f);
 
         m_track->addChild(m_knob);
@@ -176,7 +177,7 @@ protected:
             m_track->setBaseColor(bg.withAlpha(opacity()));
             m_knob->setBaseColor(nxui::Color(1.f, 1.f, 1.f, opacity()));
         }
-        float travel = 50.f - 6.f - 18.f;
+        float travel = 64.f - 8.f - 24.f;
         m_knob->setMarginLeft(travel * t);
         m_track->layout();
         m_right->setSize(std::max(120.f, rect().width * 0.42f), rect().height);
@@ -210,7 +211,7 @@ public:
         m_track->addChild(m_knob);
 
         m_pct = std::make_shared<nxui::Label>("0%");
-        m_pct->setScale(0.72f);
+        m_pct->setScale(0.78f);
         m_pct->setHAlign(nxui::Label::HAlign::Right);
         m_pct->setVAlign(nxui::Label::VAlign::Center);
         m_pct->setMarginLeft(10.f);
@@ -231,7 +232,7 @@ protected:
 
         float fillW = (trackW - kKnobW) * t;
 
-        m_track->setSize(trackW, 12.f);
+        m_track->setSize(trackW, 14.f);
         m_fill->setSize(fillW, kFillH);
         m_knob->setSize(kKnobW, kKnobW);
 
@@ -252,8 +253,8 @@ protected:
     }
 
 private:
-    static constexpr float kKnobW = 14.f;
-    static constexpr float kFillH = 8.f;
+    static constexpr float kKnobW = 18.f;
+    static constexpr float kFillH = 10.f;
 
     std::shared_ptr<nxui::GlassBox> m_track;
     std::shared_ptr<nxui::GlassBox> m_fill;
@@ -326,18 +327,18 @@ public:
     SelectorRowWidget(SettingsScreen::SettingItem& item, const SettingWidgetContext& ctx)
         : SettingRowBase(item, ctx) {
         m_pill = std::make_shared<nxui::GlassBox>(nxui::Axis::ROW);
-        m_pill->setPadding(8.f, 10.f, 8.f, 10.f);
+        m_pill->setPadding(10.f, 14.f, 10.f, 14.f);
         m_pill->setAlignItems(nxui::AlignItems::CENTER);
         m_pill->setJustifyContent(nxui::JustifyContent::SPACE_BETWEEN);
-        m_pill->setCornerRadius(9.f);
+        m_pill->setCornerRadius(11.f);
 
         m_value = std::make_shared<nxui::Label>("");
-        m_value->setScale(0.76f);
+        m_value->setScale(0.82f);
         m_value->setGrow(1.f);
         m_value->setHAlign(nxui::Label::HAlign::Left);
         m_value->setVAlign(nxui::Label::VAlign::Center);
         m_chev = std::make_shared<nxui::Label>("v");
-        m_chev->setScale(0.76f);
+        m_chev->setScale(0.82f);
         m_chev->setHAlign(nxui::Label::HAlign::Right);
         m_chev->setVAlign(nxui::Label::VAlign::Center);
         m_chev->setMarginLeft(12.f);
@@ -364,8 +365,8 @@ protected:
             m_value->setTextColor(theme->textPrimary.withAlpha(opacity()));
             m_chev->setTextColor(theme->textPrimary.withAlpha(opacity()));
         }
-        float w = std::max(190.f, rect().width * 0.45f);
-        float h = std::max(30.f, rect().height - 16.f);
+        float w = std::max(210.f, rect().width * 0.48f);
+        float h = std::max(38.f, rect().height - 14.f);
         m_pill->setSize(w, h);
         m_value->setSize(std::max(0.f, w - 34.f), h);
         m_chev->setSize(22.f, h);
@@ -383,11 +384,7 @@ public:
     ActionRowWidget(SettingsScreen::SettingItem& item, const SettingWidgetContext& ctx)
         : SettingRowBase(item, ctx) {
         m_btn = std::make_shared<nxui::GlassBox>(nxui::Axis::ROW);
-        m_btn->setPadding(8.f, 12.f, 8.f, 12.f);
-        m_btn->setAlignItems(nxui::AlignItems::CENTER);
-        m_btn->setJustifyContent(nxui::JustifyContent::CENTER);
-        m_btn->setCornerRadius(9.f);
-        m_btn->setBorderWidth(1.f);
+        switchu::ui::prepareActionButton(*m_btn, 9.f);
 
         m_btnLabel = std::make_shared<nxui::Label>(item.label);
         m_btnLabel->setScale(0.76f);
@@ -406,9 +403,8 @@ protected:
         m_btnLabel->setText(m_item.label);
 
         float pulse = 0.18f + 0.16f * m_item.anim01;
+        switchu::ui::applyActionButtonStyle(*m_btn, theme, opacity(), m_item.anim01, 1.f);
         if (theme) {
-            m_btn->setBaseColor(theme->cursorNormal.withAlpha(pulse * opacity()));
-            m_btn->setBorderColor(theme->panelBorder.withAlpha(0.65f * opacity()));
             m_btnLabel->setTextColor(theme->textPrimary.withAlpha(opacity()));
         }
         float btnW = std::max(140.f, rect().width * 0.30f);

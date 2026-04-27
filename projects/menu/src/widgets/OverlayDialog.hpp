@@ -1,4 +1,5 @@
 #pragma once
+#include <nxui/widgets/GlassBox.hpp>
 #include <nxui/widgets/GlassWidget.hpp>
 #include <nxui/widgets/Label.hpp>
 #include <nxui/widgets/Box.hpp>
@@ -74,7 +75,7 @@ private:
     std::shared_ptr<nxui::Label>                     m_titleLabel;
     std::shared_ptr<nxui::Label>                     m_messageLabel;
     std::shared_ptr<nxui::Box>                       m_buttonRow;
-    std::vector<std::shared_ptr<nxui::GlassWidget>>  m_btnWidgets;
+    std::vector<std::shared_ptr<nxui::GlassBox>>  m_btnWidgets;
     SelectionCursor m_cursor;
 
     nxui::AnimatedFloat m_overlayAlpha;
@@ -83,6 +84,9 @@ private:
     std::vector<nxui::AnimatedFloat> m_buttonFocus;
 
     float m_panelH = 0.f;
+    bool  m_backdropCacheValid = false;
+    float m_cachedPreBlurRadius = -1.f;
+    int   m_cachedBlurIterations = -1;
 
     CancelCallback m_onCancel;
     VoidCb         m_navSfxCb;
@@ -91,14 +95,16 @@ private:
 
     int  m_touchHitButton  = -1;
     bool m_touchOnSelected = false;
+    bool m_ignoreInitialTouchRelease = false;
 
     static constexpr float kPanelW       = 560.f;
-    static constexpr float kPanelPadX    = 32.f;
-    static constexpr float kPanelPadY    = 28.f;
-    static constexpr float kPanelRadius  = 24.f;
-    static constexpr float kButtonH      = 48.f;
-    static constexpr float kButtonRadius = 14.f;
-    static constexpr float kButtonGap    = 12.f;
-    static constexpr float kTitleMsgGap  = 10.f;
-    static constexpr float kMsgBtnGap    = 20.f;
+    static constexpr float kPanelPadX    = 40.f;
+    static constexpr float kPanelPadY    = 34.f;
+    static constexpr float kPanelRadius  = 26.f;
+    static constexpr float kButtonH      = 50.f;
+    static constexpr float kButtonRadius = 16.f;
+    static constexpr float kButtonGap    = 14.f;
+    static constexpr float kTitleMsgGap  = 14.f;
+    static constexpr float kMsgBtnGap    = 24.f;
+    static constexpr int   kBackdropCacheTarget = 1;
 };

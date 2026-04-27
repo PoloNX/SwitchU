@@ -26,6 +26,9 @@
 #include "launcher/AppListLoader.hpp"
 #include "launcher/IconStreamer.hpp"
 #include "core/SystemMessages.hpp"
+#ifdef SWITCHU_DEBUG_UI
+#include "debug/DebugImGuiOverlay.hpp"
+#endif
 #include <nxui/widgets/Background.hpp>
 #include <nxui/widgets/Box.hpp>
 #include <memory>
@@ -62,8 +65,16 @@ public:
     nxui::Widget* focusRoot() override;
 
 private:
+    struct GridLayoutMetrics {
+        float cellW = 150.f;
+        float cellH = 150.f;
+        float padX = 20.f;
+        float padY = 16.f;
+    };
+
     void loadResources();
     void renderButtonHints(nxui::Renderer& ren);
+    GridLayoutMetrics computeGridLayoutMetrics() const;
     void buildGrid();
     void applyTheme();
     void applyUiLanguage();
@@ -80,6 +91,19 @@ private:
     void loadSoundPreset(const std::string& preset);
     void changeSoundPreset(const std::string& preset);
     std::vector<std::string> scanAvailablePresets();
+    void loadMenuLayout();
+    void saveMenuLayout();
+    void applyMenuLayoutToPending(std::vector<PendingApp>& apps);
+    void startEditGhost(GlossyIcon* sourceIcon);
+    void stopEditGhost();
+    void updateEditGhost(float dt);
+    bool commitEditModePlacement();
+    bool moveFocusedIcon(nxui::FocusDirection dir);
+    void enterEditMode();
+    void exitEditMode();
+    void bindEditActions(GlossyIcon* icon);
+    void unbindEditActions();
+    bool isEditableIcon(nxui::Widget* w) const;
 
 #ifndef SWITCHU_HOMEBREW
     void refreshAppList();
@@ -101,6 +125,7 @@ private:
     std::shared_ptr<nxui::Background> m_background;
     std::shared_ptr<IconGrid>          m_grid;
     std::shared_ptr<SelectionCursor>   m_cursor;
+    std::shared_ptr<SelectionCursor>   m_pointerCursor;
     std::shared_ptr<DateTimeWidget>    m_clock;
     std::shared_ptr<BatteryWidget>     m_battery;
     std::shared_ptr<TitlePillWidget>   m_titlePill;
@@ -136,15 +161,30 @@ private:
     SystemMessages  m_sysMsg;
 
     bool m_showDebugOverlay  = false;
+#ifdef SWITCHU_DEBUG_UI
+    std::unique_ptr<DebugImGuiOverlay> m_debugOverlay;
+#endif
     bool m_showLoadingScreen = false;
     bool m_showWireframe     = false;
+    bool m_editMode          = false;
+    int  m_editSourceIndex   = -1;
+    std::string m_editHeldTitle;
+    GlossyIcon* m_editBoundIcon = nullptr;
+    GlossyIcon* m_editSourceIcon = nullptr;
+    std::shared_ptr<GlossyIcon> m_editGhostIcon;
+    nxui::Rect m_editGhostTargetRect {0.f, 0.f, 0.f, 0.f};
+    float m_editGhostPulse = 0.f;
     bool m_suspended         = false;
     bool m_musicWasPlaying   = false;
     uint64_t m_wakeSuspendedTid = 0;
     uint32_t m_wakeReason       = 0;
 
+    std::vector<uint64_t> m_layoutSlots;
+    bool m_layoutDirty = false;
+
     int  m_touchHitIndex     = -1;
     bool m_touchOnFocused    = false;
+    bool m_touchEditDragActive = false;
     int  m_deferredRefreshFrames = 0;
     bool m_refreshQueued         = false;
     int  m_refreshCooldownFrames = 0;

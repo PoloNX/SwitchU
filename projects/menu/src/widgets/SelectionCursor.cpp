@@ -97,6 +97,15 @@ void SelectionCursor::moveTo(const nxui::Rect& target, float cornerRadius, float
     m_cornerRadius.set(cornerRadius, adaptiveDuration, nxui::Easing::outCubic);
 }
 
+nxui::Rect SelectionCursor::currentRect() const {
+    return nxui::Rect{
+        std::roundf(m_x.value()),
+        std::roundf(m_y.value()),
+        std::roundf(m_w.value()),
+        std::roundf(m_h.value())
+    };
+}
+
 void SelectionCursor::onUpdate(float dt) {
     m_time += dt;
 }

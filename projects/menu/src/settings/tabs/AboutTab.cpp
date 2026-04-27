@@ -13,7 +13,7 @@ SettingsScreen::Tab settings::tabs::AboutTab::build(SettingsScreen& /* screen */
     Tab t;
     t.name = i18n.tr("settings.tabs.about", "About");
 
-    // ── Application info ─────────────────────────────────────────────────────
+    // Application info
     {
         SettingItem it;
         it.label = i18n.tr("settings.about.version", "Version");
@@ -30,7 +30,7 @@ SettingsScreen::Tab settings::tabs::AboutTab::build(SettingsScreen& /* screen */
         t.items.push_back(std::move(it));
     }
 
-    // ── License ──────────────────────────────────────────────────────────────
+    // License
     {
         SettingItem it;
         it.label = i18n.tr("settings.about.license", "License");
@@ -39,7 +39,7 @@ SettingsScreen::Tab settings::tabs::AboutTab::build(SettingsScreen& /* screen */
         t.items.push_back(std::move(it));
     }
 
-    // ── Source code ──────────────────────────────────────────────────────────
+    // Source code
     {
         SettingItem it;
         it.label = i18n.tr("settings.about.source_code", "Source Code");
@@ -48,7 +48,7 @@ SettingsScreen::Tab settings::tabs::AboutTab::build(SettingsScreen& /* screen */
         t.items.push_back(std::move(it));
     }
 
-    // ── Acknowledgements ─────────────────────────────────────────────────────
+    // Acknowledgements
     {
         SettingItem it;
         it.label = i18n.tr("settings.about.acknowledgements", "Acknowledgements");

@@ -117,7 +117,7 @@ public:
 
     bool uploadTexture(dk::Image& dst, const void* pixels, uint32_t size, uint32_t width, uint32_t height);
 
-    static constexpr int NUM_OFFSCREEN = 2;
+    static constexpr int NUM_OFFSCREEN = 3;
     dk::Image&       offscreenImage(int i)       { return m_offImages[i]; }
     const dk::Image& offscreenImage(int i) const { return m_offImages[i]; }
     bool offscreenReady() const { return m_offscreenReady; }
@@ -134,7 +134,7 @@ public:
 
     // Stubs for pool-based allocation (SDL2 uses SDL_CreateTexture directly)
     void resetImagePool() {}
-    static constexpr int NUM_OFFSCREEN = 2;
+    static constexpr int NUM_OFFSCREEN = 3;
     bool offscreenReady() const { return false; }
 #endif
 

@@ -1,11 +1,33 @@
 #include "OverlayDialog.hpp"
+#include "ActionButtonStyle.hpp"
+#include "settings/SettingsGlassTuning.hpp"
 #include <nxui/core/Renderer.hpp>
 #include <algorithm>
 #include <utility>
 #include <cmath>
 
+namespace {
+
+static nxui::Rect scaledRect(const nxui::Rect& rect, float scale) {
+    nxui::Rect scaled = rect;
+    if (scale >= 0.999f) {
+        return scaled;
+    }
+
+    float width = scaled.width * scale;
+    float height = scaled.height * scale;
+    scaled.x += (scaled.width - width) * 0.5f;
+    scaled.y += (scaled.height - height) * 0.5f;
+    scaled.width = width;
+    scaled.height = height;
+    return scaled;
+}
+
+} // namespace
+
 
 OverlayDialog::OverlayDialog() {
+    setFrameworkTouchEnabled(false);
     setVisible(false);
     m_cursor.setBorderWidth(2.6f);
 }
@@ -56,18 +78,15 @@ void OverlayDialog::buildWidgetTree() {
     setCornerRadius(kPanelRadius);
     setPadding(kPanelPadY, kPanelPadX, kPanelPadY, kPanelPadX);
     setAlignItems(nxui::AlignItems::STRETCH);
-    setBackingEnabled(true);
+    setBackingEnabled(false);
+    setLiquidGlassEnabled(false);
     setBlurEnabled(false);
-    setBlurRadius(2.0f);
-    setBlurPasses(3);
     setWireframeEnabled(false);
+    setPanelOpacity(0.94f);
     if (m_theme) {
-        setBaseColor(m_theme->panelBase);
-        setBorderColor(m_theme->panelBorder);
-        setHighlightColor(m_theme->panelHighlight);
-        setBackingColor(nxui::Color(
-            m_theme->panelBase.r, m_theme->panelBase.g,
-            m_theme->panelBase.b, 1.f));
+        setBaseColor(m_theme->panelBase.withAlpha(std::clamp(m_theme->panelBase.a * 0.82f, 0.18f, 0.32f)));
+        setBorderColor(m_theme->panelBorder.withAlpha(std::clamp(m_theme->panelBorder.a * 0.95f, 0.14f, 0.36f)));
+        setHighlightColor(m_theme->panelHighlight.withAlpha(std::clamp(m_theme->panelHighlight.a * 0.70f, 0.03f, 0.10f)));
     }
 
     if (titleFont && !m_title.empty()) {
@@ -102,20 +121,12 @@ void OverlayDialog::buildWidgetTree() {
     m_buttonRow->setAlignItems(nxui::AlignItems::STRETCH);
     m_buttonRow->setWireframeEnabled(false);
 
-    nxui::Color btnBase   = m_theme ? m_theme->panelBorder.withAlpha(0.12f)
-                                    : nxui::Color(0.5f, 0.5f, 0.6f, 0.12f);
-    nxui::Color btnBorder = m_theme ? m_theme->panelBorder
-                                    : nxui::Color(0.5f, 0.5f, 0.65f, 0.22f);
-
     for (int i = 0; i < btnCount; ++i) {
-        auto btn = std::make_shared<nxui::GlassWidget>();
+        auto btn = std::make_shared<nxui::GlassBox>(nxui::Axis::ROW);
+        switchu::ui::prepareActionButton(*btn, kButtonRadius);
         btn->setCornerRadius(kButtonRadius);
         btn->setRect({0, 0, btnW, kButtonH});
-        btn->setBaseColor(btnBase);
-        btn->setBorderColor(btnBorder);
-        btn->setBorderWidth(1.2f);
-        btn->setBackingEnabled(false);
-        btn->setBlurEnabled(false);
+        switchu::ui::applyActionButtonStyle(*btn, m_theme, 1.f, 0.f);
         btn->setWireframeEnabled(false);
         btn->setGrow(1.f);
 
@@ -167,6 +178,9 @@ void OverlayDialog::show(const std::string& title,
 
     m_active       = true;
     m_animatingOut = false;
+    m_backdropCacheValid = false;
+    m_cachedPreBlurRadius = -1.f;
+    m_cachedBlurIterations = -1;
 
     buildWidgetTree();
 
@@ -179,7 +193,7 @@ void OverlayDialog::show(const std::string& title,
     m_contentReveal.set(1.f, 0.34f, nxui::Easing::outCubic);
 
     if (m_selected < (int)m_btnWidgets.size()) {
-        nxui::Rect br = m_btnWidgets[m_selected]->rect();
+        nxui::Rect br = scaledRect(m_btnWidgets[m_selected]->rect(), m_panelScale.value());
         m_cursor.setCornerRadius(kButtonRadius);
         m_cursor.moveTo(br.expanded(3.f), kButtonRadius, 0.001f);
     }
@@ -192,6 +206,7 @@ void OverlayDialog::show(const std::string& title,
 
     m_touchHitButton  = -1;
     m_touchOnSelected = false;
+    m_ignoreInitialTouchRelease = true;
 }
 
 void OverlayDialog::hide() {
@@ -259,12 +274,16 @@ void OverlayDialog::handleTouch(nxui::Input& input) {
     if (!m_active || m_animatingOut) return;
 
     if (input.touchDown()) {
+        if (m_ignoreInitialTouchRelease)
+            m_ignoreInitialTouchRelease = false;
+
         float tx = input.touchX();
         float ty = input.touchY();
         m_touchHitButton  = -1;
         m_touchOnSelected = false;
         for (int i = 0; i < (int)m_btnWidgets.size(); ++i) {
-            if (m_btnWidgets[i]->rect().contains(tx, ty)) {
+            nxui::Rect buttonRect = scaledRect(m_btnWidgets[i]->rect(), m_panelScale.value()).expanded(10.f);
+            if (buttonRect.contains(tx, ty)) {
                 m_touchHitButton = i;
                 break;
             }
@@ -274,6 +293,13 @@ void OverlayDialog::handleTouch(nxui::Input& input) {
     }
 
     if (input.touchUp()) {
+        if (m_ignoreInitialTouchRelease) {
+            m_ignoreInitialTouchRelease = false;
+            m_touchHitButton  = -1;
+            m_touchOnSelected = false;
+            return;
+        }
+
         float dx = std::abs(input.touchDeltaX());
         float dy = std::abs(input.touchDeltaY());
         if (dx < 20.f && dy < 20.f) {
@@ -288,7 +314,7 @@ void OverlayDialog::handleTouch(nxui::Input& input) {
             } else {
                 float px = input.touchX();
                 float py = input.touchY();
-                if (!rect().contains(px, py))
+                if (!scaledRect(rect(), m_panelScale.value()).contains(px, py))
                     cancel();
             }
         }
@@ -300,7 +326,7 @@ void OverlayDialog::handleTouch(nxui::Input& input) {
 
 void OverlayDialog::syncCursor() {
     if (m_selected >= 0 && m_selected < (int)m_btnWidgets.size()) {
-        nxui::Rect br = m_btnWidgets[m_selected]->rect();
+        nxui::Rect br = scaledRect(m_btnWidgets[m_selected]->rect(), m_panelScale.value());
         m_cursor.moveTo(br.expanded(3.f), kButtonRadius, 0.16f);
     }
     if (m_theme)
@@ -334,21 +360,10 @@ void OverlayDialog::syncChildOpacities() {
             c->setOpacity(btn->opacity());
     }
 
-    nxui::Color btnBase    = m_theme ? m_theme->panelBorder.withAlpha(0.12f)
-                                     : nxui::Color(0.5f, 0.5f, 0.6f, 0.12f);
-    nxui::Color btnBorder  = m_theme ? m_theme->panelBorder
-                                     : nxui::Color(0.5f, 0.5f, 0.65f, 0.22f);
-    nxui::Color selBorder  = m_theme ? m_theme->textPrimary.withAlpha(0.6f)
-                                     : nxui::Color(1.f, 1.f, 1.f, 0.6f);
-
     for (int i = 0; i < (int)m_btnWidgets.size(); ++i) {
         float focus = (i < (int)m_buttonFocus.size()) ? m_buttonFocus[(size_t)i].value() : 0.f;
         focus = std::clamp(focus, 0.f, 1.f);
-
-        m_btnWidgets[i]->setBaseColor(btnBase);
-        m_btnWidgets[i]->setBorderColor(nxui::Color::lerp(btnBorder, selBorder, focus));
-        m_btnWidgets[i]->setBorderWidth(1.2f + 0.7f * focus);
-        m_btnWidgets[i]->setScale(1.f + 0.045f * focus);
+        switchu::ui::applyActionButtonStyle(*m_btnWidgets[i], m_theme, alpha, focus);
     }
 }
 
@@ -378,9 +393,57 @@ void OverlayDialog::render(nxui::Renderer& ren) {
     float alpha = m_overlayAlpha.value();
     if (alpha < 0.01f) return;
 
-    ren.drawRect({0, 0, 1280, 720}, nxui::Color(0, 0, 0, 0.55f * alpha));
+    nxui::Rect panel = scaledRect(rect(), scale());
+    const auto& tuning = settings::debug::settingsGlassTuning();
+    bool needsBackdropRefresh = !m_backdropCacheValid
+        || std::abs(m_cachedPreBlurRadius - tuning.preBlurRadius) > 0.001f
+        || m_cachedBlurIterations != tuning.blurIterations;
 
-    nxui::GlassPanel::onRender(ren);
+    if (needsBackdropRefresh) {
+        ren.captureToOffscreen(false);
+        if (tuning.blurIterations > 0 && tuning.preBlurRadius > 0.001f) {
+            ren.applyBlur(tuning.preBlurRadius, tuning.blurIterations);
+        }
+        ren.copyOffscreen(0, kBackdropCacheTarget);
+        m_backdropCacheValid = true;
+        m_cachedPreBlurRadius = tuning.preBlurRadius;
+        m_cachedBlurIterations = tuning.blurIterations;
+    }
+
+    nxui::LiquidGlassSettings savedGlass = ren.liquidGlassSettings();
+    auto& glass = ren.liquidGlassSettings();
+    glass.refractionIntensity = std::clamp(tuning.refractionIntensity, 0.0f, 1.5f);
+    glass.blurIntensity = std::max(0.0f, tuning.shaderBlurIntensity);
+    glass.noiseIntensity = 0.0f;
+    glass.glowIntensity = std::max(0.0f, tuning.glowIntensity);
+    glass.saturation = std::max(0.0f, tuning.saturation);
+    glass.opacityMultiplier = 1.0f;
+    glass.roughness = std::max(0.0f, tuning.roughness);
+    glass.powerFactor = std::max(1.001f, tuning.powerFactor);
+
+    nxui::Color glassTint = m_theme
+        ? m_theme->panelBase.withAlpha(m_theme->mode == nxui::ThemeMode::Dark
+            ? std::clamp(tuning.tintAlphaDark, 0.0f, 1.0f)
+            : std::clamp(tuning.tintAlphaLight, 0.0f, 1.0f))
+        : m_base.withAlpha(0.14f);
+    nxui::Rect glassRect = panel.shrunk(std::max(0.0f, tuning.inset));
+    float glassRadius = std::max(12.0f, kPanelRadius - std::max(0.0f, tuning.inset) * 0.5f);
+
+    ren.drawLiquidGlass(kBackdropCacheTarget,
+                        glassRect,
+                        glassRadius,
+                        glassTint,
+                        alpha,
+                        std::clamp(tuning.shade, 0.0f, 1.0f));
+    ren.drawRoundedRectOutline(glassRect,
+                               m_border.withAlpha(std::clamp(m_border.a * 0.90f, 0.14f, 0.34f) * alpha),
+                               glassRadius,
+                               1.2f);
+    ren.drawRoundedRectOutline(glassRect.shrunk(1.5f),
+                               m_highlight.withAlpha(std::clamp(m_highlight.a * 0.90f, 0.04f, 0.10f) * alpha),
+                               std::max(0.0f, glassRadius - 1.5f),
+                               1.0f);
+    ren.liquidGlassSettings() = savedGlass;
 
     for (auto& c : children())
         c->render(ren);

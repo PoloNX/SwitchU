@@ -40,7 +40,7 @@ private:
     GpuDevice* m_gpu = nullptr;
     Renderer*  m_ren = nullptr;
 
-    // ── LRU string-texture cache ──────────────────────────
+    // LRU string-texture cache
     // The list stores entries in LRU order (most-recently-used at front).
     // The map provides O(1) lookup by string → list iterator.
     // On eviction, the Texture of the least-recently-used entry is reused

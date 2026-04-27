@@ -28,20 +28,20 @@ class FocusManager {
 public:
     using FocusChangedCb = std::function<void(Widget*, Widget*)>;
 
-    // ── Grid mode (legacy) ───────────────────────────────────
+    // Legacy grid mode
     void setGrid(std::vector<Widget*> items, int cols);
     void moveLeft();
     void moveRight();
     void moveUp();
     void moveDown();
 
-    // ── Tree mode (spatial navigation) ───────────────────────
+    // Tree mode for spatial navigation
     /// Navigate in a direction from the currently focused widget.
     /// Scans all focusable descendants of `root` and picks the best candidate.
     /// Returns true if focus actually moved.
     bool navigate(FocusDirection dir, Widget* root);
 
-    // ── Common ──────────────────────────────────────────────
+    // Common state
     void setFocus(int index);
     void setFocus(Widget* target);
     int  focusIndex()   const { return m_index; }

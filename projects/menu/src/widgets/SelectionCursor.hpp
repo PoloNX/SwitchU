@@ -9,6 +9,7 @@ public:
 
     void moveTo(const nxui::Rect& target, float duration = 0.2f);
     void moveTo(const nxui::Rect& target, float cornerRadius, float duration);
+    nxui::Rect currentRect() const;
     void setColor(const nxui::Color& c) { m_color = c; }
     void setCornerRadius(float r)  { m_cornerRadius.setImmediate(r); }
     void setBorderWidth(float w)   { m_borderWidth = w; }

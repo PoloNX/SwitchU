@@ -5,7 +5,7 @@
 
 namespace nxui {
 
-// ── Public API ──────────────────────────────────────────────
+// Public API
 
 void Box::layout(const Rect& bounds) {
     m_rect = bounds;
@@ -50,7 +50,7 @@ void Box::render(Renderer& ren) {
     ren.drawLine(tr, bl, Color(0.95f, 0.12f, 0.12f, 1.0f), 1.6f);
 }
 
-// ── Internal flex layout ────────────────────────────────────
+// Internal flex layout
 
 void Box::layoutChildren() {
     // Gather visible children
@@ -69,7 +69,7 @@ void Box::layoutChildren() {
     if (m_direction == Direction::LEFT_TO_RIGHT)  reversed = false;
     // INHERIT: ROW→LTR, COLUMN→TTB (no reverse)
 
-    // ── Phase 1: Compute base sizes along the main axis ─────
+    // Phase 1: compute base sizes along the main axis.
     float totalMain = 0.f;
     float totalGrow = 0.f;
     float totalShrink = 0.f;
@@ -112,7 +112,7 @@ void Box::layoutChildren() {
     float availableMain = isRow ? inner.width : inner.height;
     float freeSpace = availableMain - totalMain;
 
-    // ── Phase 2: Distribute free space (grow / shrink) ──────
+    // Phase 2: distribute free space.
     if (freeSpace > 0 && totalGrow > 0) {
         for (size_t i = 0; i < items.size(); ++i) {
             float extra = freeSpace * (items[i]->grow() / totalGrow);
@@ -139,7 +139,7 @@ void Box::layoutChildren() {
     usedMain += totalGaps;
     freeSpace = availableMain - usedMain;
 
-    // ── Phase 3: Justify content (position along main axis) ─
+    // Phase 3: position items along the main axis.
     float startOffset = 0.f;
     float spacing = 0.f;   // extra spacing between items (for space-between/around/evenly)
 
@@ -167,7 +167,7 @@ void Box::layoutChildren() {
             break;
     }
 
-    // ── Phase 4: Position each child ────────────────────────
+    // Phase 4: place each child.
     float cursor = (isRow ? inner.x : inner.y) + startOffset;
     float crossStart = isRow ? inner.y : inner.x;
     float crossSize  = isRow ? inner.height : inner.width;

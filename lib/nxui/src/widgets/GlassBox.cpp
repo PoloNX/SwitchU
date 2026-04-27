@@ -18,14 +18,14 @@ void GlassBox::onRender(Renderer& ren) {
 
     float op = m_opacity * m_panelOpacity;
 
-    // Layer 1: main body (translucent)
+    // Main translucent body.
     ren.drawRoundedRect(r, m_base.withAlpha(m_base.a * op), m_radius);
 
-    // Layer 2: subtle inner glow (fake frosted depth)
+    // Subtle inner glow.
     Rect inner = r.shrunk(1.f);
     ren.drawRoundedRect(inner, m_base.withAlpha(m_base.a * 0.25f * op), m_radius - 1.f);
 
-    // Layer 3: thin bright border
+    // Thin border.
     if (m_borderW > 0.f)
         ren.drawRoundedRectOutline(r, m_border.withAlpha(m_border.a * op),
                                    m_radius, m_borderW);

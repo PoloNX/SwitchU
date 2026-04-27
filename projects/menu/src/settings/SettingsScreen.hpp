@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 #include <functional>
+#include <algorithm>
 
 class OverlayDialog;
 
@@ -33,17 +34,16 @@ public:
 
     void setFont(nxui::Font* f)      { m_font = f; }
     void setSmallFont(nxui::Font* f)  { m_smallFont = f; }
-    void setTheme(const nxui::Theme* t) { m_theme = t; }
+    void setTheme(const nxui::Theme* t);
 
     void show();
     void hide();
     bool isActive() const { return m_active || m_animating; }
     bool isFullyVisible() const { return m_active && !m_animating; }
 
-    void update(float dt);
-    void render(nxui::Renderer& ren);
     void rebuildCurrentTab();
     void handleTouch(nxui::Input& input);
+    void warmup();
 
     struct DialogButtonDef {
         std::string label;
@@ -60,6 +60,7 @@ public:
     using ThemeToggleCb = std::function<void(bool dark)>;
     using BoolCb = std::function<void(bool)>;
     using FloatCb = std::function<void(float)>;
+    using IntCb = std::function<void(int)>;
     using VoidCb = std::function<void()>;
     using StringCb = std::function<void(const std::string&)>;
     using ColorChangeCb = std::function<void(const std::string& key, float value)>;
@@ -81,6 +82,8 @@ public:
     void onToggleSfx(BoolCb cb)          { m_toggleSfxCb = std::move(cb); }
     void onSliderSfx(BoolCb cb)          { m_sliderSfxCb = std::move(cb); }
     void onWireframeChange(BoolCb cb)    { m_wireframeCb = std::move(cb); }
+    void onGridColumnsChange(IntCb cb)   { m_gridColumnsCb = std::move(cb); }
+    void onGridRowsChange(IntCb cb)      { m_gridRowsCb = std::move(cb); }
     void onUiLanguageChange(StringCb cb)  { m_uiLanguageCb = std::move(cb); }
     void onSoundPresetChange(StringCb cb) { m_soundPresetCb = std::move(cb); }
     void onClosed(VoidCb cb)             { m_closedCb = std::move(cb); }
@@ -91,6 +94,10 @@ public:
         m_sfxVolume = sfxVol;
     }
     void setWireframeState(bool enabled) { m_wireframeEnabled = enabled; }
+    void setGridLayoutState(int columns, int rows) {
+        m_gridColumns = std::clamp(columns, 3, 8);
+        m_gridRows = std::clamp(rows, 2, 5);
+    }
     void setUiLanguageOverride(const std::string& tag) { m_uiLanguageOverride = tag.empty() ? "auto" : tag; }
     void setSoundPresetState(const std::string& current, const std::vector<std::string>& available) {
         m_soundPreset = current;
@@ -140,6 +147,11 @@ public:
         std::function<void(Tab&, SettingsScreen&)> onUpdate;
     };
 
+protected:
+    void onRender(nxui::Renderer& ren) override;
+    void onContentRender(nxui::Renderer& ren) override;
+    void onContentUpdate(float dt) override;
+
 private:
     friend class settings::tabs::SystemTab;
     friend class settings::tabs::AudioTab;
@@ -165,6 +177,7 @@ private:
 
     std::shared_ptr<nxui::Box> m_tabBar;
     std::shared_ptr<nxui::Box> m_tabContent;
+    std::vector<std::vector<std::shared_ptr<nxui::Box>>> m_cachedTabContentWidgets;
 
     void rebuildTabBar();
     void rebuildContentItems();
@@ -183,18 +196,24 @@ private:
     int       m_contentIdx  = 0;
     float     m_scrollY     = 0.f;
     float     m_scrollTarget = 0.f;
+    bool      m_backdropCacheValid = false;
+    float     m_cachedPreBlurRadius = -1.f;
+    int       m_cachedBlurIterations = -1;
 
     int rawIndexFromFocusable(int focIdx) const;
     int focusableCount() const;
     void clampContentIdx();
+    float visibilityProgress() const;
+    void syncPanelState(float eased);
+    void invalidateBackdropCache();
 
-    static constexpr float kPanelMargin   = 40.f;
-    static constexpr float kTabWidth      = 220.f;
-    static constexpr float kRowHeight     = 52.f;
-    static constexpr float kSectionHeight = 38.f;
-    static constexpr float kTabRowHeight  = 48.f;
-    static constexpr float kPanelRadius   = 28.f;
-    static constexpr float kInnerPad      = 20.f;
+    static constexpr float kPanelMargin   = 32.f;
+    static constexpr float kTabWidth      = 248.f;
+    static constexpr float kRowHeight     = 60.f;
+    static constexpr float kSectionHeight = 44.f;
+    static constexpr float kTabRowHeight  = 52.f;
+    static constexpr float kPanelRadius   = 26.f;
+    static constexpr float kInnerPad      = 30.f;
 
     nxui::Rect panelRect() const;
     nxui::Rect panelRect(float scale) const;
@@ -204,8 +223,7 @@ private:
     nxui::Rect contentRect(const nxui::Rect& panel) const;
     float      contentTotalHeight() const;
 
-    void drawBackground(nxui::Renderer& ren, float opacity);
-    void drawPanel(nxui::Renderer& ren, const nxui::Rect& panel, float opacity);
+    void drawBackground(nxui::Renderer& ren, const nxui::Rect& panel, float opacity);
     void drawTabs(nxui::Renderer& ren, const nxui::Rect& panel, float opacity);
     void drawContent(nxui::Renderer& ren, const nxui::Rect& panel, float opacity);
     void drawDropdown(nxui::Renderer& ren, const nxui::Rect& panel, float opacity);
@@ -260,6 +278,8 @@ private:
     VoidCb  m_netConnectCb;
     DialogRequestCb m_dialogRequestCb;
     BoolCb  m_wireframeCb;
+    IntCb   m_gridColumnsCb;
+    IntCb   m_gridRowsCb;
     BoolCb  m_toggleSfxCb;
     BoolCb  m_sliderSfxCb;
     StringCb m_uiLanguageCb;
@@ -269,6 +289,8 @@ private:
     float m_musicVolume = 0.4f;
     float m_sfxVolume = 0.7f;
     bool  m_wireframeEnabled = false;
+    int   m_gridColumns = 5;
+    int   m_gridRows = 3;
     std::string m_uiLanguageOverride = "auto";
     std::string m_soundPreset = "wiiu";
     std::vector<std::string> m_soundPresets;
@@ -278,11 +300,18 @@ private:
     bool m_themeModeDark = true;
     int m_i18nListenerId = -1;
     bool m_deferredRefresh = false;
-    bool m_deferBuild = false;
 
     // Touch tracking
     enum class TouchTarget { None, Tab, Content, Dropdown, ColorPicker };
     TouchTarget m_touchTarget = TouchTarget::None;
     int   m_touchHitIndex = -1;
     bool  m_touchOnSelected = false;
+    bool  m_touchDirectControl = false;
+    float m_touchStartX = 0.f;
+    float m_touchStartY = 0.f;
+    float m_touchStartScroll = 0.f;
+    bool  m_touchScrolling = false;
+    bool  m_touchDraggingSlider = false;
+    bool  m_touchDraggingColor = false;
+    bool  m_ignoreInitialTouchRelease = false;
 };
