@@ -31,6 +31,10 @@ extern "C" {
 
     // Large heap: UI + assets + applet lifecycle in one process.
     size_t __nx_heap_size = 0xFA00000;
+
+    // Display init: libnx selects ViServiceType_Manager for SystemApplet.
+    void __nx_win_init(void);
+    void __nx_win_exit(void);
 #else
     u32 __nx_applet_type = AppletType_LibraryApplet;
 
@@ -87,6 +91,9 @@ extern "C" void __appInit(void) {
     }
     svcOutputDebugString("[SwitchU-sa] appletInitialize OK", 32);
 
+    __nx_win_init();
+    svcOutputDebugString("[SwitchU-sa] __nx_win_init OK", 29);
+
     timeInitialize();
     setsysInitialize();
     setInitialize();
@@ -138,6 +145,7 @@ extern "C" void __appExit(void) {
     timeExit();
 
     appletExit();
+    __nx_win_exit();
     fsdevUnmountAll();
     fsExit();
     smExit();
