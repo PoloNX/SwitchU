@@ -32,9 +32,15 @@ extern "C" {
     // Large heap: UI + assets + applet lifecycle in one process.
     size_t __nx_heap_size = 0xFA00000;
 
+    // Use standard user-facing clock so time displays correctly.
+    TimeServiceType __nx_time_service_type = TimeServiceType_User;
+
     // Display init: libnx selects ViServiceType_Manager for SystemApplet.
     void __nx_win_init(void);
     void __nx_win_exit(void);
+
+    // Time base init (must be called after timeInitialize).
+    void __libnx_init_time(void);
 #else
     u32 __nx_applet_type = AppletType_LibraryApplet;
 
@@ -95,6 +101,7 @@ extern "C" void __appInit(void) {
     svcOutputDebugString("[SwitchU-sa] __nx_win_init OK", 29);
 
     timeInitialize();
+    __libnx_init_time();
     setsysInitialize();
     setInitialize();
 

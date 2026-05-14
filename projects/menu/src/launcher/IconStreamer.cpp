@@ -178,6 +178,9 @@ void IconStreamer::onPageChanged(int currentPage, int iconsPerPage,
     for (int t = 0; t < NUM_WORKERS; ++t) workers[t] = std::thread(workerFn);
     for (int t = 0; t < NUM_WORKERS; ++t) workers[t].join();
 
+    DebugLog::log("[streamer] decode done, uploading to GPU (pool=%d free=%d icons=%d)",
+                  (int)m_pool.size(), (int)m_freeSlots.size(), (int)allIcons.size());
+
     // 4. Upload to GPU (must happen on the main/render thread) and
     //    wire the texture pointers on the corresponding GlossyIcons.
 
@@ -195,8 +198,11 @@ void IconStreamer::onPageChanged(int currentPage, int iconsPerPage,
         m_pool.reserve(m_pool.size() + newSlots);
     }
 
+    int uploadCount = 0;
     for (auto& d : decoded) {
         if (!d.rgba) continue;
+
+        DebugLog::log("[streamer] uploading appIndex=%d (%dx%d)", d.appIndex, d.w, d.h);
 
         // Acquire a pool slot.
         int poolIdx;
@@ -214,11 +220,15 @@ void IconStreamer::onPageChanged(int currentPage, int iconsPerPage,
             m_appToSlot[d.appIndex] = poolIdx;
             if (d.appIndex < (int)allIcons.size())
                 allIcons[d.appIndex]->setTexture(&slot.texture);
+            ++uploadCount;
+        } else {
+            DebugLog::log("[streamer] loadFromPixels FAILED appIndex=%d", d.appIndex);
         }
 
         if (d.scaledWithMalloc) std::free(d.rgba);
         else stbi_image_free(d.rgba);
     }
+    DebugLog::log("[streamer] GPU upload done (%d/%d succeeded)", uploadCount, (int)toLoad.size());
 }
 
 void IconStreamer::forceReload(int currentPage, int iconsPerPage,

@@ -1059,17 +1059,23 @@ void WiiUMenuApp::finalizeRefresh() {
 
     // Load textures for the restored page.
     int page = m_refreshPrevPage > 0 ? m_refreshPrevPage : 0;
+    DebugLog::log("[refresh] calling onPageChanged(page=%d iconsPerPage=%d allIcons=%d)",
+                  page, m_grid->iconsPerPage(), (int)m_grid->allIcons().size());
     m_iconStreamer.onPageChanged(page, m_grid->iconsPerPage(),
                                  app().gpu(), app().renderer(),
                                  m_grid->allIcons());
+    DebugLog::log("[refresh] onPageChanged returned");
 
     m_grid->startAppearAnimation();
+    DebugLog::log("[refresh] startAppearAnimation done");
     if (auto* firstIcon = m_grid->focusManager().current())
         focusManager().setFocus(firstIcon);
+    DebugLog::log("[refresh] focus set");
 
     // Keep a short cooldown to coalesce duplicate app-record notifications.
     m_refreshCooldownFrames = 20;
     applyTheme();
+    DebugLog::log("[refresh] applyTheme done");
     if (m_layoutDirty)
         saveMenuLayout();
     DebugLog::log("[refresh] done, %d icons on page %d", m_model.count(), m_grid->currentPage());
