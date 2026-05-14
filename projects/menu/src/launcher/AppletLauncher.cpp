@@ -1,7 +1,12 @@
 #include "AppletLauncher.hpp"
 #include "core/DebugLog.hpp"
+#ifdef SWITCHU_STANDALONE
+#include "AppManager.hpp"
+#endif
 #ifdef SWITCHU_MENU
+#ifndef SWITCHU_STANDALONE
 #include "smi_commands.hpp"
+#endif
 #include <switchu/smi_protocol.hpp>
 #endif
 #include <switch.h>
@@ -30,6 +35,11 @@ void AppletLauncher::setStartupStatus(uint64_t suspendedTitleId, bool appRunning
 }
 
 void AppletLauncher::launchAlbum() {
+#ifdef SWITCHU_STANDALONE
+    DebugLog::log("[launcher-sa] Album requested");
+    if (m_cb.launchLibraryApplet) m_cb.launchLibraryApplet(AppletId_LibraryAppletPhotoViewer);
+    if (m_cb.playSfxModalHide)    m_cb.playSfxModalHide();
+#else
     DebugLog::log("[launcher] requesting Album launch via daemon");
     Result rc = switchu::menu::smi_cmd::sendSimple(switchu::smi::SystemMessage::LaunchAlbum);
     DebugLog::log("[launcher] Album rc=0x%X", rc);
@@ -37,9 +47,15 @@ void AppletLauncher::launchAlbum() {
         if (m_cb.playSfxModalHide) m_cb.playSfxModalHide();
         if (m_cb.requestExit)      m_cb.requestExit();
     }
+#endif
 }
 
 void AppletLauncher::launchMiiEditor() {
+#ifdef SWITCHU_STANDALONE
+    DebugLog::log("[launcher-sa] MiiEditor requested");
+    if (m_cb.launchLibraryApplet) m_cb.launchLibraryApplet(AppletId_LibraryAppletMiiEdit);
+    if (m_cb.playSfxModalHide)    m_cb.playSfxModalHide();
+#else
     DebugLog::log("[launcher] requesting Mii Editor launch via daemon");
     Result rc = switchu::menu::smi_cmd::sendSimple(switchu::smi::SystemMessage::LaunchMiiEditor);
     DebugLog::log("[launcher] Mii Editor rc=0x%X", rc);
@@ -47,6 +63,7 @@ void AppletLauncher::launchMiiEditor() {
         if (m_cb.playSfxModalHide) m_cb.playSfxModalHide();
         if (m_cb.requestExit)      m_cb.requestExit();
     }
+#endif
 }
 
 void AppletLauncher::launchControllerPairing() {
@@ -63,6 +80,11 @@ void AppletLauncher::launchControllerPairing() {
 }
 
 void AppletLauncher::launchNetConnect() {
+#ifdef SWITCHU_STANDALONE
+    DebugLog::log("[launcher-sa] NetConnect requested");
+    if (m_cb.launchLibraryApplet) m_cb.launchLibraryApplet(AppletId_LibraryAppletNetConnect);
+    if (m_cb.playSfxModalHide)    m_cb.playSfxModalHide();
+#else
     DebugLog::log("[launcher] requesting NetConnect launch via daemon");
     Result rc = switchu::menu::smi_cmd::sendSimple(switchu::smi::SystemMessage::LaunchNetConnect);
     DebugLog::log("[launcher] NetConnect rc=0x%X", rc);
@@ -70,15 +92,30 @@ void AppletLauncher::launchNetConnect() {
         if (m_cb.playSfxModalHide) m_cb.playSfxModalHide();
         if (m_cb.requestExit)      m_cb.requestExit();
     }
+#endif
 }
 
 void AppletLauncher::enterSleep() {
     DebugLog::log("[launcher] requesting sleep");
+#ifdef SWITCHU_STANDALONE
+    appletStartSleepSequence(true);
+#else
     switchu::menu::smi_cmd::enterSleep();
+#endif
 }
 
 void AppletLauncher::launchApplication(uint64_t titleId, AccountUid uid) {
     DebugLog::log("[launcher] tid=%016lX", titleId);
+#ifdef SWITCHU_STANDALONE
+    Result rc = switchu::standalone::app::launch(titleId, uid);
+    if (R_FAILED(rc)) {
+        DebugLog::log("[launcher-sa] launch FAIL: 0x%X", rc);
+        return;
+    }
+    DebugLog::log("[launcher-sa] launched, suspending render");
+    if (m_cb.suspendForApp) m_cb.suspendForApp();
+    else if (m_cb.requestExit) m_cb.requestExit();
+#else
     Result rc = switchu::menu::smi_cmd::launchApplication(titleId, uid);
     if (R_FAILED(rc)) {
         DebugLog::log("[launcher] FAIL: 0x%X", rc);
@@ -87,6 +124,7 @@ void AppletLauncher::launchApplication(uint64_t titleId, AccountUid uid) {
     DebugLog::log("[launcher] command sent, suspending menu");
     if (m_cb.suspendForApp) m_cb.suspendForApp();
     else if (m_cb.requestExit) m_cb.requestExit();
+#endif
 }
 
 void AppletLauncher::resumeApplication() {
@@ -95,9 +133,17 @@ void AppletLauncher::resumeApplication() {
         return;
     }
     DebugLog::log("[launcher] resume, suspending menu");
+#ifdef SWITCHU_STANDALONE
+    Result rc = switchu::standalone::app::resume();
+    if (R_FAILED(rc))
+        DebugLog::log("[launcher-sa] resume FAIL: 0x%X", rc);
+    if (m_cb.suspendForApp) m_cb.suspendForApp();
+    else if (m_cb.requestExit) m_cb.requestExit();
+#else
     switchu::menu::smi_cmd::resumeApplication();
     if (m_cb.suspendForApp) m_cb.suspendForApp();
     else if (m_cb.requestExit) m_cb.requestExit();
+#endif
 }
 
 void AppletLauncher::terminateApplication() {
@@ -106,10 +152,15 @@ void AppletLauncher::terminateApplication() {
         return;
     }
     DebugLog::log("[launcher] requesting terminate 0x%016lX", (uint64_t)m_suspendedTitleId);
+#ifdef SWITCHU_STANDALONE
+    switchu::standalone::app::terminate();
+#else
     switchu::menu::smi_cmd::terminateApplication();
+#endif
 }
 
 void AppletLauncher::checkRunningApplication() {
+    // Handled by StandaloneManager::update() in standalone mode; no-op here.
 }
 
 #else

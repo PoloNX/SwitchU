@@ -133,15 +133,15 @@ target("SwitchU")
         set_values("switch.json",    "SwitchU.json")
         set_values("switch.format",  "nro")
     else
-        add_deps("switchu-daemon")
-
+        -- experiment/standalone-menu: no daemon, menu IS the system applet
         add_defines("SWITCHU_MENU")
-        set_values("switch.name",    "switchu-menu")
+        add_defines("SWITCHU_STANDALONE")
+        set_values("switch.name",    "SwitchU")
         set_values("switch.author",  "PoloNX")
         set_values("switch.version", version)
         set_values("switch.romfs",   "romfs")
-        set_values("switch.tid",     "010000000000100B")
-        set_values("switch.json",    "projects/menu/menu.json")
+        set_values("switch.tid",     "0100000000001000")
+        set_values("switch.json",    "projects/menu/standalone.json")
         set_values("switch.format",  "nsp")
         set_values("switch.assets_dir", "SwitchU")
     end
@@ -150,7 +150,8 @@ target_end()
 target("switchu-daemon")
     set_kind("binary")
     if not is_plat("cross") then return end
-    set_default(not has_config("homebrew"))
+    -- experiment/standalone-menu: daemon is disabled; the standalone menu replaces it.
+    set_default(false)
 
     set_toolchains("devkita64")
     set_languages("c++20")

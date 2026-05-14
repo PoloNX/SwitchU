@@ -10,6 +10,10 @@ public:
         std::function<void()>     playSfxLaunchGame;
         std::function<void()>     requestExit;
         std::function<void()>     suspendForApp;
+#ifdef SWITCHU_STANDALONE
+        // Request the standalone manager to launch a library applet (Album / Mii / NetConnect).
+        std::function<void(AppletId)> launchLibraryApplet;
+#endif
         std::function<void()>     waitGpuIdle;
         std::function<void(bool)> setRenderEnabled;
     };

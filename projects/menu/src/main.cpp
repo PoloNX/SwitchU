@@ -25,6 +25,12 @@ extern "C" {
     u32 __nx_applet_type = AppletType_Application;
 
     size_t __nx_heap_size = 0xD000000;
+#elif defined(SWITCHU_STANDALONE)
+    // Standalone: menu IS the system applet, replacing qlaunch.
+    u32 __nx_applet_type = AppletType_SystemApplet;
+
+    // Large heap: UI + assets + applet lifecycle in one process.
+    size_t __nx_heap_size = 0xFA00000;
 #else
     u32 __nx_applet_type = AppletType_LibraryApplet;
 
@@ -61,7 +67,83 @@ extern "C" void userAppExit(void) {
     timeExit();
     romfsExit();
 }
+#elif defined(SWITCHU_STANDALONE)
+// ── Standalone build: menu IS the system applet (qlaunch replacement) ────────
+extern "C" void __appInit(void) {
+    Result rc;
+
+    svcOutputDebugString("[SwitchU-sa] __appInit start", 28);
+
+    rc = smInitialize();
+    if (R_FAILED(rc)) diagAbortWithResult(MAKERESULT(Module_Libnx, 500));
+
+    rc = fsInitialize();
+    if (R_FAILED(rc)) diagAbortWithResult(MAKERESULT(Module_Libnx, 501));
+
+    rc = appletInitialize();
+    if (R_FAILED(rc)) {
+        svcOutputDebugString("[SwitchU-sa] appletInitialize FAIL", 34);
+        diagAbortWithResult(MAKERESULT(Module_Libnx, 502));
+    }
+    svcOutputDebugString("[SwitchU-sa] appletInitialize OK", 32);
+
+    timeInitialize();
+    setsysInitialize();
+    setInitialize();
+
+    {
+        SetSysFirmwareVersion fw = {};
+        if (R_SUCCEEDED(setsysGetFirmwareVersion(&fw)))
+            hosversionSet(MAKEHOSVERSION(fw.major, fw.minor, fw.micro) | BIT(31));
+    }
+
+    nsInitialize();
+    accountInitialize(AccountServiceType_System);
+    nssuInitialize();
+    avmInitialize();
+    psmInitialize();
+    lblInitialize();
+    hidInitialize();
+    plInitialize(PlServiceType_System);
+    splInitialize();
+
+    rc = fsdevMountSdmc();
+    if (R_FAILED(rc)) {
+        svcOutputDebugString("[SwitchU-sa] fsdevMountSdmc FAIL, retry", 39);
+        svcSleepThread(100'000'000ULL);
+        rc = fsdevMountSdmc();
+    }
+
+    switchu::FileLog::open("standalone");
+    DebugLog::openFileLog();
+    DebugLog::log("[sa] __appInit complete (sd mount: 0x%X)", rc);
+    svcOutputDebugString("[SwitchU-sa] __appInit done", 27);
+}
+
+extern "C" void __appExit(void) {
+    DebugLog::closeFileLog();
+    switchu::FileLog::close();
+
+    splExit();
+    plExit();
+    hidExit();
+    lblExit();
+    psmExit();
+    avmExit();
+    nssuExit();
+    accountExit();
+    nsExit();
+    setExit();
+    setsysExit();
+    timeExit();
+
+    appletExit();
+    fsdevUnmountAll();
+    fsExit();
+    smExit();
+}
 #else
+// ── Library-applet build (original daemon+menu split) ────────────────────────
 extern "C" void __appInit(void) {
     Result rc;
 
@@ -146,7 +228,9 @@ extern "C" void __appExit(void) {
     fsExit();
     smExit();
 }
+#endif
 
+#if !defined(SWITCHU_HOMEBREW) && !defined(SWITCHU_STANDALONE)
 static switchu::smi::MenuStartMode readStartMode() {
     LibAppletArgs args{};
     AppletStorage stor{};
@@ -174,7 +258,7 @@ static switchu::smi::SystemStatus readSystemStatus() {
     }
     return status;
 }
-#endif
+#endif // !SWITCHU_HOMEBREW && !SWITCHU_STANDALONE
 
 int main(int argc, char* argv[]) {
     (void)argc; (void)argv;
@@ -185,6 +269,19 @@ int main(int argc, char* argv[]) {
     DebugLog::openFileLog();
     DebugLog::log("[hb] main() entry");
     DebugLog::log("[main] applet config...");
+#elif defined(SWITCHU_STANDALONE)
+    DebugLog::log("[sa] main() entry");
+
+    if (!nxtcInitialize())
+        DebugLog::log("[sa] nxtc init failed (non-fatal)");
+
+    appletLoadAndApplyIdlePolicySettings();
+
+    {
+        std::string sdPath = fmt::format("{}/shaders/", SD_ASSETS);
+        nxui::Renderer::setShaderBasePath(sdPath);
+        DebugLog::log("[sa] shader path: %s", sdPath.c_str());
+    }
 #else
     DebugLog::log("[menu] main() entry");
 
@@ -226,6 +323,17 @@ int main(int argc, char* argv[]) {
         }
         DebugLog::log("[hb] app.shutdown...");
         app.shutdown();
+#elif defined(SWITCHU_STANDALONE)
+        app.setActivity(std::make_unique<WiiUMenuApp>());
+        DebugLog::log("[sa] app.initialize...");
+        if (app.initialize()) {
+            DebugLog::log("[sa] app.run...");
+            app.run();
+        } else {
+            DebugLog::log("[sa] app.initialize FAILED");
+        }
+        DebugLog::log("[sa] app.shutdown...");
+        app.shutdown();
 #else
         auto activity = std::make_unique<WiiUMenuApp>();
         activity->setStartupStatus(sysStatus.suspended_app_id, sysStatus.app_running);
@@ -247,8 +355,10 @@ int main(int argc, char* argv[]) {
 #ifdef SWITCHU_HOMEBREW
     DebugLog::log("[hb] exit");
     DebugLog::closeFileLog();
-#endif
-#ifdef SWITCHU_MENU
+#elif defined(SWITCHU_STANDALONE)
+    nxtcExit();
+    DebugLog::log("[sa] exit");
+#else
     nxtcExit();
     DebugLog::log("[menu] exit");
 #endif

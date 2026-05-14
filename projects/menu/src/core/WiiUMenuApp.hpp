@@ -42,6 +42,9 @@
 #ifdef SWITCHU_MENU
 #include <switchu/smi_protocol.hpp>
 #endif
+#ifdef SWITCHU_STANDALONE
+#include "StandaloneManager.hpp"
+#endif
 
 
 #ifdef SWITCHU_HOMEBREW
@@ -234,4 +237,9 @@ private:
 
     float m_returnFadeTimer = 0.f;
     static constexpr float kReturnFadeInDur = 0.45f;
+
+#ifdef SWITCHU_STANDALONE
+    StandaloneManager m_standalone;
+    bool              m_libAppletInProgress = false;
+#endif
 };

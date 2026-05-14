@@ -173,7 +173,22 @@ bool WiiUMenuApp::onCreate() {
         .playSfxModalHide = [this]() { m_audio.playSfx(Sfx::ModalHide); },
         .playSfxLaunchGame = [this]() { m_audio.playSfx(Sfx::LaunchGame); },
         .requestExit = [this]() { app().requestExit(); },
-#ifdef SWITCHU_MENU
+#ifdef SWITCHU_STANDALONE
+        .suspendForApp = [this]() {
+            DebugLog::log("[suspend-sa] entering standalone suspend (render off)");
+            m_musicWasPlaying = m_audio.isPlaying();
+            m_audio.stop();
+            app().setRenderEnabled(false);
+            m_suspended = true;
+            DebugLog::log("[suspend-sa] now idle");
+        },
+        .launchLibraryApplet = [this](AppletId id) {
+            // Translate AppletId to a StandaloneManager request.
+            if (id == AppletId_LibraryAppletPhotoViewer)   m_standalone.requestLaunchAlbum();
+            else if (id == AppletId_LibraryAppletMiiEdit)  m_standalone.requestLaunchMiiEditor();
+            else if (id == AppletId_LibraryAppletNetConnect) m_standalone.requestLaunchNetConnect();
+        },
+#elif defined(SWITCHU_MENU)
         .suspendForApp = [this]() {
             DebugLog::log("[suspend] entering keep-alive suspend");
             m_musicWasPlaying = m_audio.isPlaying();
@@ -209,9 +224,63 @@ bool WiiUMenuApp::onCreate() {
 
 #ifdef SWITCHU_MENU
     m_sysMsg.setCallback([this](SysAction a) { handleSystemAction(a); });
+#ifdef SWITCHU_STANDALONE
+    {
+        // Wire StandaloneManager callbacks. These fire from the main-thread
+        // update() call so all callbacks are safe to touch menu state directly.
+        StandaloneCallbacks sacbs;
+        sacbs.onAppSuspended = [this](uint64_t tid) {
+            DebugLog::log("[sa-cb] app suspended tid=0x%016lX", tid);
+            m_launcher.setAppRunning(true);
+            m_launcher.setAppHasForeground(false);
+            m_launcher.setSuspendedTitleId(tid);
+            m_wakeReason       = 0;
+            m_wakeSuspendedTid = tid;
+            m_suspended        = false;
+            m_sysMsg.pushAction(SysAction::HomeButton);
+        };
+        sacbs.onAppExited = [this]() {
+            DebugLog::log("[sa-cb] app exited");
+            m_launcher.setAppRunning(false);
+            m_launcher.setAppHasForeground(false);
+            m_launcher.setSuspendedTitleId(0);
+            m_wakeReason       = 1;
+            m_wakeSuspendedTid = 0;
+            m_suspended        = false;
+            m_sysMsg.pushAction(SysAction::HomeButton);
+        };
+        sacbs.onAppRecordsChanged = [this]() {
+            m_refreshQueued        = true;
+            m_deferredRefreshFrames = std::max(m_deferredRefreshFrames, 3);
+        };
+        sacbs.onGcMountFailure = [this](uint32_t) {
+            m_refreshQueued        = true;
+            m_deferredRefreshFrames = std::max(m_deferredRefreshFrames, 3);
+        };
+        sacbs.onHomeRequest = [this]() {
+            m_sysMsg.pushAction(SysAction::HomeButton);
+        };
+        sacbs.onLibAppletStarted = [this]() {
+            DebugLog::log("[sa-cb] library applet starting");
+            m_musicWasPlaying    = m_audio.isPlaying();
+            m_audio.stop();
+            app().setRenderEnabled(false);
+            m_libAppletInProgress = true;
+        };
+        sacbs.onLibAppletReturned = [this]() {
+            DebugLog::log("[sa-cb] library applet returned");
+            m_libAppletInProgress = false;
+            // render + music re-enable handled by !renderEnabled() block in onUpdate
+        };
+        m_standalone.setCallbacks(std::move(sacbs));
+        m_standalone.start();
+    }
+    DebugLog::log("[init] StandaloneManager started");
+#else
     DebugLog::log("[init] async notifications via AppletStorage only");
     switchu::menu::smi_cmd::menuReady();
-#endif
+#endif // SWITCHU_STANDALONE
+#endif // SWITCHU_MENU
 
     DebugLog::log("[init] DONE");
     return true;
@@ -234,8 +303,13 @@ void WiiUMenuApp::onDestroy() {
     bluetooth::Finalize();
 
 #ifdef SWITCHU_MENU
+#ifdef SWITCHU_STANDALONE
+    m_standalone.stop();
+    DebugLog::log("[destroy] StandaloneManager stopped");
+#else
     switchu::menu::smi_cmd::menuClosing();
     switchu::menu::smi_cmd::drainAllResponses();
+#endif
 #endif
     if (m_layoutDirty)
         saveMenuLayout();
@@ -1011,7 +1085,17 @@ void WiiUMenuApp::onUpdate(float dt) {
 #endif
 
     if (m_suspended) {
-#ifdef SWITCHU_MENU
+#ifdef SWITCHU_STANDALONE
+        // In standalone mode the wake is fired by StandaloneManager callbacks
+        // which clear m_suspended directly.  Just keep driving the event loop.
+        m_standalone.update();
+        if (m_suspended) {
+            m_sysMsg.pump();
+            return;
+        }
+        // else: m_suspended was cleared by onAppSuspended / onAppExited callback.
+        // Fall through to the rest of onUpdate() this frame.
+#elif defined(SWITCHU_MENU)
         AppletStorage wakeSt;
         if (R_SUCCEEDED(appletPopInteractiveInData(&wakeSt))) {
             switchu::smi::WakeSignal ws{};
@@ -1049,6 +1133,21 @@ void WiiUMenuApp::onUpdate(float dt) {
         if (m_launchAnim && m_launchAnim->isPlaying()) m_launchAnim->stop();
 
 #ifdef SWITCHU_MENU
+#ifdef SWITCHU_STANDALONE
+        // For a library applet return the launcher state was already set by the
+        // onAppSuspended / onAppExited callbacks; skip the wake-reason path.
+        if (!m_libAppletInProgress) {
+            if (m_wakeReason == 0) {
+                m_launcher.setAppRunning(true);
+                m_launcher.setAppHasForeground(false);
+                m_launcher.setSuspendedTitleId(m_wakeSuspendedTid);
+            } else {
+                m_launcher.setAppRunning(false);
+                m_launcher.setAppHasForeground(false);
+                m_launcher.setSuspendedTitleId(0);
+            }
+        }
+#else
         if (m_wakeReason == 0) {
             m_launcher.setAppRunning(true);
             m_launcher.setAppHasForeground(false);
@@ -1058,6 +1157,7 @@ void WiiUMenuApp::onUpdate(float dt) {
             m_launcher.setAppHasForeground(false);
             m_launcher.setSuspendedTitleId(0);
         }
+#endif // SWITCHU_STANDALONE
 
         {
             uint64_t sTid = m_launcher.suspendedTitleId();
@@ -1072,7 +1172,7 @@ void WiiUMenuApp::onUpdate(float dt) {
             }
             DebugLog::log("[suspend] icons updated (suspendedTid=0x%016lX)", sTid);
         }
-#endif
+#endif // SWITCHU_MENU
         app().gpu().waitIdle();
         app().setRenderEnabled(true);
         if (m_musicWasPlaying && m_config.musicEnabled) m_audio.play();
@@ -1117,6 +1217,12 @@ void WiiUMenuApp::onUpdate(float dt) {
     }
 
 #ifdef SWITCHU_MENU
+#ifdef SWITCHU_STANDALONE
+    // Standalone: drive the system-applet event loop directly.
+    // Callbacks fire synchronously and push to m_sysMsg or mutate state.
+    m_standalone.update();
+    m_sysMsg.pump();
+#else
     {
         AppletStorage notifySt;
         while (R_SUCCEEDED(appletPopInteractiveInData(&notifySt))) {
@@ -1173,6 +1279,7 @@ void WiiUMenuApp::onUpdate(float dt) {
         }
     }
     m_sysMsg.pump();
+#endif // SWITCHU_STANDALONE
     if (m_refreshCooldownFrames > 0)
         --m_refreshCooldownFrames;
     if (m_deferredRefreshFrames > 0)
