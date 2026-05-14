@@ -4,6 +4,7 @@
 #include "DebugLog.hpp"
 #include "../launcher/AppManager.hpp"
 #include <switchu/ns_ext.hpp>
+#include <switch/applets/friends_la.h>
 #include <cstring>
 
 using namespace switchu::standalone;
@@ -70,8 +71,10 @@ void StandaloneManager::update() {
             m_cb.onGcMountFailure(m_gcMountRc.load());
     }
 
-    // Check whether the running application has exited
-    if (app::checkFinished()) {
+    // Check whether the running application has exited.
+    // Skip while m_appHasLibApplet is true: the game is still alive,
+    // it only handed foreground to one of its own library applets (msg=2).
+    if (!m_appHasLibApplet && app::checkFinished()) {
         DebugLog::log("[standalone] running app exited");
         if (m_cb.onAppExited) m_cb.onAppExited();
     }
@@ -88,6 +91,10 @@ void StandaloneManager::update() {
 void StandaloneManager::requestLaunchAlbum()      { m_pendingApplet = PendingApplet::Album; }
 void StandaloneManager::requestLaunchMiiEditor()  { m_pendingApplet = PendingApplet::MiiEditor; }
 void StandaloneManager::requestLaunchNetConnect() { m_pendingApplet = PendingApplet::NetConnect; }
+void StandaloneManager::requestLaunchMyPage(AccountUid uid) {
+    m_pendingMyPageUid = uid;
+    m_pendingApplet = PendingApplet::MyPage;
+}
 
 // ── private helpers ──────────────────────────────────────────────────────────
 
@@ -130,10 +137,18 @@ void StandaloneManager::handleAppletMessages() {
     while (R_SUCCEEDED(appletGetMessage(&msg))) {
         DebugLog::log("[standalone] applet msg=%u", msg);
         switch (msg) {
+        case 1: // ChangeIntoForeground – system gave us foreground back
+            m_appHasLibApplet = false;
+            break;
         case 2: // ChangeIntoBackground
             // A game's own library applet is acquiring foreground.
             // As the system applet we don't hold a blocking AppletHolder for
             // the menu (we ARE the menu), so nothing to close here.
+            if (app::isRunning())
+                m_appHasLibApplet = true;
+            break;
+        case 6: // ApplicationExited
+            m_appHasLibApplet = false;
             break;
         case 20: // HOME pressed
             appletRequestToGetForeground();
@@ -194,6 +209,18 @@ void StandaloneManager::launchPendingApplet() {
         inData  = &s_netType;
         inSize  = sizeof(s_netType);
         break;
+    case PendingApplet::MyPage: {
+        id   = AppletId_LibraryAppletMyPage;
+        name = "MyPage";
+        version = 1;
+        static FriendsLaArgV1 s_friendsArg = {};
+        std::memset(&s_friendsArg, 0, sizeof(s_friendsArg));
+        s_friendsArg.hdr.type = FriendsLaArgType_ShowMyProfile;
+        s_friendsArg.hdr.uid  = m_pendingMyPageUid;
+        inData = &s_friendsArg;
+        inSize = sizeof(s_friendsArg);
+        break;
+    }
     default:
         m_pendingApplet = PendingApplet::None;
         return;

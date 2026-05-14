@@ -780,7 +780,54 @@ void WiiUMenuApp::buildGrid() {
     m_topHud->setWireframeEnabled(false);
     m_topHud->setJustifyContent(nxui::JustifyContent::SPACE_BETWEEN);
     m_topHud->setAlignItems(nxui::AlignItems::FLEX_START);
+
+    // Build user-avatar bar (center of top HUD).
+    m_userAvatarBar = std::make_shared<nxui::Box>(nxui::Axis::ROW);
+    m_userAvatarBar->setMarginTop(17.f);
+    m_userAvatarBar->setTag("userAvatarBar");
+    m_userAvatarBar->setWireframeEnabled(false);
+    m_userAvatarButtons.clear();
+    {
+        AccountUid uids[8] = {};
+        s32 count = 0;
+        if (R_SUCCEEDED(accountListAllUsers(uids, 8, &count)) && count > 0) {
+            for (int i = 0; i < count; ++i) {
+                AccountProfile prof;
+                if (R_FAILED(accountGetProfile(&prof, uids[i]))) continue;
+                auto btn = std::make_shared<UserAvatarButton>();
+                btn->setSize(56.f, 56.f);
+                btn->setCornerRadius(28.f);
+                if (i > 0) btn->setMarginLeft(10.f);
+                btn->setUid(uids[i]);
+                u32 imgSize = 0;
+                if (R_SUCCEEDED(accountProfileGetImageSize(&prof, &imgSize)) && imgSize > 0) {
+                    std::vector<uint8_t> imgBuf(imgSize);
+                    u32 realSize = 0;
+                    if (R_SUCCEEDED(accountProfileLoadImage(&prof, imgBuf.data(),
+                                                            imgSize, &realSize))
+                            && realSize > 0) {
+                        btn->loadAvatar(app().gpu(), app().renderer(),
+                                        imgBuf.data(), realSize);
+                    }
+                }
+                accountProfileClose(&prof);
+#ifdef SWITCHU_STANDALONE
+                {
+                    AccountUid uid = uids[i];
+                    btn->addAction(static_cast<uint64_t>(nxui::Button::A), [this, uid]() {
+                        m_audio.playSfx(Sfx::Activate);
+                        m_standalone.requestLaunchMyPage(uid);
+                    });
+                }
+#endif
+                m_userAvatarButtons.push_back(btn);
+                m_userAvatarBar->addChild(btn);
+            }
+        }
+    }
+
     m_topHud->addChild(m_clock);
+    m_topHud->addChild(m_userAvatarBar);
     m_topHud->addChild(m_battery);
     m_topHud->layout();
 
@@ -1291,11 +1338,12 @@ void WiiUMenuApp::onUpdate(float dt) {
     if (m_deferredRefreshFrames > 0)
         --m_deferredRefreshFrames;
     if (m_refreshQueued && m_deferredRefreshFrames == 0 &&
-        !m_asyncRefreshPending && m_refreshCooldownFrames == 0) {
+        !m_asyncRefreshPending && m_refreshCooldownFrames == 0 &&
+        m_returnFadeTimer <= 0.f) {
         DebugLog::log("[update] deferred refresh triggered, starting refreshAppList");
         refreshAppList();
     }
-    if (m_asyncRefreshPending && m_appLoader.isReady()) {
+    if (m_asyncRefreshPending && m_appLoader.isReady() && m_returnFadeTimer <= 0.f) {
         finalizeRefresh();
     }
 #endif

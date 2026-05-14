@@ -6,6 +6,7 @@
 #include <nxui/core/Renderer.hpp>
 #include <nxui/core/GpuDevice.hpp>
 #include <nxui/core/Input.hpp>
+#include <nxui/Theme.hpp>
 #include <switch.h>
 #include <cstring>
 #include <cstdio>
@@ -31,7 +32,8 @@ nxui::Rect scaledRect(const nxui::Rect& rect, float scale) {
 void drawCachedGlassPanel(nxui::Renderer& ren,
                           const nxui::GlassPanel& panel,
                           int backdropTarget,
-                          float opacity) {
+                          float opacity,
+                          const nxui::Theme* theme) {
     float panelOpacity = opacity * panel.panelOpacity();
     if (panelOpacity <= 0.01f) {
         return;
@@ -54,8 +56,13 @@ void drawCachedGlassPanel(nxui::Renderer& ren,
     glass.roughness = std::max(0.0f, tuning.roughness);
     glass.powerFactor = std::max(1.001f, tuning.powerFactor);
 
-    nxui::Color glassTint = panel.baseColor().withAlpha(
-        std::clamp(panel.baseColor().a * 0.82f, 0.18f, 0.32f));
+    // Use the same theme-aware tint as OverlayDialog.
+    nxui::Color glassTint = theme
+        ? theme->panelBase.withAlpha(theme->mode == nxui::ThemeMode::Dark
+            ? std::clamp(tuning.tintAlphaDark, 0.0f, 1.0f)
+            : std::clamp(tuning.tintAlphaLight, 0.0f, 1.0f))
+        : panel.baseColor().withAlpha(0.14f);
+
     nxui::Rect glassRect = panelRect.shrunk(std::max(0.0f, tuning.inset));
     float glassRadius = std::max(12.0f, panel.cornerRadius() - std::max(0.0f, tuning.inset) * 0.5f);
 
@@ -64,7 +71,7 @@ void drawCachedGlassPanel(nxui::Renderer& ren,
                         glassRadius,
                         glassTint,
                         panelOpacity,
-                        std::clamp(tuning.shade + panel.liquidGlassShade(), 0.0f, 1.0f));
+                        std::clamp(tuning.shade, 0.0f, 1.0f));
     ren.drawRoundedRectOutline(glassRect,
                                panel.borderColor().withAlpha(std::clamp(
                                    panel.borderColor().a * 0.90f, 0.14f, 0.34f) * panelOpacity),
@@ -329,7 +336,7 @@ void UserSelectScreen::onRender(nxui::Renderer& ren) {
         float tPillY = cy - scaledTotalH * 0.5f - tPadY;
         m_titlePanel.setCornerRadius(tPillH * 0.5f);
         m_titlePanel.setRect({tPillX, tPillY, tPillW, tPillH});
-        drawCachedGlassPanel(ren, m_titlePanel, kBackdropCacheTarget, alpha);
+        drawCachedGlassPanel(ren, m_titlePanel, kBackdropCacheTarget, alpha, m_theme);
 
         float tx = cx - titleSz.x * 0.5f * sc;
         float ty = tPillY + tPadY;
@@ -340,7 +347,7 @@ void UserSelectScreen::onRender(nxui::Renderer& ren) {
     float panelX = cx - panelW * 0.5f;
     float panelY = cy - totalH * 0.5f + (titleH + 16.f);
     m_panel.setRect({panelX, panelY, panelW, panelH});
-    drawCachedGlassPanel(ren, m_panel, kBackdropCacheTarget, alpha);
+    drawCachedGlassPanel(ren, m_panel, kBackdropCacheTarget, alpha, m_theme);
 
     float scaledPanelW = panelW * sc;
     float scaledPanelH = panelH * sc;

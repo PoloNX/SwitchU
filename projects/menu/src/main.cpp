@@ -97,6 +97,11 @@ extern "C" void __appInit(void) {
     }
     svcOutputDebugString("[SwitchU-sa] appletInitialize OK", 32);
 
+    // Declare that the system applet never auto-suspends on HOME / sleep.
+    // qlaunch sets this mode; without it library applets launched by games
+    // may get confused about foreground ownership and crash.
+    appletSetFocusHandlingMode(AppletFocusHandlingMode_NoSuspend);
+
     __nx_win_init();
     svcOutputDebugString("[SwitchU-sa] __nx_win_init OK", 29);
 

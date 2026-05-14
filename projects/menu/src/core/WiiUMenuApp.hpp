@@ -18,6 +18,7 @@
 #include "widgets/OverlayDialog.hpp"
 #include "widgets/AppletButton.hpp"
 #include "widgets/PageIndicator.hpp"
+#include "widgets/UserAvatarButton.hpp"
 #include "settings/SettingsScreen.hpp"
 #include "themeshop/ThemeShopScreen.hpp"
 #include "core/Config.hpp"
@@ -160,6 +161,8 @@ private:
     std::shared_ptr<nxui::Box> m_topHud;
     std::shared_ptr<nxui::Box> m_leftSidebar;
     std::shared_ptr<nxui::Box> m_rightSidebar;
+    std::shared_ptr<nxui::Box> m_userAvatarBar;
+    std::vector<std::shared_ptr<UserAvatarButton>> m_userAvatarButtons;
 
     AudioManager m_audio;
     std::future<void>    m_audioFuture;

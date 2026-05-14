@@ -942,8 +942,15 @@ void WiiUMenuApp::applyTheme() {
     m_pageIndicator->setBorderColor(m_theme.panelBorder);
     m_pageIndicator->setHighlightColor(m_theme.panelHighlight);
     m_pageIndicator->setTheme(&m_theme);
+
+    for (auto& btn : m_userAvatarButtons) {
+        btn->setBaseColor(m_theme.panelBase);
+        btn->setBorderColor(m_theme.panelBorder);
+        btn->setHighlightColor(m_theme.panelHighlight);
+    }
     DebugLog::log("[theme-apply] widget recolor HUD done");
 
+    m_userSelect->setTheme(&m_theme);
     m_userSelect->panel().setBaseColor(m_theme.panelBase);
     m_userSelect->panel().setBorderColor(m_theme.panelBorder);
     m_userSelect->panel().setHighlightColor(m_theme.panelHighlight);

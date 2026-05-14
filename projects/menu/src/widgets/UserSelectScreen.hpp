@@ -7,6 +7,7 @@
 #include <nxui/core/Animation.hpp>
 #include <nxui/core/GpuDevice.hpp>
 #include <nxui/core/Input.hpp>
+#include <nxui/Theme.hpp>
 #include <switch.h>
 #include <vector>
 #include <string>
@@ -27,6 +28,7 @@ public:
     void setFont(nxui::Font* f)       { m_font = f; }
     void setSmallFont(nxui::Font* sf) { m_smallFont = sf; }
     void setAudio(AudioManager* a) { m_audio = a; }
+    void setTheme(const nxui::Theme* t) { m_theme = t; }
 
     void show(SelectCallback onSelect, CancelCallback onCancel = {});
     void hide();
@@ -61,6 +63,7 @@ private:
     nxui::Font* m_font      = nullptr;
     nxui::Font* m_smallFont = nullptr;
     AudioManager* m_audio = nullptr;
+    const nxui::Theme* m_theme = nullptr;
 
     SelectCallback m_onSelect;
     CancelCallback m_onCancel;

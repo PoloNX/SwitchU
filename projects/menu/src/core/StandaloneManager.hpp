@@ -52,6 +52,7 @@ public:
     void requestLaunchAlbum();
     void requestLaunchMiiEditor();
     void requestLaunchNetConnect();
+    void requestLaunchMyPage(AccountUid uid);
 
     bool isLibAppletActive() const { return m_libHolderActive; }
 
@@ -72,11 +73,15 @@ private:
     std::atomic<uint32_t> m_gcMountRc{0};
     bool m_initialEventSkipped = false;
 
-    enum class PendingApplet { None, Album, MiiEditor, NetConnect };
+    enum class PendingApplet { None, Album, MiiEditor, NetConnect, MyPage };
     PendingApplet m_pendingApplet    = PendingApplet::None;
+    AccountUid    m_pendingMyPageUid = {};
     AppletHolder  m_libHolder        = {};
     bool          m_libHolderActive  = false;
     bool          m_foregroundAppletHome = false;
+    // True while the running game has a game-initiated library applet in
+    // foreground (msg=2 received, msg=1 / msg=6 not yet received).
+    bool          m_appHasLibApplet  = false;
 };
 
 #endif // SWITCHU_STANDALONE
