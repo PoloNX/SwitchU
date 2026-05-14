@@ -11,10 +11,13 @@
 
 namespace switchu::standalone::app {
 
-static AppletApplication g_app   = {};
-static bool     g_running        = false;
-static bool     g_hasForeground  = false;
-static uint64_t g_suspendedTitleId = 0;
+// inline (C++17): single definition shared across all translation units.
+// DO NOT use static here — this header is included by multiple .cpp files
+// and static would give each TU its own independent copy.
+inline AppletApplication g_app          = {};
+inline bool     g_running               = false;
+inline bool     g_hasForeground         = false;
+inline uint64_t g_suspendedTitleId      = 0;
 
 static constexpr bool kEnableSaveDataEnsure = true;
 
