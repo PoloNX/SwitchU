@@ -784,6 +784,7 @@ void WiiUMenuApp::buildGrid() {
     // Build user-avatar bar (center of top HUD).
     m_userAvatarBar = std::make_shared<nxui::Box>(nxui::Axis::ROW);
     m_userAvatarBar->setMarginTop(17.f);
+    m_userAvatarBar->setGap(10.f);  // Proper spacing between buttons
     m_userAvatarBar->setTag("userAvatarBar");
     m_userAvatarBar->setWireframeEnabled(false);
     m_userAvatarButtons.clear();
@@ -797,8 +798,15 @@ void WiiUMenuApp::buildGrid() {
                 auto btn = std::make_shared<UserAvatarButton>();
                 btn->setSize(56.f, 56.f);
                 btn->setCornerRadius(28.f);
-                if (i > 0) btn->setMarginLeft(10.f);
                 btn->setUid(uids[i]);
+                
+                // Load user nickname
+                AccountProfileBase base = {};
+                AccountUserData userData = {};
+                if (R_SUCCEEDED(accountProfileGet(&prof, &userData, &base))) {
+                    btn->setNickname(base.nickname);
+                }
+                
                 u32 imgSize = 0;
                 if (R_SUCCEEDED(accountProfileGetImageSize(&prof, &imgSize)) && imgSize > 0) {
                     std::vector<uint8_t> imgBuf(imgSize);

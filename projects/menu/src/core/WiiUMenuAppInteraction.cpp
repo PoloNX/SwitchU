@@ -315,6 +315,14 @@ void WiiUMenuApp::wireFocusCallback() {
             for (auto& btn : m_sidebar.rightButtons()) {
                 if (btn.get() == cur) { m_titlePill->setText(btn->label()); m_titlePill->setVisible(true); return; }
             }
+            // Check if a user-avatar button is focused
+            for (auto& btn : m_userAvatarButtons) {
+                if (btn.get() == cur) {
+                    m_titlePill->setText(btn->nickname());
+                    m_titlePill->setVisible(true);
+                    return;
+                }
+            }
             m_titlePill->setVisible(false);
         } else {
             m_titlePill->setVisible(false);

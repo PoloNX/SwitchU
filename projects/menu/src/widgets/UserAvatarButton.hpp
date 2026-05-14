@@ -16,7 +16,6 @@ public:
 
     UserAvatarButton() {
         setCornerRadius(28.f);
-        setPadding(4.f);
         setLiquidGlassEnabled(true);
         setBlurEnabled(false);
     }
@@ -31,6 +30,8 @@ public:
 
     void setUid(AccountUid uid)               { m_uid = uid; }
     AccountUid uid() const                    { return m_uid; }
+    void setNickname(const std::string& n)   { m_nickname = n; }
+    const std::string& nickname() const       { return m_nickname; }
     void setOnActivate(ActivateCallback cb)   { m_onActivate = std::move(cb); }
 
     bool isFocusable() const override { return true; }
@@ -43,6 +44,7 @@ protected:
 private:
     nxui::Texture    m_ownTex;
     AccountUid       m_uid      = {};
+    std::string      m_nickname;
     bool             m_focused  = false;
     ActivateCallback m_onActivate;
 };
