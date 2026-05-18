@@ -13,13 +13,20 @@
 
 namespace {
 
+#ifdef SWITCHU_MENU
+static NsApplicationControlData g_controlData;
+#endif
+
 void registerEntries(std::vector<PendingApp>& apps,
                      GridModel& model,
                      IconStreamer& streamer) {
     streamer.init((int)apps.size());
+    streamer.setIconDataLoader(AppListLoader::loadIconData);
     for (int i = 0; i < (int)apps.size(); ++i) {
         auto& p = apps[i];
-        streamer.setIconData(i, std::move(p.iconData));
+        streamer.setTitleId(i, p.titleId);
+        if (!p.iconData.empty())
+            streamer.setIconData(i, std::move(p.iconData));
         AppEntry entry;
         entry.id           = std::move(p.id);
         entry.title        = std::move(p.title);
@@ -91,8 +98,6 @@ void AppListLoader::fetchApps() {
             switchu::ns::queryApplicationViews(tids, recordCount, views);
     }
 
-    static NsApplicationControlData controlData;
-
     m_pending.reserve(recordCount);
 
     for (int i = 0; i < recordCount; ++i) {
@@ -108,10 +113,6 @@ void AppListLoader::fetchApps() {
             a.title   = meta->name ? meta->name : "";
             a.titleId = tid;
             a.viewFlags = vf;
-            if (meta->icon_data && meta->icon_size > 0) {
-                auto* ptr = static_cast<const uint8_t*>(meta->icon_data);
-                a.iconData.assign(ptr, ptr + meta->icon_size);
-            }
             m_pending.push_back(std::move(a));
             nxtcFreeApplicationMetadata(&meta);
             continue;
@@ -119,35 +120,63 @@ void AppListLoader::fetchApps() {
 
         size_t controlSize = 0;
         Result rc = nsGetApplicationControlData(NsApplicationControlSource_Storage, tid,
-                                                &controlData, sizeof(controlData), &controlSize);
+                                                &g_controlData, sizeof(g_controlData), &controlSize);
         if (R_FAILED(rc)) continue;
 
         NacpLanguageEntry* langEntry = nullptr;
-        rc = nacpGetLanguageEntry(&controlData.nacp, &langEntry);
+        rc = nacpGetLanguageEntry(&g_controlData.nacp, &langEntry);
         if (R_FAILED(rc) || !langEntry || langEntry->name[0] == '\0') {
             langEntry = nullptr;
             for (int l = 0; l < 16; ++l) {
-                NacpLanguageEntry* e = &controlData.nacp.lang[l];
+                NacpLanguageEntry* e = &g_controlData.nacp.lang[l];
                 if (e->name[0] != '\0') { langEntry = e; break; }
             }
         }
         if (!langEntry || langEntry->name[0] == '\0') continue;
 
         size_t iconSize = controlSize - sizeof(NacpStruct);
-        nxtcAddEntry(tid, &controlData.nacp, iconSize,
-                     iconSize > 0 ? controlData.icon : nullptr, false);
+        nxtcAddEntry(tid, &g_controlData.nacp, iconSize,
+                     iconSize > 0 ? g_controlData.icon : nullptr, false);
 
         PendingApp a;
         a.id      = tidBuf;
         a.title   = langEntry->name;
         a.titleId = tid;
         a.viewFlags = vf;
-        if (iconSize > 0)
-            a.iconData.assign(controlData.icon, controlData.icon + iconSize);
         m_pending.push_back(std::move(a));
     }
     nxtcFlushCacheFile();
 #endif
+}
+
+
+std::vector<uint8_t> AppListLoader::loadIconData(uint64_t titleId) {
+    std::vector<uint8_t> iconData;
+    if (titleId == 0)
+        return iconData;
+
+#ifdef SWITCHU_MENU
+    NxTitleCacheApplicationMetadata* meta = nxtcGetApplicationMetadataEntryById(titleId);
+    if (meta) {
+        if (meta->icon_data && meta->icon_size > 0) {
+            auto* ptr = static_cast<const uint8_t*>(meta->icon_data);
+            iconData.assign(ptr, ptr + meta->icon_size);
+        }
+        nxtcFreeApplicationMetadata(&meta);
+        if (!iconData.empty())
+            return iconData;
+    }
+
+    size_t controlSize = 0;
+    Result rc = nsGetApplicationControlData(NsApplicationControlSource_Storage, titleId,
+                                            &g_controlData, sizeof(g_controlData), &controlSize);
+    if (R_SUCCEEDED(rc) && controlSize > sizeof(NacpStruct)) {
+        const size_t iconSize = controlSize - sizeof(NacpStruct);
+        iconData.assign(g_controlData.icon, g_controlData.icon + iconSize);
+    }
+#endif
+
+    return iconData;
 }
 
 

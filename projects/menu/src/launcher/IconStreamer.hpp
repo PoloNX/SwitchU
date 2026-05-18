@@ -5,18 +5,22 @@
 #include <vector>
 #include <memory>
 #include <cstdint>
+#include <functional>
 
 class GlossyIcon;
 
 // Streams icon textures on demand based on the currently visible page.
 // Only icons in the visible range (current page +- kPageMargin) are uploaded
-// to the GPU.  Compressed JPEG/PNG data is kept in CPU memory for all apps
-// so textures can be decoded and uploaded when the user switches pages.
+// to the GPU. Compressed JPEG/PNG data is fetched on demand so the menu does
+// not keep every title icon resident while idle.
 class IconStreamer {
 public:
-    // Store compressed icon data for all apps.  Called once after the app
-    // list has been fetched.
+    using IconDataLoader = std::function<std::vector<uint8_t>(uint64_t titleId)>;
+
+    // Prepare icon metadata for all apps after the app list has been fetched.
     void init(int appCount);
+    void setIconDataLoader(IconDataLoader loader);
+    void setTitleId(int appIndex, uint64_t titleId);
     void setIconData(int appIndex, std::vector<uint8_t> compressed);
 
     // Call when the visible page changes (or on first display).
@@ -33,6 +37,10 @@ public:
                      nxui::GpuDevice& gpu, nxui::Renderer& ren,
                      const std::vector<std::shared_ptr<GlossyIcon>>& allIcons);
 
+    // Release uploaded GPU textures while keeping title metadata, so the
+    // current page can be loaded again when rendering resumes.
+    void releaseLoadedTextures(const std::vector<std::shared_ptr<GlossyIcon>>& allIcons);
+
     // Release everything (textures + compressed data).
     void clear();
 
@@ -40,8 +48,8 @@ public:
     // app entries are swapped in the grid model.
     bool swapIndices(int a, int b);
 
-    int  iconCount()         const { return (int)m_compressed.size(); }
-    bool hasData(int index)  const { return index >= 0 && index < (int)m_compressed.size() && !m_compressed[index].empty(); }
+    int  iconCount()         const { return (int)m_appToSlot.size(); }
+    bool hasData(int index)  const;
 
 private:
     struct DecodedIcon {
@@ -50,10 +58,13 @@ private:
         bool scaledWithMalloc = false;
     };
 
-    DecodedIcon decodeAndScale(int appIndex) const;
+    DecodedIcon decodeAndScale(const std::vector<uint8_t>& data) const;
 
-    // Per-app compressed JPEG/PNG bytes.
+    // Transient compressed JPEG/PNG bytes, normally only used for prefetched
+    // data. App icons are otherwise fetched on demand and released after upload.
     std::vector<std::vector<uint8_t>> m_compressed;
+    std::vector<uint64_t> m_titleIds;
+    IconDataLoader m_iconLoader;
 
     // Pool of reusable GPU textures.
     struct TexSlot {
@@ -71,6 +82,6 @@ private:
     int m_lastPage = -1;
 
     // How many pages around the current one to keep loaded.
-    static constexpr int kPageMargin = 1;
-    static constexpr int kIconSize   = 256;
+    static constexpr int kPageMargin = 0;
+    static constexpr int kIconSize   = 160;
 };

@@ -125,7 +125,7 @@ bool UserSelectScreen::loadUsers(nxui::GpuDevice& gpu, nxui::Renderer& ren) {
             std::vector<uint8_t> imgBuf(imgSize);
             rc = accountProfileLoadImage(&profile, imgBuf.data(), imgSize, &realSize);
             if (R_SUCCEEDED(rc) && realSize > 0) {
-                entry.icon.loadFromMemory(gpu, ren, imgBuf.data(), realSize);
+                entry.icon.loadFromMemory(gpu, ren, imgBuf.data(), realSize, 128);
             }
         }
 
@@ -135,6 +135,11 @@ bool UserSelectScreen::loadUsers(nxui::GpuDevice& gpu, nxui::Renderer& ren) {
 
     DebugLog::log("[UserSelect] loaded %d users", (int)m_users.size());
     return !m_users.empty();
+}
+
+void UserSelectScreen::clearLoadedUsers() {
+    m_users.clear();
+    m_selected = 0;
 }
 
 void UserSelectScreen::show(SelectCallback onSelect, CancelCallback onCancel) {
@@ -410,4 +415,3 @@ void UserSelectScreen::onRender(nxui::Renderer& ren) {
 
     m_cursor.render(ren);
 }
-

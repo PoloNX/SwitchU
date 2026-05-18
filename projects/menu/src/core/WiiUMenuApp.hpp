@@ -79,6 +79,8 @@ private:
     };
 
     void loadResources();
+    void trimVisualResourcesForSuspend();
+    void restoreVisualResourcesAfterSuspend();
     GridLayoutMetrics computeGridLayoutMetrics() const;
     void buildGrid();
     void applyTheme();
@@ -181,7 +183,7 @@ private:
         std::uint64_t revision = 0;
     };
 
-    nxui::ThreadPool m_threadPool{2};
+    nxui::ThreadPool m_threadPool{1};
     SidebarManager  m_sidebar;
     AppletLauncher  m_launcher;
     AppListLoader   m_appLoader;
@@ -227,6 +229,7 @@ private:
     std::string m_loadedGameCardPath;
     std::string m_loadedBackgroundImagePath;
     bool m_backgroundImageLoaded      = false;
+    bool m_visualResourcesTrimmed     = false;
     bool m_forceThemeResourceReload   = false;
     nxui::Widget* m_dialogReturnFocus = nullptr;
     bool m_dialogWasActive            = false;

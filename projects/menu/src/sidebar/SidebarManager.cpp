@@ -112,6 +112,24 @@ void SidebarManager::invalidateAssetsCache() {
     m_assetsLoaded = false;
 }
 
+void SidebarManager::releaseAssets(nxui::GpuDevice& gpu) {
+    for (auto& button : m_leftButtons)
+        if (button) button->setIcon(nullptr);
+    for (auto& button : m_rightButtons)
+        if (button) button->setIcon(nullptr);
+
+    m_anims.clear();
+    for (auto& icon : m_icons)
+        icon = nxui::Texture{};
+    invalidateAssetsCache();
+
+#ifdef NXUI_BACKEND_DEKO3D
+    gpu.resetImagePool();
+#else
+    (void)gpu;
+#endif
+}
+
 void SidebarManager::loadAssets(nxui::GpuDevice& gpu, nxui::Renderer& ren,
                                 const std::string& assetsBase,
                                 const std::string& customIconsBase) {

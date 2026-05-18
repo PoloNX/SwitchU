@@ -48,7 +48,7 @@ private:
     // The map provides O(1) lookup by string → list iterator.
     // On eviction, the Texture of the least-recently-used entry is reused
     // (its descriptor slot and MemBlock are recycled via loadFromPixels).
-    static constexpr size_t kMaxCacheEntries = 384;
+    static constexpr size_t kMaxCacheEntries = 96;
 
     struct CacheEntry {
         std::string key;

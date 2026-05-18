@@ -4,6 +4,7 @@
 #include "DebugLog.hpp"
 #include "../launcher/AppManager.hpp"
 #include <switchu/ns_ext.hpp>
+#include <switch/applets/album_la.h>
 #include <switch/applets/friends_la.h>
 #include <cstring>
 
@@ -80,12 +81,16 @@ void StandaloneManager::update() {
     }
 
     // Kick off a pending library-applet launch
-    if (m_pendingApplet != PendingApplet::None && !m_libHolderActive)
+    if (m_pendingApplet != PendingApplet::None && !m_libHolderActive) {
+        DebugLog::log("[standalone] pending applet launch: %d", (int)m_pendingApplet);
         launchPendingApplet();
+    }
 
     // Poll already-active library applet
-    if (m_libHolderActive)
+    if (m_libHolderActive) {
+        DebugLog::log("[standalone] polling library applet");
         checkLibraryAppletFinished();
+    }
 }
 
 void StandaloneManager::requestLaunchAlbum()      { m_pendingApplet = PendingApplet::Album; }
@@ -142,8 +147,6 @@ void StandaloneManager::handleAppletMessages() {
             break;
         case 2: // ChangeIntoBackground
             // A game's own library applet is acquiring foreground.
-            // As the system applet we don't hold a blocking AppletHolder for
-            // the menu (we ARE the menu), so nothing to close here.
             if (app::isRunning())
                 m_appHasLibApplet = true;
             break;
@@ -177,34 +180,38 @@ void StandaloneManager::handleAppletMessages() {
 void StandaloneManager::launchPendingApplet() {
     AppletId  id      = AppletId_LibraryAppletPhotoViewer;
     const char* name  = "Album";
-    u32       version = 0;
+    u32       argsVersion = 0;
     const void* inData = nullptr;
     size_t    inSize   = 0;
 
     // Static buffers for applet in-data (safe across frames).
+    static u8               s_albumArg = AlbumLaArg_ShowAllAlbumFilesForHomeMenu;
     static MiiLaAppletInput s_miiIn  = {};
     static u32              s_netType = 1;
 
     switch (m_pendingApplet) {
     case PendingApplet::Album:
-        id   = AppletId_LibraryAppletPhotoViewer;
-        name = "Album";
+        id          = AppletId_LibraryAppletPhotoViewer;
+        name        = "Album";
+        argsVersion = 0x10000;
+        s_albumArg  = AlbumLaArg_ShowAllAlbumFilesForHomeMenu;
+        inData      = &s_albumArg;
+        inSize      = sizeof(s_albumArg);
         break;
     case PendingApplet::MiiEditor:
         id      = AppletId_LibraryAppletMiiEdit;
         name    = "MiiEditor";
-        version = hosversionAtLeast(10, 2, 0) ? 0x4 : 0x3;
         s_miiIn = {};
-        s_miiIn.version          = version;
+        s_miiIn.version          = hosversionAtLeast(10, 2, 0) ? 0x4 : 0x3;
         s_miiIn.mode             = MiiLaAppletMode_ShowMiiEdit;
         s_miiIn.special_key_code = MiiSpecialKeyCode_Normal;
         inData  = &s_miiIn;
         inSize  = sizeof(s_miiIn);
         break;
     case PendingApplet::NetConnect:
-        id      = AppletId_LibraryAppletNetConnect;
-        name    = "NetConnect";
-        version = 1;
+        id          = AppletId_LibraryAppletNetConnect;
+        name        = "NetConnect";
+        argsVersion = 1;
         s_netType = 1;
         inData  = &s_netType;
         inSize  = sizeof(s_netType);
@@ -212,13 +219,23 @@ void StandaloneManager::launchPendingApplet() {
     case PendingApplet::MyPage: {
         id   = AppletId_LibraryAppletMyPage;
         name = "MyPage";
-        version = 1;
-        static FriendsLaArgV1 s_friendsArg = {};
-        std::memset(&s_friendsArg, 0, sizeof(s_friendsArg));
-        s_friendsArg.hdr.type = FriendsLaArgType_ShowMyProfile;
-        s_friendsArg.hdr.uid  = m_pendingMyPageUid;
-        inData = &s_friendsArg;
-        inSize = sizeof(s_friendsArg);
+        if (hosversionAtLeast(9, 0, 0)) {
+            static FriendsLaArg s_friendsArg = {};
+            std::memset(&s_friendsArg, 0, sizeof(s_friendsArg));
+            argsVersion = 0x10000;
+            s_friendsArg.hdr.type = FriendsLaArgType_ShowMyProfile;
+            s_friendsArg.hdr.uid  = m_pendingMyPageUid;
+            inData = &s_friendsArg;
+            inSize = sizeof(s_friendsArg);
+        } else {
+            static FriendsLaArgV1 s_friendsArgV1 = {};
+            std::memset(&s_friendsArgV1, 0, sizeof(s_friendsArgV1));
+            argsVersion = 1;
+            s_friendsArgV1.hdr.type = FriendsLaArgType_ShowMyProfile;
+            s_friendsArgV1.hdr.uid  = m_pendingMyPageUid;
+            inData = &s_friendsArgV1;
+            inSize = sizeof(s_friendsArgV1);
+        }
         break;
     }
     default:
@@ -241,9 +258,9 @@ void StandaloneManager::launchPendingApplet() {
         return;
     }
 
-    if (version != 0) {
+    if (argsVersion != 0) {
         LibAppletArgs args;
-        libappletArgsCreate(&args, version);
+        libappletArgsCreate(&args, argsVersion);
         rc = libappletArgsPush(&args, &m_libHolder);
         if (R_FAILED(rc)) {
             DebugLog::log("[standalone] %s args FAIL: 0x%X", name, rc);
@@ -254,12 +271,12 @@ void StandaloneManager::launchPendingApplet() {
     }
 
     if (inData && inSize > 0) {
-        AppletStorage inSt;
-        rc = appletCreateStorage(&inSt, (s64)inSize);
-        if (R_SUCCEEDED(rc)) {
-            appletStorageWrite(&inSt, 0, inData, inSize);
-            rc = appletHolderPushInData(&m_libHolder, &inSt);
-            if (R_FAILED(rc)) appletStorageClose(&inSt);
+        rc = libappletPushInData(&m_libHolder, inData, inSize);
+        if (R_FAILED(rc)) {
+            DebugLog::log("[standalone] %s in-data FAIL: 0x%X", name, rc);
+            appletHolderClose(&m_libHolder);
+            if (m_cb.onLibAppletReturned) m_cb.onLibAppletReturned();
+            return;
         }
     }
 

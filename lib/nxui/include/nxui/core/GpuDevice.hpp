@@ -112,7 +112,7 @@ public:
     dk::UniqueMemBlock allocImageMemory(uint32_t size);
     void freeImageMemory(uint32_t size);
 
-    static constexpr uint64_t kDefaultImageBudget = 32u * 1024u * 1024u;
+    static constexpr uint64_t kDefaultImageBudget = 24u * 1024u * 1024u;
     uint64_t imageMemoryUsed() const { return m_imageMemUsed; }
 
     bool uploadTexture(dk::Image& dst, const void* pixels, uint32_t size, uint32_t width, uint32_t height);

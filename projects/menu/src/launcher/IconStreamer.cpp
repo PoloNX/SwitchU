@@ -2,8 +2,6 @@
 #include "widgets/GlossyIcon.hpp"
 #include "core/DebugLog.hpp"
 #include <nxui/third_party/stb/stb_image.h>
-#include <atomic>
-#include <thread>
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
@@ -12,7 +10,17 @@
 void IconStreamer::init(int appCount) {
     clear();
     m_compressed.resize(appCount);
+    m_titleIds.assign(appCount, 0);
     m_appToSlot.assign(appCount, -1);
+}
+
+void IconStreamer::setIconDataLoader(IconDataLoader loader) {
+    m_iconLoader = std::move(loader);
+}
+
+void IconStreamer::setTitleId(int appIndex, uint64_t titleId) {
+    if (appIndex >= 0 && appIndex < (int)m_titleIds.size())
+        m_titleIds[appIndex] = titleId;
 }
 
 void IconStreamer::setIconData(int appIndex, std::vector<uint8_t> compressed) {
@@ -23,18 +31,35 @@ void IconStreamer::setIconData(int appIndex, std::vector<uint8_t> compressed) {
 void IconStreamer::clear() {
     m_pool.clear();
     m_compressed.clear();
+    m_titleIds.clear();
     m_appToSlot.clear();
     m_freeSlots.clear();
     m_lastPage = -1;
 }
 
+void IconStreamer::releaseLoadedTextures(const std::vector<std::shared_ptr<GlossyIcon>>& allIcons) {
+    for (auto& slot : m_pool) {
+        int app = slot ? slot->appIndex : -1;
+        if (app >= 0 && app < (int)allIcons.size())
+            allIcons[app]->setTexture(nullptr);
+    }
+
+    std::fill(m_appToSlot.begin(), m_appToSlot.end(), -1);
+    m_pool.clear();
+    m_freeSlots.clear();
+    m_lastPage = -1;
+}
+
 bool IconStreamer::swapIndices(int a, int b) {
-    if (a < 0 || b < 0 || a >= (int)m_compressed.size() || b >= (int)m_compressed.size())
+    if (a < 0 || b < 0 || a >= (int)m_appToSlot.size() || b >= (int)m_appToSlot.size())
         return false;
     if (a == b)
         return true;
 
-    std::swap(m_compressed[a], m_compressed[b]);
+    if (a < (int)m_compressed.size() && b < (int)m_compressed.size())
+        std::swap(m_compressed[a], m_compressed[b]);
+    if (a < (int)m_titleIds.size() && b < (int)m_titleIds.size())
+        std::swap(m_titleIds[a], m_titleIds[b]);
 
     if (a < (int)m_appToSlot.size() && b < (int)m_appToSlot.size()) {
         int slotA = m_appToSlot[a];
@@ -50,12 +75,19 @@ bool IconStreamer::swapIndices(int a, int b) {
     return true;
 }
 
+bool IconStreamer::hasData(int index) const {
+    if (index < 0 || index >= (int)m_appToSlot.size())
+        return false;
+    if (index < (int)m_compressed.size() && !m_compressed[index].empty())
+        return true;
+    return index < (int)m_titleIds.size() && m_titleIds[index] != 0 && (bool)m_iconLoader;
+}
+
 // ---------------------------------------------------------------------------
 // Decode a single compressed icon to RGBA, downscaling to kIconSize if needed.
 // ---------------------------------------------------------------------------
-IconStreamer::DecodedIcon IconStreamer::decodeAndScale(int appIndex) const {
+IconStreamer::DecodedIcon IconStreamer::decodeAndScale(const std::vector<uint8_t>& data) const {
     DecodedIcon out{};
-    const auto& data = m_compressed[appIndex];
     if (data.empty()) return out;
 
     int w, h, ch;
@@ -121,7 +153,7 @@ void IconStreamer::onPageChanged(int currentPage, int iconsPerPage,
     if (currentPage == m_lastPage) return;
     m_lastPage = currentPage;
 
-    int totalApps  = (int)m_compressed.size();
+    int totalApps  = (int)m_appToSlot.size();
     if (totalApps == 0 || iconsPerPage == 0) return;
     int totalPages = (totalApps + iconsPerPage - 1) / iconsPerPage;
 
@@ -145,14 +177,35 @@ void IconStreamer::onPageChanged(int currentPage, int iconsPerPage,
     // 2. Collect apps that need loading.
     std::vector<int> toLoad;
     for (int i = startApp; i < endApp; ++i) {
-        if (m_appToSlot[i] < 0 && !m_compressed[i].empty())
+        if (m_appToSlot[i] < 0 && hasData(i))
             toLoad.push_back(i);
     }
 
     if (toLoad.empty()) return;
 
+    struct PendingIcon {
+        int appIndex;
+        std::vector<uint8_t> compressed;
+    };
+    std::vector<PendingIcon> pending;
+    pending.reserve(toLoad.size());
+
+    for (int appIndex : toLoad) {
+        std::vector<uint8_t> compressed;
+        if (appIndex < (int)m_compressed.size() && !m_compressed[appIndex].empty()) {
+            compressed = std::move(m_compressed[appIndex]);
+        } else if (appIndex < (int)m_titleIds.size() && m_titleIds[appIndex] != 0 && m_iconLoader) {
+            compressed = m_iconLoader(m_titleIds[appIndex]);
+        }
+
+        if (!compressed.empty())
+            pending.push_back({appIndex, std::move(compressed)});
+    }
+
+    if (pending.empty()) return;
+
     DebugLog::log("[streamer] page %d: loading %d icons [%d..%d)",
-                  currentPage, (int)toLoad.size(), startApp, endApp);
+                  currentPage, (int)pending.size(), startApp, endApp);
 
     // 3. Decode icons in parallel (CPU-bound work).
     struct Decoded {
@@ -161,22 +214,12 @@ void IconStreamer::onPageChanged(int currentPage, int iconsPerPage,
         int w = 0, h = 0;
         bool scaledWithMalloc = false;
     };
-    std::vector<Decoded> decoded(toLoad.size());
-    std::atomic<int> nextJob{0};
-
-    auto workerFn = [&]() {
-        for (;;) {
-            int idx = nextJob.fetch_add(1, std::memory_order_relaxed);
-            if (idx >= (int)toLoad.size()) break;
-            auto result = decodeAndScale(toLoad[idx]);
-            decoded[idx] = {toLoad[idx], result.rgba, result.w, result.h, result.scaledWithMalloc};
-        }
-    };
-
-    constexpr int NUM_WORKERS = 3;
-    std::thread workers[NUM_WORKERS];
-    for (int t = 0; t < NUM_WORKERS; ++t) workers[t] = std::thread(workerFn);
-    for (int t = 0; t < NUM_WORKERS; ++t) workers[t].join();
+    std::vector<Decoded> decoded(pending.size());
+    for (int idx = 0; idx < (int)pending.size(); ++idx) {
+        auto result = decodeAndScale(pending[idx].compressed);
+        decoded[idx] = {pending[idx].appIndex, result.rgba, result.w, result.h, result.scaledWithMalloc};
+    }
+    pending.clear();
 
     DebugLog::log("[streamer] decode done, uploading to GPU (pool=%d free=%d icons=%d)",
                   (int)m_pool.size(), (int)m_freeSlots.size(), (int)allIcons.size());
@@ -228,7 +271,7 @@ void IconStreamer::onPageChanged(int currentPage, int iconsPerPage,
         if (d.scaledWithMalloc) std::free(d.rgba);
         else stbi_image_free(d.rgba);
     }
-    DebugLog::log("[streamer] GPU upload done (%d/%d succeeded)", uploadCount, (int)toLoad.size());
+    DebugLog::log("[streamer] GPU upload done (%d/%d succeeded)", uploadCount, (int)decoded.size());
 }
 
 void IconStreamer::forceReload(int currentPage, int iconsPerPage,

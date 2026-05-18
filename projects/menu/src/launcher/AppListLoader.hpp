@@ -22,6 +22,7 @@ struct PendingApp {
 class AppListLoader {
 public:
     using PendingTransform = std::function<void(std::vector<PendingApp>&)>;
+    static std::vector<uint8_t> loadIconData(uint64_t titleId);
 
     // Streaming path: fetch apps and hand compressed icon data to the streamer.
     void load(GridModel& model, IconStreamer& streamer);

@@ -28,6 +28,7 @@ public:
     void reloadAssets(nxui::GpuDevice& gpu, nxui::Renderer& ren,
                       const std::string& assetsBase,
                       const std::string& customIconsBase = std::string());
+    void releaseAssets(nxui::GpuDevice& gpu);
     void invalidateAssetsCache();
 
     void update(float dt, nxui::Widget* focusedWidget);

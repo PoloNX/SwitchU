@@ -236,7 +236,6 @@ void WiiUMenuApp::createSettings() {
         }
     });
 
-    m_settings->warmup();
 }
 
 void WiiUMenuApp::createThemeShop() {
@@ -330,7 +329,6 @@ void WiiUMenuApp::createThemeShop() {
     m_themeShop->setThreadPool(&m_threadPool);
     m_themeShop->setRenderContext(&app().gpu(), &app().renderer());
     m_themeShop->setMusicState(m_audio.isPlaying(), m_audio.volume(), m_audio.sfxVolume());
-    refreshThemeShopState();
 
     m_themeShop->onMusicEnabledChange([this](bool enabled) {
         if (enabled) m_audio.play(); else m_audio.stop();
@@ -434,7 +432,6 @@ void WiiUMenuApp::createThemeShop() {
         }
     });
 
-    m_themeShop->warmup();
 }
 
 void WiiUMenuApp::reloadThemePresets() {

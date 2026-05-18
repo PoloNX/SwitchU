@@ -27,7 +27,7 @@
 namespace {
 
 static constexpr const char* kLayoutPath = "sdmc:/config/SwitchU/layout.json";
-static constexpr int kMinHomePages = 8;
+static constexpr int kMinHomePages = 1;
 static constexpr const char* kBuiltInSoundPreset = "wiiu";
 
 static constexpr float kGridRectX = 0.f;
@@ -178,6 +178,7 @@ bool WiiUMenuApp::onCreate() {
             DebugLog::log("[suspend-sa] entering standalone suspend (render off)");
             m_musicWasPlaying = m_audio.isPlaying();
             m_audio.stop();
+            trimVisualResourcesForSuspend();
             app().setRenderEnabled(false);
             m_suspended = true;
             DebugLog::log("[suspend-sa] now idle");
@@ -193,6 +194,7 @@ bool WiiUMenuApp::onCreate() {
             DebugLog::log("[suspend] entering keep-alive suspend");
             m_musicWasPlaying = m_audio.isPlaying();
             m_audio.stop();
+            trimVisualResourcesForSuspend();
             app().setRenderEnabled(false);
             switchu::menu::smi_cmd::menuSuspending();
             switchu::menu::smi_cmd::drainAllResponses();
@@ -264,12 +266,14 @@ bool WiiUMenuApp::onCreate() {
             DebugLog::log("[sa-cb] library applet starting");
             m_musicWasPlaying    = m_audio.isPlaying();
             m_audio.stop();
+            trimVisualResourcesForSuspend();
             app().setRenderEnabled(false);
             m_libAppletInProgress = true;
+            m_suspended = true;
         };
         sacbs.onLibAppletReturned = [this]() {
             DebugLog::log("[sa-cb] library applet returned");
-            m_libAppletInProgress = false;
+            m_suspended = false;
             // render + music re-enable handled by !renderEnabled() block in onUpdate
         };
         m_standalone.setCallbacks(std::move(sacbs));
@@ -325,6 +329,60 @@ void WiiUMenuApp::loadResources() {
     m_gameCardTex.loadFromFile(app().gpu(), app().renderer(), gameCardPath);
 
     m_appLoader.load(m_model, m_iconStreamer);
+}
+
+void WiiUMenuApp::trimVisualResourcesForSuspend() {
+    if (m_visualResourcesTrimmed)
+        return;
+
+    DebugLog::log("[mem] trimming visual resources for background app");
+    app().gpu().waitIdle();
+
+    if (m_launchAnim)
+        m_launchAnim->stop();
+    if (m_grid)
+        m_iconStreamer.releaseLoadedTextures(m_grid->allIcons());
+
+    m_fontNormal.clearCache();
+    m_fontSmall.clearCache();
+
+    if (m_userSelect) {
+        m_userSelect->hide();
+        m_userSelect->clearLoadedUsers();
+    }
+
+    if (m_background && m_backgroundImageLoaded)
+        m_background->clearImage();
+    m_backgroundImageLoaded = false;
+    m_loadedBackgroundImagePath.clear();
+
+    m_gameCardTex = nxui::Texture{};
+    m_loadedGameCardPath.clear();
+
+    m_sidebar.releaseAssets(app().gpu());
+
+    m_forceThemeResourceReload = true;
+    m_visualResourcesTrimmed = true;
+}
+
+void WiiUMenuApp::restoreVisualResourcesAfterSuspend() {
+    if (!m_visualResourcesTrimmed)
+        return;
+
+    DebugLog::log("[mem] restoring visual resources after background app");
+
+    applyThemeResources(m_effectivePreset);
+    m_sidebar.reloadAssets(app().gpu(), app().renderer(), SD_ASSETS,
+                           resolveThemeAssetPath(m_effectivePreset, m_effectivePreset.icons.basePath));
+
+    if (m_grid) {
+        m_iconStreamer.forceReload(m_grid->currentPage(), m_grid->iconsPerPage(),
+                                   app().gpu(), app().renderer(),
+                                   m_grid->allIcons());
+    }
+
+    m_forceThemeResourceReload = false;
+    m_visualResourcesTrimmed = false;
 }
 
 WiiUMenuApp::GridLayoutMetrics WiiUMenuApp::computeGridLayoutMetrics() const {
@@ -784,7 +842,9 @@ void WiiUMenuApp::buildGrid() {
     // Build user-avatar bar (center of top HUD).
     m_userAvatarBar = std::make_shared<nxui::Box>(nxui::Axis::ROW);
     m_userAvatarBar->setMarginTop(17.f);
-    m_userAvatarBar->setGap(10.f);  // Proper spacing between buttons
+    m_userAvatarBar->setGap(10.f);
+    m_userAvatarBar->setShrink(0.f);
+    m_userAvatarBar->setSize(0.f, 56.f);
     m_userAvatarBar->setTag("userAvatarBar");
     m_userAvatarBar->setWireframeEnabled(false);
     m_userAvatarButtons.clear();
@@ -797,16 +857,11 @@ void WiiUMenuApp::buildGrid() {
                 if (R_FAILED(accountGetProfile(&prof, uids[i]))) continue;
                 auto btn = std::make_shared<UserAvatarButton>();
                 btn->setSize(56.f, 56.f);
+                btn->setMinWidth(56.f);
+                btn->setMinHeight(56.f);
+                btn->setShrink(0.f);
                 btn->setCornerRadius(28.f);
                 btn->setUid(uids[i]);
-                
-                // Load user nickname
-                AccountProfileBase base = {};
-                AccountUserData userData = {};
-                if (R_SUCCEEDED(accountProfileGet(&prof, &userData, &base))) {
-                    btn->setNickname(base.nickname);
-                }
-                
                 u32 imgSize = 0;
                 if (R_SUCCEEDED(accountProfileGetImageSize(&prof, &imgSize)) && imgSize > 0) {
                     std::vector<uint8_t> imgBuf(imgSize);
@@ -832,6 +887,10 @@ void WiiUMenuApp::buildGrid() {
                 m_userAvatarBar->addChild(btn);
             }
         }
+    }
+    if (!m_userAvatarButtons.empty()) {
+        const float avatarCount = static_cast<float>(m_userAvatarButtons.size());
+        m_userAvatarBar->setSize(avatarCount * 56.f + (avatarCount - 1.f) * 10.f, 56.f);
     }
 
     m_topHud->addChild(m_clock);
@@ -1197,7 +1256,9 @@ void WiiUMenuApp::onUpdate(float dt) {
 #ifdef SWITCHU_STANDALONE
         // For a library applet return the launcher state was already set by the
         // onAppSuspended / onAppExited callbacks; skip the wake-reason path.
-        if (!m_libAppletInProgress) {
+        if (m_libAppletInProgress) {
+            m_libAppletInProgress = false;
+        } else {
             if (m_wakeReason == 0) {
                 m_launcher.setAppRunning(true);
                 m_launcher.setAppHasForeground(false);
@@ -1235,6 +1296,7 @@ void WiiUMenuApp::onUpdate(float dt) {
         }
 #endif // SWITCHU_MENU
         app().gpu().waitIdle();
+        restoreVisualResourcesAfterSuspend();
         app().setRenderEnabled(true);
         if (m_musicWasPlaying && m_config.musicEnabled) m_audio.play();
         m_musicWasPlaying = false;
@@ -1505,4 +1567,3 @@ void WiiUMenuApp::onRender(nxui::Renderer& ren) {
     }
 #endif
 }
-

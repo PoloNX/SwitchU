@@ -20,17 +20,22 @@
 #endif
 #include <memory>
 
+namespace {
+constexpr size_t kSwitchUHeapSize = 58u * 1024u * 1024u;
+}
+
 extern "C" {
 #ifdef SWITCHU_HOMEBREW
     u32 __nx_applet_type = AppletType_Application;
 
-    size_t __nx_heap_size = 0xD000000;
+    size_t __nx_heap_size = kSwitchUHeapSize;
 #elif defined(SWITCHU_STANDALONE)
     // Standalone: menu IS the system applet, replacing qlaunch.
     u32 __nx_applet_type = AppletType_SystemApplet;
 
-    // Large heap: UI + assets + applet lifecycle in one process.
-    size_t __nx_heap_size = 0xFA00000;
+    // Keep the qlaunch replacement lean enough to leave applet-pool memory
+    // available for WebApplet, Album, MiiEdit, and applet-heavy games.
+    size_t __nx_heap_size = kSwitchUHeapSize;
 
     // Use standard user-facing clock so time displays correctly.
     TimeServiceType __nx_time_service_type = TimeServiceType_User;
@@ -44,7 +49,7 @@ extern "C" {
 #else
     u32 __nx_applet_type = AppletType_LibraryApplet;
 
-    size_t __nx_heap_size = 0xFA00000;
+    size_t __nx_heap_size = kSwitchUHeapSize;
 
     TimeServiceType __nx_time_service_type = TimeServiceType_Menu;
 

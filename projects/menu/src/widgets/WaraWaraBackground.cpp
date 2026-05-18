@@ -128,7 +128,7 @@ bool WaraWaraBackground::loadImage(nxui::GpuDevice& gpu, nxui::Renderer& ren, co
     }
 
     nxui::Texture texture;
-    if (!texture.loadFromFile(gpu, ren, path, 0))
+    if (!texture.loadFromFile(gpu, ren, path, 1280))
         return false;
 
     m_backgroundImage = std::move(texture);
@@ -410,4 +410,3 @@ void WaraWaraBackground::drawRoundedShape(nxui::Renderer& ren, const Shape& s, c
     default: break;
     }
 }
-

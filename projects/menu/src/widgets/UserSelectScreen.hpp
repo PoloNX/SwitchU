@@ -24,6 +24,7 @@ public:
     UserSelectScreen();
 
     bool loadUsers(nxui::GpuDevice& gpu, nxui::Renderer& ren);
+    void clearLoadedUsers();
 
     void setFont(nxui::Font* f)       { m_font = f; }
     void setSmallFont(nxui::Font* sf) { m_smallFont = sf; }
@@ -90,4 +91,3 @@ private:
 
     static constexpr int kBackdropCacheTarget = 3;
 };
-
