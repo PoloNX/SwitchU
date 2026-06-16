@@ -259,10 +259,24 @@ void WiiUMenuApp::createSettings() {
     m_settings->setDefaultProfileState(m_config.defaultProfileEnabled,
                                        m_config.defaultProfileUid);
     m_settings->setClockUse12HourState(m_config.clockUse12Hour);
+    m_settings->setAccessibilityEnabledState(m_config.accessibilityEnabled);
+    m_settings->setAccessibilitySpeechState(m_config.accessibilitySpeakHints,
+                                            m_config.accessibilitySpeakContextEveryFocus,
+                                            m_config.accessibilitySpeakPosition,
+                                            m_config.accessibilitySpeechRate);
 
     m_settings->onNavigateSfx([this]() { m_audio.playSfx(Sfx::Navigate); });
     m_settings->onActivateSfx([this]() { m_audio.playSfx(Sfx::Activate); });
     m_settings->onCloseSfx([this]() { m_audio.playSfx(Sfx::ModalHide); });
+    m_settings->onAccessibilityAnnouncement([this](const std::string& text) {
+        m_accessibility.announce(text);
+    });
+    m_settings->onAccessibilityStructuredAnnouncement([this](const std::string& context,
+                                                             const std::string& position,
+                                                             const std::string& summary,
+                                                             bool forceRepeat) {
+        m_accessibility.announceStructuredFocus(context, position, summary, forceRepeat);
+    });
     m_settings->onToggleSfx([this](bool on) {
         m_audio.playSfx(on ? Sfx::ThemeToggle : Sfx::ToggleOff);
     });
@@ -309,6 +323,31 @@ void WiiUMenuApp::createSettings() {
         m_config.clockUse12Hour = enabled;
         if (m_clock)
             m_clock->setUse12HourClock(enabled);
+    });
+    m_settings->onAccessibilityEnabledChange([this](bool enabled) {
+        if (m_config.accessibilityEnabled == enabled)
+            return;
+        m_config.accessibilityEnabled = enabled;
+        m_accessibility.setEnabled(enabled);
+        if (enabled)
+            m_accessibility.announce(nxui::I18n::instance().tr(
+                "accessibility.speech.enabled",
+                "Voice guidance enabled."));
+    });
+    m_settings->onAccessibilitySpeakHintsChange([this](bool enabled) {
+        m_config.accessibilitySpeakHints = enabled;
+        m_accessibility.setSpeakHints(enabled);
+    });
+    m_settings->onAccessibilitySpeakContextEveryFocusChange([this](bool enabled) {
+        m_config.accessibilitySpeakContextEveryFocus = enabled;
+        m_accessibility.setSpeakContextEveryFocus(enabled);
+    });
+    m_settings->onAccessibilitySpeakPositionChange([this](bool enabled) {
+        m_config.accessibilitySpeakPosition = enabled;
+    });
+    m_settings->onAccessibilitySpeechRateChange([this](int rate) {
+        m_config.accessibilitySpeechRate = std::clamp(rate, 120, 320);
+        m_accessibility.setSpeechRate(m_config.accessibilitySpeechRate);
     });
     m_settings->onNetConnect([this]() {
         m_pendingNetConnect = true;
@@ -498,6 +537,9 @@ void WiiUMenuApp::createThemeShop() {
     m_themeShop->onNavigateSfx([this]() { m_audio.playSfx(Sfx::Navigate); });
     m_themeShop->onActivateSfx([this]() { m_audio.playSfx(Sfx::Activate); });
     m_themeShop->onCloseSfx([this]() { m_audio.playSfx(Sfx::ModalHide); });
+    m_themeShop->onAccessibilityAnnouncement([this](const std::string& text) {
+        m_accessibility.announce(text);
+    });
     m_themeShop->onToggleSfx([this](bool on) {
         m_audio.playSfx(on ? Sfx::ThemeToggle : Sfx::ToggleOff);
     });
@@ -865,6 +907,7 @@ void WiiUMenuApp::applyUiLanguage() {
         i18n.setLanguageAuto();
     else
         i18n.setLanguage(m_config.uiLanguageOverride);
+    m_accessibility.setVoiceForLanguageTag(i18n.activeLanguageTag());
 }
 
 std::string WiiUMenuApp::resolveThemeAssetPath(const ThemePreset& preset, const std::string& rawPath) const {

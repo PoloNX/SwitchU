@@ -13,6 +13,11 @@ struct AppConfig {
     std::string defaultProfileUid;
     bool  tutorialCompleted = false;
     bool  clockUse12Hour = false;
+    bool  accessibilityEnabled = true;
+    bool  accessibilitySpeakHints = true;
+    bool  accessibilitySpeakContextEveryFocus = false;
+    bool  accessibilitySpeakPosition = true;
+    int   accessibilitySpeechRate = 190;
 
     std::string themePreset = "Default Light";
 

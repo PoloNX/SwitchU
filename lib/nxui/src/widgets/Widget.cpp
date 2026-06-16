@@ -84,6 +84,27 @@ bool Widget::fireAction(uint64_t button) const {
     return false;
 }
 
+std::string Widget::accessibilitySummary() const {
+    std::string out;
+    if (!m_accessibilityLabel.empty()) {
+        out = m_accessibilityLabel;
+    } else if (!m_tag.empty()) {
+        out = m_tag;
+    }
+
+    if (!m_accessibilityRole.empty()) {
+        if (!out.empty()) out += ", ";
+        out += m_accessibilityRole;
+    }
+
+    if (!m_accessibilityHint.empty()) {
+        if (!out.empty()) out += ". ";
+        out += m_accessibilityHint;
+    }
+
+    return out;
+}
+
 void Widget::addDirectionAction(FocusDirection dir, std::function<void()> cb) {
     switch (dir) {
         case FocusDirection::LEFT:

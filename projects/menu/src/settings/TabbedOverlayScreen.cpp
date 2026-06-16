@@ -273,6 +273,7 @@ void TabbedOverlayScreen::show() {
     syncPanelState(0.f);
     setFocusable(true);
     setupActions();
+    announceCurrentFocus();
 }
 
 void TabbedOverlayScreen::hide() {

@@ -114,6 +114,15 @@ public:
     void setTag(const std::string& t) { m_tag = t; }
     const std::string& tag() const    { return m_tag; }
 
+    // Accessibility metadata used by screen-reader style narration.
+    void setAccessibilityLabel(const std::string& label) { m_accessibilityLabel = label; }
+    const std::string& accessibilityLabel() const { return m_accessibilityLabel; }
+    void setAccessibilityHint(const std::string& hint) { m_accessibilityHint = hint; }
+    const std::string& accessibilityHint() const { return m_accessibilityHint; }
+    void setAccessibilityRole(const std::string& role) { m_accessibilityRole = role; }
+    const std::string& accessibilityRole() const { return m_accessibilityRole; }
+    std::string accessibilitySummary() const;
+
     // Lifecycle
     virtual void update(float dt);
     virtual void render(Renderer& ren);
@@ -153,6 +162,9 @@ protected:
     bool m_focusable = false;
     bool m_frameworkTouchEnabled = true;
     std::string m_tag;
+    std::string m_accessibilityLabel;
+    std::string m_accessibilityHint;
+    std::string m_accessibilityRole;
     std::function<void()> m_onActivate;
     Widget* m_parent = nullptr;
     std::vector<Ptr> m_children;

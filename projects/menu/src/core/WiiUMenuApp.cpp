@@ -242,6 +242,12 @@ bool WiiUMenuApp::onCreate() {
 
     nxui::I18n::instance().initialize(std::string(SD_ASSETS) + "/i18n", "en-US");
     applyUiLanguage();
+    m_accessibility.initialize(m_config.accessibilityEnabled,
+                               nxui::I18n::instance().activeLanguageTag(),
+                               SD_ASSETS);
+    m_accessibility.setSpeakHints(m_config.accessibilitySpeakHints);
+    m_accessibility.setSpeakContextEveryFocus(m_config.accessibilitySpeakContextEveryFocus);
+    m_accessibility.setSpeechRate(m_config.accessibilitySpeechRate);
 
     m_audioFuture = m_threadPool.submit([this]() {
         m_audio.initialize();
@@ -320,6 +326,7 @@ void WiiUMenuApp::onDestroy() {
 #endif
     if (m_layoutDirty)
         saveMenuLayout();
+    m_accessibility.shutdown();
     m_audio.shutdown();
 }
 
@@ -405,6 +412,10 @@ void WiiUMenuApp::buildUserAvatarBar() {
     if (!m_userAvatarButtons.empty()) {
         const float countF = static_cast<float>(m_userAvatarButtons.size());
         m_userAvatarBar->setSize(countF * 56.f + (countF - 1.f) * 10.f, 56.f);
+        m_userAvatarButtons.front()->setCustomNavigation(nxui::FocusDirection::LEFT,
+                                                         m_userAvatarButtons.front().get());
+        m_userAvatarButtons.back()->setCustomNavigation(nxui::FocusDirection::RIGHT,
+                                                        m_userAvatarButtons.back().get());
     }
 }
 
@@ -703,6 +714,10 @@ std::shared_ptr<GlossyIcon> WiiUMenuApp::makeIcon(const AppEntry& entry) {
         icon->setTitle("");
         icon->setTitleId(0);
         icon->setFocusable(true);
+        auto& i18n = nxui::I18n::instance();
+        icon->setAccessibilityLabel(i18n.tr("accessibility.grid.empty_slot", "Empty slot"));
+        icon->setAccessibilityRole(i18n.tr("accessibility.roles.slot", "slot"));
+        icon->setAccessibilityHint(i18n.tr("accessibility.hints.grid_empty", "Use the directional pad to move to another slot."));
         icon->setNotLaunchable(false);
         icon->setCornerRadius(m_theme.iconCornerRadius);
         return icon;
@@ -711,6 +726,14 @@ std::shared_ptr<GlossyIcon> WiiUMenuApp::makeIcon(const AppEntry& entry) {
     icon->setTag("glossy_icon");
     icon->setTitle(entry.title);
     icon->setTitleId(entry.titleId);
+    icon->setAccessibilityLabel(entry.title);
+    auto& i18n = nxui::I18n::instance();
+    icon->setAccessibilityRole(entry.isGameCard()
+        ? i18n.tr("accessibility.roles.game_card", "game card")
+        : i18n.tr("accessibility.roles.game", "game"));
+    icon->setAccessibilityHint(entry.isLaunchable()
+        ? i18n.tr("accessibility.hints.game_launchable", "A to launch. X for options. Y to move. ZL or ZR to change page.")
+        : i18n.tr("accessibility.hints.game_blocked", "A to show why this item is blocked."));
     // Texture is set by IconStreamer::onPageChanged() — not here.
     icon->setCornerRadius(m_theme.iconCornerRadius);
     icon->setIsGameCard(entry.isGameCard());
@@ -941,6 +964,9 @@ void WiiUMenuApp::buildGrid() {
     m_userSelect->onNavigateSfx([this]() { m_audio.playSfx(Sfx::Navigate); });
     m_userSelect->onActivateSfx([this]() { m_audio.playSfx(Sfx::Activate); });
     m_userSelect->onCloseSfx([this]() { m_audio.playSfx(Sfx::ModalHide); });
+    m_userSelect->onAccessibilityAnnouncement([this](const std::string& text) {
+        m_accessibility.announce(text);
+    });
 
     m_dialog = std::make_shared<OverlayDialog>();
     m_dialog->setFont(&m_fontNormal);
@@ -949,6 +975,9 @@ void WiiUMenuApp::buildGrid() {
     m_dialog->onNavigateSfx([this]() { m_audio.playSfx(Sfx::Navigate); });
     m_dialog->onActivateSfx([this]() { m_audio.playSfx(Sfx::Activate); });
     m_dialog->onCloseSfx([this]() { m_audio.playSfx(Sfx::ModalHide); });
+    m_dialog->onAccessibilityAnnouncement([this](const std::string& text) {
+        m_accessibility.announce(text);
+    });
 
     m_progressDialog = std::make_shared<ProgressDialog>();
     m_progressDialog->setFont(&m_fontNormal);
@@ -1667,6 +1696,7 @@ std::vector<WiiUMenuApp::ActionHint> WiiUMenuApp::buildActionHints() {
     if (m_dialog && m_dialog->isActive()) {
         add(buttonGlyph(nxui::Button::A), i18n.tr("hint.confirm", "Confirm"));
         add(buttonGlyph(nxui::Button::B), i18n.tr("hint.back", "Back"));
+        add(buttonGlyph(nxui::Button::L), i18n.tr("hint.repeat", "Repeat"));
         return hints;
     }
 
@@ -1674,6 +1704,7 @@ std::vector<WiiUMenuApp::ActionHint> WiiUMenuApp::buildActionHints() {
         add(dpadGlyph(), i18n.tr("hint.navigate", "Navigate"));
         add(buttonGlyph(nxui::Button::A), i18n.tr("hint.select", "Select"));
         add(buttonGlyph(nxui::Button::B), i18n.tr("hint.back", "Back"));
+        add(buttonGlyph(nxui::Button::L), i18n.tr("hint.repeat", "Repeat"));
         return hints;
     }
 
@@ -1682,6 +1713,7 @@ std::vector<WiiUMenuApp::ActionHint> WiiUMenuApp::buildActionHints() {
         add(buttonGlyph(nxui::Button::A), i18n.tr("hint.select", "Select"));
         add(buttonGlyph(nxui::Button::B), i18n.tr("hint.back", "Back"));
         add(buttonGlyph(nxui::Button::X), i18n.tr("hint.search", "Search"));
+        add(buttonGlyph(nxui::Button::L), i18n.tr("hint.repeat", "Repeat"));
         return hints;
     }
 
@@ -1689,6 +1721,7 @@ std::vector<WiiUMenuApp::ActionHint> WiiUMenuApp::buildActionHints() {
         add(dpadGlyph(), i18n.tr("hint.navigate", "Navigate"));
         add(buttonGlyph(nxui::Button::A), i18n.tr("hint.select", "Select"));
         add(buttonGlyph(nxui::Button::B), i18n.tr("hint.back", "Back"));
+        add(buttonGlyph(nxui::Button::L), i18n.tr("hint.repeat", "Repeat"));
         return hints;
     }
 
@@ -1696,6 +1729,7 @@ std::vector<WiiUMenuApp::ActionHint> WiiUMenuApp::buildActionHints() {
         add(dpadGlyph(), i18n.tr("hint.move", "Move"));
         add(buttonGlyph(nxui::Button::Y), i18n.tr("hint.place", "Place"));
         add(buttonGlyph(nxui::Button::B), i18n.tr("hint.cancel", "Cancel"));
+        add(buttonGlyph(nxui::Button::L), i18n.tr("hint.repeat", "Repeat"));
         return hints;
     }
 
@@ -1740,6 +1774,7 @@ std::vector<WiiUMenuApp::ActionHint> WiiUMenuApp::buildActionHints() {
         add(buttonGlyph(nxui::Button::ZL), i18n.tr("hint.prev_page", "Prev page"));
         add(buttonGlyph(nxui::Button::ZR), i18n.tr("hint.next_page", "Next page"));
     }
+    add(buttonGlyph(nxui::Button::L), i18n.tr("hint.repeat", "Repeat"));
 
     return hints;
 }

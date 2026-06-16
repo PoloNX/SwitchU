@@ -41,6 +41,11 @@ bool AppConfig::load() {
     readJsonOpt(j, "defaultProfileUid", defaultProfileUid);
     readJsonOpt(j, "tutorialCompleted", tutorialCompleted);
     readJsonOpt(j, "clockUse12Hour", clockUse12Hour);
+    readJsonOpt(j, "accessibilityEnabled", accessibilityEnabled);
+    readJsonOpt(j, "accessibilitySpeakHints", accessibilitySpeakHints);
+    readJsonOpt(j, "accessibilitySpeakContextEveryFocus", accessibilitySpeakContextEveryFocus);
+    readJsonOpt(j, "accessibilitySpeakPosition", accessibilitySpeakPosition);
+    readJsonOpt(j, "accessibilitySpeechRate", accessibilitySpeechRate);
     readJsonOpt(j, "themePreset", themePreset);
 
     if (musicVolume < 0.f) musicVolume = 0.f;
@@ -52,6 +57,7 @@ bool AppConfig::load() {
     if (uiLanguageOverride.empty()) uiLanguageOverride = "auto";
     if (soundPreset.empty()) soundPreset = "wiiu";
     if (!defaultProfileEnabled) defaultProfileUid.clear();
+    accessibilitySpeechRate = std::clamp(accessibilitySpeechRate, 120, 320);
     if (themePreset.empty()) themePreset = "Default Light";
 
     return true;
@@ -73,6 +79,11 @@ bool AppConfig::save() const {
     j["defaultProfileUid"] = defaultProfileEnabled ? defaultProfileUid : std::string();
     j["tutorialCompleted"] = tutorialCompleted;
     j["clockUse12Hour"] = clockUse12Hour;
+    j["accessibilityEnabled"] = accessibilityEnabled;
+    j["accessibilitySpeakHints"] = accessibilitySpeakHints;
+    j["accessibilitySpeakContextEveryFocus"] = accessibilitySpeakContextEveryFocus;
+    j["accessibilitySpeakPosition"] = accessibilitySpeakPosition;
+    j["accessibilitySpeechRate"] = std::clamp(accessibilitySpeechRate, 120, 320);
     j["themePreset"] = themePreset;
 
     std::ofstream f(kConfigPath, std::ios::trunc);

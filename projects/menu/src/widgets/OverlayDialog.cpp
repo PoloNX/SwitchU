@@ -244,6 +244,43 @@ void OverlayDialog::animateButtonFocus(float duration, nxui::EasingFunc easing) 
     }
 }
 
+std::string OverlayDialog::currentAccessibilitySummary() const {
+    if (!m_active || m_animatingOut)
+        return {};
+
+    if (m_mode == DialogMode::UserSelect) {
+        std::string name;
+        if (m_selected >= 0 && m_selected < (int)m_users.size())
+            name = m_users[(size_t)m_selected].nickname;
+        if (name.empty())
+            name = "Profil " + std::to_string(m_selected + 1);
+        return m_title + ". " + name + ". Gauche et droite pour changer de profil. A pour valider. B pour annuler.";
+    }
+
+    std::string choice;
+    if (m_selected >= 0 && m_selected < (int)m_buttons.size())
+        choice = m_buttons[(size_t)m_selected].label;
+
+    std::string out = m_title;
+    if (!m_message.empty()) {
+        if (!out.empty()) out += ". ";
+        out += m_message;
+    }
+    if (!choice.empty()) {
+        if (!out.empty()) out += ". ";
+        out += "Choix: " + choice;
+    }
+    if (!out.empty())
+        out += ". ";
+    out += "Gauche et droite pour changer. A pour valider. B pour annuler.";
+    return out;
+}
+
+void OverlayDialog::announceCurrentSelection() {
+    if (m_accessibilityCb)
+        m_accessibilityCb(currentAccessibilitySummary());
+}
+
 
 void OverlayDialog::show(const std::string& title,
                          const std::string& message,
@@ -291,6 +328,7 @@ void OverlayDialog::show(const std::string& title,
     m_touchHitUser = -1;
     m_touchOnSelected = false;
     m_ignoreInitialTouchRelease = true;
+    announceCurrentSelection();
 }
 
 void OverlayDialog::showUserSelect(UserSelectCallback onSelect, CancelCallback onCancel) {
@@ -336,6 +374,7 @@ void OverlayDialog::showUserSelect(UserSelectCallback onSelect, CancelCallback o
     m_touchHitUser = -1;
     m_touchOnSelected = false;
     m_ignoreInitialTouchRelease = true;
+    announceCurrentSelection();
 }
 
 void OverlayDialog::hide() {
@@ -362,6 +401,7 @@ void OverlayDialog::setupActions() {
         m_selected = (m_selected + n - 1) % n;
         animateButtonFocus(0.16f, nxui::Easing::outCubic);
         if (m_navSfxCb) m_navSfxCb();
+        announceCurrentSelection();
     });
 
     addDirectionAction(nxui::FocusDirection::RIGHT, [this]() {
@@ -370,6 +410,7 @@ void OverlayDialog::setupActions() {
         m_selected = (m_selected + 1) % n;
         animateButtonFocus(0.16f, nxui::Easing::outCubic);
         if (m_navSfxCb) m_navSfxCb();
+        announceCurrentSelection();
     });
 
     addAction(static_cast<uint64_t>(nxui::Button::A), [this]() {
@@ -391,6 +432,7 @@ void OverlayDialog::setupUserActions() {
         int n = (int)m_users.size();
         m_selected = (m_selected + n - 1) % n;
         if (m_navSfxCb) m_navSfxCb();
+        announceCurrentSelection();
     };
 
     auto selectNext = [this]() {
@@ -398,6 +440,7 @@ void OverlayDialog::setupUserActions() {
         int n = (int)m_users.size();
         m_selected = (m_selected + 1) % n;
         if (m_navSfxCb) m_navSfxCb();
+        announceCurrentSelection();
     };
 
     addDirectionAction(nxui::FocusDirection::LEFT, selectPrevious);
@@ -482,6 +525,7 @@ void OverlayDialog::handleTouch(nxui::Input& input) {
                     } else {
                         m_selected = m_touchHitUser;
                         if (m_navSfxCb) m_navSfxCb();
+                        announceCurrentSelection();
                     }
                 } else {
                     float px = input.touchX();
@@ -533,6 +577,7 @@ void OverlayDialog::handleTouch(nxui::Input& input) {
                     m_selected = m_touchHitButton;
                     animateButtonFocus(0.16f, nxui::Easing::outCubic);
                     if (m_navSfxCb) m_navSfxCb();
+                    announceCurrentSelection();
                 }
             } else {
                 float px = input.touchX();

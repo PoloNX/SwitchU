@@ -839,6 +839,80 @@ bool ThemeShopScreen::handleCustomPressA() {
     return false;
 }
 
+std::string ThemeShopScreen::currentAccessibilitySummary() const {
+    if (!usesCustomContentLayout())
+        return TabbedOverlayScreen::currentAccessibilitySummary();
+
+    if (m_tabIndex < 0 || m_tabIndex >= (int)m_tabs.size())
+        return {};
+
+    const std::string tabName = m_tabs[(size_t)m_tabIndex].name;
+    if (m_focusArea == FocusArea::Tabs) {
+        return "Onglet " + tabName + ". A ou droite pour entrer. Haut et bas pour changer d'onglet. B pour fermer.";
+    }
+
+    if (m_detailOpen) {
+        std::string themeName;
+        std::string author;
+        if (isCommunityTab()) {
+            if (const auto* entry = selectedCommunityThemeEntry()) {
+                themeName = entry->name;
+                author = entry->author;
+            }
+        } else if (const auto* entry = selectedThemeShopEntry()) {
+            themeName = entry->name;
+            author = entry->author;
+        }
+        if (themeName.empty())
+            themeName = "Theme";
+
+        if (m_detailFullscreen)
+            return tabName + ". Apercu plein ecran de " + themeName + ". B pour fermer l'apercu.";
+
+        std::string area = (m_detailFocusArea == DetailFocusArea::Preview)
+            ? "Apercu"
+            : "Actions";
+        std::string out = tabName + ". Detail " + themeName + ", " + area;
+        if (!author.empty())
+            out += ". Auteur: " + author;
+        out += ". Gauche et droite pour changer de controle. A pour valider. B pour revenir.";
+        return out;
+    }
+
+    if (m_contentFocusArea == ContentFocusArea::Header) {
+        if (isCommunityTab())
+            return tabName + ". Recherche et actualisation. Gauche et droite pour choisir. A pour valider. Bas pour la grille.";
+        return tabName + ". Barre de recherche. A pour chercher. Bas pour la grille.";
+    }
+
+    if (m_contentFocusArea == ContentFocusArea::Pager) {
+        return tabName + ". Pagination. Gauche et droite pour changer de bouton. A pour changer de page. Haut pour la grille.";
+    }
+
+    std::string themeName;
+    std::string detail;
+    if (isCommunityTab()) {
+        if (const auto* entry = selectedCommunityThemeEntry()) {
+            themeName = entry->name;
+            detail = entry->author;
+        }
+    } else if (const auto* entry = selectedThemeShopEntry()) {
+        themeName = entry->name;
+        detail = entry->source;
+        if (entry->active)
+            detail = detail.empty() ? "Actif" : detail + ", actif";
+    }
+
+    if (themeName.empty())
+        themeName = "Aucun theme";
+
+    std::string out = tabName + ". " + themeName;
+    if (!detail.empty())
+        out += ". " + detail;
+    out += ". Croix directionnelle pour naviguer. A pour ouvrir les details. B pour revenir aux onglets.";
+    return out;
+}
+
 bool ThemeShopScreen::handleCustomPressB() {
     if (m_detailFullscreen) {
         m_detailFullscreen = false;

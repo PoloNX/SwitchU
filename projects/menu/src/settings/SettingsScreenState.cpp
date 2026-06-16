@@ -7,6 +7,8 @@ void SettingsScreen::buildTabs() {
     m_tabs.clear();
     DebugLog::log("[settings]   SystemTab...");
     m_tabs.push_back(settings::tabs::SystemTab::build(*this));
+    DebugLog::log("[settings]   AccessibilityTab...");
+    m_tabs.push_back(settings::tabs::AccessibilityTab::build(*this));
     DebugLog::log("[settings]   StorageTab...");
     m_tabs.push_back(settings::tabs::StorageTab::build(*this));
     DebugLog::log("[settings]   AudioTab...");

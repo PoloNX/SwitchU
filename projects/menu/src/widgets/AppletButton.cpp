@@ -37,6 +37,7 @@ void AppletButton::refreshLocalizedLabel() {
         m_label = nxui::I18n::instance().tr(m_labelKey, m_labelFallback);
     else
         m_label = nxui::I18n::instance().tr(m_labelSource, m_labelSource);
+    setAccessibilityLabel(m_label);
 }
 
 void AppletButton::onContentRender(nxui::Renderer& ren) {

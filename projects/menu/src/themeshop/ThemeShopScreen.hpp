@@ -95,6 +95,7 @@ protected:
     bool handleCustomNavLeft() override;
     bool handleCustomNavRight() override;
     bool handleCustomTouch(nxui::Input& input, const nxui::Rect& panel, const nxui::Rect& tabs, const nxui::Rect& content) override;
+    std::string currentAccessibilitySummary() const override;
 
 private:
     friend class themeshop::tabs::InstalledTab;
