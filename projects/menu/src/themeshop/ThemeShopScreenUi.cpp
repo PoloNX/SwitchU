@@ -1272,10 +1272,19 @@ bool ThemeShopScreen::handleCustomTouch(nxui::Input& input, const nxui::Rect&, c
                 return true;
             case ThemeTouchTarget::GridCard:
                 if (hitTestGridCard(content, x, y) == hitIndex) {
+                    bool alreadyFocused = (m_focusArea == FocusArea::Content
+                        && m_contentFocusArea == ContentFocusArea::Grid
+                        && currentSelectedIndex() == hitIndex);
                     setCurrentSelectedIndex(hitIndex);
                     m_focusArea = FocusArea::Content;
-                    openDetail();
-                    if (m_activateSfxCb) m_activateSfxCb();
+                    m_contentFocusArea = ContentFocusArea::Grid;
+                    ensureSelectionVisible();
+                    if (alreadyFocused) {
+                        openDetail();
+                        if (m_activateSfxCb) m_activateSfxCb();
+                    } else if (m_navSfxCb) {
+                        m_navSfxCb();
+                    }
                 }
                 return true;
             case ThemeTouchTarget::DetailPreviewControl:

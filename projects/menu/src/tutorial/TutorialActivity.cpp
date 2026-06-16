@@ -143,7 +143,7 @@ void TutorialActivity::buildSteps() {
         {
             StepKind::NavigationTest,
             "Navigation",
-            "Tu peux naviguer avec la croix directionnelle ou le stick gauche. Essaie une direction horizontale et une direction verticale.",
+            "Tu peux naviguer avec la croix directionnelle, le stick gauche ou le stick droit. Essaie une direction horizontale et une direction verticale.",
             "Teste une direction gauche/droite puis haut/bas."
         },
         {
@@ -161,7 +161,7 @@ void TutorialActivity::buildSteps() {
         {
             StepKind::Text,
             "Curseur",
-            "Tu peux utiliser le curseur virtuel avec ZL et ZR quand une action demande un pointeur. ZL l'active, ZR le recentre.",
+            "Tu peux utiliser le curseur virtuel avec les clics des sticks quand une action demande un pointeur. Clique le stick gauche pour l'activer, le stick droit pour le recentrer.",
             ""
         },
         {

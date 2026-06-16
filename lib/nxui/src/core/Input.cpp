@@ -126,17 +126,21 @@ void Input::update() {
         isDown(Button::DUp)    || isDown(Button::DDown)  ||
         isDown(Button::LStickL)|| isDown(Button::LStickR)||
         isDown(Button::LStickU)|| isDown(Button::LStickD)||
+        isDown(Button::RStickL)|| isDown(Button::RStickR)||
+        isDown(Button::RStickU)|| isDown(Button::RStickD)||
         std::abs(m_lx) >= kNavStickDisableThreshold ||
-        std::abs(m_ly) >= kNavStickDisableThreshold;
+        std::abs(m_ly) >= kNavStickDisableThreshold ||
+        std::abs(m_rx) >= kNavStickDisableThreshold ||
+        std::abs(m_ry) >= kNavStickDisableThreshold;
 
     if (hardwareTouching || navInputUsed) {
         m_virtualPointerEnabled = false;
     }
 
-    if (isDown(Button::ZL)) {
+    if (isDown(Button::LStick)) {
         m_virtualPointerEnabled = !m_virtualPointerEnabled;
     }
-    if (isDown(Button::ZR)) {
+    if (isDown(Button::RStick)) {
         recenterVirtualPointer();
     }
 

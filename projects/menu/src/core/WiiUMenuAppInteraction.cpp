@@ -444,14 +444,14 @@ nxui::Widget* WiiUMenuApp::focusRoot() {
 void WiiUMenuApp::wireGlobalActions() {
     auto& root = rootBox();
 
-    root.addAction(static_cast<uint64_t>(nxui::Button::L), [this]() {
+    root.addAction(static_cast<uint64_t>(nxui::Button::ZL), [this]() {
         int p = m_grid->currentPage() - 1;
         if (p >= 0 && !m_grid->isTransitioning()) {
             m_grid->startWaveTransition(p);
             m_audio.playSfx(Sfx::PageChange);
         }
     });
-    root.addAction(static_cast<uint64_t>(nxui::Button::R), [this]() {
+    root.addAction(static_cast<uint64_t>(nxui::Button::ZR), [this]() {
         int p = m_grid->currentPage() + 1;
         if (p < m_grid->totalPages() && !m_grid->isTransitioning()) {
             m_grid->startWaveTransition(p);

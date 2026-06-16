@@ -12,6 +12,7 @@ public:
     void setSmallFont(nxui::Font* sf) { m_smallFont = sf; }
     void setTextColor(const nxui::Color& c) { m_textColor = c; }
     void setSecondaryTextColor(const nxui::Color& c) { m_secondaryColor = c; }
+    void setUse12HourClock(bool enabled);
 
 protected:
     void onContentUpdate(float dt) override;
@@ -24,7 +25,7 @@ private:
     float m_timer = 0.f;
     std::string m_timeStr;
     std::string m_dateStr;
+    bool m_use12HourClock = false;
     nxui::Color m_textColor      {1.f, 1.f, 1.f, 1.f};
     nxui::Color m_secondaryColor {0.7f, 0.7f, 0.8f, 0.8f};
 };
-

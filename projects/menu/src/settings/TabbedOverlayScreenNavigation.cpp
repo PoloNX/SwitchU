@@ -49,6 +49,7 @@ void TabbedOverlayScreen::onPressA() {
         if (focusableCount() > 0) {
             m_focusArea = FocusArea::Content;
             m_contentIdx = 0;
+            scrollToFocused();
             if (m_navSfxCb) m_navSfxCb();
         }
         return;
@@ -210,6 +211,7 @@ void TabbedOverlayScreen::onNavRight() {
         if (focusableCount() > 0) {
             m_focusArea = FocusArea::Content;
             m_contentIdx = 0;
+            scrollToFocused();
             if (m_navSfxCb) m_navSfxCb();
         }
         return;
@@ -237,7 +239,8 @@ void TabbedOverlayScreen::scrollToFocused() {
     if (m_tabIndex < 0 || m_tabIndex >= (int)m_tabs.size()) return;
     auto& items = m_tabs[m_tabIndex].items;
     nxui::Rect cr = contentRect();
-    float itemY = 0;
+    constexpr float kContentTopPad = 16.f;
+    float itemY = kContentTopPad;
     int focusIndex = 0;
     for (auto& item : items) {
         float height = item.type == ItemType::Section ? kSectionHeight : kRowHeight;
@@ -251,6 +254,8 @@ void TabbedOverlayScreen::scrollToFocused() {
         m_scrollTarget = itemY;
     if (itemY + kRowHeight - m_scrollTarget > cr.height)
         m_scrollTarget = itemY + kRowHeight - cr.height;
+    float maxScroll = std::max(0.f, contentTotalHeight() + kContentTopPad - cr.height + 20.f);
+    m_scrollTarget = std::clamp(m_scrollTarget, 0.f, maxScroll);
 }
 
 void TabbedOverlayScreen::handleTouch(nxui::Input& input) {
@@ -262,13 +267,12 @@ void TabbedOverlayScreen::handleTouch(nxui::Input& input) {
     if (usesCustomContentLayout() && handleCustomTouch(input, panel, tr, cr))
         return;
 
+    constexpr float kContentTopPad = 16.f;
     constexpr float kCardInsetX = 18.f;
     constexpr float kCardInsetY = 8.f;
-    constexpr float kCardInnerInsetX = 14.f;
-    constexpr float kCardInnerInsetY = 8.f;
 
     auto clampScrollTarget = [this, &cr](float value) {
-        float maxScroll = std::max(0.f, contentTotalHeight() - cr.height + 20.f);
+        float maxScroll = std::max(0.f, contentTotalHeight() + kContentTopPad - cr.height + 20.f);
         return std::clamp(value, 0.f, maxScroll);
     };
 
@@ -277,11 +281,18 @@ void TabbedOverlayScreen::handleTouch(nxui::Input& input) {
             return -1;
 
         auto& items = m_tabs[m_tabIndex].items;
-        float y = cr.y - m_scrollY;
+        float y = cr.y + kContentTopPad - m_scrollY;
         int focusIdx = 0;
         for (int i = 0; i < (int)items.size(); ++i) {
             float height = (items[i].type == ItemType::Section) ? kSectionHeight : kRowHeight;
-            nxui::Rect itemRect = { cr.x, y, cr.width, height };
+            float insetY = (items[i].type == ItemType::Section) ? 1.f : kCardInsetY;
+            float cardH = std::max(0.f, height - (items[i].type == ItemType::Section ? 2.f : 6.f));
+            nxui::Rect itemRect = {
+                cr.x + kCardInsetX,
+                y + insetY,
+                std::max(0.f, cr.width - kCardInsetX * 2.f),
+                cardH
+            };
             bool visible = y < cr.bottom() && y + height > cr.y;
             if (items[i].focusable()) {
                 if (visible && itemRect.contains(tx, ty))
@@ -298,24 +309,21 @@ void TabbedOverlayScreen::handleTouch(nxui::Input& input) {
             return nxui::Rect{0.f, 0.f, 0.f, 0.f};
 
         auto& items = m_tabs[m_tabIndex].items;
-        float y = cr.y - m_scrollY;
+        float y = cr.y + kContentTopPad - m_scrollY;
         int currentFocus = 0;
         for (int i = 0; i < (int)items.size(); ++i) {
             float height = (items[i].type == ItemType::Section) ? kSectionHeight : kRowHeight;
             if (items[i].focusable()) {
                 if (currentFocus == focusIdx) {
+                    float insetY = (items[i].type == ItemType::Section) ? 1.f : kCardInsetY;
+                    float cardH = std::max(0.f, height - (items[i].type == ItemType::Section ? 2.f : 6.f));
                     nxui::Rect cardRect = {
                         cr.x + kCardInsetX,
-                        y + kCardInsetY,
+                        y + insetY,
                         std::max(0.f, cr.width - kCardInsetX * 2.f),
-                        std::max(0.f, height - 6.f)
+                        cardH
                     };
-                    return nxui::Rect{
-                        cardRect.x + kCardInnerInsetX,
-                        cardRect.y + kCardInnerInsetY,
-                        std::max(0.f, cardRect.width - kCardInnerInsetX * 2.f),
-                        std::max(0.f, cardRect.height - kCardInnerInsetY * 2.f)
-                    };
+                    return cardRect;
                 }
                 ++currentFocus;
             }
@@ -415,7 +423,7 @@ void TabbedOverlayScreen::handleTouch(nxui::Input& input) {
         int visible = std::min(total, 6);
         float listH = visible * 46.f + 16.f;
 
-        float y = cr.y - m_scrollY;
+        float y = cr.y + kContentTopPad - m_scrollY;
         for (int i = 0; i < m_dropdownRawIdx; ++i)
             y += (items[i].type == ItemType::Section) ? kSectionHeight : kRowHeight;
 
@@ -428,8 +436,38 @@ void TabbedOverlayScreen::handleTouch(nxui::Input& input) {
         return nxui::Rect{ctrlX, dy, ctrlW, listH};
     };
 
+    auto dropdownIndexAt = [this, &dropdownRect](float tx, float ty) {
+        if (!m_dropdownOpen || m_dropdownRawIdx < 0 || m_tabIndex < 0 || m_tabIndex >= (int)m_tabs.size())
+            return -1;
+
+        auto& items = m_tabs[m_tabIndex].items;
+        if (m_dropdownRawIdx >= (int)items.size())
+            return -1;
+
+        auto& item = items[m_dropdownRawIdx];
+        int total = (int)item.options.size();
+        int visible = std::min(total, 6);
+        if (total <= 0 || visible <= 0)
+            return -1;
+
+        nxui::Rect dropRect = dropdownRect();
+        if (!dropRect.expanded(18.f).contains(tx, ty))
+            return -1;
+
+        float visualStart = 0.f;
+        if (total > visible)
+            visualStart = std::clamp(m_dropdownVisualStart, 0.f, (float)(total - visible));
+        int start = std::clamp((int)std::floor(visualStart), 0, std::max(0, total - visible));
+        float rowOffset = (float)start - visualStart;
+
+        constexpr float optH = 46.f;
+        float localY = std::clamp(ty - dropRect.y - 9.f, 0.f, optH * (float)visible - 0.001f);
+        int idx = start + (int)std::floor(localY / optH - rowOffset);
+        return std::clamp(idx, 0, total - 1);
+    };
+
     constexpr float kTapThreshold = 20.f;
-    constexpr float kDragThreshold = 12.f;
+    constexpr float kPanThreshold = 6.f;
 
     if (input.touchDown()) {
         if (m_ignoreInitialTouchRelease)
@@ -443,26 +481,18 @@ void TabbedOverlayScreen::handleTouch(nxui::Input& input) {
         m_touchDirectControl = false;
         m_touchStartX = tx;
         m_touchStartY = ty;
-        m_touchStartScroll = m_scrollTarget;
+        m_touchStartScroll = m_scrollY;
+        m_touchStartDropdownVisualStart = m_dropdownVisualStart;
         m_touchScrolling = false;
         m_touchDraggingSlider = false;
 
         if (m_dropdownOpen && m_dropdownRawIdx >= 0 && m_tabIndex >= 0 && m_tabIndex < (int)m_tabs.size()) {
             auto& items = m_tabs[m_tabIndex].items;
             if (m_dropdownRawIdx < (int)items.size()) {
-                auto& item = items[m_dropdownRawIdx];
-                int total = (int)item.options.size();
-                int visible = std::min(total, 6);
-                float optH = 46.f;
                 nxui::Rect dropRect = dropdownRect();
                 if (dropRect.contains(tx, ty)) {
                     m_touchTarget = TouchTarget::Dropdown;
-                    int start = 0;
-                    if (total > visible)
-                        start = std::clamp(m_dropdownHover - visible / 2, 0, total - visible);
-                    float localY = ty - dropRect.y - 9.f;
-                    int idx = start + (int)(localY / optH);
-                    idx = std::clamp(idx, 0, total - 1);
+                    int idx = dropdownIndexAt(tx, ty);
                     m_touchHitIndex = idx;
                     m_touchOnSelected = (idx == m_dropdownHover);
                     return;
@@ -489,10 +519,7 @@ void TabbedOverlayScreen::handleTouch(nxui::Input& input) {
             if (m_touchHitIndex >= 0) {
                 nxui::Rect controlRect = contentControlRect(m_touchHitIndex);
                 if (controlRect.width > 0.f && controlRect.contains(tx, ty)) {
-                    m_touchDirectControl = true;
-                    m_focusArea = FocusArea::Content;
-                    m_contentIdx = m_touchHitIndex;
-                    scrollToFocused();
+                    m_touchDirectControl = m_touchOnSelected;
                 }
 
                 if (m_touchDirectControl) {
@@ -515,15 +542,81 @@ void TabbedOverlayScreen::handleTouch(nxui::Input& input) {
     }
 
     if (input.isTouching()) {
-        float dx = std::abs(input.touchDeltaX());
-        float dy = std::abs(input.touchDeltaY());
+        float tx = input.touchX();
+        float ty = input.touchY();
+        float dx = std::abs(tx - m_touchStartX);
+        float dy = std::abs(ty - m_touchStartY);
+
+        if (m_touchTarget == TouchTarget::None && cr.contains(tx, ty)) {
+            m_touchTarget = TouchTarget::Content;
+            m_touchHitIndex = -1;
+            m_touchOnSelected = false;
+            m_touchDirectControl = false;
+            m_touchStartX = tx;
+            m_touchStartY = ty;
+            m_touchStartScroll = m_scrollY;
+            m_touchScrolling = true;
+        }
 
         if (m_touchTarget == TouchTarget::Content) {
             if (m_touchDraggingSlider && m_touchHitIndex >= 0) {
-                applySliderDrag(m_touchHitIndex, input.touchX());
-            } else if (!m_touchDirectControl && dy > kDragThreshold && dy > dx) {
-                m_touchScrolling = true;
-                m_scrollTarget = clampScrollTarget(m_touchStartScroll - (input.touchY() - m_touchStartY));
+                applySliderDrag(m_touchHitIndex, tx);
+            } else {
+                if (!m_touchScrolling
+                    && (dx > kPanThreshold || dy > kPanThreshold)
+                    && dy > dx) {
+                    m_touchDirectControl = false;
+                    m_touchScrolling = true;
+                    m_touchStartX = tx;
+                    m_touchStartY = ty;
+                    m_touchStartScroll = m_scrollY;
+                }
+
+                if (m_touchScrolling) {
+                    float nextScroll = clampScrollTarget(m_touchStartScroll - (ty - m_touchStartY));
+                    m_scrollTarget = nextScroll;
+                    m_scrollY = nextScroll;
+                }
+            }
+        } else if (m_touchTarget == TouchTarget::Dropdown) {
+            auto& items = m_tabs[m_tabIndex].items;
+            int count = (m_dropdownRawIdx >= 0 && m_dropdownRawIdx < (int)items.size())
+                ? (int)items[m_dropdownRawIdx].options.size()
+                : 0;
+            if (count > 0) {
+                if (!m_touchScrolling
+                    && (dx > kPanThreshold || dy > kPanThreshold)
+                    && dy > dx) {
+                    m_touchScrolling = true;
+                    m_touchStartX = tx;
+                    m_touchStartY = ty;
+                    m_touchStartDropdownVisualStart = m_dropdownVisualStart;
+                }
+
+                if (m_touchScrolling) {
+                    int visible = std::min(count, 6);
+                    float maxStart = (float)std::max(0, count - visible);
+                    m_dropdownVisualStart = std::clamp(
+                        m_touchStartDropdownVisualStart - (ty - m_touchStartY) / 46.f,
+                        0.f,
+                        maxStart);
+                    int idx = dropdownIndexAt(tx, ty);
+                    if (idx >= 0 && idx != m_dropdownHover) {
+                        m_dropdownHover = idx;
+                        if (m_navSfxCb) m_navSfxCb();
+                    }
+                    return;
+                }
+            }
+
+            if (!m_touchScrolling) {
+                int idx = dropdownIndexAt(tx, ty);
+                if (idx >= 0 && idx != m_touchHitIndex) {
+                    if (idx != m_dropdownHover) {
+                        m_dropdownHover = idx;
+                        if (m_navSfxCb) m_navSfxCb();
+                    }
+                }
             }
         }
     }
@@ -553,6 +646,7 @@ void TabbedOverlayScreen::handleTouch(nxui::Input& input) {
                         if (focusableCount() > 0) {
                             m_focusArea = FocusArea::Content;
                             m_contentIdx = 0;
+                            scrollToFocused();
                             if (m_navSfxCb) m_navSfxCb();
                         }
                     } else {
@@ -612,14 +706,21 @@ void TabbedOverlayScreen::handleTouch(nxui::Input& input) {
                         if (m_dropdownRawIdx < (int)items.size()) {
                             auto& sel = items[m_dropdownRawIdx];
                             int count = std::max(1, (int)sel.options.size());
-                            int picked = std::clamp(m_touchHitIndex, 0, count - 1);
-                            m_dropdownHover = picked;
-                            sel.intVal = picked;
-                            if (sel.onChange) sel.onChange(sel);
-                            if (m_activateSfxCb) m_activateSfxCb();
+                            int releasedIdx = dropdownIndexAt(input.touchX(), input.touchY());
+                            if (releasedIdx < 0)
+                                break;
+                            int picked = std::clamp(releasedIdx, 0, count - 1);
+                            if (m_touchOnSelected && picked == m_dropdownHover) {
+                                sel.intVal = picked;
+                                if (sel.onChange) sel.onChange(sel);
+                                if (m_activateSfxCb) m_activateSfxCb();
+                                closeDropdown(true);
+                            } else {
+                                m_dropdownHover = picked;
+                                if (m_navSfxCb) m_navSfxCb();
+                            }
                         }
                     }
-                    closeDropdown(true);
                 }
                 break;
 
@@ -678,6 +779,22 @@ void TabbedOverlayScreen::onContentUpdate(float dt) {
     m_focusCursor.update(dt);
     m_tabReveal.update(std::min(dt, 0.03f));
     m_dropdownAnim.update(dt);
+    if ((m_dropdownOpen || m_dropdownClosing)
+        && !(m_touchTarget == TouchTarget::Dropdown && m_touchScrolling)
+        && m_dropdownRawIdx >= 0
+        && m_tabIndex >= 0
+        && m_tabIndex < (int)m_tabs.size()
+        && m_dropdownRawIdx < (int)m_tabs[m_tabIndex].items.size()) {
+        auto& item = m_tabs[m_tabIndex].items[m_dropdownRawIdx];
+        int total = (int)item.options.size();
+        int visible = std::min(total, 6);
+        float targetStart = 0.f;
+        if (total > visible)
+            targetStart = (float)std::clamp(m_dropdownHover - visible / 2, 0, total - visible);
+        m_dropdownVisualStart += (targetStart - m_dropdownVisualStart) * std::min(1.f, dt * 18.f);
+        if (std::abs(targetStart - m_dropdownVisualStart) < 0.001f)
+            m_dropdownVisualStart = targetStart;
+    }
     if (m_dropdownClosing && m_dropdownAnim.value() <= 0.01f) {
         m_dropdownClosing = false;
         m_dropdownRawIdx = -1;

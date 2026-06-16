@@ -181,6 +181,8 @@ std::string buttonGlyph(nxui::Button button) {
         case nxui::Button::Y: return utf8Codepoint(0xE0E3);
         case nxui::Button::L: return utf8Codepoint(0xE0E4);
         case nxui::Button::R: return utf8Codepoint(0xE0E5);
+        case nxui::Button::ZL: return utf8Codepoint(0xE0E6);
+        case nxui::Button::ZR: return utf8Codepoint(0xE0E7);
         case nxui::Button::Plus: return utf8Codepoint(0xE0F1);
         case nxui::Button::Minus: return utf8Codepoint(0xE0F2);
         default: return {};
@@ -901,6 +903,7 @@ void WiiUMenuApp::buildGrid() {
     m_clock->setMarginLeft(24.f);
     m_clock->setFont(&m_fontNormal);
     m_clock->setSmallFont(&m_fontSmall);
+    m_clock->setUse12HourClock(m_config.clockUse12Hour);
     m_clock->setCornerRadius(m_theme.cellCornerRadius);
     m_clock->setForceLiquidGlass(true);
     m_clock->setBlurEnabled(false);
@@ -1734,8 +1737,8 @@ std::vector<WiiUMenuApp::ActionHint> WiiUMenuApp::buildActionHints() {
     }
 
     if (m_grid && m_grid->totalPages() > 1) {
-        add(buttonGlyph(nxui::Button::L), i18n.tr("hint.prev_page", "Prev page"));
-        add(buttonGlyph(nxui::Button::R), i18n.tr("hint.next_page", "Next page"));
+        add(buttonGlyph(nxui::Button::ZL), i18n.tr("hint.prev_page", "Prev page"));
+        add(buttonGlyph(nxui::Button::ZR), i18n.tr("hint.next_page", "Next page"));
     }
 
     return hints;

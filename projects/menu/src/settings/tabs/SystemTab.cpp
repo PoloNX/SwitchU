@@ -135,6 +135,21 @@ SettingsScreen::Tab settings::tabs::SystemTab::build(SettingsScreen& screen) {
     }
 
     {
+        SettingItem it;
+        it.label = i18n.tr("settings.system.clock_12h", "12-Hour Clock");
+        it.description = i18n.tr("settings.system.clock_12h_desc", "Show the home clock with AM and PM.");
+        it.type = ItemType::Toggle;
+        it.boolVal = screen.m_clockUse12Hour;
+        it.anim01 = it.boolVal ? 1.f : 0.f;
+        it.onChange = [&screen](SettingItem& self) {
+            screen.m_clockUse12Hour = self.boolVal;
+            if (screen.m_clockUse12HourCb)
+                screen.m_clockUse12HourCb(self.boolVal);
+        };
+        t.items.push_back(std::move(it));
+    }
+
+    {
         SettingItem it; it.label = i18n.tr("settings.system.usb30", "USB 3.0"); it.type = ItemType::Toggle;
         it.description = i18n.tr("settings.system.usb30_desc", "Enable USB 3.0 for faster transfer speeds.");
         bool val = false;

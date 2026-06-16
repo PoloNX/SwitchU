@@ -19,10 +19,16 @@ enum class Button : uint64_t {
     R      = HidNpadButton_R,
     ZL     = HidNpadButton_ZL,
     ZR     = HidNpadButton_ZR,
+    LStick = HidNpadButton_StickL,
+    RStick = HidNpadButton_StickR,
     LStickL = HidNpadButton_StickLLeft,
     LStickR = HidNpadButton_StickLRight,
     LStickU = HidNpadButton_StickLUp,
     LStickD = HidNpadButton_StickLDown,
+    RStickL = HidNpadButton_StickRLeft,
+    RStickR = HidNpadButton_StickRRight,
+    RStickU = HidNpadButton_StickRUp,
+    RStickD = HidNpadButton_StickRDown,
 };
 
 class Input {

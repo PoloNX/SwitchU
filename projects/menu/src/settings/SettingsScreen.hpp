@@ -24,6 +24,7 @@ public:
     void onGridRowsChange(IntCb cb)     { m_gridRowsCb = std::move(cb); }
     void onUiLanguageChange(StringCb cb) { m_uiLanguageCb = std::move(cb); }
     void onDefaultProfileChange(StringCb cb) { m_defaultProfileCb = std::move(cb); }
+    void onClockUse12HourChange(BoolCb cb) { m_clockUse12HourCb = std::move(cb); }
     void onNetConnect(VoidCb cb)        { m_netConnectCb = std::move(cb); }
     void onSleepRequest(VoidCb cb)      { m_sleepCb = std::move(cb); }
     void onShutdownRequest(VoidCb cb)   { m_shutdownCb = std::move(cb); }
@@ -39,6 +40,9 @@ public:
     }
     void setDefaultProfileState(bool enabled, const std::string& uidHex) {
         m_defaultProfileUid = enabled ? uidHex : std::string();
+    }
+    void setClockUse12HourState(bool enabled) {
+        m_clockUse12Hour = enabled;
     }
 
 protected:
@@ -60,6 +64,7 @@ private:
     IntCb m_gridRowsCb;
     StringCb m_uiLanguageCb;
     StringCb m_defaultProfileCb;
+    BoolCb m_clockUse12HourCb;
     VoidCb m_netConnectCb;
     VoidCb m_sleepCb;
     VoidCb m_shutdownCb;
@@ -70,4 +75,5 @@ private:
     int m_gridRows = 3;
     std::string m_uiLanguageOverride = "auto";
     std::string m_defaultProfileUid;
+    bool m_clockUse12Hour = false;
 };

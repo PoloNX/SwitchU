@@ -98,14 +98,16 @@ void Application::dispatchInput() {
         }
     }
 
-    // Debounced D-pad and left-stick navigation.
+    // Debounced D-pad and stick navigation.
     // For each direction: if the focused widget has an action for that
     // D-pad/stick button, fire it (consumed). Otherwise navigate spatially.
     bool anyDpad =
         m_input.isDown(Button::DLeft)   || m_input.isDown(Button::DRight)  ||
         m_input.isDown(Button::DUp)     || m_input.isDown(Button::DDown)   ||
         m_input.isDown(Button::LStickL) || m_input.isDown(Button::LStickR) ||
-        m_input.isDown(Button::LStickU) || m_input.isDown(Button::LStickD);
+        m_input.isDown(Button::LStickU) || m_input.isDown(Button::LStickD) ||
+        m_input.isDown(Button::RStickL) || m_input.isDown(Button::RStickR) ||
+        m_input.isDown(Button::RStickU) || m_input.isDown(Button::RStickD);
 
     if (m_navDebounce > 0) {
         --m_navDebounce;
@@ -113,23 +115,25 @@ void Application::dispatchInput() {
         m_navDebounce = 6;  // ~100 ms at 60 fps
 
         Widget* cur = fm.current();
-        auto tryDir = [&](Button dpad, Button stick, FocusDirection dir) {
+        auto tryDir = [&](Button dpad, Button leftStick, Button rightStick, FocusDirection dir) {
             bool dpadDown  = m_input.isDown(dpad);
-            bool stickDown = m_input.isDown(stick);
-            if (!dpadDown && !stickDown) return;
+            bool leftStickDown = m_input.isDown(leftStick);
+            bool rightStickDown = m_input.isDown(rightStick);
+            if (!dpadDown && !leftStickDown && !rightStickDown) return;
 
             // Focused widget's action takes priority (no bubbling for D-pad)
             if (cur) {
-                if (dpadDown  && cur->fireAction(static_cast<uint64_t>(dpad)))  return;
-                if (stickDown && cur->fireAction(static_cast<uint64_t>(stick))) return;
+                if (dpadDown && cur->fireAction(static_cast<uint64_t>(dpad))) return;
+                if (leftStickDown && cur->fireAction(static_cast<uint64_t>(leftStick))) return;
+                if (rightStickDown && cur->fireAction(static_cast<uint64_t>(rightStick))) return;
             }
             fm.navigate(dir, root);
         };
 
-        tryDir(Button::DLeft,  Button::LStickL, FocusDirection::LEFT);
-        tryDir(Button::DRight, Button::LStickR, FocusDirection::RIGHT);
-        tryDir(Button::DUp,    Button::LStickU, FocusDirection::UP);
-        tryDir(Button::DDown,  Button::LStickD, FocusDirection::DOWN);
+        tryDir(Button::DLeft,  Button::LStickL, Button::RStickL, FocusDirection::LEFT);
+        tryDir(Button::DRight, Button::LStickR, Button::RStickR, FocusDirection::RIGHT);
+        tryDir(Button::DUp,    Button::LStickU, Button::RStickU, FocusDirection::UP);
+        tryDir(Button::DDown,  Button::LStickD, Button::RStickD, FocusDirection::DOWN);
     }
 
     // Dispatch non-D-pad actions with parent bubbling.
@@ -138,7 +142,9 @@ void Application::dispatchInput() {
         static_cast<uint64_t>(Button::DLeft)   | static_cast<uint64_t>(Button::DRight)  |
         static_cast<uint64_t>(Button::DUp)     | static_cast<uint64_t>(Button::DDown)   |
         static_cast<uint64_t>(Button::LStickL) | static_cast<uint64_t>(Button::LStickR) |
-        static_cast<uint64_t>(Button::LStickU) | static_cast<uint64_t>(Button::LStickD);
+        static_cast<uint64_t>(Button::LStickU) | static_cast<uint64_t>(Button::LStickD) |
+        static_cast<uint64_t>(Button::RStickL) | static_cast<uint64_t>(Button::RStickR) |
+        static_cast<uint64_t>(Button::RStickU) | static_cast<uint64_t>(Button::RStickD);
 
     constexpr uint64_t kA = static_cast<uint64_t>(Button::A);
     bool pointerConsumesA = m_input.pointerConsumesButton(Button::A);

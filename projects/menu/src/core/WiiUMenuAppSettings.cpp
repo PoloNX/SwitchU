@@ -258,6 +258,7 @@ void WiiUMenuApp::createSettings() {
     m_settings->setUiLanguageOverride(m_config.uiLanguageOverride);
     m_settings->setDefaultProfileState(m_config.defaultProfileEnabled,
                                        m_config.defaultProfileUid);
+    m_settings->setClockUse12HourState(m_config.clockUse12Hour);
 
     m_settings->onNavigateSfx([this]() { m_audio.playSfx(Sfx::Navigate); });
     m_settings->onActivateSfx([this]() { m_audio.playSfx(Sfx::Activate); });
@@ -301,6 +302,13 @@ void WiiUMenuApp::createSettings() {
         if (m_settings)
             m_settings->setDefaultProfileState(m_config.defaultProfileEnabled,
                                                m_config.defaultProfileUid);
+    });
+    m_settings->onClockUse12HourChange([this](bool enabled) {
+        if (m_config.clockUse12Hour == enabled)
+            return;
+        m_config.clockUse12Hour = enabled;
+        if (m_clock)
+            m_clock->setUse12HourClock(enabled);
     });
     m_settings->onNetConnect([this]() {
         m_pendingNetConnect = true;

@@ -333,11 +333,6 @@ SettingsScreen::Tab settings::tabs::StorageTab::build(SettingsScreen& screen) {
         : i18n.tr("common.na", "N/A");
     t.items.push_back(std::move(sdSummary));
 
-    SettingItem section;
-    section.label = i18n.tr("settings.storage.installed_section", "Installed Software");
-    section.type = ItemType::Section;
-    t.items.push_back(std::move(section));
-
     struct AppEntry {
         uint64_t titleId;
         std::string title;

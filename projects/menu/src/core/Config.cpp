@@ -40,6 +40,7 @@ bool AppConfig::load() {
     readJsonOpt(j, "defaultProfileEnabled", defaultProfileEnabled);
     readJsonOpt(j, "defaultProfileUid", defaultProfileUid);
     readJsonOpt(j, "tutorialCompleted", tutorialCompleted);
+    readJsonOpt(j, "clockUse12Hour", clockUse12Hour);
     readJsonOpt(j, "themePreset", themePreset);
 
     if (musicVolume < 0.f) musicVolume = 0.f;
@@ -71,6 +72,7 @@ bool AppConfig::save() const {
     j["defaultProfileEnabled"] = defaultProfileEnabled;
     j["defaultProfileUid"] = defaultProfileEnabled ? defaultProfileUid : std::string();
     j["tutorialCompleted"] = tutorialCompleted;
+    j["clockUse12Hour"] = clockUse12Hour;
     j["themePreset"] = themePreset;
 
     std::ofstream f(kConfigPath, std::ios::trunc);

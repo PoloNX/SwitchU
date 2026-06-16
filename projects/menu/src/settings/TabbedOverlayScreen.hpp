@@ -213,6 +213,8 @@ protected:
     bool m_dropdownClosing = false;
     int  m_dropdownRawIdx = -1;
     int  m_dropdownHover = 0;
+    float m_dropdownVisualStart = 0.f;
+    float m_touchStartDropdownVisualStart = 0.f;
 
     VoidCb  m_navSfxCb;
     VoidCb  m_activateSfxCb;

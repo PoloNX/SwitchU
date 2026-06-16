@@ -3,6 +3,14 @@
 #include <ctime>
 #include <cstdio>
 
+void DateTimeWidget::setUse12HourClock(bool enabled) {
+    if (m_use12HourClock == enabled)
+        return;
+
+    m_use12HourClock = enabled;
+    m_timeStr.clear();
+    m_timer = 1.f;
+}
 
 void DateTimeWidget::onContentUpdate(float dt) {
     m_timer += dt;
@@ -13,7 +21,15 @@ void DateTimeWidget::onContentUpdate(float dt) {
     std::tm* tm   = std::localtime(&t);
     if (!tm) return;
     char buf[64];
-    std::snprintf(buf, sizeof(buf), "%02d:%02d", tm->tm_hour, tm->tm_min);
+    if (m_use12HourClock) {
+        int hour = tm->tm_hour % 12;
+        if (hour == 0)
+            hour = 12;
+        std::snprintf(buf, sizeof(buf), "%d:%02d %s", hour, tm->tm_min,
+                      tm->tm_hour >= 12 ? "PM" : "AM");
+    } else {
+        std::snprintf(buf, sizeof(buf), "%02d:%02d", tm->tm_hour, tm->tm_min);
+    }
     m_timeStr = buf;
     std::snprintf(buf, sizeof(buf), "%02d/%02d/%04d",
                   tm->tm_mday, tm->tm_mon + 1, tm->tm_year + 1900);
@@ -40,11 +56,10 @@ void DateTimeWidget::onContentRender(nxui::Renderer& ren) {
 
 nxui::Vec2 DateTimeWidget::computeContentSize() const {
     if (!m_font) return {130.f, 46.f};
-    nxui::Vec2 timeSz = m_font->measure("00:00");
+    nxui::Vec2 timeSz = m_font->measure(m_use12HourClock ? "12:00 PM" : "00:00");
     nxui::Font* sf = m_smallFont ? m_smallFont : m_font;
     nxui::Vec2 dateSz = sf->measure("00/00/0000");
     float w = std::max(timeSz.x, dateSz.x * 0.7f);
     float h = timeSz.y + 2.f + dateSz.y * 0.7f;
     return {w, h};
 }
-

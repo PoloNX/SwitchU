@@ -307,6 +307,10 @@ void TabbedOverlayScreen::openDropdown(int rawIdx) {
     m_dropdownClosing = false;
     m_dropdownRawIdx = rawIdx;
     m_dropdownHover = std::clamp(item.intVal, 0, std::max(0, (int)item.options.size() - 1));
+    int visible = std::min((int)item.options.size(), 6);
+    m_dropdownVisualStart = (item.options.size() > (size_t)visible)
+        ? (float)std::clamp(m_dropdownHover - visible / 2, 0, (int)item.options.size() - visible)
+        : 0.f;
     m_dropdownAnim.set(1.f, 0.18f, nxui::Easing::outCubic);
 }
 
@@ -635,6 +639,20 @@ void TabbedOverlayScreen::drawContent(nxui::Renderer& ren, const nxui::Rect& pan
     ren.pushClipRect(cr);
     m_tabContent->render(ren);
     ren.popClipRect();
+
+    float totalH = contentTotalHeight() + 16.f;
+    if (totalH > cr.height + 1.f) {
+        float maxScroll = std::max(1.f, totalH - cr.height + 20.f);
+        float trackH = std::max(42.f, cr.height * std::clamp(cr.height / totalH, 0.12f, 1.f));
+        float trackX = cr.right() - 8.f;
+        float trackY = cr.y + 16.f;
+        float trackAreaH = std::max(1.f, cr.height - 32.f);
+        float thumbY = trackY + (trackAreaH - trackH) * std::clamp(m_scrollY / maxScroll, 0.f, 1.f);
+        nxui::Rect rail = {trackX, trackY, 3.f, trackAreaH};
+        nxui::Rect thumb = {trackX - 0.5f, thumbY, 4.f, trackH};
+        ren.drawRoundedRect(rail, m_theme->panelBorder.withAlpha(0.16f * opacity), 1.5f);
+        ren.drawRoundedRect(thumb, m_theme->cursorNormal.withAlpha(0.46f * opacity), 2.f);
+    }
 }
 
 void TabbedOverlayScreen::drawDropdown(nxui::Renderer& ren, const nxui::Rect& panel, float opacity) {
@@ -650,7 +668,7 @@ void TabbedOverlayScreen::drawDropdown(nxui::Renderer& ren, const nxui::Rect& pa
 
     nxui::Rect cr = contentRect(panel);
 
-    float y = cr.y - m_scrollY;
+    float y = cr.y + 16.f - m_scrollY;
     for (int i = 0; i < m_dropdownRawIdx; ++i)
         y += (items[i].type == ItemType::Section) ? kSectionHeight : kRowHeight;
     float rowH = (item.type == ItemType::Section) ? kSectionHeight : kRowHeight;
@@ -663,9 +681,11 @@ void TabbedOverlayScreen::drawDropdown(nxui::Renderer& ren, const nxui::Rect& pa
     float optH = 46.f;
     float listH = visible * optH + 16.f;
 
-    int start = 0;
+    float visualStart = 0.f;
     if (total > visible)
-        start = std::clamp(m_dropdownHover - visible / 2, 0, total - visible);
+        visualStart = std::clamp(m_dropdownVisualStart, 0.f, (float)(total - visible));
+    int start = std::clamp((int)std::floor(visualStart), 0, std::max(0, total - visible));
+    float rowOffset = (float)start - visualStart;
 
     float dy = y + rowH + 6.f;
     if (dy + listH > cr.bottom() - 4.f)
@@ -700,11 +720,15 @@ void TabbedOverlayScreen::drawDropdown(nxui::Renderer& ren, const nxui::Rect& pa
     nxui::Rect listClip = pop.shrunk(6.f);
     ren.pushClipRect(listClip);
 
-    for (int i = 0; i < visible; ++i) {
+    for (int i = 0; i < visible + 1; ++i) {
         int idx = start + i;
+        if (idx < 0 || idx >= total)
+            continue;
         float rowReveal = std::clamp((open - i * 0.025f) / 0.25f, 0.f, 1.f);
-        float ry = listClip.y + 3.f + i * optH + (1.f - rowReveal) * 5.f;
+        float ry = listClip.y + 3.f + (rowOffset + (float)i) * optH + (1.f - rowReveal) * 5.f;
         nxui::Rect rr = { listClip.x + 3.f, ry, listClip.width - 6.f, optH - 2.f };
+        if (rr.bottom() < listClip.y || rr.y > listClip.bottom())
+            continue;
 
         bool hovered = idx == m_dropdownHover;
         bool active = idx == item.intVal;
@@ -753,6 +777,17 @@ void TabbedOverlayScreen::drawDropdown(nxui::Renderer& ren, const nxui::Rect& pa
     }
 
     ren.popClipRect();
+
+    if (total > visible) {
+        float railH = std::max(1.f, pop.height - 24.f);
+        float thumbH = std::max(24.f, railH * ((float)visible / (float)total));
+        float maxStart = (float)std::max(1, total - visible);
+        float thumbY = pop.y + 12.f + (railH - thumbH) * (visualStart / maxStart);
+        nxui::Rect rail = {pop.right() - 10.f, pop.y + 12.f, 3.f, railH};
+        nxui::Rect thumb = {pop.right() - 10.5f, thumbY, 4.f, thumbH};
+        ren.drawRoundedRect(rail, m_theme->panelBorder.withAlpha(0.22f * a), 1.5f);
+        ren.drawRoundedRect(thumb, m_theme->cursorNormal.withAlpha(0.56f * a), 2.f);
+    }
 }
 
 void TabbedOverlayScreen::drawTrackChangedToast(nxui::Renderer& ren, const nxui::Rect& panel, float opacity) {

@@ -12,6 +12,7 @@ struct AppConfig {
     bool  defaultProfileEnabled = false;
     std::string defaultProfileUid;
     bool  tutorialCompleted = false;
+    bool  clockUse12Hour = false;
 
     std::string themePreset = "Default Light";
 
