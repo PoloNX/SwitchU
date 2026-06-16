@@ -2,13 +2,134 @@
 #include "widgets/GlossyIcon.hpp"
 #include "DebugLog.hpp"
 
+#include <algorithm>
 #include <cmath>
+#include <nxui/core/I18n.hpp>
 
 bool WiiUMenuApp::isEditableIcon(nxui::Widget* w) const {
     if (!w || w->tag() != "glossy_icon")
         return false;
     auto* icon = static_cast<GlossyIcon*>(w);
     return icon->titleId() != 0;
+}
+
+std::string WiiUMenuApp::accessibilityContextFor(nxui::Widget* w) const {
+    auto& i18n = nxui::I18n::instance();
+    if (!w)
+        return {};
+    if (m_dialog && m_dialog->isActive() && w == m_dialog.get())
+        return i18n.tr("accessibility.context.dialog", "Dialog");
+    if (m_userSelect && m_userSelect->isActive() && w == m_userSelect.get())
+        return i18n.tr("accessibility.context.profile_selection", "Profile selection");
+    if (m_settings && m_settings->isActive() && w == m_settings.get())
+        return i18n.tr("accessibility.context.settings", "Settings");
+    if (m_themeShop && m_themeShop->isActive() && w == m_themeShop.get())
+        return i18n.tr("accessibility.context.themes", "Themes");
+    if (w->tag() == "glossy_icon" && m_grid)
+        return i18n.tr("accessibility.context.main_menu", "Main menu")
+             + ", " + i18n.tr("accessibility.context.page", "page") + " "
+             + std::to_string(m_grid->currentPage() + 1)
+             + " " + i18n.tr("accessibility.context.of", "of") + " "
+             + std::to_string(m_grid->totalPages());
+    for (const auto& btn : m_sidebar.leftButtons())
+        if (btn.get() == w) return i18n.tr("accessibility.context.left_sidebar", "Left sidebar");
+    for (const auto& btn : m_sidebar.rightButtons())
+        if (btn.get() == w) return i18n.tr("accessibility.context.right_sidebar", "Right sidebar");
+    for (const auto& avatar : m_userAvatarButtons)
+        if (avatar.get() == w) return i18n.tr("accessibility.context.user_profiles", "User profiles");
+    return {};
+}
+
+std::string WiiUMenuApp::accessibilityActionsFor(nxui::Widget* w) const {
+    auto& i18n = nxui::I18n::instance();
+    if (!w)
+        return {};
+    if (m_editMode && w->tag() == "glossy_icon")
+        return i18n.tr("accessibility.actions.edit_mode", "Directional pad to choose the new position. A to place. B to cancel.");
+    if (w->tag() == "glossy_icon") {
+        auto* icon = static_cast<GlossyIcon*>(w);
+        if (icon->titleId() == 0)
+            return i18n.tr("accessibility.actions.empty_slot", "Directional pad to navigate. ZL or ZR to change page.");
+        return icon->isNotLaunchable()
+            ? i18n.tr("accessibility.actions.game_blocked", "A to show the reason. Y to move. ZL or ZR to change page.")
+            : i18n.tr("accessibility.actions.game_launchable", "A to launch. X for options. Y to move. ZL or ZR to change page.");
+    }
+    if (m_settings && w == m_settings.get())
+        return i18n.tr("accessibility.actions.settings", "Up and down to choose a category. A or right to enter. B to close.");
+    if (m_themeShop && w == m_themeShop.get())
+        return i18n.tr("accessibility.actions.themes", "Up and down to navigate. A to choose. B to close.");
+    if ((m_dialog && w == m_dialog.get()) || (m_userSelect && w == m_userSelect.get()))
+        return i18n.tr("accessibility.actions.dialog", "Left and right to change choice. A to confirm. B to cancel.");
+    return {};
+}
+
+std::string WiiUMenuApp::accessibilityPositionFor(nxui::Widget* w) const {
+    if (!w || !m_config.accessibilitySpeakPosition)
+        return {};
+
+    auto& i18n = nxui::I18n::instance();
+    if (w->tag() == "glossy_icon" && m_grid) {
+        const int global = m_grid->focusedGlobalIndex();
+        if (global >= 0) {
+            const int cols = std::max(1, m_grid->columns());
+            const int rows = std::max(1, m_grid->rowsPerPage());
+            const int local = global % std::max(1, m_grid->iconsPerPage());
+            const int row = local / cols + 1;
+            const int col = local % cols + 1;
+            return i18n.tr("accessibility.position.row", "row") + " " + std::to_string(row)
+                 + " " + i18n.tr("accessibility.context.of", "of") + " " + std::to_string(rows)
+                 + ". " + i18n.tr("accessibility.position.column", "column") + " " + std::to_string(col)
+                 + " " + i18n.tr("accessibility.context.of", "of") + " " + std::to_string(cols);
+        }
+    }
+
+    auto describeLinear = [&](const auto& buttons) -> std::string {
+        for (int i = 0; i < (int)buttons.size(); ++i) {
+            if (buttons[(size_t)i].get() == w) {
+                return std::to_string(i + 1) + " "
+                     + i18n.tr("accessibility.context.of", "of") + " "
+                     + std::to_string((int)buttons.size());
+            }
+        }
+        return {};
+    };
+
+    if (auto text = describeLinear(m_sidebar.leftButtons()); !text.empty())
+        return text;
+    if (auto text = describeLinear(m_sidebar.rightButtons()); !text.empty())
+        return text;
+
+    for (int i = 0; i < (int)m_userAvatarButtons.size(); ++i) {
+        if (m_userAvatarButtons[(size_t)i].get() == w) {
+            return std::to_string(i + 1) + " "
+                 + i18n.tr("accessibility.context.of", "of") + " "
+                 + std::to_string((int)m_userAvatarButtons.size());
+        }
+    }
+
+    return {};
+}
+
+void WiiUMenuApp::announceFocusedWidget(nxui::Widget* w) {
+    if (!w)
+        return;
+
+    std::string hint = accessibilityActionsFor(w);
+    std::string position = accessibilityPositionFor(w);
+
+    std::string originalHint = w->accessibilityHint();
+    if (!hint.empty())
+        w->setAccessibilityHint(hint);
+    const bool forceRepeat = w->tag() == "glossy_icon";
+    std::string summary = w->accessibilitySummary();
+    if (summary.empty())
+        summary = w->tag();
+    m_accessibility.announceStructuredFocus(accessibilityContextFor(w),
+                                            position,
+                                            summary,
+                                            forceRepeat);
+    if (!hint.empty())
+        w->setAccessibilityHint(originalHint);
 }
 
 void WiiUMenuApp::startEditGhost(GlossyIcon* sourceIcon) {
@@ -112,6 +233,9 @@ void WiiUMenuApp::enterEditMode() {
     bindEditActions(icon);
     m_titlePill->setText(nxui::I18n::instance().tr("game.move_prefix", "Move: ") + m_editHeldTitle);
     m_titlePill->setVisible(true);
+    m_accessibility.announce(nxui::I18n::instance().tr(
+        "accessibility.move_mode.enter",
+        "Moving game: ") + m_editHeldTitle, true, true);
 }
 
 void WiiUMenuApp::exitEditMode() {
@@ -281,6 +405,7 @@ bool WiiUMenuApp::moveFocusedIcon(nxui::FocusDirection dir) {
 void WiiUMenuApp::wireFocusCallback() {
     focusManager().onFocusChanged([this](nxui::Widget*, nxui::Widget* cur) {
         updateCursor();
+        announceFocusedWidget(cur);
 
         if ((m_dialog && m_dialog->isActive()) ||
             (m_themeShop && m_themeShop->isActive()) ||
@@ -444,6 +569,10 @@ nxui::Widget* WiiUMenuApp::focusRoot() {
 void WiiUMenuApp::wireGlobalActions() {
     auto& root = rootBox();
 
+    root.addAction(static_cast<uint64_t>(nxui::Button::L), [this]() {
+        m_accessibility.repeatLastAnnouncement();
+    });
+
     root.addAction(static_cast<uint64_t>(nxui::Button::ZL), [this]() {
         int p = m_grid->currentPage() - 1;
         if (p >= 0 && !m_grid->isTransitioning()) {
@@ -467,8 +596,26 @@ void WiiUMenuApp::wireGlobalActions() {
         }
 
         if (m_editMode) {
+            const std::string movedTitle = m_editHeldTitle;
             bool changed = commitEditModePlacement();
             exitEditMode();
+            if (!movedTitle.empty()) {
+                auto* focused = focusManager().current();
+                std::string summary = nxui::I18n::instance().tr(
+                    changed ? "accessibility.move_mode.placed" : "accessibility.move_mode.cancelled",
+                    changed ? "Game moved: " : "Move cancelled: ") + movedTitle;
+                if (focused) {
+                    std::string context = accessibilityContextFor(focused);
+                    std::string position = accessibilityPositionFor(focused);
+                    if (!position.empty())
+                        context = context.empty() ? position : context + ". " + position;
+                    if (!context.empty())
+                        summary += ". " + context;
+                    if (!focused->accessibilitySummary().empty())
+                        summary += ". " + focused->accessibilitySummary();
+                }
+                m_accessibility.announce(summary, true, true);
+            }
             m_audio.playSfx(changed ? Sfx::ConfirmPositive : Sfx::ModalHide);
             return;
         }

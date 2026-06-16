@@ -9,6 +9,11 @@ public:
     static SettingsScreen::Tab build(SettingsScreen& screen);
 };
 
+class AccessibilityTab {
+public:
+    static SettingsScreen::Tab build(SettingsScreen& screen);
+};
+
 class AudioTab {
 public:
     static SettingsScreen::Tab build(SettingsScreen& screen);

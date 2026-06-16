@@ -2,7 +2,126 @@
   "common": {
     "auto": "Auto",
     "na": "N/A",
-    "active": "Active"
+    "active": "Active",
+    "disabled": "Disabled"
+  },
+  "accessibility": {
+    "speech": {
+      "enabled": "Voice guidance enabled."
+    },
+    "context": {
+      "dialog": "Dialog",
+      "profile_selection": "Profile selection",
+      "settings": "Settings",
+      "themes": "Themes",
+      "main_menu": "Main menu",
+      "page": "page",
+      "of": "of",
+      "left_sidebar": "Left sidebar",
+      "right_sidebar": "Right sidebar",
+      "user_profiles": "User profiles"
+    },
+    "roles": {
+      "button": "button",
+      "game": "game",
+      "game_card": "game card",
+      "slot": "slot",
+      "profile": "profile",
+      "toggle": "toggle",
+      "slider": "slider",
+      "selector": "selector",
+      "progress": "progress",
+      "info": "information",
+      "section": "section"
+    },
+    "hints": {
+      "open": "A to open.",
+      "open_user_page": "A to open the user page.",
+      "grid_empty": "Use the directional pad to move to another slot.",
+      "game_launchable": "A to launch. X for options. Y to move. ZL or ZR to change page.",
+      "game_blocked": "A to show why this item is blocked."
+    },
+    "actions": {
+      "edit_mode": "Directional pad to choose the new position. A to place. B to cancel.",
+      "empty_slot": "Directional pad to navigate. ZL or ZR to change page.",
+      "game_blocked": "A to show the reason. Y to move. ZL or ZR to change page.",
+      "game_launchable": "A to launch. X for options. Y to move. ZL or ZR to change page.",
+      "settings": "Up and down to choose a category. A or right to enter. B to close.",
+      "themes": "Up and down to navigate. A to choose. B to close.",
+      "dialog": "Left and right to change choice. A to confirm. B to cancel."
+    },
+    "settings": {
+      "tab_prefix": "Tab",
+      "tab_actions": "A or right to enter. Up and down to change tab. B to close.",
+      "list_prefix": "List",
+      "list_actions": "Up and down to choose. A to confirm. B to close the list.",
+      "toggle_actions": "A to change. Left to return to tabs.",
+      "slider_actions": "Left or right to adjust. B to return to tabs.",
+      "selector_actions": "A or right to open the list. B to return to tabs.",
+      "action_actions": "A to run the action. B to return to tabs."
+    },
+    "value": {
+      "label": "Value",
+      "percent": "percent"
+    },
+    "position": {
+      "row": "row",
+      "column": "column"
+    },
+    "move_mode": {
+      "enter": "Moving game: ",
+      "placed": "Game moved: ",
+      "cancelled": "Move cancelled: "
+    },
+    "grid": {
+      "empty_slot": "Empty slot"
+    },
+    "user_profile": "User profile"
+  },
+  "tutorial": {
+    "accessibility": {
+      "title": "Voice guidance",
+      "body": "Voice guidance is enabled by default. It announces the selected item and the available actions whenever focus changes.",
+      "objective": "Press X to disable the voice and use animalese sounds. Press A to continue.",
+      "enabled_announcement": "Voice guidance enabled. Press X to disable it, or A to continue.",
+      "disabled_announcement": "Voice guidance disabled. Animalese sounds are active.",
+      "text_actions": "A to continue. B to skip this step. Plus to skip everything."
+    },
+    "welcome": {
+      "title": "Welcome to SwitchU",
+      "body": "SwitchU replaces the HOME menu with a fast interface for launching your games, homebrew apps, and system tools."
+    },
+    "navigation": {
+      "title": "Navigation",
+      "body": "You can navigate with the directional pad, left stick, or right stick. Try one horizontal direction and one vertical direction.",
+      "objective": "Try left or right, then up or down."
+    },
+    "confirm": {
+      "title": "Confirm",
+      "body": "The A button confirms an action, launches a game, or opens the selected item.",
+      "objective": "Press A to validate this step."
+    },
+    "themes": {
+      "title": "Themes",
+      "body": "Themes can change colors, images, and sounds. Open Themes from the sidebar to install or apply a style."
+    },
+    "cursor": {
+      "title": "Cursor",
+      "body": "You can use the virtual cursor with stick clicks when an action needs a pointer. Click the left stick to enable it, or the right stick to recenter it."
+    },
+    "support": {
+      "title": "Support",
+      "body": "To report an issue, open the project GitHub: github.com/PoloNX/SwitchU"
+    },
+    "hints": {
+      "disable_voice": "Disable voice",
+      "enable_voice": "Enable voice",
+      "reveal": "Reveal",
+      "continue": "Continue",
+      "test": "Test",
+      "skip_step": "Skip step",
+      "skip_all": "Skip all"
+    }
   },
   "sidebar": {
     "album": "Album",
@@ -13,9 +132,13 @@
     "sleep": "Sleep",
     "music": "Music"
   },
+  "hint": {
+    "repeat": "Repeat"
+  },
   "settings": {
     "tabs": {
       "system": "System",
+      "accessibility": "Accessibility",
       "audio": "Audio",
       "display": "Display",
       "internet": "Internet",
@@ -56,6 +179,21 @@
       "region_south_korea": "South Korea",
       "auto_update": "Auto Update",
       "error_reporting": "Error Reporting"
+    },
+    "accessibility": {
+      "voice": "Voice Guidance",
+      "voice_desc": "Read focused items and available actions aloud.",
+      "voice_language": "Voice Language",
+      "voice_language_desc": "Follows the current system or UI language.",
+      "speech_rate": "Speech Rate",
+      "speech_rate_desc": "Adjust how fast voice guidance speaks.",
+      "words_per_minute": "wpm",
+      "speak_hints": "Speak Action Hints",
+      "speak_hints_desc": "Announce available actions after the selected item.",
+      "repeat_context": "Repeat Location Every Move",
+      "repeat_context_desc": "Repeat the current area on every focus move instead of only when it changes.",
+      "speak_position": "Speak Position",
+      "speak_position_desc": "Announce row, column, and item position when available."
     },
     "audio": {
       "speaker_auto_mute": "Speaker Auto-Mute",

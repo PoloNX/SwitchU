@@ -50,6 +50,8 @@ public:
     void onNavigateSfx(VoidCb cb)  { m_navSfxCb = std::move(cb); }
     void onActivateSfx(VoidCb cb)  { m_activateSfxCb = std::move(cb); }
     void onCloseSfx(VoidCb cb)     { m_closeSfxCb = std::move(cb); }
+    using StringCb = std::function<void(const std::string&)>;
+    void onAccessibilityAnnouncement(StringCb cb) { m_accessibilityCb = std::move(cb); }
 
     SelectionCursor& cursor() { return m_cursor; }
 
@@ -77,6 +79,8 @@ private:
     void cancel();
     void syncCursor();
     void syncUserCursor();
+    void announceCurrentSelection();
+    std::string currentAccessibilitySummary() const;
     void syncChildOpacities();
     void syncUserOpacities();
     nxui::Rect userAvatarRect(int index) const;
@@ -130,6 +134,7 @@ private:
     VoidCb         m_navSfxCb;
     VoidCb         m_activateSfxCb;
     VoidCb         m_closeSfxCb;
+    StringCb       m_accessibilityCb;
 
     int  m_touchHitButton  = -1;
     int  m_touchHitUser    = -1;

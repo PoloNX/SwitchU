@@ -31,6 +31,12 @@ option("backend")
     set_values("deko3d", "sdl2")
 option_end()
 
+option("espeak")
+    set_default(false)
+    set_showmenu(true)
+    set_description("Enable eSpeak NG speech backend when headers/libs are available")
+option_end()
+
 target("nxui")
     set_kind("static")
     set_default(false)
@@ -91,6 +97,73 @@ target("nxtc")
     end
 target_end()
 
+target("espeak-ucd")
+    set_kind("static")
+    set_default(false)
+    if not is_plat("cross") then return end
+
+    set_toolchains("devkita64")
+    set_languages("gnu11")
+
+    add_files("lib/espeak-ng/src/ucd-tools/src/case.c")
+    add_files("lib/espeak-ng/src/ucd-tools/src/categories.c")
+    add_files("lib/espeak-ng/src/ucd-tools/src/ctype.c")
+    add_files("lib/espeak-ng/src/ucd-tools/src/proplist.c")
+    add_files("lib/espeak-ng/src/ucd-tools/src/scripts.c")
+    add_files("lib/espeak-ng/src/ucd-tools/src/tostring.c")
+
+    add_includedirs("lib/espeak-ng/src/ucd-tools/src/include", {public = true})
+target_end()
+
+target("espeak-ng")
+    set_kind("static")
+    set_default(false)
+    if not is_plat("cross") then return end
+
+    set_toolchains("devkita64")
+    set_languages("gnu11")
+
+    add_deps("espeak-ucd")
+
+    add_files("lib/espeak-ng/src/libespeak-ng/common.c")
+    add_files("lib/espeak-ng/src/libespeak-ng/mnemonics.c")
+    add_files("lib/espeak-ng/src/libespeak-ng/error.c")
+    add_files("lib/espeak-ng/src/libespeak-ng/ieee80.c")
+    add_files("lib/espeak-ng/src/libespeak-ng/compiledata.c")
+    add_files("lib/espeak-ng/src/libespeak-ng/compiledict.c")
+    add_files("lib/espeak-ng/src/libespeak-ng/dictionary.c")
+    add_files("lib/espeak-ng/src/libespeak-ng/encoding.c")
+    add_files("lib/espeak-ng/src/libespeak-ng/intonation.c")
+    add_files("lib/espeak-ng/src/libespeak-ng/langopts.c")
+    add_files("lib/espeak-ng/src/libespeak-ng/numbers.c")
+    add_files("lib/espeak-ng/src/libespeak-ng/phoneme.c")
+    add_files("lib/espeak-ng/src/libespeak-ng/phonemelist.c")
+    add_files("lib/espeak-ng/src/libespeak-ng/readclause.c")
+    add_files("lib/espeak-ng/src/libespeak-ng/setlengths.c")
+    add_files("lib/espeak-ng/src/libespeak-ng/soundicon.c")
+    add_files("lib/espeak-ng/src/libespeak-ng/spect.c")
+    add_files("lib/espeak-ng/src/libespeak-ng/ssml.c")
+    add_files("lib/espeak-ng/src/libespeak-ng/synthdata.c")
+    add_files("lib/espeak-ng/src/libespeak-ng/synthesize.c")
+    add_files("lib/espeak-ng/src/libespeak-ng/tr_languages.c")
+    add_files("lib/espeak-ng/src/libespeak-ng/translate.c")
+    add_files("lib/espeak-ng/src/libespeak-ng/translateword.c")
+    add_files("lib/espeak-ng/src/libespeak-ng/voices.c")
+    add_files("lib/espeak-ng/src/libespeak-ng/wavegen.c")
+    add_files("lib/espeak-ng/src/libespeak-ng/speech.c")
+    add_files("lib/espeak-ng/src/libespeak-ng/espeak_api.c")
+
+    add_includedirs("projects/menu/src/core/espeak_config", {public = false})
+    add_includedirs("lib/nxui/include", {public = false})
+    add_includedirs("lib/espeak-ng/src/include", {public = true})
+    add_includedirs("lib/espeak-ng/src/libespeak-ng", {public = false})
+    add_includedirs("lib/espeak-ng/src/ucd-tools/src/include", {public = false})
+    add_defines("LIBESPEAK_NG_EXPORT=1")
+    add_defines("_GNU_SOURCE")
+    add_defines('PATH_ESPEAK_DATA="romfs:/espeak-ng-data"')
+    add_cflags("-fwrapv", "-fvisibility=hidden", {force = true})
+target_end()
+
 target("atmosphere-stratosphere")
     set_kind("phony")
     set_default(false)
@@ -132,6 +205,41 @@ target("SwitchU")
     end
 
     add_defines(version_define)
+    if has_config("espeak") then
+        add_deps("espeak-ng")
+        add_defines("SWITCHU_ENABLE_ESPEAK")
+        add_includedirs("lib/espeak-ng/src/include")
+        add_syslinks("m")
+
+        before_build(function(target)
+            local source_dir = path.join(os.projectdir(), "lib/espeak-ng")
+            local build_dir = path.join(os.projectdir(), "build/espeak-ng-native")
+            local data_dir = path.join(build_dir, "espeak-ng-data")
+
+            if not os.isdir(source_dir) then
+                raise("eSpeak NG submodule is missing: " .. source_dir)
+            end
+
+            cprint("${color.build.target}generating${clear} eSpeak NG data")
+            os.vrunv("cmake", {
+                "-S", source_dir,
+                "-B", build_dir,
+                "-DENABLE_TESTS=OFF",
+                "-DBUILD_SHARED_LIBS=OFF",
+                "-DUSE_LIBSONIC=OFF",
+                "-DUSE_LIBPCAUDIO=OFF",
+                "-DUSE_MBROLA=OFF",
+                "-DSONIC_LIB=/usr/lib/libm.so",
+                "-DSONIC_INC=/usr/include"
+            })
+            os.vrunv("cmake", {"--build", build_dir, "--target", "data"})
+
+            if not os.isfile(path.join(data_dir, "phondata")) or
+               not os.isfile(path.join(data_dir, "fr_dict")) then
+                raise("eSpeak NG data generation did not produce required runtime files")
+            end
+        end)
+    end
 
     if has_config("homebrew") then
         add_defines("SWITCHU_HOMEBREW")

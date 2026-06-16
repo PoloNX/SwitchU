@@ -1,5 +1,6 @@
 #include "TabbedOverlayScreen.hpp"
 
+#include <nxui/core/I18n.hpp>
 #include <algorithm>
 #include <cmath>
 
@@ -12,6 +13,175 @@ float quantizeSliderValue(const TabbedOverlayScreen::SettingItem& item, float va
     int steps = std::max(1, item.sliderSteps);
     return std::clamp(std::round(std::clamp(value, 0.f, 1.f) * (float)steps) / (float)steps, 0.f, 1.f);
 }
+
+std::string itemTypeName(TabbedOverlayScreen::ItemType type) {
+    auto& i18n = nxui::I18n::instance();
+    switch (type) {
+        case TabbedOverlayScreen::ItemType::Toggle: return i18n.tr("accessibility.roles.toggle", "toggle");
+        case TabbedOverlayScreen::ItemType::Slider: return i18n.tr("accessibility.roles.slider", "slider");
+        case TabbedOverlayScreen::ItemType::Selector: return i18n.tr("accessibility.roles.selector", "selector");
+        case TabbedOverlayScreen::ItemType::Action: return i18n.tr("accessibility.roles.button", "button");
+        case TabbedOverlayScreen::ItemType::Progress: return i18n.tr("accessibility.roles.progress", "progress");
+        case TabbedOverlayScreen::ItemType::Info: return i18n.tr("accessibility.roles.info", "information");
+        case TabbedOverlayScreen::ItemType::Section: return i18n.tr("accessibility.roles.section", "section");
+    }
+    return {};
+}
+
+std::string itemValueText(const TabbedOverlayScreen::SettingItem& item) {
+    auto& i18n = nxui::I18n::instance();
+    switch (item.type) {
+        case TabbedOverlayScreen::ItemType::Toggle:
+            return item.boolVal
+                ? i18n.tr("common.active", "Active")
+                : i18n.tr("common.disabled", "Disabled");
+        case TabbedOverlayScreen::ItemType::Slider: {
+            if (!item.infoText.empty())
+                return item.infoText;
+            int pct = (int)std::round(std::clamp(item.floatVal, 0.f, 1.f) * 100.f);
+            return std::to_string(pct) + " " + i18n.tr("accessibility.value.percent", "percent");
+        }
+        case TabbedOverlayScreen::ItemType::Selector: {
+            if (item.options.empty())
+                return {};
+            int idx = std::clamp(item.intVal, 0, (int)item.options.size() - 1);
+            return item.options[(size_t)idx];
+        }
+        case TabbedOverlayScreen::ItemType::Info:
+        case TabbedOverlayScreen::ItemType::Progress:
+            return item.infoText;
+        default:
+            return {};
+    }
+}
+
+std::string itemActionText(const TabbedOverlayScreen::SettingItem& item) {
+    auto& i18n = nxui::I18n::instance();
+    switch (item.type) {
+        case TabbedOverlayScreen::ItemType::Toggle:
+            return i18n.tr("accessibility.settings.toggle_actions", "A to change. Left to return to tabs.");
+        case TabbedOverlayScreen::ItemType::Slider:
+            return i18n.tr("accessibility.settings.slider_actions", "Left or right to adjust. B to return to tabs.");
+        case TabbedOverlayScreen::ItemType::Selector:
+            return i18n.tr("accessibility.settings.selector_actions", "A or right to open the list. B to return to tabs.");
+        case TabbedOverlayScreen::ItemType::Action:
+            return i18n.tr("accessibility.settings.action_actions", "A to run the action. B to return to tabs.");
+        default:
+            return {};
+    }
+}
+}
+
+std::string TabbedOverlayScreen::currentAccessibilitySummary() const {
+    std::string context;
+    std::string position;
+    std::string summary;
+    bool forceRepeat = false;
+    currentAccessibilityParts(context, position, summary, forceRepeat);
+    if (context.empty() && position.empty())
+        return summary;
+    std::string out;
+    if (!context.empty())
+        out = context;
+    if (!position.empty())
+        out += (out.empty() ? "" : ". ") + position;
+    if (!summary.empty())
+        out += (out.empty() ? "" : ". ") + summary;
+    return out;
+}
+
+void TabbedOverlayScreen::currentAccessibilityParts(std::string& context,
+                                                    std::string& position,
+                                                    std::string& summary,
+                                                    bool& forceRepeat) const {
+    context.clear();
+    position.clear();
+    summary.clear();
+    forceRepeat = false;
+
+    if (m_tabIndex < 0 || m_tabIndex >= (int)m_tabs.size())
+        return;
+
+    const auto& tab = m_tabs[(size_t)m_tabIndex];
+    auto& i18n = nxui::I18n::instance();
+    if (m_focusArea == FocusArea::Tabs) {
+        context = i18n.tr("accessibility.context.settings", "Settings");
+        position = std::to_string(m_tabIndex + 1) + " "
+                 + i18n.tr("accessibility.context.of", "of") + " "
+                 + std::to_string((int)m_tabs.size());
+        summary = i18n.tr("accessibility.settings.tab_prefix", "Tab") + " " + tab.name
+                + ". " + i18n.tr("accessibility.settings.tab_actions", "A or right to enter. Up and down to change tab. B to close.");
+        return;
+    }
+
+    if (m_dropdownOpen && m_dropdownRawIdx >= 0 && m_dropdownRawIdx < (int)tab.items.size()) {
+        const auto& item = tab.items[(size_t)m_dropdownRawIdx];
+        if (!item.options.empty()) {
+            int idx = std::clamp(m_dropdownHover, 0, (int)item.options.size() - 1);
+            context = tab.name;
+            position = std::to_string(idx + 1) + " "
+                     + i18n.tr("accessibility.context.of", "of") + " "
+                     + std::to_string((int)item.options.size());
+            summary = i18n.tr("accessibility.settings.list_prefix", "List") + " " + item.label
+                    + ". " + item.options[(size_t)idx]
+                    + ". " + i18n.tr("accessibility.settings.list_actions", "Up and down to choose. A to confirm. B to close the list.");
+            return;
+        }
+    }
+
+    int rawIdx = rawIndexFromFocusable(m_contentIdx);
+    if (rawIdx < 0 || rawIdx >= (int)tab.items.size())
+        return;
+
+    const auto& item = tab.items[(size_t)rawIdx];
+    context = tab.name;
+    const int count = focusableCount();
+    if (count > 0) {
+        position = std::to_string(m_contentIdx + 1) + " "
+                 + i18n.tr("accessibility.context.of", "of") + " "
+                 + std::to_string(count);
+    }
+
+    std::string out = item.label;
+    std::string role = itemTypeName(item.type);
+    if (!role.empty())
+        out += ", " + role;
+    std::string value = itemValueText(item);
+    if (!value.empty())
+        out += ". " + i18n.tr("accessibility.value.label", "Value") + ": " + value;
+    if (!item.description.empty())
+        out += ". " + item.description;
+    std::string actions = itemActionText(item);
+    if (!actions.empty())
+        out += ". " + actions;
+    summary = out;
+}
+
+void TabbedOverlayScreen::announceCurrentFocus() {
+    if (m_accessibilityStructuredCb) {
+        std::string context;
+        std::string position;
+        std::string summary;
+        bool forceRepeat = false;
+        currentAccessibilityParts(context, position, summary, forceRepeat);
+        m_accessibilityStructuredCb(context, position, summary, forceRepeat);
+        return;
+    }
+    if (m_accessibilityCb)
+        m_accessibilityCb(currentAccessibilitySummary());
+}
+
+void TabbedOverlayScreen::announceCurrentValue() {
+    if (!m_accessibilityCb || m_tabIndex < 0 || m_tabIndex >= (int)m_tabs.size())
+        return;
+    const auto& tab = m_tabs[(size_t)m_tabIndex];
+    int rawIdx = rawIndexFromFocusable(m_contentIdx);
+    if (rawIdx < 0 || rawIdx >= (int)tab.items.size())
+        return;
+    const auto& item = tab.items[(size_t)rawIdx];
+    std::string value = itemValueText(item);
+    if (!value.empty())
+        m_accessibilityCb(value);
 }
 
 void TabbedOverlayScreen::setupActions() {
@@ -27,15 +197,20 @@ void TabbedOverlayScreen::setupActions() {
 
 void TabbedOverlayScreen::onPressB() {
     if (!m_active || m_animating) return;
-    if (usesCustomContentLayout() && handleCustomPressB()) return;
+    if (usesCustomContentLayout() && handleCustomPressB()) {
+        announceCurrentFocus();
+        return;
+    }
 
     if (m_dropdownOpen) {
         closeDropdown(true);
+        announceCurrentFocus();
         return;
     }
     if (m_focusArea == FocusArea::Content) {
         m_focusArea = FocusArea::Tabs;
         if (m_navSfxCb) m_navSfxCb();
+        announceCurrentFocus();
         return;
     }
     hide();
@@ -43,7 +218,10 @@ void TabbedOverlayScreen::onPressB() {
 
 void TabbedOverlayScreen::onPressA() {
     if (!m_active || m_animating) return;
-    if (usesCustomContentLayout() && handleCustomPressA()) return;
+    if (usesCustomContentLayout() && handleCustomPressA()) {
+        announceCurrentFocus();
+        return;
+    }
 
     if (m_focusArea == FocusArea::Tabs) {
         if (focusableCount() > 0) {
@@ -51,6 +229,7 @@ void TabbedOverlayScreen::onPressA() {
             m_contentIdx = 0;
             scrollToFocused();
             if (m_navSfxCb) m_navSfxCb();
+            announceCurrentFocus();
         }
         return;
     }
@@ -67,6 +246,7 @@ void TabbedOverlayScreen::onPressA() {
             sel.intVal = std::clamp(m_dropdownHover, 0, count - 1);
             if (sel.onChange) sel.onChange(sel);
             if (m_activateSfxCb) m_activateSfxCb();
+            announceCurrentFocus();
         }
         closeDropdown(true);
         return;
@@ -76,25 +256,35 @@ void TabbedOverlayScreen::onPressA() {
         item.boolVal = !item.boolVal;
         if (item.onChange) item.onChange(item);
         if (m_toggleSfxCb) m_toggleSfxCb(item.boolVal);
+        announceCurrentFocus();
     } else if (item.type == ItemType::Selector) {
         openDropdown(rawIdx);
         if (m_activateSfxCb) m_activateSfxCb();
+        announceCurrentFocus();
     } else if (item.type == ItemType::Action) {
         if (item.onChange) item.onChange(item);
         if (m_activateSfxCb) m_activateSfxCb();
+        announceCurrentFocus();
     }
 }
 
 void TabbedOverlayScreen::onPressX() {
     if (!m_active || m_animating)
         return;
-    if (usesCustomContentLayout() && handleCustomPressX())
+    if (usesCustomContentLayout() && handleCustomPressX()) {
+        announceCurrentFocus();
         return;
+    }
 }
 
 void TabbedOverlayScreen::onNavUp() {
     if (!m_active || m_animating) return;
-    if (usesCustomContentLayout() && handleCustomNavUp()) return;
+    if (usesCustomContentLayout() && handleCustomNavUp()) {
+        announceCurrentFocus();
+        return;
+    }
+    if (usesCustomContentLayout() && m_focusArea == FocusArea::Content)
+        return;
 
     if (m_focusArea == FocusArea::Tabs) {
         if (m_tabIndex > 0) {
@@ -110,6 +300,7 @@ void TabbedOverlayScreen::onNavUp() {
             closeDropdown(false);
             rebuildContentItems();
             if (m_navSfxCb) m_navSfxCb();
+            announceCurrentFocus();
         }
         return;
     }
@@ -121,6 +312,7 @@ void TabbedOverlayScreen::onNavUp() {
             int count = std::max(1, (int)items[m_dropdownRawIdx].options.size());
             m_dropdownHover = (m_dropdownHover + count - 1) % count;
             if (m_navSfxCb) m_navSfxCb();
+            announceCurrentFocus();
         }
         return;
     }
@@ -129,12 +321,18 @@ void TabbedOverlayScreen::onNavUp() {
         --m_contentIdx;
         if (m_navSfxCb) m_navSfxCb();
         scrollToFocused();
+        announceCurrentFocus();
     }
 }
 
 void TabbedOverlayScreen::onNavDown() {
     if (!m_active || m_animating) return;
-    if (usesCustomContentLayout() && handleCustomNavDown()) return;
+    if (usesCustomContentLayout() && handleCustomNavDown()) {
+        announceCurrentFocus();
+        return;
+    }
+    if (usesCustomContentLayout() && m_focusArea == FocusArea::Content)
+        return;
 
     if (m_focusArea == FocusArea::Tabs) {
         if (m_tabIndex < (int)m_tabs.size() - 1) {
@@ -150,6 +348,7 @@ void TabbedOverlayScreen::onNavDown() {
             closeDropdown(false);
             rebuildContentItems();
             if (m_navSfxCb) m_navSfxCb();
+            announceCurrentFocus();
         }
         return;
     }
@@ -161,6 +360,7 @@ void TabbedOverlayScreen::onNavDown() {
             int count = std::max(1, (int)items[m_dropdownRawIdx].options.size());
             m_dropdownHover = (m_dropdownHover + 1) % count;
             if (m_navSfxCb) m_navSfxCb();
+            announceCurrentFocus();
         }
         return;
     }
@@ -169,15 +369,22 @@ void TabbedOverlayScreen::onNavDown() {
         ++m_contentIdx;
         if (m_navSfxCb) m_navSfxCb();
         scrollToFocused();
+        announceCurrentFocus();
     }
 }
 
 void TabbedOverlayScreen::onNavLeft() {
     if (!m_active || m_animating) return;
-    if (usesCustomContentLayout() && handleCustomNavLeft()) return;
+    if (usesCustomContentLayout() && handleCustomNavLeft()) {
+        announceCurrentFocus();
+        return;
+    }
+    if (usesCustomContentLayout() && m_focusArea == FocusArea::Content)
+        return;
 
     if (m_dropdownOpen) {
         closeDropdown(true);
+        announceCurrentFocus();
         return;
     }
 
@@ -192,18 +399,26 @@ void TabbedOverlayScreen::onNavLeft() {
         item.anim01 = item.floatVal;
         if (item.onChange) item.onChange(item);
         if (m_sliderSfxCb) m_sliderSfxCb(false);
+        announceCurrentValue();
     } else {
         m_focusArea = FocusArea::Tabs;
         if (m_navSfxCb) m_navSfxCb();
+        announceCurrentFocus();
     }
 }
 
 void TabbedOverlayScreen::onNavRight() {
     if (!m_active || m_animating) return;
-    if (usesCustomContentLayout() && handleCustomNavRight()) return;
+    if (usesCustomContentLayout() && handleCustomNavRight()) {
+        announceCurrentFocus();
+        return;
+    }
+    if (usesCustomContentLayout() && m_focusArea == FocusArea::Content)
+        return;
 
     if (m_dropdownOpen) {
         closeDropdown(true);
+        announceCurrentFocus();
         return;
     }
 
@@ -213,6 +428,7 @@ void TabbedOverlayScreen::onNavRight() {
             m_contentIdx = 0;
             scrollToFocused();
             if (m_navSfxCb) m_navSfxCb();
+            announceCurrentFocus();
         }
         return;
     }
@@ -226,12 +442,15 @@ void TabbedOverlayScreen::onNavRight() {
         item.anim01 = item.floatVal;
         if (item.onChange) item.onChange(item);
         if (m_sliderSfxCb) m_sliderSfxCb(true);
+        announceCurrentValue();
     } else if (item.type == ItemType::Selector) {
         openDropdown(rawIdx);
         if (m_activateSfxCb) m_activateSfxCb();
+        announceCurrentFocus();
     } else if (item.type == ItemType::Action) {
         if (item.onChange) item.onChange(item);
         if (m_activateSfxCb) m_activateSfxCb();
+        announceCurrentFocus();
     }
 }
 

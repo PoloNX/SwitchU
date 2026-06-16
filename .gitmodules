@@ -4,3 +4,6 @@
 [submodule "lib/Atmosphere-libs"]
 	path = lib/Atmosphere-libs
 	url = https://github.com/Atmosphere-NX/Atmosphere-libs
+[submodule "lib/espeak-ng"]
+	path = lib/espeak-ng
+	url = https://github.com/espeak-ng/espeak-ng.git

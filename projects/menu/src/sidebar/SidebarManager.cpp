@@ -50,6 +50,9 @@ void SidebarManager::build(nxui::GpuDevice& gpu, nxui::Renderer& ren,
         auto btn = std::make_shared<AppletButton>();
         btn->setIcon(tex);
         btn->setLabelKey(labelKey, fallback);
+        btn->setAccessibilityLabel(fallback);
+        btn->setAccessibilityRole(nxui::I18n::instance().tr("accessibility.roles.button", "button"));
+        btn->setAccessibilityHint(nxui::I18n::instance().tr("accessibility.hints.open", "A to open."));
         btn->setOnActivate(std::move(action));
         btn->setFocusable(true);
         return btn;
@@ -84,6 +87,15 @@ void SidebarManager::build(nxui::GpuDevice& gpu, nxui::Renderer& ren,
         m_themeShopButton = themeShop.get();
         themeShop->setRect({rightX, startY + 2.f * (btnSize + gap), btnSize, btnSize});
         m_rightButtons.push_back(std::move(themeShop));
+    }
+
+    if (!m_leftButtons.empty()) {
+        m_leftButtons.front()->setCustomNavigation(nxui::FocusDirection::UP, m_leftButtons.front().get());
+        m_leftButtons.back()->setCustomNavigation(nxui::FocusDirection::DOWN, m_leftButtons.back().get());
+    }
+    if (!m_rightButtons.empty()) {
+        m_rightButtons.front()->setCustomNavigation(nxui::FocusDirection::UP, m_rightButtons.front().get());
+        m_rightButtons.back()->setCustomNavigation(nxui::FocusDirection::DOWN, m_rightButtons.back().get());
     }
 
     (void)gpu;

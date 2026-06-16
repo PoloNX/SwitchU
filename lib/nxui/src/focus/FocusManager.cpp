@@ -47,6 +47,7 @@ static bool containsRecursive(Widget* node, Widget* target) {
 // ══════════════════════════════════════════════════════════════════════════════
 
 void FocusManager::setGrid(std::vector<Widget*> items, int cols) {
+    Widget* old = current();
     // Try to preserve the relative position (same row/col) across page changes
     int oldCol = (m_cols > 0 && !m_items.empty()) ? (m_index % m_cols) : 0;
     int oldRow = (m_cols > 0 && !m_items.empty()) ? (m_index / m_cols) : 0;
@@ -68,6 +69,9 @@ void FocusManager::setGrid(std::vector<Widget*> items, int cols) {
 
     m_index = std::max(idx, 0);
     m_items[m_index]->onFocusGained();
+    Widget* cur = current();
+    if (m_cb && old != cur)
+        m_cb(old, cur);
 }
 
 int FocusManager::rows() const {
@@ -243,6 +247,8 @@ bool FocusManager::navigate(FocusDirection dir, Widget* root) {
         m_items = focusables;
         m_index = 0;
         focusables[0]->onFocusGained();
+        if (m_cb)
+            m_cb(cur, focusables[0]);
         return true;
     }
 

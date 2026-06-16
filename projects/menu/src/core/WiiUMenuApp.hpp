@@ -13,6 +13,7 @@
 #include "widgets/BatteryWidget.hpp"
 #include "widgets/TitlePillWidget.hpp"
 #include "core/AudioManager.hpp"
+#include "core/AccessibilityManager.hpp"
 #include "widgets/LaunchAnimation.hpp"
 #include "widgets/OverlayDialog.hpp"
 #include "widgets/ProgressDialog.hpp"
@@ -106,6 +107,7 @@ private:
     void wireFocusCallback();
     void wireGlobalActions();
     bool isCurrentFocusableWidget(nxui::Widget* w) const;
+    std::string accessibilityPositionFor(nxui::Widget* w) const;
     void createSettings();
     void createThemeShop();
     void reloadThemePresets();
@@ -131,6 +133,9 @@ private:
     void bindEditActions(GlossyIcon* icon);
     void unbindEditActions();
     bool isEditableIcon(nxui::Widget* w) const;
+    void announceFocusedWidget(nxui::Widget* w);
+    std::string accessibilityContextFor(nxui::Widget* w) const;
+    std::string accessibilityActionsFor(nxui::Widget* w) const;
 
 #ifdef SWITCHU_MENU
     void refreshAppList();
@@ -178,6 +183,7 @@ private:
     std::vector<std::shared_ptr<UserAvatarButton>> m_userAvatarButtons;
 
     AudioManager m_audio;
+    AccessibilityManager m_accessibility;
     std::future<void>    m_audioFuture;
     bool                 m_audioStarted = false;
     std::vector<std::string> m_availablePresets;

@@ -2,7 +2,126 @@
   "common": {
     "auto": "Auto",
     "na": "N/A",
-    "active": "Actif"
+    "active": "Actif",
+    "disabled": "Désactivé"
+  },
+  "accessibility": {
+    "speech": {
+      "enabled": "Lecture vocale activée."
+    },
+    "context": {
+      "dialog": "Dialogue",
+      "profile_selection": "Sélection du profil",
+      "settings": "Paramètres",
+      "themes": "Thèmes",
+      "main_menu": "Menu principal",
+      "page": "page",
+      "of": "sur",
+      "left_sidebar": "Barre latérale gauche",
+      "right_sidebar": "Barre latérale droite",
+      "user_profiles": "Profils utilisateur"
+    },
+    "roles": {
+      "button": "bouton",
+      "game": "jeu",
+      "game_card": "carte de jeu",
+      "slot": "case",
+      "profile": "profil",
+      "toggle": "interrupteur",
+      "slider": "curseur",
+      "selector": "sélecteur",
+      "progress": "progression",
+      "info": "information",
+      "section": "section"
+    },
+    "hints": {
+      "open": "A pour ouvrir.",
+      "open_user_page": "A pour ouvrir la page utilisateur.",
+      "grid_empty": "Utilise la croix directionnelle pour changer de case.",
+      "game_launchable": "A pour lancer. X pour les options. Y pour déplacer. ZL ou ZR pour changer de page.",
+      "game_blocked": "A pour afficher la raison du blocage."
+    },
+    "actions": {
+      "edit_mode": "Croix directionnelle pour choisir la nouvelle position. A pour placer. B pour annuler.",
+      "empty_slot": "Croix directionnelle pour naviguer. ZL ou ZR pour changer de page.",
+      "game_blocked": "A pour afficher la raison. Y pour déplacer. ZL ou ZR pour changer de page.",
+      "game_launchable": "A pour lancer. X pour les options. Y pour déplacer. ZL ou ZR pour changer de page.",
+      "settings": "Haut et bas pour choisir une catégorie. A ou droite pour entrer. B pour fermer.",
+      "themes": "Haut et bas pour naviguer. A pour choisir. B pour fermer.",
+      "dialog": "Gauche et droite pour changer de choix. A pour valider. B pour annuler."
+    },
+    "settings": {
+      "tab_prefix": "Onglet",
+      "tab_actions": "A ou droite pour entrer. Haut et bas pour changer d'onglet. B pour fermer.",
+      "list_prefix": "Liste",
+      "list_actions": "Haut et bas pour choisir. A pour valider. B pour fermer la liste.",
+      "toggle_actions": "A pour changer. Gauche pour revenir aux onglets.",
+      "slider_actions": "Gauche ou droite pour ajuster. B pour revenir aux onglets.",
+      "selector_actions": "A ou droite pour ouvrir la liste. B pour revenir aux onglets.",
+      "action_actions": "A pour lancer l'action. B pour revenir aux onglets."
+    },
+    "value": {
+      "label": "Valeur",
+      "percent": "pour cent"
+    },
+    "position": {
+      "row": "ligne",
+      "column": "colonne"
+    },
+    "move_mode": {
+      "enter": "Déplacement du jeu: ",
+      "placed": "Jeu déplacé: ",
+      "cancelled": "Déplacement annulé: "
+    },
+    "grid": {
+      "empty_slot": "Emplacement vide"
+    },
+    "user_profile": "Profil utilisateur"
+  },
+  "tutorial": {
+    "accessibility": {
+      "title": "Accessibilité vocale",
+      "body": "La lecture vocale est activée par défaut. Elle annonce l'élément sélectionné et les actions disponibles à chaque changement de focus.",
+      "objective": "Appuie sur X pour désactiver la voix et utiliser les sons animalese. Appuie sur A pour continuer.",
+      "enabled_announcement": "Lecture vocale activée. Appuie sur X pour la désactiver, ou A pour continuer.",
+      "disabled_announcement": "Lecture vocale désactivée. Les sons animalese sont actifs.",
+      "text_actions": "A pour continuer. B pour passer cette étape. Plus pour tout passer."
+    },
+    "welcome": {
+      "title": "Bienvenue dans SwitchU",
+      "body": "SwitchU remplace le menu HOME par une interface rapide pour lancer tes jeux, homebrews et outils système."
+    },
+    "navigation": {
+      "title": "Navigation",
+      "body": "Tu peux naviguer avec la croix directionnelle, le stick gauche ou le stick droit. Essaie une direction horizontale et une direction verticale.",
+      "objective": "Teste une direction gauche ou droite puis haut ou bas."
+    },
+    "confirm": {
+      "title": "Valider",
+      "body": "Le bouton A confirme une action, lance un jeu ou ouvre l'élément sélectionné.",
+      "objective": "Appuie sur A pour valider cette étape."
+    },
+    "themes": {
+      "title": "Thèmes",
+      "body": "Les thèmes peuvent changer les couleurs, les images et les sons. Ouvre la section Thèmes depuis la barre latérale pour installer ou appliquer un style."
+    },
+    "cursor": {
+      "title": "Curseur",
+      "body": "Tu peux utiliser le curseur virtuel avec les clics des sticks quand une action demande un pointeur. Clique le stick gauche pour l'activer, le stick droit pour le recentrer."
+    },
+    "support": {
+      "title": "Support",
+      "body": "Pour signaler un problème, ouvre le GitHub du projet: github.com/PoloNX/SwitchU"
+    },
+    "hints": {
+      "disable_voice": "Désactiver voix",
+      "enable_voice": "Activer voix",
+      "reveal": "Afficher",
+      "continue": "Continuer",
+      "test": "Tester",
+      "skip_step": "Passer étape",
+      "skip_all": "Tout passer"
+    }
   },
   "sidebar": {
     "album": "Album",
@@ -13,9 +132,13 @@
     "music": "Musique",
     "theme_shop": "Theme Shop"
   },
+  "hint": {
+    "repeat": "Répéter"
+  },
   "settings": {
     "tabs": {
       "system": "Système",
+      "accessibility": "Accessibilité",
       "audio": "Audio",
       "display": "Affichage",
       "internet": "Internet",
@@ -56,6 +179,21 @@
       "default_profile": "Default Profile",
       "default_profile_desc": "Launch games with this profile when possible.",
       "default_profile_ask": "Ask each time"
+    },
+    "accessibility": {
+      "voice": "Lecture vocale",
+      "voice_desc": "Lit à voix haute les éléments ciblés et les actions disponibles.",
+      "voice_language": "Langue de la voix",
+      "voice_language_desc": "Suit la langue système ou la langue de l'interface.",
+      "speech_rate": "Vitesse de parole",
+      "speech_rate_desc": "Ajuste la vitesse de la lecture vocale.",
+      "words_per_minute": "mots/min",
+      "speak_hints": "Lire les aides d'action",
+      "speak_hints_desc": "Annonce les actions disponibles après l'élément sélectionné.",
+      "repeat_context": "Répéter l'emplacement à chaque déplacement",
+      "repeat_context_desc": "Répète la zone actuelle à chaque changement de focus au lieu de seulement quand elle change.",
+      "speak_position": "Lire la position",
+      "speak_position_desc": "Annonce la ligne, la colonne et la position quand elles sont disponibles."
     },
     "audio": {
       "speaker_auto_mute": "Coupure auto des haut-parleurs",

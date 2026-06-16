@@ -4,6 +4,7 @@
 
 namespace settings::tabs {
 class SystemTab;
+class AccessibilityTab;
 class AudioTab;
 class DisplayTab;
 class InternetTab;
@@ -25,6 +26,11 @@ public:
     void onUiLanguageChange(StringCb cb) { m_uiLanguageCb = std::move(cb); }
     void onDefaultProfileChange(StringCb cb) { m_defaultProfileCb = std::move(cb); }
     void onClockUse12HourChange(BoolCb cb) { m_clockUse12HourCb = std::move(cb); }
+    void onAccessibilityEnabledChange(BoolCb cb) { m_accessibilityEnabledCb = std::move(cb); }
+    void onAccessibilitySpeakHintsChange(BoolCb cb) { m_accessibilitySpeakHintsCb = std::move(cb); }
+    void onAccessibilitySpeakContextEveryFocusChange(BoolCb cb) { m_accessibilitySpeakContextEveryFocusCb = std::move(cb); }
+    void onAccessibilitySpeakPositionChange(BoolCb cb) { m_accessibilitySpeakPositionCb = std::move(cb); }
+    void onAccessibilitySpeechRateChange(IntCb cb) { m_accessibilitySpeechRateCb = std::move(cb); }
     void onNetConnect(VoidCb cb)        { m_netConnectCb = std::move(cb); }
     void onSleepRequest(VoidCb cb)      { m_sleepCb = std::move(cb); }
     void onShutdownRequest(VoidCb cb)   { m_shutdownCb = std::move(cb); }
@@ -44,12 +50,23 @@ public:
     void setClockUse12HourState(bool enabled) {
         m_clockUse12Hour = enabled;
     }
+    void setAccessibilityEnabledState(bool enabled) {
+        m_accessibilityEnabled = enabled;
+    }
+    void setAccessibilitySpeechState(bool speakHints, bool speakContextEveryFocus,
+                                     bool speakPosition, int speechRate) {
+        m_accessibilitySpeakHints = speakHints;
+        m_accessibilitySpeakContextEveryFocus = speakContextEveryFocus;
+        m_accessibilitySpeakPosition = speakPosition;
+        m_accessibilitySpeechRate = std::clamp(speechRate, 120, 320);
+    }
 
 protected:
     void buildTabs() override;
 
 private:
     friend class settings::tabs::SystemTab;
+    friend class settings::tabs::AccessibilityTab;
     friend class settings::tabs::AudioTab;
     friend class settings::tabs::DisplayTab;
     friend class settings::tabs::InternetTab;
@@ -65,6 +82,11 @@ private:
     StringCb m_uiLanguageCb;
     StringCb m_defaultProfileCb;
     BoolCb m_clockUse12HourCb;
+    BoolCb m_accessibilityEnabledCb;
+    BoolCb m_accessibilitySpeakHintsCb;
+    BoolCb m_accessibilitySpeakContextEveryFocusCb;
+    BoolCb m_accessibilitySpeakPositionCb;
+    IntCb m_accessibilitySpeechRateCb;
     VoidCb m_netConnectCb;
     VoidCb m_sleepCb;
     VoidCb m_shutdownCb;
@@ -76,4 +98,9 @@ private:
     std::string m_uiLanguageOverride = "auto";
     std::string m_defaultProfileUid;
     bool m_clockUse12Hour = false;
+    bool m_accessibilityEnabled = true;
+    bool m_accessibilitySpeakHints = true;
+    bool m_accessibilitySpeakContextEveryFocus = false;
+    bool m_accessibilitySpeakPosition = true;
+    int m_accessibilitySpeechRate = 190;
 };

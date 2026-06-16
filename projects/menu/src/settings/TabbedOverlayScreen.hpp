@@ -66,12 +66,20 @@ public:
     using IntCb = std::function<void(int)>;
     using VoidCb = std::function<void()>;
     using StringCb = std::function<void(const std::string&)>;
+    using AccessibilityStructuredCb = std::function<void(const std::string& context,
+                                                         const std::string& position,
+                                                         const std::string& summary,
+                                                         bool forceRepeat)>;
     void onNavigateSfx(VoidCb cb)        { m_navSfxCb = std::move(cb); }
     void onActivateSfx(VoidCb cb)        { m_activateSfxCb = std::move(cb); }
     void onCloseSfx(VoidCb cb)           { m_closeSfxCb = std::move(cb); }
     void onToggleSfx(BoolCb cb)          { m_toggleSfxCb = std::move(cb); }
     void onSliderSfx(BoolCb cb)          { m_sliderSfxCb = std::move(cb); }
     void onClosed(VoidCb cb)             { m_closedCb = std::move(cb); }
+    void onAccessibilityAnnouncement(StringCb cb) { m_accessibilityCb = std::move(cb); }
+    void onAccessibilityStructuredAnnouncement(AccessibilityStructuredCb cb) {
+        m_accessibilityStructuredCb = std::move(cb);
+    }
     void refreshTranslations();
     ScreenMode screenMode() const { return m_mode; }
 
@@ -132,6 +140,13 @@ protected:
     void onNavLeft();
     void onNavRight();
     void scrollToFocused();
+    void announceCurrentFocus();
+    void announceCurrentValue();
+    virtual void currentAccessibilityParts(std::string& context,
+                                           std::string& position,
+                                           std::string& summary,
+                                           bool& forceRepeat) const;
+    virtual std::string currentAccessibilitySummary() const;
 
     std::shared_ptr<nxui::Box> m_tabBar;
     std::shared_ptr<nxui::Box> m_tabContent;
@@ -223,6 +238,8 @@ protected:
     DialogRequestCb m_dialogRequestCb;
     BoolCb  m_toggleSfxCb;
     BoolCb  m_sliderSfxCb;
+    StringCb m_accessibilityCb;
+    AccessibilityStructuredCb m_accessibilityStructuredCb;
     int m_i18nListenerId = -1;
     bool m_deferredRefresh = false;
 
