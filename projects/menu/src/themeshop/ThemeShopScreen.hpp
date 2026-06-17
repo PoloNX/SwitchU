@@ -95,6 +95,10 @@ protected:
     bool handleCustomNavLeft() override;
     bool handleCustomNavRight() override;
     bool handleCustomTouch(nxui::Input& input, const nxui::Rect& panel, const nxui::Rect& tabs, const nxui::Rect& content) override;
+    void currentAccessibilityParts(std::string& context,
+                                   std::string& position,
+                                   std::string& summary,
+                                   bool& forceRepeat) const override;
     std::string currentAccessibilitySummary() const override;
 
 private:

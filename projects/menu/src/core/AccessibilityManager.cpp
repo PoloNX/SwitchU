@@ -7,10 +7,8 @@
 #include <unordered_map>
 #include <vector>
 
-#ifdef SWITCHU_ENABLE_ESPEAK
 #include <SDL2/SDL.h>
 #include <espeak-ng/speak_lib.h>
-#endif
 
 namespace {
 
@@ -51,9 +49,7 @@ std::string normalizeLanguageTag(std::string tag) {
 
 } // namespace
 
-#ifdef SWITCHU_ENABLE_ESPEAK
 AccessibilityManager* AccessibilityManager::s_activeSynthTarget = nullptr;
-#endif
 
 AccessibilityManager::~AccessibilityManager() {
     shutdown();
@@ -67,7 +63,6 @@ bool AccessibilityManager::initialize(bool enabled, const std::string& voice,
     m_lastAnnouncement.clear();
     m_lastFocusContext.clear();
 
-#ifdef SWITCHU_ENABLE_ESPEAK
     s_activeSynthTarget = this;
     espeak_SetSynthCallback(&AccessibilityManager::synthCallback);
 
@@ -105,16 +100,6 @@ bool AccessibilityManager::initialize(bool enabled, const std::string& voice,
                   m_voice.c_str(),
                   sampleRate,
                   joinPath(usedRoot, "espeak-ng-data").c_str());
-#else
-    (void)voice;
-    (void)dataRoot;
-    m_initialized = true;
-#ifdef SWITCHU_ESPEAK_REQUESTED
-    DebugLog::log("[accessibility] espeak requested but espeak-ng headers/libs were not found; announcements are logged only");
-#else
-    DebugLog::log("[accessibility] built without espeak-ng; announcements are logged only");
-#endif
-#endif
 
     return true;
 }
@@ -123,13 +108,11 @@ void AccessibilityManager::shutdown() {
     if (!m_initialized)
         return;
 
-#ifdef SWITCHU_ENABLE_ESPEAK
     releaseCurrentSpeech();
     espeak_Cancel();
     espeak_Terminate();
     if (s_activeSynthTarget == this)
         s_activeSynthTarget = nullptr;
-#endif
     m_initialized = false;
     m_lastAnnouncement.clear();
     m_lastFocusContext.clear();
@@ -139,27 +122,22 @@ void AccessibilityManager::setEnabled(bool enabled) {
     if (m_enabled == enabled)
         return;
     m_enabled = enabled;
-#ifdef SWITCHU_ENABLE_ESPEAK
     if (!m_enabled) {
         releaseCurrentSpeech();
         espeak_Cancel();
     }
-#endif
 }
 
 void AccessibilityManager::setSpeechRate(int wordsPerMinute) {
     m_speechRate = clampSpeechRate(wordsPerMinute);
-#ifdef SWITCHU_ENABLE_ESPEAK
     if (m_initialized)
         espeak_SetParameter(espeakRATE, m_speechRate, 0);
-#endif
 }
 
 bool AccessibilityManager::setVoiceForLanguageTag(const std::string& languageTag) {
     const std::string voice = voiceForLanguageTag(languageTag);
     m_voice = voice;
 
-#ifdef SWITCHU_ENABLE_ESPEAK
     if (!m_initialized)
         return true;
 
@@ -170,7 +148,6 @@ bool AccessibilityManager::setVoiceForLanguageTag(const std::string& languageTag
         m_voice = "en-us";
         return espeak_SetVoiceByName(m_voice.c_str()) == EE_OK;
     }
-#endif
 
     DebugLog::log("[accessibility] voice set to %s for language %s",
                   m_voice.c_str(),
@@ -241,7 +218,6 @@ void AccessibilityManager::announce(const std::string& text, bool interrupt, boo
         return;
     m_lastAnnouncement = spoken;
 
-#ifdef SWITCHU_ENABLE_ESPEAK
     if (interrupt) {
         releaseCurrentSpeech();
         espeak_Cancel();
@@ -257,17 +233,20 @@ void AccessibilityManager::announce(const std::string& text, bool interrupt, boo
                  nullptr);
     espeak_Synchronize();
     playSynthBuffer();
-#else
-    (void)interrupt;
-    DebugLog::log("[accessibility] speak: %s", spoken.c_str());
-#endif
+}
+
+void AccessibilityManager::announceAndDisable(const std::string& text) {
+    if (!m_initialized)
+        return;
+    m_enabled = true;
+    announce(text, true, true);
+    m_enabled = false;
 }
 
 void AccessibilityManager::repeatLastAnnouncement() {
     announce(m_lastAnnouncement, true, true);
 }
 
-#ifdef SWITCHU_ENABLE_ESPEAK
 int AccessibilityManager::synthCallback(short* wav, int numsamples, espeak_EVENT* events) {
     (void)events;
     if (s_activeSynthTarget)
@@ -350,7 +329,6 @@ void AccessibilityManager::playSynthBuffer() {
     if (m_ttsChannel < 0)
         DebugLog::log("[accessibility] Mix_PlayChannel failed: %s", Mix_GetError());
 }
-#endif
 
 void AccessibilityManager::announceFocus(nxui::Widget* widget, const std::string& context,
                                          bool forceRepeat) {
@@ -360,8 +338,9 @@ void AccessibilityManager::announceFocus(nxui::Widget* widget, const std::string
 void AccessibilityManager::announceStructuredFocus(const std::string& context,
                                                    const std::string& position,
                                                    const std::string& summary,
-                                                   bool forceRepeat) {
-    announce(composeStructuredFocus(context, position, summary), true, forceRepeat);
+                                                   bool forceRepeat,
+                                                   bool forceContext) {
+    announce(composeStructuredFocus(context, position, summary, forceContext), true, forceRepeat);
 }
 
 std::string AccessibilityManager::describeWidget(nxui::Widget* widget,
@@ -389,9 +368,10 @@ std::string AccessibilityManager::describeWidget(nxui::Widget* widget,
 
 std::string AccessibilityManager::composeStructuredFocus(const std::string& context,
                                                          const std::string& position,
-                                                         const std::string& summary) {
+                                                         const std::string& summary,
+                                                         bool forceContext) {
     std::string spokenContext;
-    if (!context.empty() && (m_speakContextEveryFocus || context != m_lastFocusContext))
+    if (!context.empty() && (forceContext || m_speakContextEveryFocus || context != m_lastFocusContext))
         spokenContext = context;
 
     m_lastFocusContext = context;

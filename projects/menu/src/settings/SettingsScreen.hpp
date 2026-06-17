@@ -52,6 +52,7 @@ public:
     }
     void setAccessibilityEnabledState(bool enabled) {
         m_accessibilityEnabled = enabled;
+        setAccessibilityVoiceEnabled(enabled);
     }
     void setAccessibilitySpeechState(bool speakHints, bool speakContextEveryFocus,
                                      bool speakPosition, int speechRate) {
@@ -59,6 +60,7 @@ public:
         m_accessibilitySpeakContextEveryFocus = speakContextEveryFocus;
         m_accessibilitySpeakPosition = speakPosition;
         m_accessibilitySpeechRate = std::clamp(speechRate, 120, 320);
+        setAccessibilitySpeechPreferences(speakHints, speakPosition);
     }
 
 protected:

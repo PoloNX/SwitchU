@@ -4,7 +4,7 @@
 #include <mutex>
 #include <cstdarg>
 #include <cstdio>
-#include <cstring>
+#include <fstream>
 #include <switchu/log_utils.hpp>
 #ifdef SWITCHU_MENU
 #include <switchu/file_log.hpp>
@@ -38,13 +38,12 @@ public:
         const bool canTruncate = switchu::log_detail::rotate_current_log(LOG_DIR, LOG_BASE_NAME, LOG_EXTENSION, MAX_ARCHIVED_LOGS);
         char path[256];
         switchu::log_detail::build_current_log_path(path, sizeof(path), LOG_DIR, LOG_BASE_NAME, LOG_EXTENSION);
-        self.m_file = std::fopen(path, canTruncate ? "w" : "a");
-        if (self.m_file) {
-            std::setvbuf(self.m_file, nullptr, _IOLBF, 0);
+        self.m_file.open(path, canTruncate ? std::ios::out | std::ios::trunc : std::ios::out | std::ios::app);
+        if (self.m_file.is_open()) {
             char timestamp[32];
             switchu::log_detail::format_line_timestamp(timestamp, sizeof(timestamp));
-            std::fprintf(self.m_file, "[%s] === SwitchU log start ===\n", timestamp);
-            std::fflush(self.m_file);
+            self.m_file << '[' << timestamp << "] === SwitchU log start ===\n";
+            self.m_file.flush();
         }
 #endif
     }
@@ -76,9 +75,9 @@ public:
 #ifdef SWITCHU_MENU
         switchu::FileLog::log("%s", buf);
 #else
-        if (self.m_file) {
-            std::fprintf(self.m_file, "%s\n", line.c_str());
-            std::fflush(self.m_file);
+        if (self.m_file.is_open()) {
+            self.m_file << line << '\n';
+            self.m_file.flush();
         }
 
         std::fprintf(stderr, "%s\n", line.c_str());
@@ -98,17 +97,16 @@ private:
     }
 
     static void closeCurrentFile(DebugLog& self) {
-        if (!self.m_file)
+        if (!self.m_file.is_open())
             return;
 
         char timestamp[32];
         switchu::log_detail::format_line_timestamp(timestamp, sizeof(timestamp));
-        std::fprintf(self.m_file, "[%s] === SwitchU log end ===\n", timestamp);
-        std::fclose(self.m_file);
-        self.m_file = nullptr;
+        self.m_file << '[' << timestamp << "] === SwitchU log end ===\n";
+        self.m_file.close();
     }
 
     std::mutex m_mutex;
     std::vector<std::string> m_lines;
-    FILE* m_file = nullptr;
+    std::ofstream m_file;
 };

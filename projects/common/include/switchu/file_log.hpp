@@ -1,6 +1,7 @@
 #pragma once
 #include <cstdio>
 #include <cstdarg>
+#include <fstream>
 #include <mutex>
 #include <switchu/log_utils.hpp>
 
@@ -24,13 +25,12 @@ public:
 
         char path[256];
         log_detail::build_current_log_path(path, sizeof(path), LOG_DIR, tag, LOG_EXTENSION);
-        self.m_file = std::fopen(path, can_truncate ? "w" : "a");
-        if (self.m_file) {
-            std::setvbuf(self.m_file, nullptr, _IOLBF, 0);
+        self.m_file.open(path, can_truncate ? std::ios::out | std::ios::trunc : std::ios::out | std::ios::app);
+        if (self.m_file.is_open()) {
             char timestamp[32];
             log_detail::format_line_timestamp(timestamp, sizeof(timestamp));
-            std::fprintf(self.m_file, "[%s] === %s log start ===\n", timestamp, tag);
-            std::fflush(self.m_file);
+            self.m_file << '[' << timestamp << "] === " << tag << " log start ===\n";
+            self.m_file.flush();
         }
     }
 
@@ -54,9 +54,9 @@ public:
         std::lock_guard<std::mutex> lock(self.m_mutex);
 
         std::fprintf(stderr, "[%s] %s\n", timestamp, buf);
-        if (self.m_file) {
-            std::fprintf(self.m_file, "[%s] %s\n", timestamp, buf);
-            std::fflush(self.m_file);
+        if (self.m_file.is_open()) {
+            self.m_file << '[' << timestamp << "] " << buf << '\n';
+            self.m_file.flush();
         }
     }
 
@@ -64,18 +64,17 @@ private:
     static FileLog& inst() { static FileLog s; return s; }
 
     static void close_current_file(FileLog& self) {
-        if (!self.m_file)
+        if (!self.m_file.is_open())
             return;
 
         char timestamp[32];
         log_detail::format_line_timestamp(timestamp, sizeof(timestamp));
-        std::fprintf(self.m_file, "[%s] === log end ===\n", timestamp);
-        std::fclose(self.m_file);
-        self.m_file = nullptr;
+        self.m_file << '[' << timestamp << "] === log end ===\n";
+        self.m_file.close();
     }
 
     std::mutex m_mutex;
-    FILE* m_file = nullptr;
+    std::ofstream m_file;
 };
 
 }

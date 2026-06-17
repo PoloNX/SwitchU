@@ -29,6 +29,7 @@ public:
 private:
     enum class StepKind {
         AccessibilityChoice,
+        AccessibilitySettings,
         Text,
         NavigationTest,
         ConfirmTest,

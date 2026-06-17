@@ -244,9 +244,21 @@ void OverlayDialog::animateButtonFocus(float duration, nxui::EasingFunc easing) 
     }
 }
 
-std::string OverlayDialog::currentAccessibilitySummary() const {
+void OverlayDialog::currentAccessibilityParts(std::string& context,
+                                              std::string& position,
+                                              std::string& summary,
+                                              bool& forceRepeat) const {
+    context.clear();
+    position.clear();
+    summary.clear();
+    forceRepeat = false;
+
     if (!m_active || m_animatingOut)
-        return {};
+        return;
+
+    context = m_title;
+    if (!m_message.empty())
+        context += (context.empty() ? "" : ". ") + m_message;
 
     if (m_mode == DialogMode::UserSelect) {
         std::string name;
@@ -254,29 +266,54 @@ std::string OverlayDialog::currentAccessibilitySummary() const {
             name = m_users[(size_t)m_selected].nickname;
         if (name.empty())
             name = "Profil " + std::to_string(m_selected + 1);
-        return m_title + ". " + name + ". Gauche et droite pour changer de profil. A pour valider. B pour annuler.";
+        summary = name;
+        if (m_accessibilitySpeakPosition && !m_users.empty())
+            position = std::to_string(m_selected + 1) + " sur " + std::to_string((int)m_users.size());
+        if (m_accessibilitySpeakHints)
+            summary += ". Gauche et droite pour changer de profil. A pour valider. B pour annuler.";
+        return;
     }
 
     std::string choice;
     if (m_selected >= 0 && m_selected < (int)m_buttons.size())
         choice = m_buttons[(size_t)m_selected].label;
 
-    std::string out = m_title;
-    if (!m_message.empty()) {
-        if (!out.empty()) out += ". ";
-        out += m_message;
+    if (!choice.empty())
+        summary = choice;
+    if (m_accessibilitySpeakPosition && !m_buttons.empty())
+        position = std::to_string(m_selected + 1) + " sur " + std::to_string((int)m_buttons.size());
+    if (m_accessibilitySpeakHints) {
+        if (!summary.empty()) summary += ". ";
+        summary += "Gauche et droite pour changer. A pour valider. B pour annuler.";
     }
-    if (!choice.empty()) {
-        if (!out.empty()) out += ". ";
-        out += "Choix: " + choice;
-    }
-    if (!out.empty())
-        out += ". ";
-    out += "Gauche et droite pour changer. A pour valider. B pour annuler.";
+}
+
+std::string OverlayDialog::currentAccessibilitySummary() const {
+    std::string context;
+    std::string position;
+    std::string summary;
+    bool forceRepeat = false;
+    currentAccessibilityParts(context, position, summary, forceRepeat);
+
+    std::string out = context;
+    if (!summary.empty())
+        out += (out.empty() ? "" : ". ") + summary;
+    if (!position.empty())
+        out += (out.empty() ? "" : ". ") + position;
     return out;
 }
 
-void OverlayDialog::announceCurrentSelection() {
+void OverlayDialog::announceCurrentSelection(bool forceRepeatOverride, bool forceContextOverride) {
+    if (m_accessibilityStructuredCb) {
+        std::string context;
+        std::string position;
+        std::string summary;
+        bool forceRepeat = false;
+        currentAccessibilityParts(context, position, summary, forceRepeat);
+        forceRepeat = forceRepeat || forceRepeatOverride;
+        m_accessibilityStructuredCb(context, position, summary, forceRepeat, forceContextOverride);
+        return;
+    }
     if (m_accessibilityCb)
         m_accessibilityCb(currentAccessibilitySummary());
 }
@@ -328,7 +365,7 @@ void OverlayDialog::show(const std::string& title,
     m_touchHitUser = -1;
     m_touchOnSelected = false;
     m_ignoreInitialTouchRelease = true;
-    announceCurrentSelection();
+    m_pendingInitialAccessibilityFrames = 2;
 }
 
 void OverlayDialog::showUserSelect(UserSelectCallback onSelect, CancelCallback onCancel) {
@@ -752,6 +789,12 @@ void OverlayDialog::update(float dt) {
 
     syncChildOpacities();
     syncCursor();
+
+    if (m_pendingInitialAccessibilityFrames > 0) {
+        --m_pendingInitialAccessibilityFrames;
+        if (m_pendingInitialAccessibilityFrames == 0)
+            announceCurrentSelection(true, true);
+    }
 
     if (m_mode == DialogMode::Buttons) {
         for (auto& c : children())

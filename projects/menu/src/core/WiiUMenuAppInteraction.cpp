@@ -45,7 +45,7 @@ std::string WiiUMenuApp::accessibilityActionsFor(nxui::Widget* w) const {
     if (!w)
         return {};
     if (m_editMode && w->tag() == "glossy_icon")
-        return i18n.tr("accessibility.actions.edit_mode", "Directional pad to choose the new position. A to place. B to cancel.");
+        return i18n.tr("accessibility.actions.edit_mode", "Directional pad to choose the new position. Y to place. B to cancel.");
     if (w->tag() == "glossy_icon") {
         auto* icon = static_cast<GlossyIcon*>(w);
         if (icon->titleId() == 0)
@@ -118,8 +118,12 @@ void WiiUMenuApp::announceFocusedWidget(nxui::Widget* w) {
     std::string position = accessibilityPositionFor(w);
 
     std::string originalHint = w->accessibilityHint();
-    if (!hint.empty())
-        w->setAccessibilityHint(hint);
+    if (m_accessibility.speakHints()) {
+        if (!hint.empty())
+            w->setAccessibilityHint(hint);
+    } else {
+        w->setAccessibilityHint({});
+    }
     const bool forceRepeat = w->tag() == "glossy_icon";
     std::string summary = w->accessibilitySummary();
     if (summary.empty())
@@ -128,7 +132,7 @@ void WiiUMenuApp::announceFocusedWidget(nxui::Widget* w) {
                                             position,
                                             summary,
                                             forceRepeat);
-    if (!hint.empty())
+    if ((m_accessibility.speakHints() && !hint.empty()) || !m_accessibility.speakHints())
         w->setAccessibilityHint(originalHint);
 }
 
@@ -566,6 +570,40 @@ nxui::Widget* WiiUMenuApp::focusRoot() {
     return &rootBox();
 }
 
+void WiiUMenuApp::toggleAccessibilitySpeech() {
+    auto& i18n = nxui::I18n::instance();
+    const bool enabled = !m_config.accessibilityEnabled;
+    m_config.accessibilityEnabled = enabled;
+    if (m_settings)
+        m_settings->setAccessibilityEnabledState(enabled);
+    if (m_themeShop)
+        m_themeShop->setAccessibilityVoiceEnabled(enabled);
+
+    if (enabled) {
+        m_audio.playSfx(Sfx::ThemeToggle);
+        m_accessibility.setEnabled(true);
+        m_accessibility.announce(i18n.tr("accessibility.speech.enabled",
+                                         "Voice guidance enabled."), true, true);
+    } else {
+        m_accessibility.announceAndDisable(i18n.tr("accessibility.speech.disabled",
+                                                   "Voice guidance disabled."));
+    }
+    m_config.save();
+}
+
+bool WiiUMenuApp::handleAccessibilityToggleCombo() {
+    auto& input = app().input();
+    if (!input.isDown(nxui::Button::Plus) || !input.isDown(nxui::Button::Minus))
+        return false;
+    if (m_accessibilityToggleComboHeld)
+        return true;
+    m_accessibilityToggleComboHeld = true;
+    m_plusExitPending = false;
+    m_plusExitPendingTimer = 0.f;
+    toggleAccessibilitySpeech();
+    return true;
+}
+
 void WiiUMenuApp::wireGlobalActions() {
     auto& root = rootBox();
 
@@ -629,14 +667,26 @@ void WiiUMenuApp::wireGlobalActions() {
     });
 #ifdef SWITCHU_DEBUG_UI
     root.addAction(static_cast<uint64_t>(nxui::Button::Minus), [this]() {
+        if (handleAccessibilityToggleCombo())
+            return;
         m_showDebugOverlay = !m_showDebugOverlay;
         DebugLog::log("[debug] ImGui overlay toggled: %d", m_showDebugOverlay ? 1 : 0);
+    });
+#else
+    root.addAction(static_cast<uint64_t>(nxui::Button::Minus), [this]() {
+        handleAccessibilityToggleCombo();
     });
 #endif
 #ifdef SWITCHU_HOMEBREW
     root.addAction(static_cast<uint64_t>(nxui::Button::Plus), [this]() {
-        m_audio.playSfx(Sfx::ModalHide);
-        app().requestExit();
+        if (handleAccessibilityToggleCombo())
+            return;
+        m_plusExitPending = true;
+        m_plusExitPendingTimer = 0.80f;
+    });
+#else
+    root.addAction(static_cast<uint64_t>(nxui::Button::Plus), [this]() {
+        handleAccessibilityToggleCombo();
     });
 #endif
 

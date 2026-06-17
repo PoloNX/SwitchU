@@ -7,7 +7,8 @@
   },
   "accessibility": {
     "speech": {
-      "enabled": "Voice guidance enabled."
+      "enabled": "Voice guidance enabled.",
+      "disabled": "Voice guidance disabled. Ending voice help."
     },
     "context": {
       "dialog": "Dialog",
@@ -42,7 +43,7 @@
       "game_blocked": "A to show why this item is blocked."
     },
     "actions": {
-      "edit_mode": "Directional pad to choose the new position. A to place. B to cancel.",
+      "edit_mode": "Directional pad to choose the new position. Y to place. B to cancel.",
       "empty_slot": "Directional pad to navigate. ZL or ZR to change page.",
       "game_blocked": "A to show the reason. Y to move. ZL or ZR to change page.",
       "game_launchable": "A to launch. X for options. Y to move. ZL or ZR to change page.",
@@ -81,11 +82,16 @@
   "tutorial": {
     "accessibility": {
       "title": "Voice guidance",
-      "body": "Voice guidance is enabled by default. It announces the selected item and the available actions whenever focus changes.",
-      "objective": "Press X to disable the voice and use animalese sounds. Press A to continue.",
-      "enabled_announcement": "Voice guidance enabled. Press X to disable it, or A to continue.",
+      "body": "Voice guidance is available for this menu. It can read the selected item and the available actions aloud.",
+      "objective": "Press X to enable voice guidance for later. Press A to continue without it.",
+      "enabled_announcement": "Voice guidance enabled for later. Press A to continue.",
+      "already_enabled_announcement": "Voice guidance is already enabled for later.",
       "disabled_announcement": "Voice guidance disabled. Animalese sounds are active.",
       "text_actions": "A to continue. B to skip this step. Plus to skip everything."
+    },
+    "accessibility_settings": {
+      "title": "Accessibility settings",
+      "body": "Accessibility options are available in Settings, then Accessibility. You can adjust speech speed, repeated hints, location announcements, and position details."
     },
     "welcome": {
       "title": "Welcome to SwitchU",
@@ -116,6 +122,7 @@
     "hints": {
       "disable_voice": "Disable voice",
       "enable_voice": "Enable voice",
+      "voice_enabled": "Voice enabled",
       "reveal": "Reveal",
       "continue": "Continue",
       "test": "Test",
@@ -133,7 +140,8 @@
     "music": "Music"
   },
   "hint": {
-    "repeat": "Repeat"
+    "repeat": "Repeat",
+    "voice": "Voice"
   },
   "settings": {
     "tabs": {
@@ -234,7 +242,7 @@
       "ip_address": "IP Address",
       "not_connected": "Not connected",
       "wifi": "WiFi",
-      "wifi_desc": "Enable or disable the wireless LAN radio.",
+      "wifi_desc": "Enable or disable WiFi.",
       "auto_app_download": "Auto App Download",
       "auto_app_download_desc": "Automatically download updates for installed games.",
       "mac_address": "MAC Address",
@@ -415,6 +423,23 @@
       "installed": "Installed",
       "community": "Community",
       "options": "Options"
+    },
+    "accessibility": {
+      "fullscreen_preview": "Fullscreen preview",
+      "fullscreen_actions": "B to close the preview.",
+      "preview_area": "Preview",
+      "actions_area": "Actions",
+      "detail": "Detail",
+      "author": "Author",
+      "detail_actions": "Left and right to change control. A to confirm. B to go back.",
+      "search_refresh": "Search and refresh",
+      "search_bar": "Search bar",
+      "header_actions": "Left and right to choose. A to confirm. Down to the grid.",
+      "search_actions": "A to search. Down to the grid.",
+      "pagination": "Pagination",
+      "pagination_actions": "Left and right to change button. A to change page. Up to the grid.",
+      "no_theme": "No theme",
+      "grid_actions": "Directional pad to navigate. A to open details. B to return to tabs."
     },
     "search": {
       "button": "Search",

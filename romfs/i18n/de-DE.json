@@ -2,7 +2,8 @@
   "common": {
     "auto": "Auto",
     "na": "N/A",
-    "active": "Aktiv"
+    "active": "Aktiv",
+    "disabled": "Deaktiviert"
   },
   "sidebar": {
     "album": "Album",
@@ -11,7 +12,7 @@
     "controllers": "Controller",
     "sleep": "Standby-Modus",
     "music": "Musik",
-    "theme_shop": "Theme Shop"
+    "theme_shop": "Theme-Shop"
   },
   "settings": {
     "tabs": {
@@ -25,7 +26,8 @@
       "music": "Musik",
       "theme": "Design",
       "storage": "Speicher",
-      "about": "Info"
+      "about": "Info",
+      "accessibility": "Bedienhilfen"
     },
     "system": {
       "firmware": "Firmware-Version",
@@ -53,7 +55,9 @@
       "error_reporting": "Fehlerinformationen senden",
       "default_profile": "Default Profile",
       "default_profile_desc": "Launch games with this profile when possible.",
-      "default_profile_ask": "Ask each time"
+      "default_profile_ask": "Ask each time",
+      "clock_12h": "12-Stunden-Uhr",
+      "clock_12h_desc": "Zeit im 12-Stunden-Format anzeigen."
     },
     "audio": {
       "speaker_auto_mute": "Konsolenlautsprecher stummschalten",
@@ -94,7 +98,7 @@
       "ip_address": "IP-Adresse",
       "not_connected": "Nicht verbunden",
       "wifi": "WLAN",
-      "wifi_desc": "WLAN-Verbindung aktivieren oder deaktivieren.",
+      "wifi_desc": "WLAN ein- oder ausschalten.",
       "auto_app_download": "Automatischer Software-Download",
       "auto_app_download_desc": "Updates für installierte Spiele automatisch herunterladen.",
       "mac_address": "MAC-Adresse",
@@ -211,6 +215,21 @@
       "acknowledgements_desc": "Danke an xortroll für die Hilfe mit uLaunch und für die Unterstützung und Ratschläge während der Entwicklung.",
       "source_code": "Quellcode",
       "source_code_value": "github.com/PoloNX/SwitchU"
+    },
+    "accessibility": {
+      "voice": "Sprachausgabe",
+      "voice_desc": "Liest ausgewählte Elemente und verfügbare Aktionen vor.",
+      "voice_language": "Sprache der Stimme",
+      "voice_language_desc": "Folgt der System- oder Oberflächensprache.",
+      "speech_rate": "Sprechtempo",
+      "speech_rate_desc": "Legt fest, wie schnell gesprochen wird.",
+      "words_per_minute": "W/min",
+      "speak_hints": "Aktionshinweise vorlesen",
+      "speak_hints_desc": "Liest verfügbare Aktionen nach dem ausgewählten Element vor.",
+      "repeat_context": "Ort immer wiederholen",
+      "repeat_context_desc": "Wiederholt den aktuellen Bereich bei jeder Fokusbewegung.",
+      "speak_position": "Position vorlesen",
+      "speak_position_desc": "Liest Zeile, Spalte und Position vor, wenn verfügbar."
     }
   },
   "userselect": {
@@ -265,89 +284,235 @@
   },
   "themeshop": {
     "source": {
-      "builtin": "Built-in",
-      "custom": "Custom",
+      "builtin": "Integriert",
+      "custom": "Eigen",
       "community": "Community",
       "options": "Optionen",
-      "unknown": "Unknown"
+      "unknown": "Unbekannt"
     },
     "tabs": {
-      "installed": "Installed",
+      "installed": "Installiert",
       "community": "Community",
       "options": "Optionen"
     },
     "search": {
-      "button": "Search",
-      "guide": "Search themes",
-      "unavailable": "Search keyboard is unavailable.",
-      "no_results": "No themes match this search.",
-      "no_results_hint": "Press X or use Search to change or clear the filter."
+      "button": "Suchen",
+      "guide": "Themes suchen",
+      "unavailable": "Such-Tastatur nicht verfügbar.",
+      "no_results": "Keine Themes gefunden.",
+      "no_results_hint": "Drücke X oder nutze Suche, um den Filter zu ändern oder zu löschen."
     },
     "installed": {
-      "title": "Installed Theme Library",
-      "subtitle": "Your local themes in a gallery layout.",
-      "empty": "No installed themes found.",
+      "title": "Installierte Themes",
+      "subtitle": "Deine lokalen Themes als Galerie.",
+      "empty": "Keine installierten Themes gefunden.",
       "status": "Status",
-      "status_active": "Active",
-      "status_available": "Available",
-      "sound": "Bundled Sound Pack",
-      "sound_none": "None",
-      "remove_hint": "This theme can be removed from the console.",
-      "builtin_hint": "This is part of the built-in theme set.",
-      "apply": "Apply Theme",
-      "remove": "Remove Theme"
+      "status_active": "Aktiv",
+      "status_available": "Verfügbar",
+      "sound": "Enthaltenes Soundpaket",
+      "sound_none": "Keins",
+      "remove_hint": "Dieses Theme kann von der Konsole entfernt werden.",
+      "builtin_hint": "Dieses Theme gehört zum Programm.",
+      "apply": "Theme anwenden",
+      "remove": "Theme entfernen"
     },
     "community": {
-      "title": "Browse Community Themes",
-      "subtitle": "A visual catalog, not a settings selector.",
-      "counter_loading": "Loading",
-      "refresh": "Refresh",
-      "refreshing": "Refreshing",
-      "loading": "Loading theme catalog...",
-      "catalog_empty": "No published themes are listed in the catalog.",
-      "catalog_failed": "The catalog could not be fetched. Use Refresh to try again.",
-      "empty_hint": "Add themes to the repository and they will appear here.",
-      "author_unknown": "Unknown",
+      "title": "Community-Themes",
+      "subtitle": "Ein visueller Katalog, keine Einstellungsseite.",
+      "counter_loading": "Lädt",
+      "refresh": "Aktualisieren",
+      "refreshing": "Aktualisiert",
+      "loading": "Theme-Katalog wird geladen...",
+      "catalog_empty": "Keine veröffentlichten Themes im Katalog.",
+      "catalog_failed": "Katalog konnte nicht geladen werden. Versuche Aktualisieren.",
+      "empty_hint": "Füge Themes zum Repository hinzu, dann erscheinen sie hier.",
+      "author_unknown": "Unbekannt",
       "version": "Version",
-      "version_unknown": "Unknown",
+      "version_unknown": "Unbekannt",
       "manifest": "Manifest",
-      "manifest_missing": "Not provided",
-      "cover_missing": "No screenshot has been declared for this theme yet.",
-      "cover_present": "Use Left/Right to browse screenshots and A for fullscreen.",
-      "cover_single": "Press A to open this screenshot in fullscreen.",
-      "cover_loading": "Loading theme screenshot...",
-      "cover_unavailable": "The screenshot could not be loaded. Placeholder shown instead.",
-      "install": "Install",
-      "download_apply": "Download + Apply",
-      "transfer_busy": "Another theme transfer is already running.",
-      "install_pending": "Install flow is not wired yet.",
-      "download_apply_pending": "Download + apply flow is not wired yet.",
-      "selected_missing": "The selected community theme is no longer available in the catalog.",
-      "overwrite_apply_title": "Replace And Apply Theme",
-      "overwrite_apply_message": "A package with this theme ID is already installed. Replace it with the GitHub version, then apply it?",
-      "overwrite_install_title": "Replace Installed Theme",
-      "overwrite_install_message": "A package with this theme ID is already installed. Replace it with the version from GitHub?"
+      "manifest_missing": "Nicht angegeben",
+      "cover_missing": "Für dieses Theme ist noch kein Screenshot eingetragen.",
+      "cover_present": "Links/Rechts für Screenshots, A für Vollbild.",
+      "cover_single": "A öffnet diesen Screenshot im Vollbild.",
+      "cover_loading": "Theme-Screenshot wird geladen...",
+      "cover_unavailable": "Screenshot konnte nicht geladen werden. Platzhalter wird angezeigt.",
+      "install": "Installieren",
+      "download_apply": "Laden + Anwenden",
+      "transfer_busy": "Es läuft bereits eine Theme-Übertragung.",
+      "install_pending": "Installation ist noch nicht verbunden.",
+      "download_apply_pending": "Laden + Anwenden ist noch nicht verbunden.",
+      "selected_missing": "Das ausgewählte Community-Theme ist nicht mehr im Katalog.",
+      "overwrite_apply_title": "Theme ersetzen und anwenden",
+      "overwrite_apply_message": "Ein Paket mit dieser Theme-ID ist bereits installiert. Durch die GitHub-Version ersetzen und anwenden?",
+      "overwrite_install_title": "Installiertes Theme ersetzen",
+      "overwrite_install_message": "Ein Paket mit dieser Theme-ID ist bereits installiert. Durch die GitHub-Version ersetzen?"
     },
     "transfer": {
-      "prepare_apply": "Preparing download + apply...",
-      "prepare_install": "Preparing download + install...",
-      "unknown_error": "Unknown transfer error",
+      "prepare_apply": "Laden + Anwenden wird vorbereitet...",
+      "prepare_install": "Laden + Installation wird vorbereitet...",
+      "unknown_error": "Unbekannter Übertragungsfehler",
       "dialog_title": "Theme wird heruntergeladen",
       "downloading": "Theme wird heruntergeladen...",
-      "downloading_file": "Herunterladen",
+      "downloading_file": "Lädt",
       "finalize_apply": "Installation vor dem Anwenden wird abgeschlossen...",
       "finalize_install": "Installation wird abgeschlossen...",
-      "installed_applying": "Theme installiert. Wird jetzt angewendet...",
-      "installed": "Theme installed.",
-      "installed_applied": "Theme installed and applied.",
-      "installed_apply_failed": "Theme installed, but it could not be applied automatically."
+      "installed_applying": "Theme installiert. Wird angewendet...",
+      "installed": "Theme installiert.",
+      "installed_applied": "Theme installiert und angewendet.",
+      "installed_apply_failed": "Theme installiert, konnte aber nicht automatisch angewendet werden."
     },
     "preview": {
-      "loading": "Loading screenshot...",
-      "unavailable": "Screenshot unavailable",
-      "missing": "No screenshot",
-      "prev": "Prev",
-      "next": "Next"
+      "loading": "Screenshot wird geladen...",
+      "unavailable": "Screenshot nicht verfügbar",
+      "missing": "Kein Screenshot",
+      "prev": "Zurück",
+      "next": "Weiter"
+    },
+    "accessibility": {
+      "fullscreen_preview": "Vollbildvorschau",
+      "fullscreen_actions": "B schließt die Vorschau.",
+      "preview_area": "Vorschau",
+      "actions_area": "Aktionen",
+      "detail": "Details",
+      "author": "Autor",
+      "detail_actions": "Links und rechts wechseln die Steuerung. A bestätigt. B zurück.",
+      "search_refresh": "Suchen und aktualisieren",
+      "search_bar": "Suche",
+      "header_actions": "Links und rechts zum Auswählen. A bestätigt. Runter zum Raster.",
+      "search_actions": "A zum Suchen. Runter zum Raster.",
+      "pagination": "Seiten",
+      "pagination_actions": "Links und rechts wechseln die Taste. A wechselt die Seite. Hoch zum Raster.",
+      "no_theme": "Kein Theme",
+      "grid_actions": "Steuerkreuz zum Navigieren. A öffnet Details. B zurück zu den Tabs."
+    }
+  },
+  "hint": {
+    "repeat": "Wiederholen",
+    "voice": "Stimme"
+  },
+  "accessibility": {
+    "speech": {
+      "enabled": "Sprachausgabe aktiviert.",
+      "disabled": "Sprachausgabe deaktiviert. Sprachhilfe beendet."
+    },
+    "context": {
+      "dialog": "Dialog",
+      "profile_selection": "Profilauswahl",
+      "settings": "Einstellungen",
+      "themes": "Themes",
+      "main_menu": "Hauptmenü",
+      "page": "Seite",
+      "of": "von",
+      "left_sidebar": "Linke Seitenleiste",
+      "right_sidebar": "Rechte Seitenleiste",
+      "user_profiles": "Benutzerprofile"
+    },
+    "roles": {
+      "button": "Taste",
+      "game": "Spiel",
+      "game_card": "Spielkarte",
+      "slot": "Feld",
+      "profile": "Profil",
+      "toggle": "Schalter",
+      "slider": "Regler",
+      "selector": "Auswahl",
+      "progress": "Fortschritt",
+      "info": "Info",
+      "section": "Abschnitt"
+    },
+    "hints": {
+      "open": "A zum Öffnen.",
+      "open_user_page": "A zum Öffnen der Benutzerseite.",
+      "grid_empty": "Mit dem Steuerkreuz zu einem anderen Feld wechseln.",
+      "game_launchable": "A zum Starten. X für Optionen. Y zum Verschieben. ZL oder ZR zum Seitenwechsel.",
+      "game_blocked": "A zeigt den Grund der Sperre."
+    },
+    "actions": {
+      "edit_mode": "Steuerkreuz wählt die neue Position. Y zum Platzieren. B zum Abbrechen.",
+      "empty_slot": "Steuerkreuz zum Navigieren. ZL oder ZR zum Seitenwechsel.",
+      "game_blocked": "A zeigt den Grund. Y zum Verschieben. ZL oder ZR zum Seitenwechsel.",
+      "game_launchable": "A zum Starten. X für Optionen. Y zum Verschieben. ZL oder ZR zum Seitenwechsel.",
+      "settings": "Hoch und runter wählen eine Kategorie. A oder rechts zum Öffnen. B zum Schließen.",
+      "themes": "Hoch und runter zum Navigieren. A zum Auswählen. B zum Schließen.",
+      "dialog": "Links und rechts ändern die Auswahl. A bestätigt. B bricht ab."
+    },
+    "settings": {
+      "tab_prefix": "Tab",
+      "tab_actions": "A oder rechts zum Öffnen. Hoch und runter wechseln den Tab. B schließt.",
+      "list_prefix": "Liste",
+      "list_actions": "Hoch und runter zum Auswählen. A bestätigt. B schließt die Liste.",
+      "toggle_actions": "A zum Umschalten. Links zurück zu den Tabs.",
+      "slider_actions": "Links oder rechts zum Anpassen. B zurück zu den Tabs.",
+      "selector_actions": "A oder rechts öffnet die Liste. B zurück zu den Tabs.",
+      "action_actions": "A führt die Aktion aus. B zurück zu den Tabs."
+    },
+    "value": {
+      "label": "Wert",
+      "percent": "Prozent"
+    },
+    "position": {
+      "row": "Zeile",
+      "column": "Spalte"
+    },
+    "move_mode": {
+      "enter": "Spiel verschieben: ",
+      "placed": "Spiel verschoben: ",
+      "cancelled": "Verschieben abgebrochen: "
+    },
+    "grid": {
+      "empty_slot": "Leeres Feld"
+    },
+    "user_profile": "Benutzerprofil"
+  },
+  "tutorial": {
+    "accessibility": {
+      "title": "Sprachausgabe",
+      "body": "Sprachausgabe ist in diesem Menü verfügbar. Sie kann das ausgewählte Element und verfügbare Aktionen vorlesen.",
+      "objective": "Drücke X, um Sprachausgabe für später zu aktivieren. Drücke A, um ohne sie fortzufahren.",
+      "enabled_announcement": "Sprachausgabe für später aktiviert. Drücke A zum Fortfahren.",
+      "already_enabled_announcement": "Sprachausgabe ist bereits für später aktiviert.",
+      "disabled_announcement": "Sprachausgabe deaktiviert. Animalese-Töne sind aktiv.",
+      "text_actions": "A zum Fortfahren. B zum Überspringen."
+    },
+    "accessibility_settings": {
+      "title": "Bedienhilfen",
+      "body": "Optionen für Bedienhilfen findest du unter Einstellungen, dann Bedienhilfen. Dort kannst du Tempo, Hinweise, Ortsansagen und Positionsdetails anpassen."
+    },
+    "welcome": {
+      "title": "Willkommen bei SwitchU",
+      "body": "Dieses kurze Tutorial zeigt dir die wichtigsten Steuerungen."
+    },
+    "navigation": {
+      "title": "Navigation",
+      "body": "Benutze das Steuerkreuz oder den linken Stick, um den Fokus zu bewegen.",
+      "objective": "Bewege den Fokus zu einem anderen Element."
+    },
+    "cursor": {
+      "title": "Fokus",
+      "body": "Der Leuchtrahmen zeigt, welches Element ausgewählt ist."
+    },
+    "themes": {
+      "title": "Themes",
+      "body": "Themes ändern Farben, Bilder und Sounds. Öffne Themes über die Seitenleiste, um Styles zu installieren oder anzuwenden."
+    },
+    "support": {
+      "title": "Hilfe",
+      "body": "Unten links siehst du die wichtigsten Tasten für den aktuellen Bildschirm."
+    },
+    "confirm": {
+      "title": "Fertig",
+      "body": "Du bist startklar.",
+      "objective": "Drücke A, um diesen Schritt zu bestätigen."
+    },
+    "hints": {
+      "enable_voice": "Stimme ein",
+      "disable_voice": "Stimme aus",
+      "voice_enabled": "Stimme ein",
+      "continue": "Weiter",
+      "reveal": "Anzeigen",
+      "skip_step": "Schritt überspringen",
+      "skip_all": "Alles überspringen",
+      "test": "Test"
     }
   }
 }

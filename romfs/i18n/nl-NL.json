@@ -2,7 +2,8 @@
   "common": {
     "auto": "Auto",
     "na": "N/B",
-    "active": "Actief"
+    "active": "Actief",
+    "disabled": "Uit"
   },
   "sidebar": {
     "album": "Album",
@@ -11,7 +12,7 @@
     "controllers": "Controllers",
     "sleep": "Slaapstand",
     "music": "Muziek",
-    "theme_shop": "Theme Shop"
+    "theme_shop": "Themawinkel"
   },
   "settings": {
     "tabs": {
@@ -25,7 +26,8 @@
       "music": "Muziek",
       "theme": "Thema",
       "storage": "Opslag",
-      "about": "Over"
+      "about": "Over",
+      "accessibility": "Toegankelijkheid"
     },
     "system": {
       "firmware": "Firmwareversie",
@@ -53,7 +55,9 @@
       "error_reporting": "Foutmelding",
       "default_profile": "Default Profile",
       "default_profile_desc": "Launch games with this profile when possible.",
-      "default_profile_ask": "Ask each time"
+      "default_profile_ask": "Ask each time",
+      "clock_12h": "12-uursklok",
+      "clock_12h_desc": "Toon de tijd in 12-uursformaat."
     },
     "audio": {
       "speaker_auto_mute": "Automatisch dempen speakers",
@@ -94,7 +98,7 @@
       "ip_address": "IP-adres",
       "not_connected": "Niet verbonden",
       "wifi": "WiFi",
-      "wifi_desc": "Schakel WiFi-radio in of uit.",
+      "wifi_desc": "Zet wifi aan of uit.",
       "auto_app_download": "Automatisch apps downloaden",
       "auto_app_download_desc": "Downloadt automatisch updates voor geïnstalleerde games.",
       "mac_address": "MAC-adres",
@@ -211,6 +215,21 @@
       "acknowledgements_desc": "Dank aan xortroll voor de hulp met het uLaunch-project en voor de steun en adviezen tijdens de ontwikkeling.",
       "source_code": "Broncode",
       "source_code_value": "github.com/PoloNX/SwitchU"
+    },
+    "accessibility": {
+      "voice": "Spraak",
+      "voice_desc": "Leest het geselecteerde item en beschikbare acties voor.",
+      "voice_language": "Taal van stem",
+      "voice_language_desc": "Volgt de systeem- of interfacetaal.",
+      "speech_rate": "Spreeksnelheid",
+      "speech_rate_desc": "Past de spreeksnelheid aan.",
+      "words_per_minute": "wpm",
+      "speak_hints": "Actiehints voorlezen",
+      "speak_hints_desc": "Leest beschikbare acties na het geselecteerde item.",
+      "repeat_context": "Locatie steeds herhalen",
+      "repeat_context_desc": "Herhaalt het huidige gebied bij elke focusbeweging.",
+      "speak_position": "Positie voorlezen",
+      "speak_position_desc": "Leest rij, kolom en positie voor wanneer beschikbaar."
     }
   },
   "userselect": {
@@ -265,89 +284,235 @@
   },
   "themeshop": {
     "source": {
-      "builtin": "Built-in",
-      "custom": "Custom",
+      "builtin": "Ingebouwd",
+      "custom": "Eigen",
       "community": "Community",
       "options": "Opties",
-      "unknown": "Unknown"
+      "unknown": "Onbekend"
     },
     "tabs": {
-      "installed": "Installed",
+      "installed": "Geïnstalleerd",
       "community": "Community",
       "options": "Opties"
     },
     "search": {
-      "button": "Search",
-      "guide": "Search themes",
-      "unavailable": "Search keyboard is unavailable.",
-      "no_results": "No themes match this search.",
-      "no_results_hint": "Press X or use Search to change or clear the filter."
+      "button": "Zoeken",
+      "guide": "Thema’s zoeken",
+      "unavailable": "Zoektoetsenbord niet beschikbaar.",
+      "no_results": "Geen thema’s gevonden.",
+      "no_results_hint": "Druk op X of gebruik Zoeken om het filter te wijzigen of te wissen."
     },
     "installed": {
-      "title": "Installed Theme Library",
-      "subtitle": "Your local themes in a gallery layout.",
-      "empty": "No installed themes found.",
+      "title": "Geïnstalleerde thema’s",
+      "subtitle": "Je lokale thema’s als galerij.",
+      "empty": "Geen geïnstalleerde thema’s.",
       "status": "Status",
-      "status_active": "Active",
-      "status_available": "Available",
-      "sound": "Bundled Sound Pack",
-      "sound_none": "None",
-      "remove_hint": "This theme can be removed from the console.",
-      "builtin_hint": "This is part of the built-in theme set.",
-      "apply": "Apply Theme",
-      "remove": "Remove Theme"
+      "status_active": "Actief",
+      "status_available": "Beschikbaar",
+      "sound": "Meegeleverd geluidspakket",
+      "sound_none": "Geen",
+      "remove_hint": "Dit thema kan van de console worden verwijderd.",
+      "builtin_hint": "Dit thema hoort bij de app.",
+      "apply": "Thema toepassen",
+      "remove": "Thema verwijderen"
     },
     "community": {
-      "title": "Browse Community Themes",
-      "subtitle": "A visual catalog, not a settings selector.",
-      "counter_loading": "Loading",
-      "refresh": "Refresh",
-      "refreshing": "Refreshing",
-      "loading": "Loading theme catalog...",
-      "catalog_empty": "No published themes are listed in the catalog.",
-      "catalog_failed": "The catalog could not be fetched. Use Refresh to try again.",
-      "empty_hint": "Add themes to the repository and they will appear here.",
-      "author_unknown": "Unknown",
-      "version": "Version",
-      "version_unknown": "Unknown",
+      "title": "Community-thema’s",
+      "subtitle": "Een visuele catalogus, geen instellingenpagina.",
+      "counter_loading": "Laden",
+      "refresh": "Vernieuwen",
+      "refreshing": "Vernieuwen",
+      "loading": "Themacatalogus laden...",
+      "catalog_empty": "Geen gepubliceerde thema’s in de catalogus.",
+      "catalog_failed": "Catalogus kon niet worden geladen. Gebruik Vernieuwen.",
+      "empty_hint": "Voeg thema’s toe aan de repository en ze verschijnen hier.",
+      "author_unknown": "Onbekend",
+      "version": "Versie",
+      "version_unknown": "Onbekend",
       "manifest": "Manifest",
-      "manifest_missing": "Not provided",
-      "cover_missing": "No screenshot has been declared for this theme yet.",
-      "cover_present": "Use Left/Right to browse screenshots and A for fullscreen.",
-      "cover_single": "Press A to open this screenshot in fullscreen.",
-      "cover_loading": "Loading theme screenshot...",
-      "cover_unavailable": "The screenshot could not be loaded. Placeholder shown instead.",
-      "install": "Install",
-      "download_apply": "Download + Apply",
-      "transfer_busy": "Another theme transfer is already running.",
-      "install_pending": "Install flow is not wired yet.",
-      "download_apply_pending": "Download + apply flow is not wired yet.",
-      "selected_missing": "The selected community theme is no longer available in the catalog.",
-      "overwrite_apply_title": "Replace And Apply Theme",
-      "overwrite_apply_message": "A package with this theme ID is already installed. Replace it with the GitHub version, then apply it?",
-      "overwrite_install_title": "Replace Installed Theme",
-      "overwrite_install_message": "A package with this theme ID is already installed. Replace it with the version from GitHub?"
+      "manifest_missing": "Niet opgegeven",
+      "cover_missing": "Nog geen screenshot voor dit thema.",
+      "cover_present": "Links/Rechts voor screenshots, A voor volledig scherm.",
+      "cover_single": "A opent deze screenshot volledig.",
+      "cover_loading": "Themascreenshot laden...",
+      "cover_unavailable": "Screenshot kon niet worden geladen. Plaatshouder getoond.",
+      "install": "Installeren",
+      "download_apply": "Download + toepassen",
+      "transfer_busy": "Er loopt al een thema-overdracht.",
+      "install_pending": "Installatie is nog niet gekoppeld.",
+      "download_apply_pending": "Download + toepassen is nog niet gekoppeld.",
+      "selected_missing": "Het gekozen community-thema staat niet meer in de catalogus.",
+      "overwrite_apply_title": "Thema vervangen en toepassen",
+      "overwrite_apply_message": "Er is al een pakket met deze thema-ID. Vervangen door de GitHub-versie en toepassen?",
+      "overwrite_install_title": "Geïnstalleerd thema vervangen",
+      "overwrite_install_message": "Er is al een pakket met deze thema-ID. Vervangen door de GitHub-versie?"
     },
     "transfer": {
-      "prepare_apply": "Preparing download + apply...",
-      "prepare_install": "Preparing download + install...",
-      "unknown_error": "Unknown transfer error",
+      "prepare_apply": "Download + toepassen voorbereiden...",
+      "prepare_install": "Download + installatie voorbereiden...",
+      "unknown_error": "Onbekende overdrachtsfout",
       "dialog_title": "Thema downloaden",
       "downloading": "Thema downloaden...",
       "downloading_file": "Downloaden",
       "finalize_apply": "Installatie afronden voor toepassen...",
       "finalize_install": "Installatie afronden...",
-      "installed_applying": "Thema geïnstalleerd. Nu toepassen...",
-      "installed": "Theme installed.",
-      "installed_applied": "Theme installed and applied.",
-      "installed_apply_failed": "Theme installed, but it could not be applied automatically."
+      "installed_applying": "Thema geïnstalleerd. Toepassen...",
+      "installed": "Thema geïnstalleerd.",
+      "installed_applied": "Thema geïnstalleerd en toegepast.",
+      "installed_apply_failed": "Thema geïnstalleerd, maar niet automatisch toegepast."
     },
     "preview": {
-      "loading": "Loading screenshot...",
-      "unavailable": "Screenshot unavailable",
-      "missing": "No screenshot",
-      "prev": "Prev",
-      "next": "Next"
+      "loading": "Screenshot laden...",
+      "unavailable": "Screenshot niet beschikbaar",
+      "missing": "Geen screenshot",
+      "prev": "Vorige",
+      "next": "Volgende"
+    },
+    "accessibility": {
+      "fullscreen_preview": "Volledig scherm",
+      "fullscreen_actions": "B sluit de preview.",
+      "preview_area": "Preview",
+      "actions_area": "Acties",
+      "detail": "Detail",
+      "author": "Auteur",
+      "detail_actions": "Links en rechts wisselen bediening. A bevestigt. B terug.",
+      "search_refresh": "Zoeken en vernieuwen",
+      "search_bar": "Zoeken",
+      "header_actions": "Links en rechts om te kiezen. A bevestigt. Omlaag naar het raster.",
+      "search_actions": "A om te zoeken. Omlaag naar het raster.",
+      "pagination": "Pagina’s",
+      "pagination_actions": "Links en rechts wisselen knop. A wisselt pagina. Omhoog naar het raster.",
+      "no_theme": "Geen thema",
+      "grid_actions": "Richtingsknoppen om te navigeren. A opent details. B terug naar tabs."
+    }
+  },
+  "hint": {
+    "repeat": "Herhaal",
+    "voice": "Stem"
+  },
+  "accessibility": {
+    "speech": {
+      "enabled": "Spraak ingeschakeld.",
+      "disabled": "Spraak uitgeschakeld. Spraakhulp gestopt."
+    },
+    "context": {
+      "dialog": "Dialoog",
+      "profile_selection": "Profielkeuze",
+      "settings": "Instellingen",
+      "themes": "Thema’s",
+      "main_menu": "Hoofdmenu",
+      "page": "pagina",
+      "of": "van",
+      "left_sidebar": "Linkerzijbalk",
+      "right_sidebar": "Rechterzijbalk",
+      "user_profiles": "Gebruikersprofielen"
+    },
+    "roles": {
+      "button": "knop",
+      "game": "spel",
+      "game_card": "gamecard",
+      "slot": "vak",
+      "profile": "profiel",
+      "toggle": "schakelaar",
+      "slider": "schuifregelaar",
+      "selector": "keuze",
+      "progress": "voortgang",
+      "info": "informatie",
+      "section": "sectie"
+    },
+    "hints": {
+      "open": "A om te openen.",
+      "open_user_page": "A om de gebruikerspagina te openen.",
+      "grid_empty": "Gebruik de richtingsknoppen om naar een ander vak te gaan.",
+      "game_launchable": "A om te starten. X voor opties. Y om te verplaatsen. ZL of ZR voor andere pagina.",
+      "game_blocked": "A toont waarom dit is geblokkeerd."
+    },
+    "actions": {
+      "edit_mode": "Richtingsknoppen kiezen de nieuwe positie. Y om te plaatsen. B annuleert.",
+      "empty_slot": "Richtingsknoppen om te navigeren. ZL of ZR voor andere pagina.",
+      "game_blocked": "A toont de reden. Y om te verplaatsen. ZL of ZR voor andere pagina.",
+      "game_launchable": "A om te starten. X voor opties. Y om te verplaatsen. ZL of ZR voor andere pagina.",
+      "settings": "Omhoog en omlaag kiezen een categorie. A of rechts opent. B sluit.",
+      "themes": "Omhoog en omlaag om te navigeren. A kiest. B sluit.",
+      "dialog": "Links en rechts wijzigen de keuze. A bevestigt. B annuleert."
+    },
+    "settings": {
+      "tab_prefix": "Tab",
+      "tab_actions": "A of rechts opent. Omhoog en omlaag wisselen tab. B sluit.",
+      "list_prefix": "Lijst",
+      "list_actions": "Omhoog en omlaag om te kiezen. A bevestigt. B sluit de lijst.",
+      "toggle_actions": "A om te wijzigen. Links terug naar tabs.",
+      "slider_actions": "Links of rechts om aan te passen. B terug naar tabs.",
+      "selector_actions": "A of rechts opent de lijst. B terug naar tabs.",
+      "action_actions": "A voert de actie uit. B terug naar tabs."
+    },
+    "value": {
+      "label": "Waarde",
+      "percent": "procent"
+    },
+    "position": {
+      "row": "rij",
+      "column": "kolom"
+    },
+    "move_mode": {
+      "enter": "Spel verplaatsen: ",
+      "placed": "Spel verplaatst: ",
+      "cancelled": "Verplaatsen geannuleerd: "
+    },
+    "grid": {
+      "empty_slot": "Leeg vak"
+    },
+    "user_profile": "Gebruikersprofiel"
+  },
+  "tutorial": {
+    "accessibility": {
+      "title": "Spraak",
+      "body": "Spraak is beschikbaar in dit menu. Het kan het geselecteerde item en beschikbare acties voorlezen.",
+      "objective": "Druk op X om spraak voor later aan te zetten. Druk op A om zonder spraak door te gaan.",
+      "enabled_announcement": "Spraak ingeschakeld voor later. Druk op A om door te gaan.",
+      "already_enabled_announcement": "Spraak is al ingeschakeld voor later.",
+      "disabled_announcement": "Spraak uitgeschakeld. Animalese-geluiden zijn actief.",
+      "text_actions": "A om door te gaan. B om over te slaan."
+    },
+    "accessibility_settings": {
+      "title": "Toegankelijkheid",
+      "body": "Toegankelijkheidsopties staan in Instellingen, daarna Toegankelijkheid. Je kunt snelheid, hints, locatie en positie aanpassen."
+    },
+    "welcome": {
+      "title": "Welkom bij SwitchU",
+      "body": "Deze korte tutorial laat de basisbediening zien."
+    },
+    "navigation": {
+      "title": "Navigatie",
+      "body": "Gebruik de richtingsknoppen of linkerstick om de focus te verplaatsen.",
+      "objective": "Verplaats de focus naar een ander item."
+    },
+    "cursor": {
+      "title": "Focus",
+      "body": "De lichtgevende rand toont welk item geselecteerd is."
+    },
+    "themes": {
+      "title": "Thema’s",
+      "body": "Thema’s veranderen kleuren, beelden en geluiden. Open Thema’s via de zijbalk om stijlen te installeren of toe te passen."
+    },
+    "support": {
+      "title": "Hulp",
+      "body": "Linksonder zie je de nuttige knoppen voor het huidige scherm."
+    },
+    "confirm": {
+      "title": "Klaar",
+      "body": "Je kunt beginnen.",
+      "objective": "Druk op A om deze stap te bevestigen."
+    },
+    "hints": {
+      "enable_voice": "Spraak aan",
+      "disable_voice": "Spraak uit",
+      "voice_enabled": "Spraak aan",
+      "continue": "Verder",
+      "reveal": "Tonen",
+      "skip_step": "Stap overslaan",
+      "skip_all": "Alles overslaan",
+      "test": "Test"
     }
   }
 }

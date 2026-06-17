@@ -1,13 +1,10 @@
 #pragma once
 
 #include <nxui/widgets/Widget.hpp>
-#include <string>
-#include <vector>
-
-#ifdef SWITCHU_ENABLE_ESPEAK
 #include <SDL2/SDL_mixer.h>
 #include <espeak-ng/speak_lib.h>
-#endif
+#include <string>
+#include <vector>
 
 class AccessibilityManager {
 public:
@@ -31,20 +28,22 @@ public:
     static std::string voiceForLanguageTag(const std::string& languageTag);
 
     void announce(const std::string& text, bool interrupt = true, bool allowRepeat = false);
+    void announceAndDisable(const std::string& text);
     void repeatLastAnnouncement();
     void announceFocus(nxui::Widget* widget, const std::string& context = {},
                        bool forceRepeat = false);
     void announceStructuredFocus(const std::string& context,
                                  const std::string& position,
                                  const std::string& summary,
-                                 bool forceRepeat = false);
+                                 bool forceRepeat = false,
+                                 bool forceContext = false);
 
 private:
     std::string describeWidget(nxui::Widget* widget, const std::string& context);
     std::string composeStructuredFocus(const std::string& context,
                                        const std::string& position,
-                                       const std::string& summary);
-#ifdef SWITCHU_ENABLE_ESPEAK
+                                       const std::string& summary,
+                                       bool forceContext = false);
     static int synthCallback(short* wav, int numsamples, espeak_EVENT* events);
     void appendSynthSamples(short* wav, int numsamples);
     void playSynthBuffer();
@@ -56,7 +55,6 @@ private:
     int m_ttsChannel = -1;
     int m_sampleRate = 0;
     static AccessibilityManager* s_activeSynthTarget;
-#endif
 
     bool m_initialized = false;
     bool m_enabled = true;

@@ -1,7 +1,6 @@
 
 #include <switch.h>
 #include <switch/applets/friends_la.h>
-#include <cstdio>
 #include <cstdlib>
 #include <nxtc.h>
 #include <switchu/smi_protocol.hpp>
@@ -18,7 +17,9 @@
 #include <utility>
 #include <algorithm>
 #include <cstdint>
-#include <sys/stat.h>
+#include <filesystem>
+#include <fstream>
+#include <system_error>
 
 using namespace switchu;
 
@@ -200,17 +201,19 @@ static bool assignCString(std::string& out, const char* value) {
 }
 
 static bool writeAppCatalogFile() {
-    mkdir("sdmc:/config", 0777);
-    mkdir("sdmc:/config/SwitchU", 0777);
+    std::error_code fsEc;
+    std::filesystem::create_directory("sdmc:/config", fsEc);
+    fsEc.clear();
+    std::filesystem::create_directory("sdmc:/config/SwitchU", fsEc);
 
-    FILE* f = std::fopen(kAppCatalogTmpPath, "wb");
-    if (!f) {
+    std::ofstream f(kAppCatalogTmpPath, std::ios::binary | std::ios::trunc);
+    if (!f.is_open()) {
         switchu::FileLog::log("[catalog] fopen tmp FAIL");
         return false;
     }
 
     uint32_t count = static_cast<uint32_t>(g_appCatalog.size());
-    bool ok = std::fwrite(&count, sizeof(count), 1, f) == 1;
+    bool ok = static_cast<bool>(f.write(reinterpret_cast<const char*>(&count), sizeof(count)));
     for (const auto& ent : g_appCatalog) {
         if (!ok) break;
 
@@ -223,23 +226,29 @@ static bool writeAppCatalogFile() {
         eh.startup_user_account_option = ent.startupUserAccountOption;
         eh.startup_user_known = ent.startupUserKnown ? 1 : 0;
 
-        ok = std::fwrite(&eh, sizeof(eh), 1, f) == 1;
+        ok = static_cast<bool>(f.write(reinterpret_cast<const char*>(&eh), sizeof(eh)));
         if (ok && eh.name_len > 0)
-            ok = std::fwrite(ent.name.data(), 1, eh.name_len, f) == eh.name_len;
+            ok = static_cast<bool>(f.write(ent.name.data(), static_cast<std::streamsize>(eh.name_len)));
         if (ok && eh.icon_data_len > 0)
-            ok = std::fwrite(ent.icon.data(), 1, eh.icon_data_len, f) == eh.icon_data_len;
+            ok = static_cast<bool>(f.write(reinterpret_cast<const char*>(ent.icon.data()), static_cast<std::streamsize>(eh.icon_data_len)));
     }
 
-    std::fclose(f);
+    f.close();
+    ok = ok && static_cast<bool>(f);
     if (!ok) {
-        std::remove(kAppCatalogTmpPath);
+        fsEc.clear();
+        std::filesystem::remove(kAppCatalogTmpPath, fsEc);
         switchu::FileLog::log("[catalog] write FAIL");
         return false;
     }
 
-    std::remove(kAppCatalogPath);
-    if (std::rename(kAppCatalogTmpPath, kAppCatalogPath) != 0) {
-        std::remove(kAppCatalogTmpPath);
+    fsEc.clear();
+    std::filesystem::remove(kAppCatalogPath, fsEc);
+    fsEc.clear();
+    std::filesystem::rename(kAppCatalogTmpPath, kAppCatalogPath, fsEc);
+    if (fsEc) {
+        fsEc.clear();
+        std::filesystem::remove(kAppCatalogTmpPath, fsEc);
         switchu::FileLog::log("[catalog] rename FAIL");
         return false;
     }

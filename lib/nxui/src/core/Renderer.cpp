@@ -5,6 +5,7 @@
 #include <cstring>
 #include <cstdio>
 #include <cmath>
+#include <fstream>
 
 namespace nxui {
 
@@ -73,38 +74,32 @@ bool Renderer::loadShaders() {
     auto loadDksh = [&](dk::Shader& out, const std::string& path) {
         auto tryLoad = [&](const std::string& candidatePath) {
             std::printf("[Renderer] Loading shader: %s\n", candidatePath.c_str());
-            FILE* f = std::fopen(candidatePath.c_str(), "rb");
-            if (!f) {
+            std::ifstream f(candidatePath, std::ios::binary | std::ios::ate);
+            if (!f.is_open()) {
                 std::printf("[Renderer] FAILED to open shader: %s\n", candidatePath.c_str());
                 return false;
             }
-        std::fseek(f, 0, SEEK_END);
-        long sz = std::ftell(f);
-        std::fseek(f, 0, SEEK_SET);
+            const std::streamoff sz = f.tellg();
+            f.seekg(0, std::ios::beg);
 
             if (sz <= 0) {
                 std::printf("[Renderer] Invalid shader size for %s\n", candidatePath.c_str());
-                std::fclose(f);
                 return false;
             }
 
-        uint32_t off = m_gpu.codePool().alloc(sz, DK_SHADER_CODE_ALIGNMENT);
-        if (off == UINT32_MAX) {
-                std::printf("[Renderer] Code pool alloc FAILED for %ld bytes\n", sz);
-                std::fclose(f);
-                return false;
-        }
-        void* dst = m_gpu.codePool().cpuAddr(off);
-            size_t readBytes = std::fread(dst, 1, sz, f);
-        std::fclose(f);
-
-            if (readBytes != (size_t)sz) {
-                std::printf("[Renderer] Short shader read for %s (%zu/%ld)\n",
-                            candidatePath.c_str(), readBytes, sz);
+            uint32_t off = m_gpu.codePool().alloc(static_cast<uint32_t>(sz), DK_SHADER_CODE_ALIGNMENT);
+            if (off == UINT32_MAX) {
+                std::printf("[Renderer] Code pool alloc FAILED for %lld bytes\n", static_cast<long long>(sz));
                 return false;
             }
 
-        dk::ShaderMaker{m_gpu.codePool().block, off}.initialize(out);
+            void* dst = m_gpu.codePool().cpuAddr(off);
+            if (!f.read(static_cast<char*>(dst), static_cast<std::streamsize>(sz))) {
+                std::printf("[Renderer] Short shader read for %s\n", candidatePath.c_str());
+                return false;
+            }
+
+            dk::ShaderMaker{m_gpu.codePool().block, off}.initialize(out);
             return true;
         };
 

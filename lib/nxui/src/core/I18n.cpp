@@ -3,6 +3,8 @@
 #include <fstream>
 #include <algorithm>
 #include <cctype>
+#include <filesystem>
+#include <system_error>
 
 namespace nxui {
 
@@ -280,13 +282,34 @@ bool I18n::loadJsonMapFromFile(const std::string& path,
     return parser.parse();
 }
 
+static std::vector<std::string> scanI18nLanguageTags() {
+    std::vector<std::string> tags;
+    const char* basePath = "romfs:/i18n";
+    std::error_code ec;
+    for (const auto& entry : std::filesystem::directory_iterator(basePath, ec)) {
+        if (ec)
+            break;
+
+        const std::string name = entry.path().filename().string();
+        if (name.size() <= 5 || name.substr(name.size() - 5) != ".json")
+            continue;
+
+        const std::string tag = name.substr(0, name.size() - 5);
+        if (!tag.empty())
+            tags.push_back(tag);
+    }
+    std::sort(tags.begin(), tags.end());
+    tags.erase(std::unique(tags.begin(), tags.end()), tags.end());
+    return tags;
+}
+
 std::vector<std::string> I18n::supportedLanguageTags() {
-    return {
-        "auto",
-        "ja-JP", "en-US", "fr-FR", "de-DE", "it-IT", "es-ES",
-        "zh-CN", "ko-KR", "nl-NL", "pt-PT", "ru-RU", "zh-TW",
-        "en-GB", "fr-CA", "es-419", "pt-BR"
-    };
+    std::vector<std::string> tags = scanI18nLanguageTags();
+    tags.erase(std::remove_if(tags.begin(), tags.end(), [](const std::string& tag) {
+        return tag == "auto";
+    }), tags.end());
+    tags.insert(tags.begin(), "auto");
+    return tags;
 }
 
 std::string I18n::detectSystemLanguageTag() {

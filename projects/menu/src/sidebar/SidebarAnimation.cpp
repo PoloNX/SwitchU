@@ -1,7 +1,7 @@
 #include "SidebarAnimation.hpp"
 #include "core/DebugLog.hpp"
 #include <webp/demux.h>
-#include <cstdio>
+#include <fstream>
 #include <cmath>
 #include <algorithm>
 
@@ -12,23 +12,19 @@ bool SidebarAnimation::load(nxui::GpuDevice& gpu, nxui::Renderer& ren,
     m_frameIndex  = 0;
     m_elapsedMs   = 0.f;
 
-    FILE* fp = std::fopen(webpPath.c_str(), "rb");
-    if (!fp) {
+    std::ifstream input(webpPath, std::ios::binary | std::ios::ate);
+    if (!input.is_open()) {
         DebugLog::log("[sidebar-anim] not found: %s", webpPath.c_str());
         return false;
     }
 
-    std::fseek(fp, 0, SEEK_END);
-    long sz = std::ftell(fp);
-    std::rewind(fp);
-    if (sz <= 0) { std::fclose(fp); return false; }
+    const std::streamoff sz = input.tellg();
+    if (sz <= 0) return false;
+    input.seekg(0, std::ios::beg);
 
     std::vector<uint8_t> bytes(static_cast<size_t>(sz));
-    if (std::fread(bytes.data(), 1, bytes.size(), fp) != bytes.size()) {
-        std::fclose(fp);
+    if (!input.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(bytes.size())))
         return false;
-    }
-    std::fclose(fp);
 
     WebPData webpData;
     webpData.bytes = bytes.data();

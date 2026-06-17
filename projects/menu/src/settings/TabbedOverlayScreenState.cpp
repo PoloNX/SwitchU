@@ -129,11 +129,17 @@ void TabbedOverlayScreen::warmup() {
     rebuildContentItems();
 }
 
+bool TabbedOverlayScreen::itemFocusable(const SettingItem& item) const {
+    if (item.focusable())
+        return true;
+    return m_accessibilityVoiceEnabled && (item.type == ItemType::Info || item.type == ItemType::Section);
+}
+
 int TabbedOverlayScreen::focusableCount() const {
     if (m_tabIndex < 0 || m_tabIndex >= (int)m_tabs.size()) return 0;
     int count = 0;
     for (auto& item : m_tabs[m_tabIndex].items)
-        if (item.focusable()) ++count;
+        if (itemFocusable(item)) ++count;
     return count;
 }
 
@@ -142,7 +148,7 @@ int TabbedOverlayScreen::rawIndexFromFocusable(int focIdx) const {
     auto& items = m_tabs[m_tabIndex].items;
     int count = 0;
     for (int i = 0; i < (int)items.size(); ++i) {
-        if (items[i].focusable()) {
+        if (itemFocusable(items[i])) {
             if (count == focIdx) return i;
             ++count;
         }

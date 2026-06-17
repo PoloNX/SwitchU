@@ -1,14 +1,13 @@
 #include "ThemePreset.hpp"
-#include <cstdio>
 #include <cstdlib>
-#include <cstring>
-#include <sys/stat.h>
-#include <dirent.h>
+#include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <nlohmann/json.hpp>
 #include <sstream>
 #include <algorithm>
 #include <cctype>
+#include <system_error>
 
 namespace {
 
@@ -71,9 +70,8 @@ bool hasBundledAudio(const std::string& installDir) {
     };
 
     for (const char* suffix : candidates) {
-        struct stat st {};
-        std::string path = installDir + suffix;
-        if (stat(path.c_str(), &st) == 0 && S_ISDIR(st.st_mode))
+        std::error_code ec;
+        if (std::filesystem::is_directory(installDir + suffix, ec))
             return true;
     }
 
@@ -744,20 +742,17 @@ std::vector<ThemePreset> ThemePreset::loadUserPresets() {
 std::vector<ThemePreset> ThemePreset::loadInstalledPackages() {
     std::vector<ThemePreset> result;
 
-    DIR* dir = opendir(kInstalledThemesDir);
-    if (!dir)
-        return result;
-
-    struct dirent* entry = nullptr;
-    while ((entry = readdir(dir)) != nullptr) {
-        std::string dirName = entry->d_name;
-        if (dirName == "." || dirName == "..")
+    std::error_code ec;
+    for (const auto& entry : std::filesystem::directory_iterator(kInstalledThemesDir, ec)) {
+        if (ec)
+            break;
+        if (!entry.is_directory(ec)) {
+            ec.clear();
             continue;
+        }
 
-        std::string installDir = std::string(kInstalledThemesDir) + "/" + dirName;
-        struct stat st;
-        if (stat(installDir.c_str(), &st) != 0 || !S_ISDIR(st.st_mode))
-            continue;
+        std::string dirName = entry.path().filename().string();
+        std::string installDir = entry.path().string();
 
         std::string manifestPath = installDir + "/theme.json";
         ThemePreset preset;
@@ -772,7 +767,6 @@ std::vector<ThemePreset> ThemePreset::loadInstalledPackages() {
         result.push_back(std::move(preset));
     }
 
-    closedir(dir);
     std::sort(result.begin(), result.end(), [](const ThemePreset& lhs, const ThemePreset& rhs) {
         return lhs.name < rhs.name;
     });
@@ -780,36 +774,37 @@ std::vector<ThemePreset> ThemePreset::loadInstalledPackages() {
 }
 
 bool ThemePreset::saveUserPresets(const std::vector<ThemePreset>& presets) {
-    mkdir("sdmc:/config", 0777);
-    mkdir("sdmc:/config/SwitchU", 0777);
+    std::error_code ec;
+    std::filesystem::create_directory("sdmc:/config", ec);
+    ec.clear();
+    std::filesystem::create_directory("sdmc:/config/SwitchU", ec);
 
-    FILE* f = fopen(kUserPresetsPath, "w");
-    if (!f) return false;
+    std::ofstream f(kUserPresetsPath, std::ios::trunc);
+    if (!f.is_open()) return false;
 
+    f << std::fixed << std::setprecision(4);
     for (auto& p : presets) {
         const float cursorH = p.colors.cursorH >= 0.f ? p.colors.cursorH : p.colors.accentH;
         const float cursorS = p.colors.cursorS >= 0.f ? p.colors.cursorS : p.colors.accentS;
         const float cursorL = p.colors.cursorL >= 0.f ? p.colors.cursorL : p.colors.accentL;
-        fprintf(f, "[%s]\n", p.name.c_str());
-        fprintf(f, "mode=%s\n", p.mode == nxui::ThemeMode::Light ? "light" : "dark");
-        fprintf(f, "cursor_h=%.4f\n", cursorH);
-        fprintf(f, "cursor_s=%.4f\n", cursorS);
-        fprintf(f, "cursor_l=%.4f\n", cursorL);
-        fprintf(f, "accent_h=%.4f\n", p.colors.accentH);
-        fprintf(f, "accent_s=%.4f\n", p.colors.accentS);
-        fprintf(f, "accent_l=%.4f\n", p.colors.accentL);
-        fprintf(f, "bg_h=%.4f\n",     p.colors.bgH);
-        fprintf(f, "bg_s=%.4f\n",     p.colors.bgS);
-        fprintf(f, "bg_l=%.4f\n",     p.colors.bgL);
-        fprintf(f, "bg_acc_h=%.4f\n", p.colors.bgAccH);
-        fprintf(f, "bg_acc_s=%.4f\n", p.colors.bgAccS);
-        fprintf(f, "bg_acc_l=%.4f\n", p.colors.bgAccL);
-        fprintf(f, "shape_h=%.4f\n",  p.colors.shapeH);
-        fprintf(f, "shape_s=%.4f\n",  p.colors.shapeS);
-        fprintf(f, "shape_l=%.4f\n",  p.colors.shapeL);
-        fprintf(f, "\n");
+        f << '[' << p.name << "]\n";
+        f << "mode=" << (p.mode == nxui::ThemeMode::Light ? "light" : "dark") << '\n';
+        f << "cursor_h=" << cursorH << '\n';
+        f << "cursor_s=" << cursorS << '\n';
+        f << "cursor_l=" << cursorL << '\n';
+        f << "accent_h=" << p.colors.accentH << '\n';
+        f << "accent_s=" << p.colors.accentS << '\n';
+        f << "accent_l=" << p.colors.accentL << '\n';
+        f << "bg_h=" << p.colors.bgH << '\n';
+        f << "bg_s=" << p.colors.bgS << '\n';
+        f << "bg_l=" << p.colors.bgL << '\n';
+        f << "bg_acc_h=" << p.colors.bgAccH << '\n';
+        f << "bg_acc_s=" << p.colors.bgAccS << '\n';
+        f << "bg_acc_l=" << p.colors.bgAccL << '\n';
+        f << "shape_h=" << p.colors.shapeH << '\n';
+        f << "shape_s=" << p.colors.shapeS << '\n';
+        f << "shape_l=" << p.colors.shapeL << "\n\n";
     }
 
-    fclose(f);
-    return true;
+    return static_cast<bool>(f);
 }

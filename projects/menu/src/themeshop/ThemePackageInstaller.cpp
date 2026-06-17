@@ -14,12 +14,11 @@
 #include <switch.h>
 
 #include <algorithm>
-#include <cstring>
-#include <dirent.h>
+#include <filesystem>
 #include <fstream>
 #include <list>
 #include <stdexcept>
-#include <sys/stat.h>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -73,8 +72,8 @@ bool startsWith(const std::string& value, const std::string& prefix) {
 }
 
 bool pathExists(const std::string& path) {
-    struct stat st {};
-    return stat(path.c_str(), &st) == 0;
+    std::error_code ec;
+    return std::filesystem::exists(path, ec);
 }
 
 bool ensureDirectoryRecursive(const std::string& path) {
@@ -102,7 +101,8 @@ bool ensureDirectoryRecursive(const std::string& path) {
             if (!current.empty() && current.back() != '/')
                 current.push_back('/');
             current += part;
-            if (mkdir(current.c_str(), 0777) != 0 && errno != EEXIST)
+            std::error_code ec;
+            if (!std::filesystem::create_directory(current, ec) && ec)
                 return false;
         }
         if (slash == std::string::npos)
@@ -114,29 +114,9 @@ bool ensureDirectoryRecursive(const std::string& path) {
 }
 
 bool removeDirectoryRecursive(const std::string& path) {
-    DIR* dir = opendir(path.c_str());
-    if (!dir)
-        return std::remove(path.c_str()) == 0;
-
-    struct dirent* entry = nullptr;
-    while ((entry = readdir(dir)) != nullptr) {
-        std::string name = entry->d_name;
-        if (name == "." || name == "..")
-            continue;
-
-        std::string child = path + "/" + name;
-        struct stat st {};
-        if (stat(child.c_str(), &st) != 0)
-            continue;
-
-        if (S_ISDIR(st.st_mode))
-            removeDirectoryRecursive(child);
-        else
-            std::remove(child.c_str());
-    }
-
-    closedir(dir);
-    return rmdir(path.c_str()) == 0;
+    std::error_code ec;
+    std::filesystem::remove_all(path, ec);
+    return !ec;
 }
 
 std::string joinUrl(const std::string& baseUrl, const std::string& relativePath) {
@@ -166,7 +146,7 @@ bool parseRawGitHubUrl(const std::string& url, GitHubRepoSource& out) {
     if (!startsWith(url, kPrefix))
         return false;
 
-    std::string rest = url.substr(std::strlen(kPrefix));
+    std::string rest = url.substr(sizeof(kPrefix) - 1);
     std::size_t slash1 = rest.find('/');
     if (slash1 == std::string::npos)
         return false;

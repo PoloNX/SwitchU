@@ -1,15 +1,16 @@
 #include "SidebarManager.hpp"
 #include "core/DebugLog.hpp"
 #include <nxui/core/I18n.hpp>
-#include <sys/stat.h>
+#include <filesystem>
+#include <system_error>
 
 namespace {
 
 constexpr int kSidebarIconCount = 6;
 
 bool pathExists(const std::string& path) {
-    struct stat st {};
-    return stat(path.c_str(), &st) == 0;
+    std::error_code ec;
+    return std::filesystem::exists(path, ec);
 }
 
 std::string joinPath(const std::string& base, const std::string& name) {

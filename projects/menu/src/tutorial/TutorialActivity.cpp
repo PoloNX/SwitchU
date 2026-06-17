@@ -110,8 +110,8 @@ bool TutorialActivity::onCreate() {
         i18n.setLanguageAuto();
     else
         i18n.setLanguage(savedConfig.uiLanguageOverride);
-    m_accessibilityEnabled = savedConfig.accessibilityEnabled;
-    m_accessibility.initialize(m_accessibilityEnabled, i18n.activeLanguageTag(), TUTORIAL_ASSETS);
+    m_accessibilityEnabled = false;
+    m_accessibility.initialize(true, i18n.activeLanguageTag(), TUTORIAL_ASSETS);
     m_accessibility.setSpeakHints(savedConfig.accessibilitySpeakHints);
     m_accessibility.setSpeakContextEveryFocus(savedConfig.accessibilitySpeakContextEveryFocus);
     m_accessibility.setSpeechRate(savedConfig.accessibilitySpeechRate);
@@ -141,6 +141,8 @@ bool TutorialActivity::onCreate() {
     m_finishTimer = 0.f;
     m_transitionAlpha = 0.f;
     announceCurrentStep();
+    if (!m_accessibilityEnabled)
+        m_accessibility.setEnabled(false);
     return true;
 }
 
@@ -156,9 +158,21 @@ void TutorialActivity::buildSteps() {
         {
             StepKind::AccessibilityChoice,
             i18n.tr("tutorial.accessibility.title", "Voice guidance"),
-            i18n.tr("tutorial.accessibility.body", "Voice guidance is enabled by default. It announces the selected item and the available actions whenever focus changes."),
-            i18n.tr("tutorial.accessibility.objective", "Press X to disable the voice and use animalese sounds. Press A to continue.")
+            i18n.tr("tutorial.accessibility.body", "Voice guidance is available for this menu. It can read the selected item and the available actions aloud."),
+            i18n.tr("tutorial.accessibility.objective", "Press X to enable voice guidance for later. Press A to continue without it.")
         },
+    };
+
+    if (m_accessibilityEnabled) {
+        m_steps.push_back({
+            StepKind::AccessibilitySettings,
+            i18n.tr("tutorial.accessibility_settings.title", "Accessibility settings"),
+            i18n.tr("tutorial.accessibility_settings.body", "Accessibility options are available in Settings, then Accessibility. You can adjust speech speed, repeated hints, location announcements, and position details."),
+            ""
+        });
+    }
+
+    std::vector<Step> rest = {
         {
             StepKind::Text,
             i18n.tr("tutorial.welcome.title", "Welcome to SwitchU"),
@@ -196,6 +210,7 @@ void TutorialActivity::buildSteps() {
             ""
         },
     };
+    m_steps.insert(m_steps.end(), rest.begin(), rest.end());
 }
 
 void TutorialActivity::loadAnimaleseSfx() {
@@ -342,7 +357,10 @@ void TutorialActivity::advanceStep() {
         return;
     }
 
-    if (step.kind != StepKind::Text && step.kind != StepKind::AccessibilityChoice && !step.complete)
+    if (step.kind != StepKind::Text
+        && step.kind != StepKind::AccessibilityChoice
+        && step.kind != StepKind::AccessibilitySettings
+        && !step.complete)
         return;
 
     if (m_stepIndex + 1 >= (int)m_steps.size()) {
@@ -370,23 +388,40 @@ void TutorialActivity::skipAll() {
 }
 
 void TutorialActivity::toggleAccessibility() {
-    m_accessibilityEnabled = !m_accessibilityEnabled;
+    if (m_accessibilityEnabled) {
+        m_accessibility.announce(nxui::I18n::instance().tr(
+            "tutorial.accessibility.already_enabled_announcement",
+            "Voice guidance is already enabled for later."));
+        return;
+    }
+
+    m_accessibilityEnabled = true;
 
     AppConfig config;
     config.load();
     config.accessibilityEnabled = m_accessibilityEnabled;
     config.save();
 
-    if (m_accessibilityEnabled) {
-        m_accessibility.setEnabled(true);
-        m_accessibility.announce(nxui::I18n::instance().tr(
-            "tutorial.accessibility.enabled_announcement",
-            "Voice guidance enabled. Press X to disable it, or A to continue."));
-    } else {
-        m_accessibility.announce(nxui::I18n::instance().tr(
-            "tutorial.accessibility.disabled_announcement",
-            "Voice guidance disabled. Animalese sounds are active."));
-        m_accessibility.setEnabled(false);
+    m_accessibility.setEnabled(true);
+    m_accessibility.announce(nxui::I18n::instance().tr(
+        "tutorial.accessibility.enabled_announcement",
+        "Voice guidance enabled for later. Press A to continue."));
+
+    if (m_stepIndex >= 0 && m_stepIndex < (int)m_steps.size()
+        && m_steps[(size_t)m_stepIndex].kind == StepKind::AccessibilityChoice) {
+        const bool hasSettingsSlide = std::any_of(m_steps.begin(), m_steps.end(), [](const Step& step) {
+            return step.kind == StepKind::AccessibilitySettings;
+        });
+        if (!hasSettingsSlide) {
+            auto& i18n = nxui::I18n::instance();
+            Step settingsStep{
+                StepKind::AccessibilitySettings,
+                i18n.tr("tutorial.accessibility_settings.title", "Accessibility settings"),
+                i18n.tr("tutorial.accessibility_settings.body", "Accessibility options are available in Settings, then Accessibility. You can adjust speech speed, repeated hints, location announcements, and position details."),
+                ""
+            };
+            m_steps.insert(m_steps.begin() + m_stepIndex + 1, std::move(settingsStep));
+        }
     }
 }
 
@@ -398,7 +433,7 @@ void TutorialActivity::announceCurrentStep() {
     std::string text = step.title + ". " + step.body;
     if (!step.objective.empty())
         text += ". " + step.objective;
-    if (step.kind == StepKind::Text)
+    if (step.kind == StepKind::Text || step.kind == StepKind::AccessibilitySettings)
         text += ". " + nxui::I18n::instance().tr(
             "tutorial.accessibility.text_actions",
             "A to continue. B to skip this step. Plus to skip everything.");
@@ -414,6 +449,7 @@ void TutorialActivity::finish() {
     AppConfig config;
     config.load();
     config.tutorialCompleted = true;
+    config.accessibilityEnabled = m_accessibilityEnabled;
     config.save();
 }
 
@@ -466,6 +502,7 @@ void TutorialActivity::onUpdate(float dt) {
     const Step& step = m_steps[(size_t)m_stepIndex];
     const bool showObjective = step.kind != StepKind::Text
         && step.kind != StepKind::AccessibilityChoice
+        && step.kind != StepKind::AccessibilitySettings
         && m_visibleChars >= step.body.size();
     if (m_objectivePanel)
         m_objectivePanel->setVisible(showObjective);
@@ -542,12 +579,16 @@ std::vector<TutorialActivity::ActionHint> TutorialActivity::buildActionHints() c
 
     const Step& step = m_steps[(size_t)m_stepIndex];
     const bool typing = m_visibleChars < step.body.size();
-    const bool testPending = step.kind != StepKind::Text && !step.complete && !typing;
+    const bool testPending = step.kind != StepKind::Text
+        && step.kind != StepKind::AccessibilityChoice
+        && step.kind != StepKind::AccessibilitySettings
+        && !step.complete
+        && !typing;
 
     if (step.kind == StepKind::AccessibilityChoice) {
         hints.push_back({buttonGlyph(nxui::Button::X),
                          m_accessibilityEnabled
-                            ? nxui::I18n::instance().tr("tutorial.hints.disable_voice", "Disable voice")
+                            ? nxui::I18n::instance().tr("tutorial.hints.voice_enabled", "Voice enabled")
                             : nxui::I18n::instance().tr("tutorial.hints.enable_voice", "Enable voice")});
         hints.push_back({buttonGlyph(nxui::Button::A), typing
                          ? nxui::I18n::instance().tr("tutorial.hints.reveal", "Reveal")

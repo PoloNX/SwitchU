@@ -31,12 +31,6 @@ option("backend")
     set_values("deko3d", "sdl2")
 option_end()
 
-option("espeak")
-    set_default(false)
-    set_showmenu(true)
-    set_description("Enable eSpeak NG speech backend when headers/libs are available")
-option_end()
-
 target("nxui")
     set_kind("static")
     set_default(false)
@@ -205,41 +199,38 @@ target("SwitchU")
     end
 
     add_defines(version_define)
-    if has_config("espeak") then
-        add_deps("espeak-ng")
-        add_defines("SWITCHU_ENABLE_ESPEAK")
-        add_includedirs("lib/espeak-ng/src/include")
-        add_syslinks("m")
+    add_deps("espeak-ng")
+    add_includedirs("lib/espeak-ng/src/include")
+    add_syslinks("m")
 
-        before_build(function(target)
-            local source_dir = path.join(os.projectdir(), "lib/espeak-ng")
-            local build_dir = path.join(os.projectdir(), "build/espeak-ng-native")
-            local data_dir = path.join(build_dir, "espeak-ng-data")
+    before_build(function(target)
+        local source_dir = path.join(os.projectdir(), "lib/espeak-ng")
+        local build_dir = path.join(os.projectdir(), "build/espeak-ng-native")
+        local data_dir = path.join(build_dir, "espeak-ng-data")
 
-            if not os.isdir(source_dir) then
-                raise("eSpeak NG submodule is missing: " .. source_dir)
-            end
+        if not os.isdir(source_dir) then
+            raise("eSpeak NG submodule is missing: " .. source_dir)
+        end
 
-            cprint("${color.build.target}generating${clear} eSpeak NG data")
-            os.vrunv("cmake", {
-                "-S", source_dir,
-                "-B", build_dir,
-                "-DENABLE_TESTS=OFF",
-                "-DBUILD_SHARED_LIBS=OFF",
-                "-DUSE_LIBSONIC=OFF",
-                "-DUSE_LIBPCAUDIO=OFF",
-                "-DUSE_MBROLA=OFF",
-                "-DSONIC_LIB=/usr/lib/libm.so",
-                "-DSONIC_INC=/usr/include"
-            })
-            os.vrunv("cmake", {"--build", build_dir, "--target", "data"})
+        cprint("${color.build.target}generating${clear} eSpeak NG data")
+        os.vrunv("cmake", {
+            "-S", source_dir,
+            "-B", build_dir,
+            "-DENABLE_TESTS=OFF",
+            "-DBUILD_SHARED_LIBS=OFF",
+            "-DUSE_LIBSONIC=OFF",
+            "-DUSE_LIBPCAUDIO=OFF",
+            "-DUSE_MBROLA=OFF",
+            "-DSONIC_LIB=/usr/lib/libm.so",
+            "-DSONIC_INC=/usr/include"
+        })
+        os.vrunv("cmake", {"--build", build_dir, "--target", "data"})
 
-            if not os.isfile(path.join(data_dir, "phondata")) or
-               not os.isfile(path.join(data_dir, "fr_dict")) then
-                raise("eSpeak NG data generation did not produce required runtime files")
-            end
-        end)
-    end
+        if not os.isfile(path.join(data_dir, "phondata")) or
+           not os.isfile(path.join(data_dir, "fr_dict")) then
+            raise("eSpeak NG data generation did not produce required runtime files")
+        end
+    end)
 
     if has_config("homebrew") then
         add_defines("SWITCHU_HOMEBREW")

@@ -105,12 +105,18 @@ void TabbedOverlayScreen::currentAccessibilityParts(std::string& context,
     const auto& tab = m_tabs[(size_t)m_tabIndex];
     auto& i18n = nxui::I18n::instance();
     if (m_focusArea == FocusArea::Tabs) {
-        context = i18n.tr("accessibility.context.settings", "Settings");
-        position = std::to_string(m_tabIndex + 1) + " "
-                 + i18n.tr("accessibility.context.of", "of") + " "
-                 + std::to_string((int)m_tabs.size());
+        context = m_mode == ScreenMode::ThemeShop
+            ? i18n.tr("accessibility.context.themes", "Themes")
+            : i18n.tr("accessibility.context.settings", "Settings");
+        if (m_accessibilitySpeakPosition) {
+            position = std::to_string(m_tabIndex + 1) + " "
+                     + i18n.tr("accessibility.context.of", "of") + " "
+                     + std::to_string((int)m_tabs.size());
+        }
         summary = i18n.tr("accessibility.settings.tab_prefix", "Tab") + " " + tab.name
-                + ". " + i18n.tr("accessibility.settings.tab_actions", "A or right to enter. Up and down to change tab. B to close.");
+                + (m_accessibilitySpeakHints
+                    ? ". " + i18n.tr("accessibility.settings.tab_actions", "A or right to enter. Up and down to change tab. B to close.")
+                    : "");
         return;
     }
 
@@ -118,13 +124,17 @@ void TabbedOverlayScreen::currentAccessibilityParts(std::string& context,
         const auto& item = tab.items[(size_t)m_dropdownRawIdx];
         if (!item.options.empty()) {
             int idx = std::clamp(m_dropdownHover, 0, (int)item.options.size() - 1);
-            context = tab.name;
-            position = std::to_string(idx + 1) + " "
-                     + i18n.tr("accessibility.context.of", "of") + " "
-                     + std::to_string((int)item.options.size());
-            summary = i18n.tr("accessibility.settings.list_prefix", "List") + " " + item.label
-                    + ". " + item.options[(size_t)idx]
-                    + ". " + i18n.tr("accessibility.settings.list_actions", "Up and down to choose. A to confirm. B to close the list.");
+            context = tab.name
+                    + ". " + i18n.tr("accessibility.settings.list_prefix", "List")
+                    + " " + item.label;
+            if (m_accessibilitySpeakPosition) {
+                position = std::to_string(idx + 1) + " "
+                         + i18n.tr("accessibility.context.of", "of") + " "
+                         + std::to_string((int)item.options.size());
+            }
+            summary = item.options[(size_t)idx];
+            if (m_accessibilitySpeakHints)
+                summary += ". " + i18n.tr("accessibility.settings.list_actions", "Up and down to choose. A to confirm. B to close the list.");
             return;
         }
     }
@@ -136,7 +146,7 @@ void TabbedOverlayScreen::currentAccessibilityParts(std::string& context,
     const auto& item = tab.items[(size_t)rawIdx];
     context = tab.name;
     const int count = focusableCount();
-    if (count > 0) {
+    if (m_accessibilitySpeakPosition && count > 0) {
         position = std::to_string(m_contentIdx + 1) + " "
                  + i18n.tr("accessibility.context.of", "of") + " "
                  + std::to_string(count);
@@ -151,7 +161,7 @@ void TabbedOverlayScreen::currentAccessibilityParts(std::string& context,
         out += ". " + i18n.tr("accessibility.value.label", "Value") + ": " + value;
     if (!item.description.empty())
         out += ". " + item.description;
-    std::string actions = itemActionText(item);
+    std::string actions = m_accessibilitySpeakHints ? itemActionText(item) : std::string();
     if (!actions.empty())
         out += ". " + actions;
     summary = out;
@@ -164,7 +174,7 @@ void TabbedOverlayScreen::announceCurrentFocus() {
         std::string summary;
         bool forceRepeat = false;
         currentAccessibilityParts(context, position, summary, forceRepeat);
-        m_accessibilityStructuredCb(context, position, summary, forceRepeat);
+        m_accessibilityStructuredCb(context, position, summary, forceRepeat, false);
         return;
     }
     if (m_accessibilityCb)
@@ -222,6 +232,8 @@ void TabbedOverlayScreen::onPressA() {
         announceCurrentFocus();
         return;
     }
+    if (usesCustomContentLayout() && m_focusArea == FocusArea::Content)
+        return;
 
     if (m_focusArea == FocusArea::Tabs) {
         if (focusableCount() > 0) {
@@ -255,7 +267,7 @@ void TabbedOverlayScreen::onPressA() {
     if (item.type == ItemType::Toggle) {
         item.boolVal = !item.boolVal;
         if (item.onChange) item.onChange(item);
-        if (m_toggleSfxCb) m_toggleSfxCb(item.boolVal);
+        if (m_toggleSfxCb && !item.suppressToggleSfx) m_toggleSfxCb(item.boolVal);
         announceCurrentFocus();
     } else if (item.type == ItemType::Selector) {
         openDropdown(rawIdx);
@@ -463,7 +475,7 @@ void TabbedOverlayScreen::scrollToFocused() {
     int focusIndex = 0;
     for (auto& item : items) {
         float height = item.type == ItemType::Section ? kSectionHeight : kRowHeight;
-        if (item.focusable()) {
+        if (itemFocusable(item)) {
             if (focusIndex == m_contentIdx) break;
             ++focusIndex;
         }
@@ -513,7 +525,7 @@ void TabbedOverlayScreen::handleTouch(nxui::Input& input) {
                 cardH
             };
             bool visible = y < cr.bottom() && y + height > cr.y;
-            if (items[i].focusable()) {
+            if (itemFocusable(items[i])) {
                 if (visible && itemRect.contains(tx, ty))
                     return focusIdx;
                 ++focusIdx;
@@ -532,7 +544,7 @@ void TabbedOverlayScreen::handleTouch(nxui::Input& input) {
         int currentFocus = 0;
         for (int i = 0; i < (int)items.size(); ++i) {
             float height = (items[i].type == ItemType::Section) ? kSectionHeight : kRowHeight;
-            if (items[i].focusable()) {
+            if (itemFocusable(items[i])) {
                 if (currentFocus == focusIdx) {
                     float insetY = (items[i].type == ItemType::Section) ? 1.f : kCardInsetY;
                     float cardH = std::max(0.f, height - (items[i].type == ItemType::Section ? 2.f : 6.f));
@@ -903,7 +915,7 @@ void TabbedOverlayScreen::handleTouch(nxui::Input& input) {
                             item.boolVal = !item.boolVal;
                             item.anim01 = item.boolVal ? 1.f : 0.f;
                             if (item.onChange) item.onChange(item);
-                            if (m_toggleSfxCb) m_toggleSfxCb(item.boolVal);
+                            if (m_toggleSfxCb && !item.suppressToggleSfx) m_toggleSfxCb(item.boolVal);
                         } else if (item.type == ItemType::Selector) {
                             onPressA();
                         }

@@ -4,18 +4,19 @@
 #include <cstdio>
 #include <cstring>
 #include <ctime>
-#include <dirent.h>
+#include <filesystem>
 #include <string>
-#include <sys/stat.h>
 #include <sys/time.h>
-#include <unistd.h>
+#include <system_error>
 #include <vector>
 
 namespace switchu::log_detail {
 
 inline void ensure_log_dir(const char* log_dir) {
-    ::mkdir("sdmc:/config", 0755);
-    ::mkdir(log_dir, 0755);
+    std::error_code ec;
+    std::filesystem::create_directory("sdmc:/config", ec);
+    ec.clear();
+    std::filesystem::create_directory(log_dir, ec);
 }
 
 inline bool read_local_time(std::tm& local_time, long& milliseconds, long& tenths) {
@@ -103,17 +104,16 @@ inline bool has_archived_log_name(const char* file_name, const char* base_name, 
 }
 
 inline void prune_archived_logs(const char* log_dir, const char* base_name, const char* extension, size_t keep_count) {
-    DIR* dir = ::opendir(log_dir);
-    if (!dir)
-        return;
-
     std::vector<std::string> matches;
-    while (dirent* entry = ::readdir(dir)) {
-        if (has_archived_log_name(entry->d_name, base_name, extension))
-            matches.emplace_back(entry->d_name);
-    }
+    std::error_code ec;
+    for (const auto& entry : std::filesystem::directory_iterator(log_dir, ec)) {
+        if (ec)
+            break;
 
-    ::closedir(dir);
+        const std::string file_name = entry.path().filename().string();
+        if (has_archived_log_name(file_name.c_str(), base_name, extension))
+            matches.emplace_back(file_name);
+    }
 
     if (matches.size() <= keep_count)
         return;
@@ -124,7 +124,8 @@ inline void prune_archived_logs(const char* log_dir, const char* base_name, cons
     const size_t delete_count = matches.size() - keep_count;
     for (size_t i = 0; i < delete_count; ++i) {
         std::snprintf(path, sizeof(path), "%s/%s", log_dir, matches[i].c_str());
-        ::unlink(path);
+        ec.clear();
+        std::filesystem::remove(path, ec);
     }
 }
 
@@ -133,10 +134,13 @@ inline bool rotate_current_log(const char* log_dir, const char* base_name, const
     build_current_log_path(current_path, sizeof(current_path), log_dir, base_name, extension);
 
     bool can_truncate = true;
-    if (::access(current_path, F_OK) == 0) {
+    std::error_code ec;
+    if (std::filesystem::exists(current_path, ec)) {
         char archived_path[256];
         build_archived_log_path(archived_path, sizeof(archived_path), log_dir, base_name, extension);
-        can_truncate = (::rename(current_path, archived_path) == 0);
+        ec.clear();
+        std::filesystem::rename(current_path, archived_path, ec);
+        can_truncate = !ec;
     }
 
     prune_archived_logs(log_dir, base_name, extension, keep_count);

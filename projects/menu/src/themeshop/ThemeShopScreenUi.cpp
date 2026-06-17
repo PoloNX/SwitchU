@@ -839,17 +839,39 @@ bool ThemeShopScreen::handleCustomPressA() {
     return false;
 }
 
-std::string ThemeShopScreen::currentAccessibilitySummary() const {
-    if (!usesCustomContentLayout())
-        return TabbedOverlayScreen::currentAccessibilitySummary();
+void ThemeShopScreen::currentAccessibilityParts(std::string& context,
+                                                std::string& position,
+                                                std::string& summary,
+                                                bool& forceRepeat) const {
+    if (!usesCustomContentLayout()) {
+        TabbedOverlayScreen::currentAccessibilityParts(context, position, summary, forceRepeat);
+        return;
+    }
+
+    context.clear();
+    position.clear();
+    summary.clear();
+    forceRepeat = false;
 
     if (m_tabIndex < 0 || m_tabIndex >= (int)m_tabs.size())
-        return {};
+        return;
 
+    auto& i18n = nxui::I18n::instance();
     const std::string tabName = m_tabs[(size_t)m_tabIndex].name;
     if (m_focusArea == FocusArea::Tabs) {
-        return "Onglet " + tabName + ". A ou droite pour entrer. Haut et bas pour changer d'onglet. B pour fermer.";
+        context = i18n.tr("accessibility.context.themes", "Themes");
+        if (m_accessibilitySpeakPosition) {
+            position = std::to_string(m_tabIndex + 1) + " "
+                     + i18n.tr("accessibility.context.of", "of") + " "
+                     + std::to_string((int)m_tabs.size());
+        }
+        summary = i18n.tr("accessibility.settings.tab_prefix", "Tab") + " " + tabName;
+        if (m_accessibilitySpeakHints)
+            summary += ". " + i18n.tr("accessibility.settings.tab_actions", "A or right to enter. Up and down to change tab. B to close.");
+        return;
     }
+
+    context = tabName;
 
     if (m_detailOpen) {
         std::string themeName;
@@ -864,29 +886,45 @@ std::string ThemeShopScreen::currentAccessibilitySummary() const {
             author = entry->author;
         }
         if (themeName.empty())
-            themeName = "Theme";
+            themeName = i18n.tr("settings.tabs.theme", "Theme");
 
-        if (m_detailFullscreen)
-            return tabName + ". Apercu plein ecran de " + themeName + ". B pour fermer l'apercu.";
+        if (m_detailFullscreen) {
+            summary = i18n.tr("themeshop.accessibility.fullscreen_preview", "Fullscreen preview")
+                    + ". " + themeName;
+            if (m_accessibilitySpeakHints)
+                summary += ". " + i18n.tr("themeshop.accessibility.fullscreen_actions", "B to close the preview.");
+            return;
+        }
 
         std::string area = (m_detailFocusArea == DetailFocusArea::Preview)
-            ? "Apercu"
-            : "Actions";
-        std::string out = tabName + ". Detail " + themeName + ", " + area;
+            ? i18n.tr("themeshop.accessibility.preview_area", "Preview")
+            : i18n.tr("themeshop.accessibility.actions_area", "Actions");
+        summary = i18n.tr("themeshop.accessibility.detail", "Detail")
+                + ". " + themeName + ". " + area;
         if (!author.empty())
-            out += ". Auteur: " + author;
-        out += ". Gauche et droite pour changer de controle. A pour valider. B pour revenir.";
-        return out;
+            summary += ". " + i18n.tr("themeshop.accessibility.author", "Author") + ": " + author;
+        if (m_accessibilitySpeakHints)
+            summary += ". " + i18n.tr("themeshop.accessibility.detail_actions", "Left and right to change control. A to confirm. B to go back.");
+        return;
     }
 
     if (m_contentFocusArea == ContentFocusArea::Header) {
-        if (isCommunityTab())
-            return tabName + ". Recherche et actualisation. Gauche et droite pour choisir. A pour valider. Bas pour la grille.";
-        return tabName + ". Barre de recherche. A pour chercher. Bas pour la grille.";
+        summary = isCommunityTab()
+            ? i18n.tr("themeshop.accessibility.search_refresh", "Search and refresh")
+            : i18n.tr("themeshop.accessibility.search_bar", "Search bar");
+        if (m_accessibilitySpeakHints) {
+            summary += ". " + (isCommunityTab()
+                ? i18n.tr("themeshop.accessibility.header_actions", "Left and right to choose. A to confirm. Down to the grid.")
+                : i18n.tr("themeshop.accessibility.search_actions", "A to search. Down to the grid."));
+        }
+        return;
     }
 
     if (m_contentFocusArea == ContentFocusArea::Pager) {
-        return tabName + ". Pagination. Gauche et droite pour changer de bouton. A pour changer de page. Haut pour la grille.";
+        summary = i18n.tr("themeshop.accessibility.pagination", "Pagination");
+        if (m_accessibilitySpeakHints)
+            summary += ". " + i18n.tr("themeshop.accessibility.pagination_actions", "Left and right to change button. A to change page. Up to the grid.");
+        return;
     }
 
     std::string themeName;
@@ -904,12 +942,35 @@ std::string ThemeShopScreen::currentAccessibilitySummary() const {
     }
 
     if (themeName.empty())
-        themeName = "Aucun theme";
+        themeName = i18n.tr("themeshop.accessibility.no_theme", "No theme");
 
-    std::string out = tabName + ". " + themeName;
+    summary = themeName;
     if (!detail.empty())
-        out += ". " + detail;
-    out += ". Croix directionnelle pour naviguer. A pour ouvrir les details. B pour revenir aux onglets.";
+        summary += ". " + detail;
+    if (m_accessibilitySpeakPosition) {
+        const int count = currentEntryCount();
+        const int selected = currentSelectedIndex();
+        if (selected >= 0 && count > 0) {
+            position = std::to_string(selected + 1) + " "
+                     + i18n.tr("accessibility.context.of", "of") + " "
+                     + std::to_string(count);
+        }
+    }
+    if (m_accessibilitySpeakHints)
+        summary += ". " + i18n.tr("themeshop.accessibility.grid_actions", "Directional pad to navigate. A to open details. B to return to tabs.");
+}
+
+std::string ThemeShopScreen::currentAccessibilitySummary() const {
+    std::string context;
+    std::string position;
+    std::string summary;
+    bool forceRepeat = false;
+    currentAccessibilityParts(context, position, summary, forceRepeat);
+    std::string out = context;
+    if (!summary.empty())
+        out += (out.empty() ? "" : ". ") + summary;
+    if (!position.empty())
+        out += (out.empty() ? "" : ". ") + position;
     return out;
 }
 

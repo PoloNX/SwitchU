@@ -69,7 +69,8 @@ public:
     using AccessibilityStructuredCb = std::function<void(const std::string& context,
                                                          const std::string& position,
                                                          const std::string& summary,
-                                                         bool forceRepeat)>;
+                                                         bool forceRepeat,
+                                                         bool forceContext)>;
     void onNavigateSfx(VoidCb cb)        { m_navSfxCb = std::move(cb); }
     void onActivateSfx(VoidCb cb)        { m_activateSfxCb = std::move(cb); }
     void onCloseSfx(VoidCb cb)           { m_closeSfxCb = std::move(cb); }
@@ -79,6 +80,13 @@ public:
     void onAccessibilityAnnouncement(StringCb cb) { m_accessibilityCb = std::move(cb); }
     void onAccessibilityStructuredAnnouncement(AccessibilityStructuredCb cb) {
         m_accessibilityStructuredCb = std::move(cb);
+    }
+    void setAccessibilitySpeechPreferences(bool speakHints, bool speakPosition) {
+        m_accessibilitySpeakHints = speakHints;
+        m_accessibilitySpeakPosition = speakPosition;
+    }
+    void setAccessibilityVoiceEnabled(bool enabled) {
+        m_accessibilityVoiceEnabled = enabled;
     }
     void refreshTranslations();
     ScreenMode screenMode() const { return m_mode; }
@@ -91,6 +99,7 @@ public:
         std::string description;
 
         bool                     boolVal   = false;
+        bool                     suppressToggleSfx = false;
         float                    floatVal  = 0.f;
         int                      intVal    = 0;
         int                      sliderSteps = 20;
@@ -175,6 +184,7 @@ protected:
 
     int rawIndexFromFocusable(int focIdx) const;
     int focusableCount() const;
+    bool itemFocusable(const SettingItem& item) const;
     void clampContentIdx();
     float visibilityProgress() const;
     void syncPanelState(float eased);
@@ -240,6 +250,9 @@ protected:
     BoolCb  m_sliderSfxCb;
     StringCb m_accessibilityCb;
     AccessibilityStructuredCb m_accessibilityStructuredCb;
+    bool m_accessibilityVoiceEnabled = true;
+    bool m_accessibilitySpeakHints = true;
+    bool m_accessibilitySpeakPosition = true;
     int m_i18nListenerId = -1;
     bool m_deferredRefresh = false;
 

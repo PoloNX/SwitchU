@@ -20,6 +20,7 @@ SettingsScreen::Tab settings::tabs::AccessibilityTab::build(SettingsScreen& scre
                                  "Read focused items and available actions aloud.");
         it.type = ItemType::Toggle;
         it.boolVal = screen.m_accessibilityEnabled;
+        it.suppressToggleSfx = true;
         it.anim01 = it.boolVal ? 1.f : 0.f;
         it.onChange = [&screen](SettingItem& self) {
             screen.m_accessibilityEnabled = self.boolVal;

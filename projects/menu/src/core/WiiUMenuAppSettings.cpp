@@ -8,49 +8,26 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
-#include <dirent.h>
+#include <filesystem>
 #include <fstream>
 #include <nlohmann/json.hpp>
-#include <sys/stat.h>
-#include <cstdio>
+#include <system_error>
 #include <utility>
 
 namespace {
 
 bool removeDirectoryRecursive(const std::string& path) {
-    DIR* dir = opendir(path.c_str());
-    if (!dir) {
-        return std::remove(path.c_str()) == 0;
-    }
-
-    struct dirent* entry = nullptr;
-    while ((entry = readdir(dir)) != nullptr) {
-        std::string name = entry->d_name;
-        if (name == "." || name == "..")
-            continue;
-
-        std::string child = path + "/" + name;
-        struct stat st {};
-        if (stat(child.c_str(), &st) != 0)
-            continue;
-
-        if (S_ISDIR(st.st_mode)) {
-            removeDirectoryRecursive(child);
-        } else {
-            std::remove(child.c_str());
-        }
-    }
-
-    closedir(dir);
-    return rmdir(path.c_str()) == 0;
+    std::error_code ec;
+    std::filesystem::remove_all(path, ec);
+    return !ec;
 }
 
 bool pathExists(const std::string& path) {
     if (path.empty())
         return false;
 
-    struct stat st {};
-    return stat(path.c_str(), &st) == 0;
+    std::error_code ec;
+    return std::filesystem::exists(path, ec);
 }
 
 std::string joinPath(const std::string& base, const std::string& name) {
@@ -264,6 +241,8 @@ void WiiUMenuApp::createSettings() {
                                             m_config.accessibilitySpeakContextEveryFocus,
                                             m_config.accessibilitySpeakPosition,
                                             m_config.accessibilitySpeechRate);
+    m_settings->setAccessibilitySpeechPreferences(m_config.accessibilitySpeakHints,
+                                                  m_config.accessibilitySpeakPosition);
 
     m_settings->onNavigateSfx([this]() { m_audio.playSfx(Sfx::Navigate); });
     m_settings->onActivateSfx([this]() { m_audio.playSfx(Sfx::Activate); });
@@ -274,8 +253,9 @@ void WiiUMenuApp::createSettings() {
     m_settings->onAccessibilityStructuredAnnouncement([this](const std::string& context,
                                                              const std::string& position,
                                                              const std::string& summary,
-                                                             bool forceRepeat) {
-        m_accessibility.announceStructuredFocus(context, position, summary, forceRepeat);
+                                                             bool forceRepeat,
+                                                             bool forceContext) {
+        m_accessibility.announceStructuredFocus(context, position, summary, forceRepeat, forceContext);
     });
     m_settings->onToggleSfx([this](bool on) {
         m_audio.playSfx(on ? Sfx::ThemeToggle : Sfx::ToggleOff);
@@ -328,15 +308,36 @@ void WiiUMenuApp::createSettings() {
         if (m_config.accessibilityEnabled == enabled)
             return;
         m_config.accessibilityEnabled = enabled;
-        m_accessibility.setEnabled(enabled);
-        if (enabled)
+        if (m_settings)
+            m_settings->setAccessibilityVoiceEnabled(enabled);
+        if (m_themeShop)
+            m_themeShop->setAccessibilityVoiceEnabled(enabled);
+        if (enabled) {
+            m_accessibility.setEnabled(true);
             m_accessibility.announce(nxui::I18n::instance().tr(
                 "accessibility.speech.enabled",
                 "Voice guidance enabled."));
+        } else {
+            m_accessibility.announceAndDisable(nxui::I18n::instance().tr(
+                "accessibility.speech.disabled",
+                "Voice guidance disabled."));
+        }
     });
     m_settings->onAccessibilitySpeakHintsChange([this](bool enabled) {
         m_config.accessibilitySpeakHints = enabled;
         m_accessibility.setSpeakHints(enabled);
+        if (m_settings)
+            m_settings->setAccessibilitySpeechPreferences(m_config.accessibilitySpeakHints,
+                                                          m_config.accessibilitySpeakPosition);
+        if (m_themeShop)
+            m_themeShop->setAccessibilitySpeechPreferences(m_config.accessibilitySpeakHints,
+                                                           m_config.accessibilitySpeakPosition);
+        if (m_dialog)
+            m_dialog->setAccessibilitySpeechPreferences(m_config.accessibilitySpeakHints,
+                                                        m_config.accessibilitySpeakPosition);
+        if (m_userSelect)
+            m_userSelect->setAccessibilitySpeechPreferences(m_config.accessibilitySpeakHints,
+                                                            m_config.accessibilitySpeakPosition);
     });
     m_settings->onAccessibilitySpeakContextEveryFocusChange([this](bool enabled) {
         m_config.accessibilitySpeakContextEveryFocus = enabled;
@@ -344,6 +345,18 @@ void WiiUMenuApp::createSettings() {
     });
     m_settings->onAccessibilitySpeakPositionChange([this](bool enabled) {
         m_config.accessibilitySpeakPosition = enabled;
+        if (m_settings)
+            m_settings->setAccessibilitySpeechPreferences(m_config.accessibilitySpeakHints,
+                                                          m_config.accessibilitySpeakPosition);
+        if (m_themeShop)
+            m_themeShop->setAccessibilitySpeechPreferences(m_config.accessibilitySpeakHints,
+                                                           m_config.accessibilitySpeakPosition);
+        if (m_dialog)
+            m_dialog->setAccessibilitySpeechPreferences(m_config.accessibilitySpeakHints,
+                                                        m_config.accessibilitySpeakPosition);
+        if (m_userSelect)
+            m_userSelect->setAccessibilitySpeechPreferences(m_config.accessibilitySpeakHints,
+                                                            m_config.accessibilitySpeakPosition);
     });
     m_settings->onAccessibilitySpeechRateChange([this](int rate) {
         m_config.accessibilitySpeechRate = std::clamp(rate, 120, 320);
@@ -440,8 +453,7 @@ void WiiUMenuApp::createThemeShop() {
             startThemePackageTransfer(entryCopy, applyAfterInstall);
         };
 
-        struct stat st {};
-        if (stat(destination.c_str(), &st) != 0) {
+        if (!pathExists(destination)) {
             startTransfer();
             return;
         }
@@ -503,6 +515,9 @@ void WiiUMenuApp::createThemeShop() {
     m_themeShop->setRenderContext(&app().gpu(), &app().renderer());
     m_themeShop->setMusicState(m_audio.isPlaying(), m_audio.volume(), m_audio.sfxVolume());
     m_themeShop->setGridLayoutState(m_config.gridColumns, m_config.gridRows);
+    m_themeShop->setAccessibilityVoiceEnabled(m_config.accessibilityEnabled);
+    m_themeShop->setAccessibilitySpeechPreferences(m_config.accessibilitySpeakHints,
+                                                   m_config.accessibilitySpeakPosition);
 
     m_themeShop->onMusicEnabledChange([this](bool enabled) {
         if (enabled) m_audio.play(); else m_audio.stop();
@@ -539,6 +554,13 @@ void WiiUMenuApp::createThemeShop() {
     m_themeShop->onCloseSfx([this]() { m_audio.playSfx(Sfx::ModalHide); });
     m_themeShop->onAccessibilityAnnouncement([this](const std::string& text) {
         m_accessibility.announce(text);
+    });
+    m_themeShop->onAccessibilityStructuredAnnouncement([this](const std::string& context,
+                                                              const std::string& position,
+                                                              const std::string& summary,
+                                                              bool forceRepeat,
+                                                              bool forceContext) {
+        m_accessibility.announceStructuredFocus(context, position, summary, forceRepeat, forceContext);
     });
     m_themeShop->onToggleSfx([this](bool on) {
         m_audio.playSfx(on ? Sfx::ThemeToggle : Sfx::ToggleOff);

@@ -20,9 +20,9 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <fstream>
-#include <dirent.h>
-#include <sys/stat.h>
+#include <filesystem>
 #include <nlohmann/json.hpp>
+#include <system_error>
 
 namespace {
 
@@ -45,13 +45,13 @@ bool isPackageSoundPreset(const std::string& preset) {
 }
 
 bool pathExists(const std::string& path) {
-    struct stat st {};
-    return stat(path.c_str(), &st) == 0;
+    std::error_code ec;
+    return std::filesystem::exists(path, ec);
 }
 
 bool directoryExists(const std::string& path) {
-    struct stat st {};
-    return stat(path.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
+    std::error_code ec;
+    return std::filesystem::is_directory(path, ec);
 }
 
 std::string resolveAudioOverridePath(const std::string& preferredBase,
@@ -613,8 +613,10 @@ void WiiUMenuApp::loadMenuLayout() {
 }
 
 void WiiUMenuApp::saveMenuLayout() {
-    mkdir("sdmc:/config", 0777);
-    mkdir("sdmc:/config/SwitchU", 0777);
+    std::error_code ec;
+    std::filesystem::create_directory("sdmc:/config", ec);
+    ec.clear();
+    std::filesystem::create_directory("sdmc:/config/SwitchU", ec);
 
     nlohmann::json j;
     j["version"] = 1;
@@ -961,22 +963,40 @@ void WiiUMenuApp::buildGrid() {
     m_userSelect->setFont(&m_fontNormal);
     m_userSelect->setSmallFont(&m_fontSmall);
     m_userSelect->setTheme(&m_theme);
+    m_userSelect->setAccessibilitySpeechPreferences(m_config.accessibilitySpeakHints,
+                                                    m_config.accessibilitySpeakPosition);
     m_userSelect->onNavigateSfx([this]() { m_audio.playSfx(Sfx::Navigate); });
     m_userSelect->onActivateSfx([this]() { m_audio.playSfx(Sfx::Activate); });
     m_userSelect->onCloseSfx([this]() { m_audio.playSfx(Sfx::ModalHide); });
     m_userSelect->onAccessibilityAnnouncement([this](const std::string& text) {
         m_accessibility.announce(text);
     });
+    m_userSelect->onAccessibilityStructuredAnnouncement([this](const std::string& context,
+                                                               const std::string& position,
+                                                               const std::string& summary,
+                                                               bool forceRepeat,
+                                                               bool forceContext) {
+        m_accessibility.announceStructuredFocus(context, position, summary, forceRepeat, forceContext);
+    });
 
     m_dialog = std::make_shared<OverlayDialog>();
     m_dialog->setFont(&m_fontNormal);
     m_dialog->setSmallFont(&m_fontSmall);
     m_dialog->setTheme(&m_theme);
+    m_dialog->setAccessibilitySpeechPreferences(m_config.accessibilitySpeakHints,
+                                                m_config.accessibilitySpeakPosition);
     m_dialog->onNavigateSfx([this]() { m_audio.playSfx(Sfx::Navigate); });
     m_dialog->onActivateSfx([this]() { m_audio.playSfx(Sfx::Activate); });
     m_dialog->onCloseSfx([this]() { m_audio.playSfx(Sfx::ModalHide); });
     m_dialog->onAccessibilityAnnouncement([this](const std::string& text) {
         m_accessibility.announce(text);
+    });
+    m_dialog->onAccessibilityStructuredAnnouncement([this](const std::string& context,
+                                                           const std::string& position,
+                                                           const std::string& summary,
+                                                           bool forceRepeat,
+                                                           bool forceContext) {
+        m_accessibility.announceStructuredFocus(context, position, summary, forceRepeat, forceContext);
     });
 
     m_progressDialog = std::make_shared<ProgressDialog>();
@@ -1274,16 +1294,18 @@ void WiiUMenuApp::loadSoundPreset(const std::string& preset) {
     m_audio.loadSfx(Sfx::Volume,          sfxPath("sfx/volume.wav"));
 
     std::string musicDir = musicBase + "/music";
-    DIR* dir = opendir(musicDir.c_str());
-    if (dir) {
+    std::error_code ec;
+    if (std::filesystem::is_directory(musicDir, ec)) {
         std::vector<std::string> tracks;
-        struct dirent* entry;
-        while ((entry = readdir(dir)) != nullptr) {
-            std::string name = entry->d_name;
+        ec.clear();
+        for (const auto& entry : std::filesystem::directory_iterator(musicDir, ec)) {
+            if (ec)
+                break;
+
+            std::string name = entry.path().filename().string();
             if (name.size() > 4 && name.substr(name.size() - 4) == ".mp3")
                 tracks.push_back(name);
         }
-        closedir(dir);
         std::sort(tracks.begin(), tracks.end(), [](const std::string& left, const std::string& right) {
             const bool leftIsHome = (left == "home.mp3");
             const bool rightIsHome = (right == "home.mp3");
@@ -1327,28 +1349,27 @@ void WiiUMenuApp::changeSoundPreset(const std::string& preset) {
 std::vector<std::string> WiiUMenuApp::scanAvailablePresets() {
     std::vector<std::string> presets;
     std::string soundsDir = std::string(SD_ASSETS) + "/sounds";
-    DIR* dir = opendir(soundsDir.c_str());
-    if (!dir) return presets;
+    std::error_code ec;
+    for (const auto& entry : std::filesystem::directory_iterator(soundsDir, ec)) {
+        if (ec)
+            break;
 
-    struct dirent* entry;
-    while ((entry = readdir(dir)) != nullptr) {
-        std::string name = entry->d_name;
-        if (name == "." || name == "..") continue;
+        std::string name = entry.path().filename().string();
         if (name != kBuiltInSoundPreset) continue;
 
-        std::string sub = soundsDir + "/" + name;
-        struct stat st;
-        if (stat(sub.c_str(), &st) != 0 || !S_ISDIR(st.st_mode)) continue;
+        std::string sub = entry.path().string();
+        if (!entry.is_directory(ec)) {
+            ec.clear();
+            continue;
+        }
 
         std::string sfxSub = sub + "/sfx";
         std::string musicSub = sub + "/music";
-        struct stat st2;
-        bool hasSfx = (stat(sfxSub.c_str(), &st2) == 0 && S_ISDIR(st2.st_mode));
-        bool hasMusic = (stat(musicSub.c_str(), &st2) == 0 && S_ISDIR(st2.st_mode));
+        bool hasSfx = directoryExists(sfxSub);
+        bool hasMusic = directoryExists(musicSub);
         if (hasSfx || hasMusic)
             presets.push_back(name);
     }
-    closedir(dir);
     std::sort(presets.begin(), presets.end());
     return presets;
 }
@@ -1604,6 +1625,26 @@ void WiiUMenuApp::onUpdate(float dt) {
     debugTouchBlocked = m_showDebugOverlay;
 #endif
 
+    if (handleAccessibilityToggleCombo()) {
+        m_plusExitPending = false;
+        m_plusExitPendingTimer = 0.f;
+    }
+
+    if (!app().input().isDown(nxui::Button::Plus) || !app().input().isDown(nxui::Button::Minus))
+        m_accessibilityToggleComboHeld = false;
+
+    if (m_plusExitPending) {
+        m_plusExitPendingTimer -= dt;
+        if (m_plusExitPendingTimer <= 0.f) {
+            m_plusExitPending = false;
+            m_plusExitPendingTimer = 0.f;
+#ifdef SWITCHU_HOMEBREW
+            m_audio.playSfx(Sfx::ModalHide);
+            app().requestExit();
+#endif
+        }
+    }
+
     if (!debugTouchBlocked
         && !m_launchAnim->isPlaying()
         && !(m_dialog && m_dialog->isActive())
@@ -1689,6 +1730,13 @@ std::vector<WiiUMenuApp::ActionHint> WiiUMenuApp::buildActionHints() {
         if (!icon.empty() && !label.empty())
             hints.push_back({icon, label});
     };
+    auto addVoiceControls = [&]() {
+        if (!m_config.accessibilityEnabled)
+            return;
+        add(buttonGlyph(nxui::Button::L), i18n.tr("hint.repeat", "Repeat"));
+        add(buttonGlyph(nxui::Button::Plus) + buttonGlyph(nxui::Button::Minus),
+            i18n.tr("hint.voice", "Voice"));
+    };
 
     if (m_launchAnim && m_launchAnim->isPlaying())
         return hints;
@@ -1696,7 +1744,7 @@ std::vector<WiiUMenuApp::ActionHint> WiiUMenuApp::buildActionHints() {
     if (m_dialog && m_dialog->isActive()) {
         add(buttonGlyph(nxui::Button::A), i18n.tr("hint.confirm", "Confirm"));
         add(buttonGlyph(nxui::Button::B), i18n.tr("hint.back", "Back"));
-        add(buttonGlyph(nxui::Button::L), i18n.tr("hint.repeat", "Repeat"));
+        addVoiceControls();
         return hints;
     }
 
@@ -1704,7 +1752,7 @@ std::vector<WiiUMenuApp::ActionHint> WiiUMenuApp::buildActionHints() {
         add(dpadGlyph(), i18n.tr("hint.navigate", "Navigate"));
         add(buttonGlyph(nxui::Button::A), i18n.tr("hint.select", "Select"));
         add(buttonGlyph(nxui::Button::B), i18n.tr("hint.back", "Back"));
-        add(buttonGlyph(nxui::Button::L), i18n.tr("hint.repeat", "Repeat"));
+        addVoiceControls();
         return hints;
     }
 
@@ -1713,7 +1761,7 @@ std::vector<WiiUMenuApp::ActionHint> WiiUMenuApp::buildActionHints() {
         add(buttonGlyph(nxui::Button::A), i18n.tr("hint.select", "Select"));
         add(buttonGlyph(nxui::Button::B), i18n.tr("hint.back", "Back"));
         add(buttonGlyph(nxui::Button::X), i18n.tr("hint.search", "Search"));
-        add(buttonGlyph(nxui::Button::L), i18n.tr("hint.repeat", "Repeat"));
+        addVoiceControls();
         return hints;
     }
 
@@ -1721,7 +1769,7 @@ std::vector<WiiUMenuApp::ActionHint> WiiUMenuApp::buildActionHints() {
         add(dpadGlyph(), i18n.tr("hint.navigate", "Navigate"));
         add(buttonGlyph(nxui::Button::A), i18n.tr("hint.select", "Select"));
         add(buttonGlyph(nxui::Button::B), i18n.tr("hint.back", "Back"));
-        add(buttonGlyph(nxui::Button::L), i18n.tr("hint.repeat", "Repeat"));
+        addVoiceControls();
         return hints;
     }
 
@@ -1729,7 +1777,7 @@ std::vector<WiiUMenuApp::ActionHint> WiiUMenuApp::buildActionHints() {
         add(dpadGlyph(), i18n.tr("hint.move", "Move"));
         add(buttonGlyph(nxui::Button::Y), i18n.tr("hint.place", "Place"));
         add(buttonGlyph(nxui::Button::B), i18n.tr("hint.cancel", "Cancel"));
-        add(buttonGlyph(nxui::Button::L), i18n.tr("hint.repeat", "Repeat"));
+        addVoiceControls();
         return hints;
     }
 
@@ -1774,7 +1822,7 @@ std::vector<WiiUMenuApp::ActionHint> WiiUMenuApp::buildActionHints() {
         add(buttonGlyph(nxui::Button::ZL), i18n.tr("hint.prev_page", "Prev page"));
         add(buttonGlyph(nxui::Button::ZR), i18n.tr("hint.next_page", "Next page"));
     }
-    add(buttonGlyph(nxui::Button::L), i18n.tr("hint.repeat", "Repeat"));
+    addVoiceControls();
 
     return hints;
 }
@@ -1792,7 +1840,7 @@ void WiiUMenuApp::renderActionHintBar(nxui::Renderer& ren) {
     constexpr float kPadY = 8.f;
     constexpr float kIconTextGap = 6.f;
     constexpr float kScreenMargin = 18.f;
-    constexpr int kMaxItems = 5;
+    constexpr int kMaxItems = 6;
 
     int count = std::min((int)hints.size(), kMaxItems);
     if (count <= 0)

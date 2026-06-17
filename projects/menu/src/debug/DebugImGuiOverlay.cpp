@@ -9,6 +9,7 @@
 #include <cfloat>
 #include <cstdio>
 #include <cstring>
+#include <fstream>
 #include <string>
 
 extern "C" int execvp(const char*, char* const[]) {
@@ -36,25 +37,29 @@ static void ortho(float* m, float width, float height) {
 }
 
 static bool loadShader(nxui::GpuDevice& gpu, dk::Shader& shader, const char* path) {
-    FILE* file = std::fopen(path, "rb");
-    if (!file) {
+    std::ifstream file(path, std::ios::binary | std::ios::ate);
+    if (!file.is_open()) {
         std::fprintf(stderr, "[DebugImGuiOverlay] failed to open shader %s\n", path);
         return false;
     }
 
-    std::fseek(file, 0, SEEK_END);
-    long size = std::ftell(file);
-    std::fseek(file, 0, SEEK_SET);
+    const std::streamoff size = file.tellg();
+    if (size <= 0) {
+        std::fprintf(stderr, "[DebugImGuiOverlay] invalid shader size for %s\n", path);
+        return false;
+    }
+    file.seekg(0, std::ios::beg);
 
-    uint32_t offset = gpu.codePool().alloc((uint32_t)size, DK_SHADER_CODE_ALIGNMENT);
+    uint32_t offset = gpu.codePool().alloc(static_cast<uint32_t>(size), DK_SHADER_CODE_ALIGNMENT);
     if (offset == UINT32_MAX) {
         std::fprintf(stderr, "[DebugImGuiOverlay] code pool allocation failed for %s\n", path);
-        std::fclose(file);
         return false;
     }
 
-    std::fread(gpu.codePool().cpuAddr(offset), 1, (size_t)size, file);
-    std::fclose(file);
+    if (!file.read(static_cast<char*>(gpu.codePool().cpuAddr(offset)), static_cast<std::streamsize>(size))) {
+        std::fprintf(stderr, "[DebugImGuiOverlay] failed to read shader %s\n", path);
+        return false;
+    }
 
     dk::ShaderMaker{gpu.codePool().block, offset}.initialize(shader);
     return true;

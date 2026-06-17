@@ -3,8 +3,8 @@
 #include <switchu/smi_helpers.hpp>
 #include <switch.h>
 
-#include <cstdio>
 #include <cstring>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -96,23 +96,21 @@ struct AppEntry {
 
 inline Result getAppList(std::vector<AppEntry>& outList, bool waitForDaemon = true) {
     outList.clear();
-    FILE* f = nullptr;
+    std::ifstream file;
     const int retries = waitForDaemon ? 20 : 1;
-    for (int retry = 0; retry < retries && !f; ++retry) {
-        f = std::fopen("sdmc:/config/SwitchU/applist.bin", "rb");
-        if (!f && waitForDaemon) svcSleepThread(50'000'000ULL);
+    for (int retry = 0; retry < retries && !file.is_open(); ++retry) {
+        file.open("sdmc:/config/SwitchU/applist.bin", std::ios::binary);
+        if (!file.is_open() && waitForDaemon) svcSleepThread(50'000'000ULL);
     }
-    if (!f) return MAKERESULT(Module_Libnx, 0xFE);
+    if (!file.is_open()) return MAKERESULT(Module_Libnx, 0xFE);
 
     uint32_t count = 0;
-    if (std::fread(&count, sizeof(count), 1, f) != 1) {
-        std::fclose(f);
+    if (!file.read(reinterpret_cast<char*>(&count), sizeof(count)))
         return MAKERESULT(Module_Libnx, 0xFD);
-    }
 
     for (uint32_t i = 0; i < count; ++i) {
         smi::AppEntryHeader eh{};
-        if (std::fread(&eh, sizeof(eh), 1, f) != 1) break;
+        if (!file.read(reinterpret_cast<char*>(&eh), sizeof(eh))) break;
 
         AppEntry ent{};
         ent.titleId = eh.title_id;
@@ -125,18 +123,17 @@ inline Result getAppList(std::vector<AppEntry>& outList, bool waitForDaemon = tr
 
         if (eh.name_len > 0) {
             ent.name.resize(eh.name_len);
-            if (std::fread(&ent.name[0], 1, eh.name_len, f) != eh.name_len) break;
+            if (!file.read(ent.name.data(), static_cast<std::streamsize>(eh.name_len))) break;
         }
 
         if (eh.icon_data_len > 0) {
             ent.icon.resize(eh.icon_data_len);
-            if (std::fread(ent.icon.data(), 1, eh.icon_data_len, f) != eh.icon_data_len) break;
+            if (!file.read(reinterpret_cast<char*>(ent.icon.data()), static_cast<std::streamsize>(eh.icon_data_len))) break;
         }
 
         outList.push_back(std::move(ent));
     }
 
-    std::fclose(f);
     return 0;
 }
 

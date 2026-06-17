@@ -1,8 +1,9 @@
 #include "Config.hpp"
-#include <sys/stat.h>
 #include <fstream>
 #include <algorithm>
+#include <filesystem>
 #include <nlohmann/json.hpp>
+#include <system_error>
 
 namespace {
 
@@ -64,8 +65,10 @@ bool AppConfig::load() {
 }
 
 bool AppConfig::save() const {
-    mkdir("sdmc:/config", 0777);
-    mkdir(kConfigDir, 0777);
+    std::error_code ec;
+    std::filesystem::create_directory("sdmc:/config", ec);
+    ec.clear();
+    std::filesystem::create_directory(kConfigDir, ec);
 
     nlohmann::json j;
     j["musicEnabled"] = musicEnabled;

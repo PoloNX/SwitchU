@@ -106,6 +106,8 @@ private:
     std::shared_ptr<GlossyIcon> makeIcon(const AppEntry& entry);
     void wireFocusCallback();
     void wireGlobalActions();
+    void toggleAccessibilitySpeech();
+    bool handleAccessibilityToggleCombo();
     bool isCurrentFocusableWidget(nxui::Widget* w) const;
     std::string accessibilityPositionFor(nxui::Widget* w) const;
     void createSettings();
@@ -258,6 +260,9 @@ private:
     float m_tutorialStartupFadeTimer = 0.f;
     bool  m_tutorialStartupFade = false;
     bool m_hintPanelInitialized = false;
+    bool m_accessibilityToggleComboHeld = false;
+    bool m_plusExitPending = false;
+    float m_plusExitPendingTimer = 0.f;
     nxui::AnimatedFloat m_hintPanelW{0.f};
     nxui::AnimatedFloat m_hintPanelH{0.f};
     nxui::AnimatedFloat m_hintContentReveal{1.f};

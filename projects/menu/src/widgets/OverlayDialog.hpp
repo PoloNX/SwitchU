@@ -32,6 +32,10 @@ public:
     void setFont(nxui::Font* f)         { m_font = f; }
     void setSmallFont(nxui::Font* f)    { m_smallFont = f; }
     void setTheme(const nxui::Theme* t) { m_theme = t; }
+    void setAccessibilitySpeechPreferences(bool speakHints, bool speakPosition) {
+        m_accessibilitySpeakHints = speakHints;
+        m_accessibilitySpeakPosition = speakPosition;
+    }
 
     void show(const std::string& title,
               const std::string& message,
@@ -52,6 +56,14 @@ public:
     void onCloseSfx(VoidCb cb)     { m_closeSfxCb = std::move(cb); }
     using StringCb = std::function<void(const std::string&)>;
     void onAccessibilityAnnouncement(StringCb cb) { m_accessibilityCb = std::move(cb); }
+    using AccessibilityStructuredCb = std::function<void(const std::string& context,
+                                                         const std::string& position,
+                                                         const std::string& summary,
+                                                         bool forceRepeat,
+                                                         bool forceContext)>;
+    void onAccessibilityStructuredAnnouncement(AccessibilityStructuredCb cb) {
+        m_accessibilityStructuredCb = std::move(cb);
+    }
 
     SelectionCursor& cursor() { return m_cursor; }
 
@@ -79,7 +91,11 @@ private:
     void cancel();
     void syncCursor();
     void syncUserCursor();
-    void announceCurrentSelection();
+    void announceCurrentSelection(bool forceRepeat = false, bool forceContext = false);
+    void currentAccessibilityParts(std::string& context,
+                                   std::string& position,
+                                   std::string& summary,
+                                   bool& forceRepeat) const;
     std::string currentAccessibilitySummary() const;
     void syncChildOpacities();
     void syncUserOpacities();
@@ -135,6 +151,10 @@ private:
     VoidCb         m_activateSfxCb;
     VoidCb         m_closeSfxCb;
     StringCb       m_accessibilityCb;
+    AccessibilityStructuredCb m_accessibilityStructuredCb;
+    bool m_accessibilitySpeakHints = true;
+    bool m_accessibilitySpeakPosition = true;
+    int  m_pendingInitialAccessibilityFrames = 0;
 
     int  m_touchHitButton  = -1;
     int  m_touchHitUser    = -1;

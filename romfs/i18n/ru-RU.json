@@ -2,7 +2,8 @@
   "common": {
     "auto": "Авто",
     "na": "Н/Д",
-    "active": "Активно"
+    "active": "Активно",
+    "disabled": "Выключено"
   },
   "sidebar": {
     "album": "Альбом",
@@ -11,7 +12,7 @@
     "controllers": "Контроллеры",
     "sleep": "Сон",
     "music": "Музыка",
-    "theme_shop": "Theme Shop"
+    "theme_shop": "Магазин тем"
   },
   "settings": {
     "tabs": {
@@ -25,7 +26,8 @@
       "music": "Музыка",
       "theme": "Тема",
       "storage": "Хранилище",
-      "about": "О программе"
+      "about": "О программе",
+      "accessibility": "Доступность"
     },
     "system": {
       "firmware": "Версия прошивки",
@@ -53,7 +55,9 @@
       "error_reporting": "Отправка ошибок",
       "default_profile": "Default Profile",
       "default_profile_desc": "Launch games with this profile when possible.",
-      "default_profile_ask": "Ask each time"
+      "default_profile_ask": "Ask each time",
+      "clock_12h": "12-часовой формат",
+      "clock_12h_desc": "Показывать время в 12-часовом формате."
     },
     "audio": {
       "speaker_auto_mute": "Автоматическое отключение динамиков",
@@ -94,7 +98,7 @@
       "ip_address": "IP-адрес",
       "not_connected": "Не подключено",
       "wifi": "WiFi",
-      "wifi_desc": "Включить или выключить WiFi-модуль.",
+      "wifi_desc": "Включить или выключить WiFi.",
       "auto_app_download": "Автоматическая загрузка приложений",
       "auto_app_download_desc": "Автоматически загружать обновления для установленных игр.",
       "mac_address": "MAC-адрес",
@@ -211,6 +215,21 @@
       "acknowledgements_desc": "Спасибо xortroll за помощь с проектом uLaunch и за поддержку и советы во время разработки.",
       "source_code": "Исходный код",
       "source_code_value": "github.com/PoloNX/SwitchU"
+    },
+    "accessibility": {
+      "voice": "Озвучивание",
+      "voice_desc": "Читает выбранный элемент и доступные действия.",
+      "voice_language": "Язык голоса",
+      "voice_language_desc": "Следует языку системы или интерфейса.",
+      "speech_rate": "Скорость речи",
+      "speech_rate_desc": "Меняет скорость озвучивания.",
+      "words_per_minute": "сл/мин",
+      "speak_hints": "Читать подсказки",
+      "speak_hints_desc": "Читает доступные действия после выбранного элемента.",
+      "repeat_context": "Всегда повторять место",
+      "repeat_context_desc": "Повторяет текущую область при каждом смещении фокуса.",
+      "speak_position": "Читать позицию",
+      "speak_position_desc": "Читает строку, столбец и позицию, если доступно."
     }
   },
   "userselect": {
@@ -265,89 +284,235 @@
   },
   "themeshop": {
     "source": {
-      "builtin": "Built-in",
-      "custom": "Custom",
-      "community": "Community",
-      "options": "Параметры",
-      "unknown": "Unknown"
+      "builtin": "Встроенный",
+      "custom": "Свой",
+      "community": "Сообщество",
+      "options": "Опции",
+      "unknown": "Неизвестно"
     },
     "tabs": {
-      "installed": "Installed",
-      "community": "Community",
-      "options": "Параметры"
+      "installed": "Установленные",
+      "community": "Сообщество",
+      "options": "Опции"
     },
     "search": {
-      "button": "Search",
-      "guide": "Search themes",
-      "unavailable": "Search keyboard is unavailable.",
-      "no_results": "No themes match this search.",
-      "no_results_hint": "Press X or use Search to change or clear the filter."
+      "button": "Поиск",
+      "guide": "Искать темы",
+      "unavailable": "Клавиатура поиска недоступна.",
+      "no_results": "Темы не найдены.",
+      "no_results_hint": "Нажмите X или Поиск, чтобы изменить или очистить фильтр."
     },
     "installed": {
-      "title": "Installed Theme Library",
-      "subtitle": "Your local themes in a gallery layout.",
-      "empty": "No installed themes found.",
-      "status": "Status",
-      "status_active": "Active",
-      "status_available": "Available",
-      "sound": "Bundled Sound Pack",
-      "sound_none": "None",
-      "remove_hint": "This theme can be removed from the console.",
-      "builtin_hint": "This is part of the built-in theme set.",
-      "apply": "Apply Theme",
-      "remove": "Remove Theme"
+      "title": "Установленные темы",
+      "subtitle": "Ваши локальные темы в виде галереи.",
+      "empty": "Установленных тем нет.",
+      "status": "Статус",
+      "status_active": "Активна",
+      "status_available": "Доступна",
+      "sound": "Встроенный набор звуков",
+      "sound_none": "Нет",
+      "remove_hint": "Эту тему можно удалить с консоли.",
+      "builtin_hint": "Эта тема входит в приложение.",
+      "apply": "Применить тему",
+      "remove": "Удалить тему"
     },
     "community": {
-      "title": "Browse Community Themes",
-      "subtitle": "A visual catalog, not a settings selector.",
-      "counter_loading": "Loading",
-      "refresh": "Refresh",
-      "refreshing": "Refreshing",
-      "loading": "Loading theme catalog...",
-      "catalog_empty": "No published themes are listed in the catalog.",
-      "catalog_failed": "The catalog could not be fetched. Use Refresh to try again.",
-      "empty_hint": "Add themes to the repository and they will appear here.",
-      "author_unknown": "Unknown",
-      "version": "Version",
-      "version_unknown": "Unknown",
-      "manifest": "Manifest",
-      "manifest_missing": "Not provided",
-      "cover_missing": "No screenshot has been declared for this theme yet.",
-      "cover_present": "Use Left/Right to browse screenshots and A for fullscreen.",
-      "cover_single": "Press A to open this screenshot in fullscreen.",
-      "cover_loading": "Loading theme screenshot...",
-      "cover_unavailable": "The screenshot could not be loaded. Placeholder shown instead.",
-      "install": "Install",
-      "download_apply": "Download + Apply",
-      "transfer_busy": "Another theme transfer is already running.",
-      "install_pending": "Install flow is not wired yet.",
-      "download_apply_pending": "Download + apply flow is not wired yet.",
-      "selected_missing": "The selected community theme is no longer available in the catalog.",
-      "overwrite_apply_title": "Replace And Apply Theme",
-      "overwrite_apply_message": "A package with this theme ID is already installed. Replace it with the GitHub version, then apply it?",
-      "overwrite_install_title": "Replace Installed Theme",
-      "overwrite_install_message": "A package with this theme ID is already installed. Replace it with the version from GitHub?"
+      "title": "Темы сообщества",
+      "subtitle": "Визуальный каталог, не страница настроек.",
+      "counter_loading": "Загрузка",
+      "refresh": "Обновить",
+      "refreshing": "Обновление",
+      "loading": "Загрузка каталога тем...",
+      "catalog_empty": "В каталоге нет опубликованных тем.",
+      "catalog_failed": "Не удалось загрузить каталог. Попробуйте Обновить.",
+      "empty_hint": "Добавьте темы в репозиторий, и они появятся здесь.",
+      "author_unknown": "Неизвестно",
+      "version": "Версия",
+      "version_unknown": "Неизвестно",
+      "manifest": "Манифест",
+      "manifest_missing": "Не указано",
+      "cover_missing": "Для этой темы нет скриншота.",
+      "cover_present": "Влево/вправо для скриншотов, A для полного экрана.",
+      "cover_single": "A открывает скриншот на весь экран.",
+      "cover_loading": "Загрузка скриншота темы...",
+      "cover_unavailable": "Скриншот не загружен. Показана заглушка.",
+      "install": "Установить",
+      "download_apply": "Скачать + применить",
+      "transfer_busy": "Передача темы уже идет.",
+      "install_pending": "Установка еще не подключена.",
+      "download_apply_pending": "Скачать + применить еще не подключено.",
+      "selected_missing": "Выбранной темы больше нет в каталоге.",
+      "overwrite_apply_title": "Заменить и применить тему",
+      "overwrite_apply_message": "Пакет с этим ID темы уже установлен. Заменить версией с GitHub и применить?",
+      "overwrite_install_title": "Заменить установленную тему",
+      "overwrite_install_message": "Пакет с этим ID темы уже установлен. Заменить версией с GitHub?"
     },
     "transfer": {
-      "prepare_apply": "Preparing download + apply...",
-      "prepare_install": "Preparing download + install...",
-      "unknown_error": "Unknown transfer error",
-      "dialog_title": "Загрузка темы",
-      "downloading": "Загрузка темы...",
-      "downloading_file": "Загрузка",
+      "prepare_apply": "Подготовка скачать + применить...",
+      "prepare_install": "Подготовка скачать + установить...",
+      "unknown_error": "Неизвестная ошибка передачи",
+      "dialog_title": "Скачивание темы",
+      "downloading": "Скачивание темы...",
+      "downloading_file": "Скачивание",
       "finalize_apply": "Завершение установки перед применением...",
       "finalize_install": "Завершение установки...",
       "installed_applying": "Тема установлена. Применение...",
-      "installed": "Theme installed.",
-      "installed_applied": "Theme installed and applied.",
-      "installed_apply_failed": "Theme installed, but it could not be applied automatically."
+      "installed": "Тема установлена.",
+      "installed_applied": "Тема установлена и применена.",
+      "installed_apply_failed": "Тема установлена, но не применена автоматически."
     },
     "preview": {
-      "loading": "Loading screenshot...",
-      "unavailable": "Screenshot unavailable",
-      "missing": "No screenshot",
-      "prev": "Prev",
-      "next": "Next"
+      "loading": "Загрузка скриншота...",
+      "unavailable": "Скриншот недоступен",
+      "missing": "Нет скриншота",
+      "prev": "Назад",
+      "next": "Далее"
+    },
+    "accessibility": {
+      "fullscreen_preview": "Полноэкранный просмотр",
+      "fullscreen_actions": "B, закрыть просмотр.",
+      "preview_area": "Просмотр",
+      "actions_area": "Действия",
+      "detail": "Детали",
+      "author": "Автор",
+      "detail_actions": "Влево и вправо меняют управление. A, подтвердить. B, назад.",
+      "search_refresh": "Поиск и обновление",
+      "search_bar": "Поиск",
+      "header_actions": "Влево и вправо для выбора. A, подтвердить. Вниз к сетке.",
+      "search_actions": "A, искать. Вниз к сетке.",
+      "pagination": "Страницы",
+      "pagination_actions": "Влево и вправо меняют кнопку. A, сменить страницу. Вверх к сетке.",
+      "no_theme": "Нет темы",
+      "grid_actions": "Крестовина для навигации. A, открыть детали. B, назад к вкладкам."
+    }
+  },
+  "hint": {
+    "repeat": "Повтор",
+    "voice": "Голос"
+  },
+  "accessibility": {
+    "speech": {
+      "enabled": "Озвучивание включено.",
+      "disabled": "Озвучивание выключено. Голосовая помощь завершена."
+    },
+    "context": {
+      "dialog": "Диалог",
+      "profile_selection": "Выбор профиля",
+      "settings": "Настройки",
+      "themes": "Темы",
+      "main_menu": "Главное меню",
+      "page": "страница",
+      "of": "из",
+      "left_sidebar": "Левая панель",
+      "right_sidebar": "Правая панель",
+      "user_profiles": "Профили пользователей"
+    },
+    "roles": {
+      "button": "кнопка",
+      "game": "игра",
+      "game_card": "игровая карта",
+      "slot": "ячейка",
+      "profile": "профиль",
+      "toggle": "переключатель",
+      "slider": "ползунок",
+      "selector": "выбор",
+      "progress": "прогресс",
+      "info": "информация",
+      "section": "раздел"
+    },
+    "hints": {
+      "open": "A, открыть.",
+      "open_user_page": "A, открыть страницу пользователя.",
+      "grid_empty": "Используйте крестовину, чтобы перейти к другой ячейке.",
+      "game_launchable": "A, запустить. X, опции. Y, переместить. ZL или ZR, сменить страницу.",
+      "game_blocked": "A, показать причину блокировки."
+    },
+    "actions": {
+      "edit_mode": "Крестовина выбирает новую позицию. Y, поставить. B, отмена.",
+      "empty_slot": "Крестовина для навигации. ZL или ZR, сменить страницу.",
+      "game_blocked": "A, показать причину. Y, переместить. ZL или ZR, сменить страницу.",
+      "game_launchable": "A, запустить. X, опции. Y, переместить. ZL или ZR, сменить страницу.",
+      "settings": "Вверх и вниз выбирают категорию. A или вправо, войти. B, закрыть.",
+      "themes": "Вверх и вниз для навигации. A, выбрать. B, закрыть.",
+      "dialog": "Влево и вправо меняют выбор. A, подтвердить. B, отмена."
+    },
+    "settings": {
+      "tab_prefix": "Вкладка",
+      "tab_actions": "A или вправо, войти. Вверх и вниз меняют вкладку. B, закрыть.",
+      "list_prefix": "Список",
+      "list_actions": "Вверх и вниз для выбора. A, подтвердить. B, закрыть список.",
+      "toggle_actions": "A, переключить. Влево, назад к вкладкам.",
+      "slider_actions": "Влево или вправо для настройки. B, назад к вкладкам.",
+      "selector_actions": "A или вправо открывает список. B, назад к вкладкам.",
+      "action_actions": "A выполняет действие. B, назад к вкладкам."
+    },
+    "value": {
+      "label": "Значение",
+      "percent": "процентов"
+    },
+    "position": {
+      "row": "строка",
+      "column": "столбец"
+    },
+    "move_mode": {
+      "enter": "Перемещение игры: ",
+      "placed": "Игра перемещена: ",
+      "cancelled": "Перемещение отменено: "
+    },
+    "grid": {
+      "empty_slot": "Пустая ячейка"
+    },
+    "user_profile": "Профиль пользователя"
+  },
+  "tutorial": {
+    "accessibility": {
+      "title": "Озвучивание",
+      "body": "Озвучивание доступно в этом меню. Оно может читать выбранный элемент и доступные действия.",
+      "objective": "Нажмите X, чтобы включить озвучивание на будущее. Нажмите A, чтобы продолжить без него.",
+      "enabled_announcement": "Озвучивание включено на будущее. Нажмите A, чтобы продолжить.",
+      "already_enabled_announcement": "Озвучивание уже включено на будущее.",
+      "disabled_announcement": "Озвучивание выключено. Звуки Animalese активны.",
+      "text_actions": "A, продолжить. B, пропустить."
+    },
+    "accessibility_settings": {
+      "title": "Доступность",
+      "body": "Параметры доступности находятся в Настройках, затем Доступность. Там можно настроить скорость, подсказки, место и позицию."
+    },
+    "welcome": {
+      "title": "Добро пожаловать в SwitchU",
+      "body": "Это короткое обучение покажет основные кнопки."
+    },
+    "navigation": {
+      "title": "Навигация",
+      "body": "Используйте крестовину или левый стик, чтобы перемещать фокус.",
+      "objective": "Переместите фокус на другой элемент."
+    },
+    "cursor": {
+      "title": "Фокус",
+      "body": "Светлая рамка показывает выбранный элемент."
+    },
+    "themes": {
+      "title": "Темы",
+      "body": "Темы меняют цвета, изображения и звуки. Откройте Темы на боковой панели, чтобы установить или применить стиль."
+    },
+    "support": {
+      "title": "Помощь",
+      "body": "Внизу слева показаны полезные кнопки для текущего экрана."
+    },
+    "confirm": {
+      "title": "Готово",
+      "body": "Можно начинать.",
+      "objective": "Нажмите A, чтобы подтвердить этот шаг."
+    },
+    "hints": {
+      "enable_voice": "Включить голос",
+      "disable_voice": "Выключить голос",
+      "voice_enabled": "Голос включен",
+      "continue": "Далее",
+      "reveal": "Показать",
+      "skip_step": "Пропустить шаг",
+      "skip_all": "Пропустить всё",
+      "test": "Тест"
     }
   }
 }
