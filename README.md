@@ -8,7 +8,7 @@
     <img src="https://img.shields.io/static/v1?label=license&message=GPLV3&labelColor=111111&color=0057da&style=for-the-badge" alt="License">
   </a>
   <a rel="VERSION" href="https://github.com/PoloNX/SwitchU/releases">
-    <img src="https://img.shields.io/static/v1?label=version&message=1.0.0&labelColor=111111&color=06f&style=for-the-badge" alt="Version">
+    <img src="https://img.shields.io/static/v1?label=version&message=1.1.0&labelColor=111111&color=06f&style=for-the-badge" alt="Version">
   </a>
   <a rel="BUILD" href="https://github.com/PoloNX/SwitchU/actions">
       <img src="https://img.shields.io/github/actions/workflow/status/PoloNX/SwitchU/switch.yml?branch=master &labelColor=111111&color=06f&style=for-the-badge" alt=Build>
