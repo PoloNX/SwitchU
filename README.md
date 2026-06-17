@@ -6,36 +6,24 @@
 <p align="center">
   <a rel="LICENSE" href="https://github.com/PoloNX/SwitchU/blob/master/LICENSE">
     <img src="https://img.shields.io/static/v1?label=license&message=GPLV3&labelColor=111111&color=0057da&style=for-the-badge" alt="License">
-    </a>
-    <a rel="VERSION" href="https://github.com/PoloNX/SwitchU/releases">
-        <img src="https://img.shields.io/static/v1?label=version&message=1.0.0&labelColor=111111&color=06f&style=for-the-badge" alt="Version">
-    </a>
+  </a>
+  <a rel="VERSION" href="https://github.com/PoloNX/SwitchU/releases">
+    <img src="https://img.shields.io/static/v1?label=version&message=1.0.0&labelColor=111111&color=06f&style=for-the-badge" alt="Version">
+  </a>
+  <a rel="BUILD" href="https://github.com/PoloNX/SwitchU/actions">
+      <img src="https://img.shields.io/github/actions/workflow/status/PoloNX/SwitchU/switch.yml?branch=master &labelColor=111111&color=06f&style=for-the-badge" alt=Build>
+  </a>
 </p>
 
 ---
 
 - [Features](#features)
-- [Architecture](#architecture)
 - [Screenshots](#screenshots)
 - [How to build](#how-to-build)
-- [SD card layout](#sd-card-layout)
 - [Help me](#help-me)
 - [Credits](#credits)
 - [License](#license)
 
-
-## Architecture
-
-- `switchu-daemon` (System Applet, title ID `0x0100000000001000`)
-  - Replaces qlaunch
-  - Handles lifecycle, HOME/suspend-resume flow, sleep/reboot and menu launch
-- `switchu-menu`
-  - Renders the full UI
-  - Stored as raw ExeFS under `sdmc:/switch/SwitchU/bin/menu`
-  - Registered by the daemon as external content for the Album library applet takeover
-  - Communicates with the daemon through AppletStorage
-- `SwitchU` (Homebrew mode)
-  - Monolithic `.nro` target for standalone usage/testing
 
 ## Screenshots
 
@@ -68,21 +56,14 @@ cd SwitchU
 ### Build (production daemon + external menu mode)
 
 ```bash
-xmake f -p cross --toolchain=devkita64
+xmake f -p cross --toolchain=devkita64 --homebrew=n --backend=deko3d
 xmake
 ```
 
 ### Build (homebrew .nro mode)
 
 ```bash
-xmake f -p cross --toolchain=devkita64 --homebrew=y
-xmake
-```
-
-### Build (SDL2 backend)
-
-```bash
-xmake f -p cross --toolchain=devkita64 --backend=sdl2
+xmake f -p cross --toolchain=devkita64 --homebrew=y --backend=deko3d
 xmake
 ```
 
@@ -97,17 +78,12 @@ Build outputs are generated under `build/cross/aarch64/<mode>/`.
 ## Know issues
 - Some settings are not implemented yet
 - Current icons are very ugly, feel free to replace them with better ones
-- SDL2 backend is very buggy and incomplete, use it for testing only
-- You may experience somme crash when using overlays
+- You may experience somme crash when using a lot of sysmodules. I tried to reduce the ram usage but I still get some instability when launching a game.
 
-## SD card layout
-
-- `sdmc:/config/SwitchU/config.json`: user settings
-- `sdmc:/config/SwitchU/applist.bin`: app metadata cache
-- `sdmc:/config/SwitchU/menu.log` and `sdmc:/config/SwitchU/daemon.log`: current runtime logs
-- `sdmc:/config/SwitchU/menu-*.log` and `sdmc:/config/SwitchU/daemon-*.log`: previous sessions kept on rotation
-- `sdmc:/switch/SwitchU/bin/menu/`: menu raw ExeFS (`main`, `main.npdm`)
-- `sdmc:/switch/SwitchU/`: menu assets in non-homebrew mode
+## TODO
+- Add a pannel when pressing + on a game to show more information about it
+- Add video in background for the home menu
+- Add a steamgriddb integration to get game banners and backgrounds
 
 ## Help me
 

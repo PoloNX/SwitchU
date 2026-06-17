@@ -23,7 +23,7 @@
 #include <memory>
 
 namespace {
-constexpr size_t kMenuAppletHeapSize = 296u * 1024u * 1024u;
+constexpr size_t kMenuAppletHeapSize = 224u * 1024u * 1024u;
 }
 
 extern "C" {

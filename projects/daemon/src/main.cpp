@@ -27,7 +27,7 @@ extern "C" {
     u32 __nx_applet_type = AppletType_SystemApplet;
     u32 __nx_fs_num_sessions = 3;
 
-    size_t __nx_heap_size = 0x1400000;
+    size_t __nx_heap_size = 0x800000;
 }
 
 extern "C" void __appInit(void) {
@@ -351,6 +351,8 @@ static bool rebuildAppCatalog(const char* reason, bool* outChanged = nullptr) {
     const bool ok = writeAppCatalogFile();
     switchu::FileLog::log("[catalog] rebuilt %d/%d apps reason=%s write=%d",
                           (int)g_appCatalog.size(), (int)count, reason, ok ? 1 : 0);
+    g_appCatalog.clear();
+    g_appCatalog.shrink_to_fit();
     if (outChanged)
         *outChanged = changed;
     return ok;
