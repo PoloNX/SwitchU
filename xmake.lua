@@ -5,7 +5,7 @@ add_repositories("switch-repo https://github.com/PoloNX/switch-repo.git")
 includes("toolchain/*.lua")
 add_rules("mode.debug", "mode.release")
 
-local version = "1.0.1"
+local version = "1.1.0"
 local version_define = string.format('SWITCHU_VERSION="%s"', version)
 
 set_version(version)
