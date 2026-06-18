@@ -1,8 +1,7 @@
 #pragma once
 #include <switch.h>
+#include <switchu/control_cache.hpp>
 #include <switchu/file_log.hpp>
-#include <cstdio>
-#include <cstring>
 
 namespace switchu::daemon::app {
 
@@ -14,10 +13,6 @@ static bool g_lastLaunchAcceptsUser = true;
 static bool g_lastLaunchNeedsUser = true;
 static uint8_t g_lastStartupUserAccount = 1;
 static uint8_t g_lastStartupUserAccountOption = 0;
-// Save-data pre-creation mirrors qlaunch/ulaunch behaviour.
-// The check-then-create path in ensureSaveData is safe: it tries to open first
-// and only calls fsCreateSaveDataFileSystem when the filesystem does not exist.
-static constexpr bool kEnableSaveDataEnsure = true;
 
 inline bool isRunning() { return g_running; }
 inline bool hasForeground() { return g_hasForeground; }
@@ -27,23 +22,12 @@ inline bool startupUserRequiresInteractiveSelection(uint8_t account, uint8_t opt
     return account == 1 && option == 0;
 }
 
-inline bool titleIdLooksStandardApplication(uint64_t title_id) {
-    return (title_id & 0xFF00000000000000ULL) == 0x0100000000000000ULL;
-}
-
-inline bool looksLikeHomebrewForwarder(uint64_t title_id) {
-    return title_id != 0 && !titleIdLooksStandardApplication(title_id);
-}
-
-inline bool suspendedTitleLooksLikeHomebrewForwarder() {
-    return g_running && looksLikeHomebrewForwarder(g_suspendedTitleId);
-}
-
 static inline void ensureSaveData(uint64_t app_id, uint64_t owner_id,
                                   AccountUid user_id, FsSaveDataType type,
                                   FsSaveDataSpaceId space_id,
                                   uint64_t save_size, uint64_t journal_size) {
-    if (save_size == 0) return;
+    if (save_size == 0)
+        return;
 
     FsSaveDataAttribute attr = {};
     attr.application_id = app_id;
@@ -52,94 +36,65 @@ static inline void ensureSaveData(uint64_t app_id, uint64_t owner_id,
     attr.save_data_rank = FsSaveDataRank_Primary;
 
     FsSaveDataCreationInfo cr = {};
-    cr.save_data_size = (s64)save_size;
-    cr.journal_size   = (s64)journal_size;
+    cr.save_data_size = static_cast<s64>(save_size);
+    cr.journal_size = static_cast<s64>(journal_size);
     cr.available_size = 0x4000;
-    cr.owner_id       = owner_id;
-    cr.save_data_space_id = (u8)space_id;
+    cr.owner_id = owner_id;
+    cr.save_data_space_id = static_cast<u8>(space_id);
 
     FsSaveDataMetaInfo meta = {};
-    if (type == FsSaveDataType_Bcat) {
-        meta.size = 0;
-        meta.type = FsSaveDataMetaType_None;
-    } else {
-        meta.size = 0x40060;
-        meta.type = FsSaveDataMetaType_Thumbnail;
-    }
+    meta.size = type == FsSaveDataType_Bcat ? 0 : 0x40060;
+    meta.type = type == FsSaveDataType_Bcat ? FsSaveDataMetaType_None
+                                            : FsSaveDataMetaType_Thumbnail;
 
     FsFileSystem fs;
     if (R_SUCCEEDED(fsOpenSaveDataFileSystem(&fs, space_id, &attr))) {
         fsFsClose(&fs);
-        switchu::FileLog::log("[app] ensureSaveData type=%d already exists (ok)", (int)type);
-    } else {
-        switchu::FileLog::log("[app] ensureSaveData type=%d creating (size=0x%lX journal=0x%lX)",
-                              (int)type, save_size, journal_size);
-        Result rc = fsCreateSaveDataFileSystem(&attr, &cr, &meta);
-        if (R_FAILED(rc))
-            switchu::FileLog::log("[app] ensureSaveData type=%d FAIL: 0x%X", (int)type, rc);
-        else
-            switchu::FileLog::log("[app] ensureSaveData type=%d created ok", (int)type);
-    }
-}
-
-static inline void ensureApplicationSaveData(uint64_t title_id, AccountUid uid) {
-    NsApplicationControlData* ctrl = new NsApplicationControlData();
-    if (!ctrl) return;
-
-    u64 got_size = 0;
-    Result rc = nsGetApplicationControlData(NsApplicationControlSource_Storage,
-                                            title_id, ctrl, sizeof(*ctrl), &got_size);
-    if (R_FAILED(rc)) {
-        switchu::FileLog::log("[app] GetControlData FAIL: 0x%X (save data not created)", rc);
-        delete ctrl;
         return;
     }
 
-    const NacpStruct& nacp = ctrl->nacp;
-    uint64_t owner = nacp.save_data_owner_id;
-    g_lastStartupUserAccount = nacp.startup_user_account;
-    g_lastStartupUserAccountOption = nacp.startup_user_account_option;
+    Result rc = fsCreateSaveDataFileSystem(&attr, &cr, &meta);
+    if (R_FAILED(rc))
+        switchu::FileLog::log("[app] ensureSaveData type=%d FAIL: 0x%X", static_cast<int>(type), rc);
+}
+
+static inline void ensureApplicationSaveData(uint64_t title_id, AccountUid uid) {
+    switchu::control_cache::Meta meta{};
+    if (!switchu::control_cache::readMeta(title_id, meta)) {
+        switchu::FileLog::log("[app] control cache missing for 0x%016lX; save data not precreated",
+                              title_id);
+        return;
+    }
+
+    g_lastStartupUserAccount = meta.startup_user_account;
+    g_lastStartupUserAccountOption = meta.startup_user_account_option;
     g_lastLaunchAcceptsUser = g_lastStartupUserAccount != 0;
     g_lastLaunchNeedsUser = startupUserRequiresInteractiveSelection(g_lastStartupUserAccount,
                                                                     g_lastStartupUserAccountOption);
 
-    switchu::FileLog::log("[app] NACP: startup_user=%u startup_user_option=%u accepts_user=%d needs_user=%d switch_lock=%u user_save=0x%lX device_save=0x%lX cache=0x%lX bcat=0x%lX",
-                          (unsigned)nacp.startup_user_account,
-                          (unsigned)nacp.startup_user_account_option,
-                          g_lastLaunchAcceptsUser ? 1 : 0,
-                          g_lastLaunchNeedsUser ? 1 : 0,
-                          (unsigned)nacp.user_account_switch_lock,
-                          nacp.user_account_save_data_size,
-                          nacp.device_save_data_size,
-                          nacp.cache_storage_size,
-                          nacp.bcat_delivery_cache_storage_size);
-
-    ensureSaveData(title_id, owner, uid,
+    ensureSaveData(title_id, meta.save_data_owner_id, uid,
                    FsSaveDataType_Account, FsSaveDataSpaceId_User,
-                   nacp.user_account_save_data_size,
-                   nacp.user_account_save_data_journal_size);
+                   meta.user_account_save_data_size,
+                   meta.user_account_save_data_journal_size);
 
     AccountUid emptyUid = {};
-    ensureSaveData(title_id, owner, emptyUid,
+    ensureSaveData(title_id, meta.save_data_owner_id, emptyUid,
                    FsSaveDataType_Device, FsSaveDataSpaceId_User,
-                   nacp.device_save_data_size,
-                   nacp.device_save_data_journal_size);
+                   meta.device_save_data_size,
+                   meta.device_save_data_journal_size);
 
-    ensureSaveData(title_id, owner, emptyUid,
+    ensureSaveData(title_id, meta.save_data_owner_id, emptyUid,
                    FsSaveDataType_Temporary, FsSaveDataSpaceId_Temporary,
-                   nacp.temporary_storage_size, 0);
+                   meta.temporary_storage_size, 0);
 
-    ensureSaveData(title_id, owner, emptyUid,
+    ensureSaveData(title_id, meta.save_data_owner_id, emptyUid,
                    FsSaveDataType_Cache, FsSaveDataSpaceId_User,
-                   nacp.cache_storage_size,
-                   nacp.cache_storage_journal_size);
+                   meta.cache_storage_size,
+                   meta.cache_storage_journal_size);
 
     ensureSaveData(title_id, 0x010000000000000C, emptyUid,
                    FsSaveDataType_Bcat, FsSaveDataSpaceId_User,
-                   nacp.bcat_delivery_cache_storage_size, 0x200000);
-
-    delete ctrl;
-    switchu::FileLog::log("[app] save data ensured for 0x%016lX", title_id);
+                   meta.bcat_delivery_cache_storage_size, 0x200000);
 }
 
 inline Result launch(uint64_t title_id, AccountUid uid) {
@@ -167,19 +122,11 @@ inline Result launch(uint64_t title_id, AccountUid uid) {
     else
         switchu::FileLog::log("[app] nsTouchApplication ok");
 
-    if (kEnableSaveDataEnsure) {
-        g_lastLaunchAcceptsUser = true;
-        g_lastLaunchNeedsUser = true;
-        g_lastStartupUserAccount = 1;
-        g_lastStartupUserAccountOption = 0;
-        ensureApplicationSaveData(title_id, uid);
-    } else {
-        g_lastLaunchAcceptsUser = true;
-        g_lastLaunchNeedsUser = true;
-        g_lastStartupUserAccount = 1;
-        g_lastStartupUserAccountOption = 0;
-        switchu::FileLog::log("[app] save data precreate skipped for 0x%016lX", title_id);
-    }
+    g_lastLaunchAcceptsUser = true;
+    g_lastLaunchNeedsUser = true;
+    g_lastStartupUserAccount = 1;
+    g_lastStartupUserAccountOption = 0;
+    ensureApplicationSaveData(title_id, uid);
 
     Result rc = appletCreateApplication(&g_app, title_id);
     if (R_FAILED(rc)) {

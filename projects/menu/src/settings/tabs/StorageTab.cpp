@@ -2,7 +2,7 @@
 #include <nxui/core/I18n.hpp>
 #include <switch.h>
 #ifdef SWITCHU_MENU
-#include <nxtc.h>
+#include <switchu/control_cache.hpp>
 #endif
 #include <algorithm>
 #include <cmath>
@@ -187,47 +187,18 @@ AppControlInfo queryApplicationControlInfo(uint64_t titleId) {
 #endif
 
 #ifdef SWITCHU_MENU
-    NxTitleCacheApplicationMetadata* meta = nxtcGetApplicationMetadataEntryById(titleId);
-    if (meta) {
-        if (meta->name && meta->name[0] != '\0')
-            info.title = meta->name;
-        else
-            info.title = std::string();
+    switchu::control_cache::Meta meta{};
+    if (switchu::control_cache::readMeta(titleId, meta)) {
+        if (meta.name[0] != '\0')
+            info.title = meta.name;
         info.state = AppState::Installed;
-        nxtcFreeApplicationMetadata(&meta);
         if (!info.title.empty())
             return info;
     }
 #endif
 
-    NsApplicationControlData controlData{};
-    size_t actualSize = 0;
-    if (R_SUCCEEDED(nsGetApplicationControlData(NsApplicationControlSource_Storage,
-                                               titleId,
-                                               &controlData,
-                                               sizeof(controlData),
-                                               &actualSize))) {
-        NacpLanguageEntry* entry = nullptr;
-        if (R_SUCCEEDED(nacpGetLanguageEntry(&controlData.nacp, &entry)) &&
-            entry && entry->name[0] != '\0') {
-            info.title = entry->name;
-        } else {
-            for (int i = 0; i < 16; ++i) {
-                if (controlData.nacp.lang[i].name[0] != '\0') {
-                    info.title = controlData.nacp.lang[i].name;
-                    break;
-                }
-            }
-        }
-        info.state = AppState::Installed;
-        if (info.title.empty()) {
-            info.title = fmt::format("{:016X}", titleId);
-        }
-        return info;
-    }
-
     info.title = fmt::format("{:016X}", titleId);
-    info.state = AppState::Corrupt;
+    info.state = AppState::Unknown;
     return info;
 }
 

@@ -342,9 +342,6 @@ void WiiUMenuApp::loadResources() {
     if (m_gameCardTex.loadFromFile(app().gpu(), app().renderer(), gameCardPath))
         m_loadedGameCardPath = gameCardPath;
 
-#ifdef SWITCHU_MENU
-    m_appLoader.setFastStartupUserInfo(m_launcher.suspendedTitleId() != 0);
-#endif
     m_appLoader.load(m_model, m_iconStreamer);
 }
 
@@ -802,14 +799,9 @@ std::shared_ptr<GlossyIcon> WiiUMenuApp::makeIcon(const AppEntry& entry) {
             };
             if (entry) {
                 if (!entry->startupUserKnown) {
-                    uint8_t account = 1;
-                    uint8_t option = 0;
-                    if (AppListLoader::queryStartupUserInfo(tid, account, option)) {
-                        entry->startupUserAccount = account;
-                        entry->startupUserAccountOption = option;
-                        entry->userRequired = (account == 1 && option == 0);
-                        entry->startupUserKnown = true;
-                    }
+                    entry->startupUserAccount = 1;
+                    entry->startupUserAccountOption = 0;
+                    entry->userRequired = true;
                 }
                 DebugLog::log("[launcher] user decision tid=%016lX startup_user=%u option=%u interactive_user=%d",
                               tid,
@@ -1394,7 +1386,6 @@ void WiiUMenuApp::refreshAppList() {
     m_asyncRefreshPending = true;
     m_refreshQueued = false;
 
-    m_appLoader.setFastStartupUserInfo(false);
     m_appLoader.startAsync(m_threadPool);
 }
 

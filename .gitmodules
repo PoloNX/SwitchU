@@ -1,6 +1,3 @@
-[submodule "lib/libnxtc"]
-	path = lib/libnxtc
-	url = https://github.com/PoloNX/libnxtc.git
 [submodule "lib/Atmosphere-libs"]
 	path = lib/Atmosphere-libs
 	url = https://github.com/Atmosphere-NX/Atmosphere-libs

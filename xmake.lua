@@ -75,22 +75,6 @@ target("nxui")
     end
 target_end()
 
-target("nxtc")
-    set_kind("static")
-    set_default(false)
-    if not is_plat("cross") then return end
-
-    set_toolchains("devkita64")
-
-    add_files("lib/libnxtc/source/*.c")
-    add_includedirs("lib/libnxtc/include", {public = true})
-    add_packages("zlib")
-
-    if is_mode("release") then
-        add_cflags("-O2", {force = true})
-    end
-target_end()
-
 target("espeak-ucd")
     set_kind("static")
     set_default(false)
@@ -176,7 +160,7 @@ target("SwitchU")
     set_languages("c++20")
     add_rules("switch")
 
-    add_deps("nxui", "nxtc")
+    add_deps("nxui")
     add_includedirs("projects/common/include", {public = false})
     add_includedirs("projects/menu/src", {public = false})
     add_files("projects/menu/src/**.cpp")
@@ -266,12 +250,11 @@ target("switchu-daemon")
     set_languages("c++20")
     add_rules("switch")
 
-    add_deps("nxtc", "atmosphere-stratosphere")
+    add_deps("atmosphere-stratosphere")
 
     add_files("projects/daemon/src/**.cpp")
 
     add_includedirs("projects/common/include", {public = false})
-    add_includedirs("lib/libnxtc/include")
     add_includedirs("lib/Atmosphere-libs/libstratosphere/include")
     add_includedirs("lib/Atmosphere-libs/libvapours/include")
 

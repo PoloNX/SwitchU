@@ -6,6 +6,15 @@
 namespace switchu::ns {
 
 
+struct ExtApplicationRecord {
+    uint64_t id;
+    uint8_t  last_event;
+    uint8_t  attributes;
+    uint8_t  reserved[6];
+    uint64_t last_updated;
+};
+static_assert(sizeof(ExtApplicationRecord) == sizeof(NsApplicationRecord));
+
 enum AppViewFlag : uint32_t {
     AppViewFlag_IsValid              = (1u << 0),
     AppViewFlag_HasMainContents      = (1u << 1),

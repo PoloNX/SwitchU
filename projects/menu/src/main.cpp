@@ -9,7 +9,6 @@
 #include <nxui/core/Renderer.hpp>
 #include <switchu/smi_protocol.hpp>
 #include <switchu/file_log.hpp>
-#include <nxtc.h>
 #endif
 #include <switch.h>
 #include <SDL2/SDL.h>
@@ -195,9 +194,6 @@ int main(int argc, char* argv[]) {
 #else
     DebugLog::log("[menu] main() entry");
 
-    if (!nxtcInitialize())
-        DebugLog::log("[menu] nxtc init failed (non-fatal)");
-
     auto startMode = readStartMode();
     auto sysStatus = readSystemStatus();
 
@@ -275,7 +271,6 @@ int main(int argc, char* argv[]) {
     DebugLog::closeFileLog();
 #endif
 #ifdef SWITCHU_MENU
-    nxtcExit();
     DebugLog::log("[menu] exit");
 #endif
     return 0;

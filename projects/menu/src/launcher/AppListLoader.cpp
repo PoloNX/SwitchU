@@ -3,12 +3,10 @@
 #include "smi_commands.hpp"
 #include <switch.h>
 #include <cstdio>
-#include <cstdlib>
-#include <cstring>
 #include <vector>
 #include <algorithm>
 #ifdef SWITCHU_MENU
-#include <nxtc.h>
+#include <switchu/control_cache.hpp>
 #include <switchu/ns_ext.hpp>
 #endif
 
@@ -19,26 +17,66 @@ bool requiresInteractiveUserSelection(uint8_t account, uint8_t option) {
 }
 
 #ifdef SWITCHU_MENU
-static NsApplicationControlData g_controlData;
+static constexpr s32 kMaxTrackedApplicationRecords = 1024;
+static constexpr s32 kApplicationRecordChunkCount = 30;
 
-struct StartupUserInfo {
-    uint8_t account = 1;
-    uint8_t option = 0;
-};
+bool listApplicationRecords(std::vector<switchu::ns::ExtApplicationRecord>& records) {
+    records.clear();
 
-StartupUserInfo queryStartupUserInfoImpl(uint64_t tid, StartupUserInfo fallback = {}) {
-    size_t controlSize = 0;
-    Result rc = nsGetApplicationControlData(NsApplicationControlSource_Storage, tid,
-                                            &g_controlData, sizeof(g_controlData), &controlSize);
-    if (R_FAILED(rc)) {
-        DebugLog::log("[loader] startup_user query failed tid=%016lX rc=0x%X",
-                      (unsigned long)tid, rc);
-        return fallback;
+    switchu::ns::ExtApplicationRecord chunk[kApplicationRecordChunkCount] = {};
+    s32 offset = 0;
+    while (offset < kMaxTrackedApplicationRecords) {
+        s32 readCount = 0;
+        Result rc = nsListApplicationRecord(
+            reinterpret_cast<NsApplicationRecord*>(chunk),
+            kApplicationRecordChunkCount,
+            offset,
+            &readCount);
+        if (R_FAILED(rc)) {
+            DebugLog::log("[loader] nsListApplicationRecord failed rc=0x%X offset=%d",
+                          rc, offset);
+            records.clear();
+            return false;
+        }
+        if (readCount <= 0)
+            break;
+
+        const s32 remaining = kMaxTrackedApplicationRecords - offset;
+        const s32 appendCount = readCount > remaining ? remaining : readCount;
+        records.insert(records.end(), chunk, chunk + appendCount);
+        offset += readCount;
+
+        if (readCount < kApplicationRecordChunkCount)
+            break;
     }
-    StartupUserInfo info{};
-    info.account = g_controlData.nacp.startup_user_account;
-    info.option = g_controlData.nacp.startup_user_account_option;
-    return info;
+
+    std::sort(records.begin(), records.end(),
+              [](const switchu::ns::ExtApplicationRecord& a,
+                 const switchu::ns::ExtApplicationRecord& b) {
+                  return a.id < b.id;
+              });
+    return true;
+}
+
+void queryApplicationViews(const std::vector<switchu::ns::ExtApplicationRecord>& records,
+                           std::vector<switchu::ns::ExtApplicationView>& views) {
+    views.clear();
+    if (records.empty())
+        return;
+
+    std::vector<uint64_t> tids(records.size());
+    for (size_t i = 0; i < records.size(); ++i)
+        tids[i] = records[i].id;
+
+    views.resize(records.size());
+    Result rc = switchu::ns::queryApplicationViews(
+        tids.data(),
+        static_cast<int>(tids.size()),
+        views.data());
+    if (R_FAILED(rc)) {
+        DebugLog::log("[loader] queryApplicationViews failed rc=0x%X", rc);
+        std::fill(views.begin(), views.end(), switchu::ns::ExtApplicationView{});
+    }
 }
 #endif
 
@@ -72,6 +110,19 @@ bool fetchDaemonCatalog(std::vector<PendingApp>& out) {
                          requiresInteractiveUserSelection(a.startupUserAccount,
                                                           a.startupUserAccountOption);
         a.iconData = std::move(ent.icon);
+
+        switchu::control_cache::Meta meta{};
+        if (switchu::control_cache::readMeta(ent.titleId, meta)) {
+            if (meta.name[0] != '\0')
+                a.title = meta.name;
+            a.startupUserKnown = true;
+            a.startupUserAccount = meta.startup_user_account;
+            a.startupUserAccountOption = meta.startup_user_account_option;
+            a.userRequired = requiresInteractiveUserSelection(a.startupUserAccount,
+                                                              a.startupUserAccountOption);
+            a.iconData = switchu::control_cache::readIcon(ent.titleId);
+        }
+
         out.push_back(std::move(a));
     }
 
@@ -110,20 +161,6 @@ void registerEntries(std::vector<PendingApp>& apps,
     }
 }
 
-}
-
-bool AppListLoader::queryStartupUserInfo(uint64_t titleId, uint8_t& account, uint8_t& option) {
-#ifdef SWITCHU_MENU
-    StartupUserInfo info = queryStartupUserInfoImpl(titleId);
-    account = info.account;
-    option = info.option;
-    return true;
-#else
-    (void)titleId;
-    account = 1;
-    option = 0;
-    return true;
-#endif
 }
 
 void AppListLoader::fetchApps() {
@@ -185,81 +222,51 @@ void AppListLoader::fetchApps() {
     return;
 #endif
 
-    NsApplicationRecord records[1024] = {};
-    s32 recordCount = 0;
-    nsListApplicationRecord(records, 1024, 0, &recordCount);
+    std::vector<switchu::ns::ExtApplicationRecord> records;
+    if (!listApplicationRecords(records))
+        return;
 
-    static switchu::ns::ExtApplicationView views[1024] = {};
-    {
-        uint64_t tids[1024];
-        for (int i = 0; i < recordCount && i < 1024; ++i)
-            tids[i] = records[i].application_id;
-        if (recordCount > 0)
-            switchu::ns::queryApplicationViews(tids, recordCount, views);
-    }
+    std::vector<switchu::ns::ExtApplicationView> views;
+    queryApplicationViews(records, views);
 
-    m_pending.reserve(recordCount);
+    m_pending.reserve(records.size());
 
-    for (int i = 0; i < recordCount; ++i) {
-        uint64_t tid = records[i].application_id;
+    for (size_t i = 0; i < records.size(); ++i) {
+        uint64_t tid = records[i].id;
         std::snprintf(tidBuf, sizeof(tidBuf), "%016lX", (unsigned long)tid);
 
         uint32_t vf = views[i].flags;
 
-        NxTitleCacheApplicationMetadata* meta = nxtcGetApplicationMetadataEntryById(tid);
-        if (meta) {
-            StartupUserInfo startup{};
+        switchu::control_cache::Meta meta{};
+        if (switchu::control_cache::readMeta(tid, meta)) {
             PendingApp a;
             a.id      = tidBuf;
-            a.title   = meta->name ? meta->name : "";
+            a.title   = meta.name;
             a.titleId = tid;
             a.viewFlags = vf;
-            a.startupUserKnown = !m_fastStartupUserInfo;
-            if (!m_fastStartupUserInfo)
-                startup = queryStartupUserInfoImpl(tid);
-            a.startupUserAccount = startup.account;
-            a.startupUserAccountOption = startup.option;
-            a.userRequired = requiresInteractiveUserSelection(startup.account, startup.option);
+            a.startupUserKnown = true;
+            a.startupUserAccount = meta.startup_user_account;
+            a.startupUserAccountOption = meta.startup_user_account_option;
+            a.userRequired = requiresInteractiveUserSelection(a.startupUserAccount,
+                                                              a.startupUserAccountOption);
+            a.iconData = switchu::control_cache::readIcon(tid);
             m_pending.push_back(std::move(a));
-            nxtcFreeApplicationMetadata(&meta);
             continue;
         }
 
-        size_t controlSize = 0;
-        Result rc = nsGetApplicationControlData(NsApplicationControlSource_Storage, tid,
-                                                &g_controlData, sizeof(g_controlData), &controlSize);
-        if (R_FAILED(rc)) continue;
-
-        NacpLanguageEntry* langEntry = nullptr;
-        rc = nacpGetLanguageEntry(&g_controlData.nacp, &langEntry);
-        if (R_FAILED(rc) || !langEntry || langEntry->name[0] == '\0') {
-            langEntry = nullptr;
-            for (int l = 0; l < 16; ++l) {
-                NacpLanguageEntry* e = &g_controlData.nacp.lang[l];
-                if (e->name[0] != '\0') { langEntry = e; break; }
-            }
-        }
-        if (!langEntry || langEntry->name[0] == '\0') continue;
-
-        size_t iconSize = controlSize - sizeof(NacpStruct);
-        nxtcAddEntry(tid, &g_controlData.nacp, iconSize,
-                     iconSize > 0 ? g_controlData.icon : nullptr, false);
-
         PendingApp a;
         a.id      = tidBuf;
-        a.title   = langEntry->name;
+        a.title   = tidBuf;
         a.titleId = tid;
         a.viewFlags = vf;
-        a.startupUserKnown = true;
-        a.startupUserAccount = g_controlData.nacp.startup_user_account;
-        a.startupUserAccountOption = g_controlData.nacp.startup_user_account_option;
+        a.startupUserKnown = false;
+        a.startupUserAccount = 1;
+        a.startupUserAccountOption = 0;
         a.userRequired = requiresInteractiveUserSelection(a.startupUserAccount, a.startupUserAccountOption);
         m_pending.push_back(std::move(a));
     }
-    nxtcFlushCacheFile();
 #endif
-    DebugLog::log("[loader] fetched %d apps (fast_startup_user=%d)",
-                  (int)m_pending.size(), m_fastStartupUserInfo ? 1 : 0);
+    DebugLog::log("[loader] fetched %d apps", (int)m_pending.size());
 }
 
 
@@ -269,24 +276,7 @@ std::vector<uint8_t> AppListLoader::loadIconData(uint64_t titleId) {
         return iconData;
 
 #ifdef SWITCHU_MENU
-    NxTitleCacheApplicationMetadata* meta = nxtcGetApplicationMetadataEntryById(titleId);
-    if (meta) {
-        if (meta->icon_data && meta->icon_size > 0) {
-            auto* ptr = static_cast<const uint8_t*>(meta->icon_data);
-            iconData.assign(ptr, ptr + meta->icon_size);
-        }
-        nxtcFreeApplicationMetadata(&meta);
-        if (!iconData.empty())
-            return iconData;
-    }
-
-    size_t controlSize = 0;
-    Result rc = nsGetApplicationControlData(NsApplicationControlSource_Storage, titleId,
-                                            &g_controlData, sizeof(g_controlData), &controlSize);
-    if (R_SUCCEEDED(rc) && controlSize > sizeof(NacpStruct)) {
-        const size_t iconSize = controlSize - sizeof(NacpStruct);
-        iconData.assign(g_controlData.icon, g_controlData.icon + iconSize);
-    }
+    iconData = switchu::control_cache::readIcon(titleId);
 #endif
 
     return iconData;

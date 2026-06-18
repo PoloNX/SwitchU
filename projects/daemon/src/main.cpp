@@ -2,16 +2,18 @@
 #include <switch.h>
 #include <switch/applets/friends_la.h>
 #include <cstdlib>
-#include <nxtc.h>
 #include <switchu/smi_protocol.hpp>
 #include <switchu/smi_helpers.hpp>
+#include <switchu/control_cache.hpp>
 #include <switchu/ns_ext.hpp>
 #include <switchu/file_log.hpp>
 #include "app_manager.hpp"
 #include "ecs.hpp"
 #include "menu_launcher.hpp"
+#include <cstdio>
 #include <cstring>
 #include <atomic>
+#include <mutex>
 #include <vector>
 #include <string>
 #include <utility>
@@ -22,6 +24,18 @@
 #include <system_error>
 
 using namespace switchu;
+
+static bool g_timeReady = false;
+static bool g_setsysReady = false;
+static bool g_setReady = false;
+static bool g_nsReady = false;
+static bool g_ldrShellReady = false;
+static bool g_accountReady = false;
+static bool g_nssuReady = false;
+static bool g_avmReady = false;
+static bool g_psmReady = false;
+static bool g_lblReady = false;
+static bool g_hidReady = false;
 
 extern "C" {
     u32 __nx_applet_type = AppletType_SystemApplet;
@@ -55,24 +69,72 @@ extern "C" void __appInit(void) {
     }
     svcOutputDebugString("[SwitchU-daemon] appletInitialize OK", 37);
 
-    timeInitialize();
-    setsysInitialize();
-    setInitialize();
+    rc = timeInitialize();
+    g_timeReady = R_SUCCEEDED(rc);
+    if (R_FAILED(rc))
+        svcOutputDebugString("[SwitchU-daemon] timeInitialize FAIL", 37);
 
-    {
+    rc = setsysInitialize();
+    g_setsysReady = R_SUCCEEDED(rc);
+    if (R_FAILED(rc))
+        svcOutputDebugString("[SwitchU-daemon] setsysInitialize FAIL", 39);
+
+    rc = setInitialize();
+    g_setReady = R_SUCCEEDED(rc);
+    if (R_FAILED(rc))
+        svcOutputDebugString("[SwitchU-daemon] setInitialize FAIL", 36);
+
+    if (g_setsysReady) {
         SetSysFirmwareVersion fw = {};
         if (R_SUCCEEDED(setsysGetFirmwareVersion(&fw)))
             hosversionSet(MAKEHOSVERSION(fw.major, fw.minor, fw.micro) | BIT(31));
     }
 
-    nsInitialize();
-    ldrShellInitialize();
-    accountInitialize(AccountServiceType_System);
-    nssuInitialize();
-    avmInitialize();
-    psmInitialize();
-    lblInitialize();
-    hidInitialize();
+    rc = nsInitialize();
+    if (R_FAILED(rc)) {
+        svcOutputDebugString("[SwitchU-daemon] nsInitialize FAIL", 35);
+        diagAbortWithResult(rc);
+    }
+    g_nsReady = true;
+
+    rc = ldrShellInitialize();
+    if (R_FAILED(rc)) {
+        svcOutputDebugString("[SwitchU-daemon] ldrShellInitialize FAIL", 41);
+        diagAbortWithResult(rc);
+    }
+    g_ldrShellReady = true;
+
+    rc = accountInitialize(AccountServiceType_System);
+    if (R_FAILED(rc)) {
+        svcOutputDebugString("[SwitchU-daemon] accountInitialize FAIL", 40);
+        diagAbortWithResult(rc);
+    }
+    g_accountReady = true;
+
+    rc = nssuInitialize();
+    g_nssuReady = R_SUCCEEDED(rc);
+    if (R_FAILED(rc))
+        svcOutputDebugString("[SwitchU-daemon] nssuInitialize FAIL", 37);
+
+    rc = avmInitialize();
+    g_avmReady = R_SUCCEEDED(rc);
+    if (R_FAILED(rc))
+        svcOutputDebugString("[SwitchU-daemon] avmInitialize FAIL", 36);
+
+    rc = psmInitialize();
+    g_psmReady = R_SUCCEEDED(rc);
+    if (R_FAILED(rc))
+        svcOutputDebugString("[SwitchU-daemon] psmInitialize FAIL", 36);
+
+    rc = lblInitialize();
+    g_lblReady = R_SUCCEEDED(rc);
+    if (R_FAILED(rc))
+        svcOutputDebugString("[SwitchU-daemon] lblInitialize FAIL", 36);
+
+    rc = hidInitialize();
+    g_hidReady = R_SUCCEEDED(rc);
+    if (R_FAILED(rc))
+        svcOutputDebugString("[SwitchU-daemon] hidInitialize FAIL", 36);
 
     rc = fsdevMountSdmc();
     if (R_FAILED(rc)) {
@@ -83,6 +145,18 @@ extern "C" void __appInit(void) {
 
     switchu::FileLog::open("daemon");
     switchu::FileLog::log("[daemon] __appInit complete (sd mount: 0x%X)", rc);
+    switchu::FileLog::log("[daemon] services time=%d setsys=%d set=%d ns=%d ldr=%d account=%d nssu=%d avm=%d psm=%d lbl=%d hid=%d",
+                          g_timeReady ? 1 : 0,
+                          g_setsysReady ? 1 : 0,
+                          g_setReady ? 1 : 0,
+                          g_nsReady ? 1 : 0,
+                          g_ldrShellReady ? 1 : 0,
+                          g_accountReady ? 1 : 0,
+                          g_nssuReady ? 1 : 0,
+                          g_avmReady ? 1 : 0,
+                          g_psmReady ? 1 : 0,
+                          g_lblReady ? 1 : 0,
+                          g_hidReady ? 1 : 0);
 
     svcOutputDebugString("[SwitchU-daemon] __appInit done", 31);
 }
@@ -91,17 +165,17 @@ extern "C" void __appExit(void) {
     switchu::FileLog::log("[daemon] __appExit");
     switchu::FileLog::close();
 
-    hidExit();
-    lblExit();
-    psmExit();
-    avmExit();
-    nssuExit();
-    accountExit();
-    ldrShellExit();
-    nsExit();
-    setExit();
-    setsysExit();
-    timeExit();
+    if (g_hidReady) hidExit();
+    if (g_lblReady) lblExit();
+    if (g_psmReady) psmExit();
+    if (g_avmReady) avmExit();
+    if (g_nssuReady) nssuExit();
+    if (g_accountReady) accountExit();
+    if (g_ldrShellReady) ldrShellExit();
+    if (g_nsReady) nsExit();
+    if (g_setReady) setExit();
+    if (g_setsysReady) setsysExit();
+    if (g_timeReady) timeExit();
 
     appletExit();
     fsdevUnmountAll();
@@ -123,6 +197,9 @@ static s32      g_lastRecordCount = 0;
 static uint64_t g_lastRecordTids[1024] = {};
 static uint32_t g_lastViewFlags[1024]  = {};
 
+static constexpr s32 kMaxTrackedApplicationRecords = 1024;
+static constexpr s32 kApplicationRecordChunkCount = 30;
+
 struct DaemonAppCatalogEntry {
     uint64_t titleId = 0;
     uint32_t viewFlags = 0;
@@ -130,15 +207,17 @@ struct DaemonAppCatalogEntry {
     uint8_t startupUserAccount = 1;
     uint8_t startupUserAccountOption = 0;
     std::string name;
-    std::vector<uint8_t> icon;
 };
 
 static std::vector<DaemonAppCatalogEntry> g_appCatalog;
 static std::atomic<bool> g_appCatalogRefreshPending{false};
 static int g_appCatalogRefreshDelay = 0;
-static NsApplicationControlData g_catalogControlData;
 static constexpr const char* kAppCatalogPath = "sdmc:/config/SwitchU/applist.bin";
 static constexpr const char* kAppCatalogTmpPath = "sdmc:/config/SwitchU/applist.tmp";
+static std::mutex g_controlCacheQueueMutex;
+static std::vector<uint64_t> g_controlCacheQueue;
+static std::atomic<bool> g_controlCacheRefreshPending{false};
+static std::atomic<int> g_controlCacheRefreshDelay{0};
 
 enum class ActionType : uint32_t {
     LaunchApplication,
@@ -170,34 +249,90 @@ static bool shouldDeferViewPolling() {
            !g_foregroundAppletActive;
 }
 
-static bool getCatalogNameFromControlData(const NacpStruct& nacp, std::string& outName) {
-    NacpLanguageEntry* langEntry = nullptr;
-    Result rc = nacpGetLanguageEntry(const_cast<NacpStruct*>(&nacp), &langEntry);
-    if (R_FAILED(rc) || !langEntry || langEntry->name[0] == '\0') {
-        langEntry = nullptr;
-        for (int l = 0; l < 16; ++l) {
-            auto* e = const_cast<NacpLanguageEntry*>(&nacp.lang[l]);
-            if (e->name[0] != '\0') {
-                langEntry = e;
-                break;
-            }
-        }
-    }
-    if (!langEntry || langEntry->name[0] == '\0')
-        return false;
+static bool listApplicationRecords(std::vector<switchu::ns::ExtApplicationRecord>& records,
+                                   const char* tag) {
+    records.clear();
 
-    const size_t len = strnlen(langEntry->name, sizeof(langEntry->name));
-    if (len == 0)
-        return false;
-    outName.assign(langEntry->name, len);
+    switchu::ns::ExtApplicationRecord chunk[kApplicationRecordChunkCount] = {};
+    s32 offset = 0;
+    while (offset < kMaxTrackedApplicationRecords) {
+        s32 readCount = 0;
+        Result rc = nsListApplicationRecord(
+            reinterpret_cast<NsApplicationRecord*>(chunk),
+            kApplicationRecordChunkCount,
+            offset,
+            &readCount);
+        if (R_FAILED(rc)) {
+            switchu::FileLog::log("[%s] nsListApplicationRecord FAIL: 0x%X offset=%d",
+                                  tag, rc, offset);
+            records.clear();
+            return false;
+        }
+        if (readCount <= 0)
+            break;
+
+        const s32 remaining = kMaxTrackedApplicationRecords - offset;
+        const s32 appendCount = readCount > remaining ? remaining : readCount;
+        records.insert(records.end(), chunk, chunk + appendCount);
+        offset += readCount;
+
+        if (readCount < kApplicationRecordChunkCount)
+            break;
+    }
+
+    std::sort(records.begin(), records.end(),
+              [](const switchu::ns::ExtApplicationRecord& a,
+                 const switchu::ns::ExtApplicationRecord& b) {
+                  return a.id < b.id;
+              });
     return true;
 }
 
-static bool assignCString(std::string& out, const char* value) {
-    if (!value || value[0] == '\0')
+static bool queryApplicationViews(const std::vector<switchu::ns::ExtApplicationRecord>& records,
+                                  std::vector<switchu::ns::ExtApplicationView>& views,
+                                  const char* tag) {
+    views.clear();
+    if (records.empty())
+        return true;
+
+    std::vector<uint64_t> tids(records.size());
+    for (size_t i = 0; i < records.size(); ++i)
+        tids[i] = records[i].id;
+
+    views.resize(records.size());
+    Result rc = switchu::ns::queryApplicationViews(
+        tids.data(),
+        static_cast<int>(tids.size()),
+        views.data());
+    if (R_FAILED(rc)) {
+        switchu::FileLog::log("[%s] queryApplicationViews FAIL: 0x%X", tag, rc);
+        std::fill(views.begin(), views.end(), switchu::ns::ExtApplicationView{});
         return false;
-    out.assign(value, strnlen(value, 0x400));
-    return !out.empty();
+    }
+
+    return true;
+}
+
+static void enqueueControlCacheRecords(const std::vector<switchu::ns::ExtApplicationRecord>& records) {
+    std::lock_guard<std::mutex> lock(g_controlCacheQueueMutex);
+    for (const auto& record : records) {
+        if (record.id == 0 || switchu::control_cache::hasMeta(record.id))
+            continue;
+        if (std::find(g_controlCacheQueue.begin(), g_controlCacheQueue.end(), record.id) ==
+            g_controlCacheQueue.end()) {
+            g_controlCacheQueue.push_back(record.id);
+        }
+    }
+}
+
+static bool popControlCacheTitle(uint64_t& outTitleId) {
+    std::lock_guard<std::mutex> lock(g_controlCacheQueueMutex);
+    if (g_controlCacheQueue.empty())
+        return false;
+
+    outTitleId = g_controlCacheQueue.front();
+    g_controlCacheQueue.erase(g_controlCacheQueue.begin());
+    return true;
 }
 
 static bool writeAppCatalogFile() {
@@ -220,7 +355,7 @@ static bool writeAppCatalogFile() {
         smi::AppEntryHeader eh{};
         eh.title_id = ent.titleId;
         eh.name_len = static_cast<uint32_t>(ent.name.size());
-        eh.icon_data_len = static_cast<uint32_t>(ent.icon.size());
+        eh.icon_data_len = 0;
         eh.view_flags = ent.viewFlags;
         eh.startup_user_account = ent.startupUserAccount;
         eh.startup_user_account_option = ent.startupUserAccountOption;
@@ -229,8 +364,6 @@ static bool writeAppCatalogFile() {
         ok = static_cast<bool>(f.write(reinterpret_cast<const char*>(&eh), sizeof(eh)));
         if (ok && eh.name_len > 0)
             ok = static_cast<bool>(f.write(ent.name.data(), static_cast<std::streamsize>(eh.name_len)));
-        if (ok && eh.icon_data_len > 0)
-            ok = static_cast<bool>(f.write(reinterpret_cast<const char*>(ent.icon.data()), static_cast<std::streamsize>(eh.icon_data_len)));
     }
 
     f.close();
@@ -257,82 +390,35 @@ static bool writeAppCatalogFile() {
 }
 
 static bool rebuildAppCatalog(const char* reason, bool* outChanged = nullptr) {
-    NsApplicationRecord records[1024] = {};
-    s32 recordCount = 0;
-    Result listRc = nsListApplicationRecord(records, 1024, 0, &recordCount);
-    if (R_FAILED(listRc)) {
-        switchu::FileLog::log("[catalog] nsListApplicationRecord FAIL: 0x%X (%s)",
-                              listRc, reason);
+    std::vector<switchu::ns::ExtApplicationRecord> records;
+    if (!listApplicationRecords(records, "catalog"))
         return false;
-    }
 
-    const s32 count = recordCount > 1024 ? 1024 : recordCount;
-    std::sort(records, records + count, [](const NsApplicationRecord& a,
-                                           const NsApplicationRecord& b) {
-        return a.application_id < b.application_id;
-    });
+    std::vector<switchu::ns::ExtApplicationView> views;
+    queryApplicationViews(records, views, "catalog");
+    enqueueControlCacheRecords(records);
 
-    static switchu::ns::ExtApplicationView views[1024] = {};
-    std::memset(views, 0, sizeof(views));
-    if (count > 0) {
-        uint64_t tids[1024];
-        for (s32 i = 0; i < count; ++i)
-            tids[i] = records[i].application_id;
-        Result viewRc = switchu::ns::queryApplicationViews(tids, count, views);
-        if (R_FAILED(viewRc))
-            switchu::FileLog::log("[catalog] queryApplicationViews FAIL: 0x%X", viewRc);
-    }
-
+    const s32 count = static_cast<s32>(records.size());
     g_appCatalog.clear();
     g_appCatalog.reserve(count);
 
     for (s32 i = 0; i < count; ++i) {
-        const uint64_t tid = records[i].application_id;
+        const uint64_t tid = records[i].id;
         DaemonAppCatalogEntry ent;
         ent.titleId = tid;
         ent.viewFlags = views[i].flags;
-
-        NxTitleCacheApplicationMetadata* meta = nxtcGetApplicationMetadataEntryById(tid);
-        if (meta) {
-            assignCString(ent.name, meta->name);
-            nxtcFreeApplicationMetadata(&meta);
-        }
-
-        size_t controlSize = 0;
-        Result controlRc = nsGetApplicationControlData(NsApplicationControlSource_Storage,
-                                                       tid, &g_catalogControlData,
-                                                       sizeof(g_catalogControlData),
-                                                       &controlSize);
-        if (R_SUCCEEDED(controlRc) && controlSize >= sizeof(NacpStruct)) {
-            ent.startupUserKnown = true;
-            ent.startupUserAccount = g_catalogControlData.nacp.startup_user_account;
-            ent.startupUserAccountOption = g_catalogControlData.nacp.startup_user_account_option;
-
-            if (ent.name.empty())
-                getCatalogNameFromControlData(g_catalogControlData.nacp, ent.name);
-
-            if (controlSize > sizeof(NacpStruct)) {
-                const size_t iconSize = controlSize - sizeof(NacpStruct);
-                ent.icon.assign(g_catalogControlData.icon,
-                                g_catalogControlData.icon + iconSize);
-            }
-
-        } else {
-            switchu::FileLog::log("[catalog] control data unavailable tid=0x%016lX rc=0x%X size=%zu",
-                                  tid, controlRc, controlSize);
-        }
-
-        if (!ent.name.empty())
-            g_appCatalog.push_back(std::move(ent));
+        char fallbackName[17] = {};
+        std::snprintf(fallbackName, sizeof(fallbackName), "%016lX",
+                      static_cast<unsigned long>(tid));
+        ent.name = fallbackName;
+        g_appCatalog.push_back(std::move(ent));
     }
-
-    nxtcFlushCacheFile();
 
     const s32 prevCount = g_lastRecordCount;
     bool changed = prevCount != count;
     if (!changed) {
         for (s32 i = 0; i < count; ++i) {
-            if (g_lastRecordTids[i] != records[i].application_id) {
+            if (g_lastRecordTids[i] != records[i].id) {
                 changed = true;
                 break;
             }
@@ -340,10 +426,10 @@ static bool rebuildAppCatalog(const char* reason, bool* outChanged = nullptr) {
     }
     g_lastRecordCount = count;
     for (s32 i = 0; i < count; ++i) {
-        g_lastRecordTids[i] = records[i].application_id;
+        g_lastRecordTids[i] = records[i].id;
         g_lastViewFlags[i] = views[i].flags;
     }
-    for (s32 i = count; i < prevCount && i < 1024; ++i) {
+    for (s32 i = count; i < prevCount && i < kMaxTrackedApplicationRecords; ++i) {
         g_lastRecordTids[i] = 0;
         g_lastViewFlags[i] = 0;
     }
@@ -402,6 +488,9 @@ static void pushNotification(smi::MenuMessage msg,
 }
 
 static bool queryBatteryStatus(uint8_t& percent, PsmChargerType& chargerType) {
+    if (!g_psmReady)
+        return false;
+
     u32 charge = 100;
     Result chargeRc = psmGetBatteryChargePercentage(&charge);
     if (R_FAILED(chargeRc)) {
@@ -526,27 +615,14 @@ static void openMenuFromHome(const char* source) {
 }
 
 static bool sendViewFlagsUpdates() {
-    NsApplicationRecord records[1024] = {};
-    s32 recordCount = 0;
-    nsListApplicationRecord(records, 1024, 0, &recordCount);
+    std::vector<switchu::ns::ExtApplicationRecord> records;
+    if (!listApplicationRecords(records, "views"))
+        return false;
 
-    const s32 count = recordCount > 1024 ? 1024 : recordCount;
-    std::sort(records, records + count, [](const NsApplicationRecord& a,
-                                           const NsApplicationRecord& b) {
-        return a.application_id < b.application_id;
-    });
+    std::vector<switchu::ns::ExtApplicationView> views;
+    queryApplicationViews(records, views, "views");
 
-    static switchu::ns::ExtApplicationView views[1024] = {};
-    if (count > 0) {
-        uint64_t tids[1024];
-        for (s32 i = 0; i < count; ++i)
-            tids[i] = records[i].application_id;
-        Result rc = switchu::ns::queryApplicationViews(tids, count, views);
-        if (R_FAILED(rc)) {
-            switchu::FileLog::log("[views] queryApplicationViews FAIL: 0x%X", rc);
-            std::memset(views, 0, sizeof(views));
-        }
-    }
+    const s32 count = static_cast<s32>(records.size());
 
     if (count != g_lastRecordCount) {
         const s32 prevCount = g_lastRecordCount;
@@ -554,10 +630,10 @@ static bool sendViewFlagsUpdates() {
                               g_lastRecordCount, count);
 
         for (s32 i = 0; i < count; ++i) {
-            g_lastRecordTids[i] = records[i].application_id;
+            g_lastRecordTids[i] = records[i].id;
             g_lastViewFlags[i]  = views[i].flags;
         }
-        for (s32 i = count; i < prevCount && i < 1024; ++i) {
+        for (s32 i = count; i < prevCount && i < kMaxTrackedApplicationRecords; ++i) {
             g_lastRecordTids[i] = 0;
             g_lastViewFlags[i]  = 0;
         }
@@ -571,17 +647,17 @@ static bool sendViewFlagsUpdates() {
         uint32_t newFlags = views[i].flags;
         uint32_t oldFlags = 0;
         for (s32 j = 0; j < g_lastRecordCount; ++j) {
-            if (g_lastRecordTids[j] == records[i].application_id) {
+            if (g_lastRecordTids[j] == records[i].id) {
                 oldFlags = g_lastViewFlags[j];
                 break;
             }
         }
         if (newFlags != oldFlags) {
             pushNotification(smi::MenuMessage::AppViewFlagsUpdate,
-                             records[i].application_id, newFlags);
+                             records[i].id, newFlags);
             ++pushed;
         }
-        g_lastRecordTids[i] = records[i].application_id;
+        g_lastRecordTids[i] = records[i].id;
         g_lastViewFlags[i]  = newFlags;
     }
     g_lastRecordCount = count;
@@ -1059,6 +1135,13 @@ static void mainLoop() {
             didWork = true;
         }
     }
+    if (g_controlCacheRefreshPending.load() && g_controlCacheRefreshDelay.load() > 0) {
+        --g_controlCacheRefreshDelay;
+    } else if (g_controlCacheRefreshPending.exchange(false)) {
+        if (daemon::menu_la::isActive())
+            pushNotification(smi::MenuMessage::AppRecordsChanged);
+        didWork = true;
+    }
     if (g_eventPollsRemaining > 0 && shouldDeferViewPolling()) {
         g_eventPollCountdown = 20;
     } else if (g_eventPollsRemaining > 0 && --g_eventPollCountdown == 0) {
@@ -1158,12 +1241,16 @@ static void eventManagerThreadFunc(void* arg) {
 
     PsmSession psmSession{};
     bool hasPsmEvent = false;
-    rc = psmBindStateChangeEvent(&psmSession, true, true, true);
-    if (R_SUCCEEDED(rc)) {
-        hasPsmEvent = true;
-        switchu::FileLog::log("[event] registered PSM state change event");
+    if (g_psmReady) {
+        rc = psmBindStateChangeEvent(&psmSession, true, true, true);
+        if (R_SUCCEEDED(rc)) {
+            hasPsmEvent = true;
+            switchu::FileLog::log("[event] registered PSM state change event");
+        } else {
+            switchu::FileLog::log("[event] psmBindStateChangeEvent FAIL: 0x%X", rc);
+        }
     } else {
-        switchu::FileLog::log("[event] psmBindStateChangeEvent FAIL: 0x%X", rc);
+        switchu::FileLog::log("[event] PSM unavailable; battery events disabled");
     }
 
     while (g_eventRunning.load()) {
@@ -1245,17 +1332,112 @@ static void stopEventManager() {
     switchu::FileLog::log("[event] thread stopped");
 }
 
+static Thread g_controlCacheThread = {};
+static std::atomic<bool> g_controlCacheRunning{false};
+static bool g_controlCacheStarted = false;
+
+static void controlCacheThreadFunc(void* arg) {
+    (void)arg;
+    switchu::FileLog::log("[control-cache] thread alive");
+    switchu::control_cache::ensureDirectory();
+
+    while (g_controlCacheRunning.load()) {
+        uint64_t titleId = 0;
+        if (!popControlCacheTitle(titleId)) {
+            svcSleepThread(100'000'000ULL);
+            continue;
+        }
+
+        if (titleId == 0 || switchu::control_cache::hasMeta(titleId))
+            continue;
+
+        auto* controlData = new NsApplicationControlData();
+        if (!controlData) {
+            switchu::FileLog::log("[control-cache] alloc FAIL title=0x%016lX", titleId);
+            svcSleepThread(250'000'000ULL);
+            continue;
+        }
+
+        size_t controlSize = 0;
+        const uint64_t startTick = armGetSystemTick();
+        Result rc = nsGetApplicationControlData(NsApplicationControlSource_Storage,
+                                                titleId,
+                                                controlData,
+                                                sizeof(*controlData),
+                                                &controlSize);
+        const uint64_t elapsedMs = armTicksToNs(armGetSystemTick() - startTick) / 1'000'000ULL;
+        if (R_SUCCEEDED(rc) && controlSize >= sizeof(NacpStruct)) {
+            const bool ok = switchu::control_cache::writeFromControlData(
+                titleId,
+                *controlData,
+                controlSize);
+            switchu::FileLog::log("[control-cache] cached 0x%016lX size=%zu elapsed=%lums ok=%d",
+                                  titleId,
+                                  controlSize,
+                                  static_cast<unsigned long>(elapsedMs),
+                                  ok ? 1 : 0);
+            if (ok) {
+                g_controlCacheRefreshPending.store(true);
+                g_controlCacheRefreshDelay.store(60);
+            }
+        } else {
+            switchu::FileLog::log("[control-cache] GetControlData FAIL title=0x%016lX rc=0x%X size=%zu elapsed=%lums",
+                                  titleId,
+                                  rc,
+                                  controlSize,
+                                  static_cast<unsigned long>(elapsedMs));
+        }
+
+        delete controlData;
+        svcSleepThread(10'000'000ULL);
+    }
+
+    switchu::FileLog::log("[control-cache] thread exiting");
+}
+
+static Result startControlCacheWorker() {
+    g_controlCacheRunning.store(true);
+    Result rc = threadCreate(&g_controlCacheThread, controlCacheThreadFunc, nullptr,
+                             nullptr, 0x10000, 0x2D, -2);
+    if (R_FAILED(rc)) {
+        switchu::FileLog::log("[control-cache] threadCreate FAIL: 0x%X", rc);
+        return rc;
+    }
+
+    rc = threadStart(&g_controlCacheThread);
+    if (R_FAILED(rc)) {
+        switchu::FileLog::log("[control-cache] threadStart FAIL: 0x%X", rc);
+        threadClose(&g_controlCacheThread);
+        return rc;
+    }
+
+    switchu::FileLog::log("[control-cache] thread started");
+    g_controlCacheStarted = true;
+    return 0;
+}
+
+static void stopControlCacheWorker() {
+    if (!g_controlCacheStarted)
+        return;
+    g_controlCacheRunning.store(false);
+    threadWaitForExit(&g_controlCacheThread);
+    threadClose(&g_controlCacheThread);
+    g_controlCacheStarted = false;
+    switchu::FileLog::log("[control-cache] thread stopped");
+}
+
 int main(int argc, char* argv[]) {
     switchu::FileLog::log("[daemon] main() entry");
 
     appletLoadAndApplyIdlePolicySettings();
 
-    if (!nxtcInitialize())
-        switchu::FileLog::log("[daemon] nxtc init failed (non-fatal)");
-
     rebuildAppCatalog("boot");
 
-    Result rc = startEventManager();
+    Result rc = startControlCacheWorker();
+    if (R_FAILED(rc))
+        switchu::FileLog::log("[daemon] control cache worker failed: 0x%X (non-fatal)", rc);
+
+    rc = startEventManager();
     if (R_FAILED(rc))
         switchu::FileLog::log("[daemon] event manager failed: 0x%X (non-fatal)", rc);
 
@@ -1270,10 +1452,9 @@ int main(int argc, char* argv[]) {
     }
 
     stopEventManager();
+    stopControlCacheWorker();
     daemon::menu_la::terminate();
     daemon::app::cleanup();
-    nxtcExit();
-
     switchu::FileLog::log("[daemon] shutdown complete");
     return 0;
 }
