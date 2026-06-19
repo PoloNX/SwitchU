@@ -1249,8 +1249,13 @@ void WiiUMenuApp::loadSoundPreset(const std::string& preset) {
         }
     }
 
-    if (base.empty())
-        base = std::string(SD_ASSETS) + "/sounds/" + effectivePreset;
+    if (base.empty()) {
+        if (isPackageSoundPreset(effectivePreset)) {
+            base = installedThemePathFromPackagePreset(effectivePreset);
+        } else {
+            base = std::string(SD_ASSETS) + "/sounds/" + effectivePreset;
+        }
+    }
     DebugLog::log("[audio] Loading preset '%s' from %s", effectivePreset.c_str(), base.c_str());
 
     const bool hasCustomSfx = directoryExists(base + "/sfx");
