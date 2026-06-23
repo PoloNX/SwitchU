@@ -13,6 +13,11 @@ constexpr int kFloatingRenderedShapeBudget = 160;
 constexpr int kDenseRenderCopyThreshold = 96;
 constexpr float kPi = 3.14159265358979323846f;
 constexpr float kHalfPi = kPi * 0.5f;
+constexpr float kShapeBodyAlphaMin = 0.84f;
+constexpr float kShapeBodyAlphaMax = 0.92f;
+constexpr float kShapeHighlightAlpha = 0.18f;
+constexpr float kFloatingShapeEdgeAlpha = 0.11f;
+constexpr float kGridShapeEdgeAlpha = 0.08f;
 
 float degreesToRadians(float degrees) {
     return degrees * kPi / 180.f;
@@ -214,7 +219,7 @@ void WaraWaraBackground::regenerate(int count) {
             s.rotSpeed = randomRange(m_config.rotationSpeed * 0.35f, m_config.rotationSpeed);
             if (std::rand() % 2) s.rotSpeed = -s.rotSpeed;
         }
-        s.glassAlpha = randomRange(0.05f, 0.16f) * m_config.opacity;
+        s.glassAlpha = randomRange(kShapeBodyAlphaMin, kShapeBodyAlphaMax) * m_config.opacity;
         s.color = nxui::Color::white().withAlpha(s.glassAlpha);
     }
 }
@@ -328,12 +333,14 @@ void WaraWaraBackground::drawGlassShape(nxui::Renderer& ren, const Shape& s) con
     Shape highlight = s;
     highlight.pos.y -= s.size * 0.08f;
     highlight.size   = s.size * 0.85f;
-    nxui::Color hi = nxui::Color(1.f, 1.f, 1.f, a * 0.35f);
+    const float effectAlpha = m_config.opacity * m_opacity;
+    nxui::Color hi = nxui::Color(1.f, 1.f, 1.f, kShapeHighlightAlpha * effectAlpha);
     drawRoundedShape(ren, highlight, hi);
 
     Shape edge = s;
     edge.size = s.size * 1.06f;
-    nxui::Color edgeC = nxui::Color(1.f, 1.f, 1.f, a * 0.15f);
+    const float edgeAlpha = (m_config.layout == Layout::Grid) ? kGridShapeEdgeAlpha : kFloatingShapeEdgeAlpha;
+    nxui::Color edgeC = nxui::Color(1.f, 1.f, 1.f, edgeAlpha * effectAlpha);
     drawRoundedShape(ren, edge, edgeC);
 }
 
@@ -410,4 +417,3 @@ void WaraWaraBackground::drawRoundedShape(nxui::Renderer& ren, const Shape& s, c
     default: break;
     }
 }
-
