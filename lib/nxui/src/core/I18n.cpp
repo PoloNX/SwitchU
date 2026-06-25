@@ -282,9 +282,8 @@ bool I18n::loadJsonMapFromFile(const std::string& path,
     return parser.parse();
 }
 
-static std::vector<std::string> scanI18nLanguageTags() {
+static std::vector<std::string> scanI18nLanguageTags(const std::string& basePath) {
     std::vector<std::string> tags;
-    const char* basePath = "romfs:/i18n";
     std::error_code ec;
     for (const auto& entry : std::filesystem::directory_iterator(basePath, ec)) {
         if (ec)
@@ -304,7 +303,10 @@ static std::vector<std::string> scanI18nLanguageTags() {
 }
 
 std::vector<std::string> I18n::supportedLanguageTags() {
-    std::vector<std::string> tags = scanI18nLanguageTags();
+    std::vector<std::string> tags = scanI18nLanguageTags(instance().m_basePath);
+    if (tags.empty() && instance().m_basePath != "romfs:/i18n")
+        tags = scanI18nLanguageTags("romfs:/i18n");
+
     tags.erase(std::remove_if(tags.begin(), tags.end(), [](const std::string& tag) {
         return tag == "auto";
     }), tags.end());
