@@ -450,7 +450,6 @@ static bool writeAppCatalogFile() {
 
     fsEc.clear();
     std::filesystem::remove(kAppCatalogBackupPath, fsEc);
-
     return true;
 }
 
