@@ -458,15 +458,18 @@ static bool rebuildAppCatalog(const char* reason, bool* outChanged = nullptr) {
     std::vector<switchu::ns::ExtApplicationRecord> records;
     if (!listApplicationRecords(records, "catalog"))
         return false;
+    enqueueControlCacheRecords(records);
 
     std::vector<switchu::ns::ExtApplicationView> views;
     queryApplicationViews(records, views, "catalog");
-    enqueueControlCacheRecords(records);
 
     const s32 count = static_cast<s32>(records.size());
     g_appCatalog.clear();
     g_appCatalog.reserve(count);
 
+    // Resolve display name and startup-user policy here, on the daemon, so the
+    // menu can build its grid straight from applist.bin. Otherwise every menu
+    // cold start reopens one .meta file per installed title.
     for (s32 i = 0; i < count; ++i) {
         const uint64_t tid = records[i].id;
         DaemonAppCatalogEntry ent;
