@@ -4108,6 +4108,14 @@ void WiiUMenuApp::finalizeRefresh() {
         focusManager().invalidateWidget(icon.get());
         m_grid->focusManager().invalidateWidget(icon.get());
     }
+    // The focus managers were not the only ones holding these. Edit mode keeps
+    // two raw icon pointers and dereferences both without checking -- cancelEdit
+    // calls setOpacity on one and clearActions on the other -- so a refresh
+    // arriving mid-drag leaves those calls reading a freed vtable, the same way
+    // changeFocusTo did. m_dialogReturnFocus needs nothing: it is checked
+    // against the live grid by isCurrentFocusableWidget before it is used.
+    m_editBoundIcon = nullptr;
+    m_editSourceIcon = nullptr;
     m_model = std::move(refreshedModel);
 
     std::vector<std::shared_ptr<GlossyIcon>> icons;
