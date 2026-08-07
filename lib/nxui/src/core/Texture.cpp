@@ -98,6 +98,23 @@ bool Texture::loadFromPixels(GpuDevice& gpu, Renderer& ren,
             if (oldSlot >= 0)
                 ren.releaseTextureSlot(oldSlot);
             std::printf("[Texture] allocImageMemory FAILED (%dx%d) — GPU budget exhausted\n", w, h);
+            // Two things had to be put right here, and both of them showed up
+            // as a crash rather than as a missing texture.
+            //
+            // The old block is gone: it was destroyed by the assignment above,
+            // and freeImageMemory already gave its bytes back. m_image still
+            // described it, and m_valid still said true from the load that
+            // succeeded before, so the next frame drew a texture whose memory
+            // no longer existed -- deko3d answers that with svcBreak, which is
+            // the User Break in the crash reports.
+            //
+            // m_allocSize still held the old size too, so the next attempt
+            // would hand those same bytes back a second time. The budget walks
+            // downwards from there and stops bounding anything, which is how a
+            // console with enough icons reaches real exhaustion.
+            m_valid = false;
+            m_slot = -1;
+            m_allocSize = 0;
             return false;
         }
         m_allocSize = needed;
@@ -108,6 +125,8 @@ bool Texture::loadFromPixels(GpuDevice& gpu, Renderer& ren,
     if (!gpu.uploadTexture(m_image, rgba, w * h * 4, w, h)) {
         m_slot = oldSlot;
         std::printf("[Texture] uploadTexture FAILED (%dx%d)\n", w, h);
+        // Half a texture is worse than none: it can still be bound and drawn.
+        m_valid = false;
         return false;
     }
 
@@ -120,6 +139,8 @@ bool Texture::loadFromPixels(GpuDevice& gpu, Renderer& ren,
         m_slot = ren.registerTexture(view);
         if (m_slot < 0) {
             std::printf("[Texture] registerTexture FAILED (%dx%d) — descriptor pool full\n", w, h);
+            // Half a texture is worse than none: it can still be bound and drawn.
+            m_valid = false;
             return false;
         }
     }
@@ -147,6 +168,8 @@ bool Texture::loadFromPixelsPooled(GpuDevice& gpu, Renderer& ren,
     auto alloc = gpu.allocImageFromPool(layout.getSize(), layout.getAlignment());
     if (!alloc.valid()) {
         std::printf("[Texture] pool alloc FAILED (%dx%d) — budget exhausted\n", w, h);
+        // Half a texture is worse than none: it can still be bound and drawn.
+        m_valid = false;
         return false;
     }
     // m_mem stays empty — pool owns the memory.
@@ -154,6 +177,8 @@ bool Texture::loadFromPixelsPooled(GpuDevice& gpu, Renderer& ren,
 
     if (!gpu.uploadTexture(m_image, rgba, w * h * 4, w, h)) {
         std::printf("[Texture] uploadTexture FAILED (%dx%d)\n", w, h);
+        // Half a texture is worse than none: it can still be bound and drawn.
+        m_valid = false;
         return false;
     }
 
@@ -161,6 +186,8 @@ bool Texture::loadFromPixelsPooled(GpuDevice& gpu, Renderer& ren,
     m_slot = ren.registerTexture(view);
     if (m_slot < 0) {
         std::printf("[Texture] registerTexture FAILED (%dx%d) — descriptor pool full\n", w, h);
+        // Half a texture is worse than none: it can still be bound and drawn.
+        m_valid = false;
         return false;
     }
     m_valid = true;
@@ -172,6 +199,8 @@ bool Texture::loadFromFile(GpuDevice& gpu, Renderer& ren, const std::string& pat
     uint8_t* data = stbi_load(path.c_str(), &w, &h, &ch, 4);
     if (!data) {
         std::printf("[Texture] stbi_load FAILED: %s\n", path.c_str());
+        // Half a texture is worse than none: it can still be bound and drawn.
+        m_valid = false;
         return false;
     }
     if (maxSide > 0 && (w > maxSide || h > maxSide)) {

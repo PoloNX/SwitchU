@@ -340,6 +340,25 @@ void GpuDevice::resetImagePool() {
 bool GpuDevice::uploadTexture(dk::Image& dst, const void* pixels, uint32_t size,
                               uint32_t w, uint32_t h)
 {
+    // deko3d does not report a bad upload, it calls svcBreak: a crash report
+    // resolving to dk::detail::RaiseError under ImageLayout::calcLevelOffset is
+    // what that looks like, and one arrived from a 1TB card where the menu had
+    // uploaded a great many icons. Nothing here checked the arguments first, so
+    // a zero-sized or mismatched upload took the process with it instead of
+    // failing. These are the cases that can be caught without asking deko3d.
+    if (!pixels || size == 0 || w == 0 || h == 0) {
+        std::fprintf(stderr,
+                     "[GpuDevice] refusing texture upload %ux%u size=%u pixels=%p\n",
+                     w, h, size, pixels);
+        return false;
+    }
+    if (size < (uint64_t)w * h * 4) {
+        std::fprintf(stderr,
+                     "[GpuDevice] refusing texture upload %ux%u: %u bytes is short of %llu\n",
+                     w, h, size, (unsigned long long)((uint64_t)w * h * 4));
+        return false;
+    }
+
     if (m_uploadBatchActive) {
         const uint32_t stagingOffset = m_stagingPool.alloc(size, 256);
         if (stagingOffset == UINT32_MAX) {
