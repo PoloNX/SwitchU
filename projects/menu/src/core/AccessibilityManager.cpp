@@ -57,11 +57,26 @@ AccessibilityManager::~AccessibilityManager() {
 
 bool AccessibilityManager::initialize(bool enabled, const std::string& voice,
                                       const std::string& dataRoot) {
+    configure(enabled, voice);
+    return initializeConfigured(dataRoot, m_voice, m_speechRate);
+}
+
+void AccessibilityManager::configure(bool enabled, const std::string& voice) {
     m_enabled = enabled;
     m_voice = voiceForLanguageTag(voice);
     m_speechRate = clampSpeechRate(m_speechRate);
     m_lastAnnouncement.clear();
     m_lastFocusContext.clear();
+}
+
+bool AccessibilityManager::initializeConfigured(const std::string& dataRoot,
+                                                 const std::string& voice,
+                                                 int speechRate) {
+    if (m_initialized.load(std::memory_order_acquire))
+        return true;
+
+    std::string configuredVoice = voiceForLanguageTag(voice);
+    const int configuredRate = clampSpeechRate(speechRate);
 
     s_activeSynthTarget = this;
     espeak_SetSynthCallback(&AccessibilityManager::synthCallback);
@@ -89,23 +104,29 @@ bool AccessibilityManager::initialize(bool enabled, const std::string& voice,
         DebugLog::log("[accessibility] espeak-ng initialization failed");
         if (s_activeSynthTarget == this)
             s_activeSynthTarget = nullptr;
-        m_initialized = false;
+        m_initialized.store(false, std::memory_order_release);
         return false;
     }
     m_sampleRate = sampleRate;
-    m_initialized = true;
-    setVoiceForLanguageTag(m_voice);
-    setSpeechRate(m_speechRate);
+    const espeak_ERROR voiceResult = espeak_SetVoiceByName(configuredVoice.c_str());
+    if (voiceResult != EE_OK) {
+        DebugLog::log("[accessibility] espeak voice '%s' failed, falling back to en-us",
+                      configuredVoice.c_str());
+        configuredVoice = "en-us";
+        espeak_SetVoiceByName(configuredVoice.c_str());
+    }
+    espeak_SetParameter(espeakRATE, configuredRate, 0);
+    m_initialized.store(true, std::memory_order_release);
     DebugLog::log("[accessibility] espeak-ng initialized voice=%s rate=%d data=%s",
-                  m_voice.c_str(),
-                  sampleRate,
+                  configuredVoice.c_str(),
+                  configuredRate,
                   joinPath(usedRoot, "espeak-ng-data").c_str());
 
     return true;
 }
 
 void AccessibilityManager::shutdown() {
-    if (!m_initialized)
+    if (!m_initialized.load(std::memory_order_acquire))
         return;
 
     releaseCurrentSpeech();
@@ -113,7 +134,7 @@ void AccessibilityManager::shutdown() {
     espeak_Terminate();
     if (s_activeSynthTarget == this)
         s_activeSynthTarget = nullptr;
-    m_initialized = false;
+    m_initialized.store(false, std::memory_order_release);
     m_lastAnnouncement.clear();
     m_lastFocusContext.clear();
 }
@@ -130,7 +151,7 @@ void AccessibilityManager::setEnabled(bool enabled) {
 
 void AccessibilityManager::setSpeechRate(int wordsPerMinute) {
     m_speechRate = clampSpeechRate(wordsPerMinute);
-    if (m_initialized)
+    if (m_initialized.load(std::memory_order_acquire))
         espeak_SetParameter(espeakRATE, m_speechRate, 0);
 }
 
@@ -138,7 +159,7 @@ bool AccessibilityManager::setVoiceForLanguageTag(const std::string& languageTag
     const std::string voice = voiceForLanguageTag(languageTag);
     m_voice = voice;
 
-    if (!m_initialized)
+    if (!m_initialized.load(std::memory_order_acquire))
         return true;
 
     const espeak_ERROR result = espeak_SetVoiceByName(voice.c_str());
@@ -207,7 +228,7 @@ std::string AccessibilityManager::voiceForLanguageTag(const std::string& languag
 }
 
 void AccessibilityManager::announce(const std::string& text, bool interrupt, bool allowRepeat) {
-    if (!m_initialized || !m_enabled)
+    if (!m_initialized.load(std::memory_order_acquire) || !m_enabled)
         return;
 
     std::string spoken = trimSpaces(text);
@@ -236,7 +257,7 @@ void AccessibilityManager::announce(const std::string& text, bool interrupt, boo
 }
 
 void AccessibilityManager::announceAndDisable(const std::string& text) {
-    if (!m_initialized)
+    if (!m_initialized.load(std::memory_order_acquire))
         return;
     m_enabled = true;
     announce(text, true, true);

@@ -1,6 +1,7 @@
 #include "SettingsScreen.hpp"
 #include "tabs/TabBuilders.hpp"
 #include "core/DebugLog.hpp"
+#include "bluetooth/BluetoothManager.hpp"
 #include <nxui/core/I18n.hpp>
 #include <chrono>
 
@@ -43,6 +44,11 @@ void SettingsScreen::ensureTabLoaded(int tabIndex) {
         return;
     if (m_loadingTabs[static_cast<std::size_t>(tabIndex)])
         return;
+
+    if (tabIndex == 7 && !bluetooth::IsAvailable()) {
+        bluetooth::Initialize();
+        DebugLog::log("[settings] Bluetooth audio manager initialized on demand");
+    }
 
     m_tabs[static_cast<std::size_t>(tabIndex)] = makeLoadingTab(tabIndex);
     startAsyncTabLoad(tabIndex);
@@ -135,6 +141,11 @@ void SettingsScreen::prefetchOneTab() {
         if (idx >= m_loadedTabs.size() || idx >= m_loadingTabs.size())
             continue;
         if (m_loadedTabs[idx] || m_loadingTabs[idx])
+            continue;
+
+        // Keep the optional btmsys client out of the normal menu/application
+        // handoff. Initialize it only when the user explicitly visits the tab.
+        if (idx == 7 && idx != static_cast<std::size_t>(m_tabIndex))
             continue;
 
         if (idx != static_cast<std::size_t>(m_tabIndex))

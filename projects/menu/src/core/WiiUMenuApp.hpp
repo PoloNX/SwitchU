@@ -64,7 +64,7 @@ public:
     void setTutorialStartupFade(bool enabled);
 
 #ifdef SWITCHU_MENU
-    void setStartupStatus(const switchu::smi::SystemStatus& status);
+    void setStartupStatus(const switchu::smi::SystemStatus& status, bool fastReturn = false);
 #endif
 
     bool onCreate() override;
@@ -86,9 +86,11 @@ private:
     GridLayoutMetrics computeGridLayoutMetrics() const;
     void reflowHomeGrid();
     void buildGrid();
-    void buildUserAvatarBar();
+    void buildUserAvatarBar(bool loadImmediately = true);
+    void loadNextUserAvatar();
     void applyTheme();
     void applyThemeResources(const ThemePreset& preset);
+    void retryPendingBackgroundImage();
     void applyUiLanguage();
     void rebuildThemeFromColors();
     ThemePreset buildEffectiveThemePreset();
@@ -260,14 +262,23 @@ private:
     std::string m_loadedGameCardPath;
     std::string m_loadedBackgroundImagePath;
     bool m_backgroundImageLoaded      = false;
+    std::string m_pendingBackgroundImagePath;
+    int m_backgroundImageRetryFrames = 0;
+    int m_backgroundImageRetryAttempts = 0;
     bool m_forceThemeResourceReload   = false;
     std::uint64_t m_gameOptionsTitleId = 0;
     nxui::Widget* m_dialogReturnFocus = nullptr;
     bool m_dialogWasActive            = false;
     bool m_suppressNextNavigateSfx    = false;
     bool m_pendingNetConnect          = false;
-    int  m_deferredBluetoothInitFrames = 0;
     int  m_deferredInitialAssetFrames = 0;
+    int  m_deferredProfileFrames = 0;
+    std::vector<AccountUid> m_pendingProfileUids;
+    std::size_t m_pendingProfileIndex = 0;
+    std::future<void> m_accessibilityFuture;
+    bool m_accessibilityReady = false;
+    std::uint64_t m_fastReturnStartupTick = 0;
+    bool m_fastReturnRequested = false;
     std::future<void> m_themePackageTransferFuture;
     std::future<void> m_softwareDeleteFuture;
     Result m_softwareDeleteResult = 0;

@@ -16,6 +16,13 @@ bool requiresInteractiveUserSelection(uint8_t account, uint8_t option) {
     return account == 1 && option == 0;
 }
 
+bool isTitleIdFallback(const std::string& title, uint64_t titleId) {
+    char expected[17]{};
+    std::snprintf(expected, sizeof(expected), "%016lX",
+                  static_cast<unsigned long>(titleId));
+    return title == expected;
+}
+
 #ifdef SWITCHU_MENU
 static constexpr s32 kMaxTrackedApplicationRecords = 1024;
 static constexpr s32 kApplicationRecordChunkCount = 30;
@@ -80,10 +87,10 @@ void queryApplicationViews(const std::vector<switchu::ns::ExtApplicationRecord>&
 }
 #endif
 
-bool fetchDaemonCatalog(std::vector<PendingApp>& out) {
+bool fetchDaemonCatalog(std::vector<PendingApp>& out, bool prefetchIcons) {
 #ifdef SWITCHU_MENU
     std::vector<switchu::menu::smi_cmd::AppEntry> catalog;
-    Result rc = switchu::menu::smi_cmd::getAppList(catalog, true);
+    Result rc = switchu::menu::smi_cmd::getAppList(catalog, prefetchIcons);
     if (R_FAILED(rc) || catalog.empty()) {
         DebugLog::log("[loader] daemon catalog unavailable rc=0x%X count=%d",
                       rc, (int)catalog.size());
@@ -109,10 +116,17 @@ bool fetchDaemonCatalog(std::vector<PendingApp>& out) {
         a.userRequired = !ent.startupUserKnown ||
                          requiresInteractiveUserSelection(a.startupUserAccount,
                                                           a.startupUserAccountOption);
-        a.iconData = std::move(ent.icon);
+        if (prefetchIcons)
+            a.iconData = std::move(ent.icon);
 
+        // A freshly rebuilt daemon catalog already carries these fields. Older
+        // on-disk catalogs can still contain the title-id fallback, so repair
+        // only those incomplete entries without putting every metadata file
+        // back on the fast HOME-return path.
         switchu::control_cache::Meta meta{};
-        if (switchu::control_cache::readMeta(ent.titleId, meta)) {
+        const bool needsMetadata = prefetchIcons || isTitleIdFallback(a.title, ent.titleId)
+            || !a.startupUserKnown;
+        if (needsMetadata && switchu::control_cache::readMeta(ent.titleId, meta)) {
             if (meta.name[0] != '\0')
                 a.title = meta.name;
             a.startupUserKnown = true;
@@ -120,7 +134,8 @@ bool fetchDaemonCatalog(std::vector<PendingApp>& out) {
             a.startupUserAccountOption = meta.startup_user_account_option;
             a.userRequired = requiresInteractiveUserSelection(a.startupUserAccount,
                                                               a.startupUserAccountOption);
-            a.iconData = switchu::control_cache::readIcon(ent.titleId);
+            if (prefetchIcons)
+                a.iconData = switchu::control_cache::readIcon(ent.titleId);
         }
 
         if (!switchu::control_cache::isValidUtf8(a.title.c_str(), a.title.size() + 1)) {
@@ -139,6 +154,7 @@ bool fetchDaemonCatalog(std::vector<PendingApp>& out) {
     return true;
 #else
     (void)out;
+    (void)prefetchIcons;
     return false;
 #endif
 }
@@ -169,7 +185,7 @@ void registerEntries(std::vector<PendingApp>& apps,
 
 }
 
-void AppListLoader::fetchApps(std::vector<PendingApp>& output) {
+void AppListLoader::fetchApps(std::vector<PendingApp>& output, bool prefetchIcons) {
     char tidBuf[17];
     output.clear();
 
@@ -217,7 +233,7 @@ void AppListLoader::fetchApps(std::vector<PendingApp>& output) {
     DebugLog::log("[loader] generated %d dummy apps", kDummyCount);
 
 #else
-    if (fetchDaemonCatalog(output)) {
+    if (fetchDaemonCatalog(output, prefetchIcons)) {
         DebugLog::log("[loader] fetched %d apps via daemon catalog",
                       (int)output.size());
         return;
@@ -255,7 +271,8 @@ void AppListLoader::fetchApps(std::vector<PendingApp>& output) {
             a.startupUserAccountOption = meta.startup_user_account_option;
             a.userRequired = requiresInteractiveUserSelection(a.startupUserAccount,
                                                               a.startupUserAccountOption);
-            a.iconData = switchu::control_cache::readIcon(tid);
+            if (prefetchIcons)
+                a.iconData = switchu::control_cache::readIcon(tid);
             output.push_back(std::move(a));
             continue;
         }
@@ -291,7 +308,7 @@ std::vector<uint8_t> AppListLoader::loadIconData(uint64_t titleId) {
 
 void AppListLoader::load(GridModel& model, IconStreamer& streamer) {
     try {
-        fetchApps(m_pending);
+        fetchApps(m_pending, m_prefetchIcons);
     } catch (const std::exception& ex) {
         DebugLog::log("[loader] synchronous load failed: %s", ex.what());
         m_pending.clear();
@@ -318,9 +335,10 @@ void AppListLoader::startAsync(nxui::ThreadPool& pool) {
 
     auto state = std::make_shared<AsyncLoadState>();
     m_asyncState = state;
-    m_future = pool.submit([state]() {
+    const bool prefetchIcons = m_prefetchIcons;
+    m_future = pool.submit([state, prefetchIcons]() {
         try {
-            fetchApps(state->pending);
+            fetchApps(state->pending, prefetchIcons);
         } catch (...) {
             state->error = std::current_exception();
             state->pending.clear();

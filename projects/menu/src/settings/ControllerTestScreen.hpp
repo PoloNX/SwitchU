@@ -59,8 +59,8 @@ private:
     ActiveStick m_activeStick = ActiveStick::None;
     ActiveStick m_candidateStick = ActiveStick::None;
     float m_candidateTime = 0.f;
-    float m_smoothX = 0.f;
-    float m_smoothY = 0.f;
+    float m_stickX = 0.f;
+    float m_stickY = 0.f;
     bool m_recordingTouch = false;
     bool m_touchFullscreen = false;
     float m_bHoldTime = 0.f;

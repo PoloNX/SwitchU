@@ -748,14 +748,27 @@ void OverlayDialog::renderUserContent(nxui::Renderer& ren, float alpha) {
         float selected = (i == m_selected) ? 1.f : 0.f;
         float visualScale = 1.f + 0.08f * selected;
         nxui::Rect drawRect = scaledRect(avatar, visualScale);
+        const nxui::Color glassBase = m_theme
+            ? m_theme->iconDefault.withAlpha(m_theme->mode == nxui::ThemeMode::Dark ? 0.92f : 0.94f)
+            : nxui::Color(0.20f, 0.22f, 0.28f, 0.92f);
+        const nxui::Color glassBorder = m_theme
+            ? m_theme->panelBorder.withAlpha(0.38f)
+            : nxui::Color::white().withAlpha(0.28f);
+        const nxui::Color glassHighlight = m_theme
+            ? m_theme->panelHighlight.withAlpha(0.11f)
+            : nxui::Color::white().withAlpha(0.10f);
+        ren.drawFrostedInset(drawRect, glassBase, glassBorder, glassHighlight,
+                            drawRect.width * 0.5f, contentAlpha);
+
+        nxui::Rect imageRect = drawRect.shrunk(5.f * sc);
         if (m_users[(size_t)i].icon.valid()) {
             ren.drawTextureRounded(&m_users[(size_t)i].icon,
-                                   drawRect,
-                                   drawRect.width * 0.5f,
+                                   imageRect,
+                                   imageRect.width * 0.5f,
                                    nxui::Color::white().withAlpha(contentAlpha));
         } else {
-            float r = drawRect.width * 0.5f;
-            ren.drawCircle({drawRect.x + r, drawRect.y + r}, r,
+            float r = imageRect.width * 0.5f;
+            ren.drawCircle({imageRect.x + r, imageRect.y + r}, r,
                            textSecondary.withAlpha(0.35f * contentAlpha), 32);
         }
 

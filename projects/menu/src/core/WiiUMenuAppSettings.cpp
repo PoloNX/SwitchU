@@ -1053,6 +1053,11 @@ void WiiUMenuApp::applyThemeResources(const ThemePreset& preset) {
     const std::string themeIconsBase = resolveThemeAssetPath(preset, preset.icons.basePath);
     const std::string backgroundImagePath = resolveThemeAssetPath(preset, preset.background.imagePath);
 
+    // This application supersedes any retry left by the previous theme.
+    m_pendingBackgroundImagePath.clear();
+    m_backgroundImageRetryFrames = 0;
+    m_backgroundImageRetryAttempts = 0;
+
     const std::string presetRef = preset.id.empty() ? preset.name : preset.id;
     DebugLog::log("[theme-apply] resources start: preset=%s regularFont=%s smallFont=%s iconsBase=%s bgImage=%s",
                   presetRef.c_str(),
@@ -1203,6 +1208,12 @@ void WiiUMenuApp::applyThemeResources(const ThemePreset& preset) {
                 m_backgroundImageLoaded = false;
                 m_loadedBackgroundImagePath.clear();
                 DebugLog::log("[theme-apply] background image cleared");
+                if (!backgroundImagePath.empty()) {
+                    m_pendingBackgroundImagePath = backgroundImagePath;
+                    m_backgroundImageRetryFrames = 2;
+                    DebugLog::log("[theme-apply] background image retry scheduled: path=%s",
+                                  safeLogPath(backgroundImagePath));
+                }
             } else {
                 m_backgroundImageLoaded = true;
                 m_loadedBackgroundImagePath = backgroundImagePath;
@@ -1224,6 +1235,52 @@ void WiiUMenuApp::applyThemeResources(const ThemePreset& preset) {
     }
 
     DebugLog::log("[theme-apply] resources done: preset=%s", presetRef.c_str());
+}
+
+void WiiUMenuApp::retryPendingBackgroundImage() {
+    if (m_pendingBackgroundImagePath.empty() || !m_background)
+        return;
+    if (m_backgroundImageRetryFrames > 0) {
+        --m_backgroundImageRetryFrames;
+        return;
+    }
+
+    const std::string expectedPath = resolveThemeAssetPath(
+        m_effectivePreset, m_effectivePreset.background.imagePath);
+    if (expectedPath != m_pendingBackgroundImagePath) {
+        DebugLog::log("[theme-apply] background retry cancelled after theme changed");
+        m_pendingBackgroundImagePath.clear();
+        return;
+    }
+
+    ++m_backgroundImageRetryAttempts;
+    const bool exists = pathExists(m_pendingBackgroundImagePath);
+    bool loaded = false;
+    if (exists) {
+        app().gpu().waitIdle();
+        loaded = m_background->loadImage(app().gpu(), app().renderer(),
+                                         m_pendingBackgroundImagePath);
+    }
+    DebugLog::log("[theme-apply] background retry %d/3: path=%s exists=%d loaded=%d",
+                  m_backgroundImageRetryAttempts,
+                  safeLogPath(m_pendingBackgroundImagePath),
+                  exists ? 1 : 0, loaded ? 1 : 0);
+
+    if (loaded) {
+        m_backgroundImageLoaded = true;
+        m_loadedBackgroundImagePath = m_pendingBackgroundImagePath;
+        m_pendingBackgroundImagePath.clear();
+        m_backgroundImageRetryAttempts = 0;
+        return;
+    }
+
+    if (m_backgroundImageRetryAttempts >= 3) {
+        DebugLog::log("[theme-apply] background retry exhausted: path=%s",
+                      safeLogPath(m_pendingBackgroundImagePath));
+        m_pendingBackgroundImagePath.clear();
+        return;
+    }
+    m_backgroundImageRetryFrames = 2 << (m_backgroundImageRetryAttempts - 1);
 }
 
 void WiiUMenuApp::applyTheme() {
@@ -1277,11 +1334,12 @@ void WiiUMenuApp::applyTheme() {
     m_pageIndicator->setHighlightColor(m_theme.panelHighlight);
     m_pageIndicator->setTheme(&m_theme);
     for (auto& avatar : m_userAvatarButtons) {
-        avatar->setBaseColor(m_theme.panelBase);
+        avatar->setBaseColor(m_theme.iconDefault.withAlpha(
+            m_theme.mode == nxui::ThemeMode::Dark ? 0.92f : 0.94f));
         avatar->setBorderColor(m_theme.panelBorder);
         avatar->setHighlightColor(m_theme.panelHighlight);
         avatar->setCornerRadius(28.f);
-        avatar->setChromeEnabled(false);
+        avatar->setChromeEnabled(true);
     }
     DebugLog::log("[theme-apply] widget recolor HUD done");
 

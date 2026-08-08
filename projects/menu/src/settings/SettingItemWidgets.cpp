@@ -162,6 +162,16 @@ protected:
         m_left->setRect(leftRect);
         m_right->setRect(rightRect);
 
+        if (m_cachedShowDesc && smallFont()) {
+            const std::string fitted = fitTextToWidth(
+                smallFont(), m_item.description, 0.74f, leftRect.width);
+            if (fitted != m_displayedDescription) {
+                m_displayedDescription = fitted;
+                m_desc->setText(m_displayedDescription);
+                m_descMeasure = m_desc->measureText();
+            }
+        }
+
         if (m_item.wrapLabel)
             m_labelMeasure = m_label->measureWrappedText(std::max(1.f, leftRect.width));
 
@@ -209,6 +219,7 @@ protected:
         }
         if (m_cachedDescText != m_item.description) {
             m_cachedDescText = m_item.description;
+            m_displayedDescription.clear();
             m_desc->setText(m_cachedDescText);
             m_descMeasure = m_desc->measureText();
         }
@@ -253,6 +264,7 @@ private:
     const nxui::Theme* m_cachedTheme = nullptr;
     std::string m_cachedLabelText;
     std::string m_cachedDescText;
+    std::string m_displayedDescription;
     float m_cachedLabelScale = -1.f;
     bool m_cachedShowDesc = false;
     bool m_cachedIsSection = false;

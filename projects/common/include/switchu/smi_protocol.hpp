@@ -54,6 +54,7 @@ enum class SystemMessage : uint32_t {
 enum class MenuStartMode : uint32_t {
     MainMenu       = 0,
     StartupBoot    = 1,
+    AppletReturn   = 2,
 };
 
 struct CommandHeader {

@@ -42,9 +42,10 @@ public:
     void setPendingTransform(PendingTransform transform) {
         m_pendingTransform = std::move(transform);
     }
+    void setPrefetchIcons(bool enabled) { m_prefetchIcons = enabled; }
 
 private:
-    static void fetchApps(std::vector<PendingApp>& output);
+    static void fetchApps(std::vector<PendingApp>& output, bool prefetchIcons);
 
     struct AsyncLoadState {
         std::vector<PendingApp> pending;
@@ -55,4 +56,5 @@ private:
     std::vector<PendingApp> m_pending;
     std::shared_ptr<AsyncLoadState> m_asyncState;
     PendingTransform        m_pendingTransform;
+    bool                    m_prefetchIcons = true;
 };

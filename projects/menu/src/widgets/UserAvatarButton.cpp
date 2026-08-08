@@ -21,7 +21,7 @@ UserAvatarButton::UserAvatarButton() {
 void UserAvatarButton::setTheme(const nxui::Theme* theme) {
     if (!theme)
         return;
-    setBaseColor(theme->panelBase.withAlpha(theme->mode == nxui::ThemeMode::Dark ? 0.95f : 0.96f));
+    setBaseColor(theme->iconDefault.withAlpha(theme->mode == nxui::ThemeMode::Dark ? 0.92f : 0.94f));
     setBorderColor(theme->panelBorder.withAlpha(0.36f));
     setHighlightColor(theme->panelHighlight.withAlpha(0.10f));
 }
@@ -31,8 +31,8 @@ void UserAvatarButton::setChromeEnabled(bool enabled) {
     setPadding(enabled ? 4.f : 0.f);
     setLiquidGlassEnabled(enabled);
     setForceLiquidGlass(enabled);
-    setPanelOpacity(enabled ? 0.86f : 0.f);
-    setBorderWidth(enabled ? 1.f : 0.f);
+    setPanelOpacity(enabled ? 0.90f : 0.f);
+    setBorderWidth(enabled ? 1.8f : 0.f);
 }
 
 void UserAvatarButton::loadAvatar(nxui::GpuDevice& gpu, nxui::Renderer& ren,

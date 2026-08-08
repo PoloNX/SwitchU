@@ -228,13 +228,19 @@ void WiiUMenuApp::setTutorialStartupFade(bool enabled) {
 }
 
 #ifdef SWITCHU_MENU
-void WiiUMenuApp::setStartupStatus(const switchu::smi::SystemStatus& status) {
+void WiiUMenuApp::setStartupStatus(const switchu::smi::SystemStatus& status, bool fastReturn) {
     m_launcher.setStartupStatus(status.suspended_app_id, status.app_running);
     m_startupFailure = status.last_failure;
+    m_fastReturnRequested = fastReturn || status.suspended_app_id != 0;
 }
 #endif
 
 bool WiiUMenuApp::onCreate() {
+    const std::uint64_t initStartTick = armGetSystemTick();
+    auto initElapsedMs = [initStartTick]() -> unsigned long {
+        return static_cast<unsigned long>(
+            armTicksToNs(armGetSystemTick() - initStartTick) / 1'000'000ULL);
+    };
     DebugLog::log("[init] onCreate enter");
     m_iconStreamer.setThreadPool(&m_threadPool);
     m_config.load();
@@ -245,12 +251,28 @@ bool WiiUMenuApp::onCreate() {
 
     nxui::I18n::instance().initialize(std::string(SD_ASSETS) + "/i18n", "en-US");
     applyUiLanguage();
-    m_accessibility.initialize(m_config.accessibilityEnabled,
-                               nxui::I18n::instance().activeLanguageTag(),
-                               SD_ASSETS);
+    const bool fastReturn = m_fastReturnRequested || m_launcher.suspendedTitleId() != 0;
+    m_fastReturnRequested = fastReturn;
+    m_fastReturnStartupTick = fastReturn ? initStartTick : 0;
+    m_appLoader.setPrefetchIcons(!fastReturn);
+
+    const std::string accessibilityVoice = nxui::I18n::instance().activeLanguageTag();
+    const int accessibilityRate = m_config.accessibilitySpeechRate;
+    m_accessibility.configure(m_config.accessibilityEnabled, accessibilityVoice);
     m_accessibility.setSpeakHints(m_config.accessibilitySpeakHints);
     m_accessibility.setSpeakContextEveryFocus(m_config.accessibilitySpeakContextEveryFocus);
     m_accessibility.setSpeechRate(m_config.accessibilitySpeechRate);
+    if (fastReturn) {
+        m_accessibilityFuture = m_threadPool.submit([this, accessibilityVoice, accessibilityRate]() {
+            m_accessibility.initializeConfigured(SD_ASSETS, accessibilityVoice,
+                                                  accessibilityRate);
+        });
+        DebugLog::log("[init] accessibility deferred for fast return at %lums",
+                      initElapsedMs());
+    } else {
+        m_accessibilityReady = m_accessibility.initializeConfigured(
+            SD_ASSETS, accessibilityVoice, accessibilityRate);
+    }
 
     m_audioFuture = m_threadPool.submit([this]() {
         m_audio.initialize();
@@ -265,13 +287,7 @@ bool WiiUMenuApp::onCreate() {
     });
     DebugLog::log("[init] Audio loading started on background thread");
 
-    if (m_launcher.suspendedTitleId() != 0) {
-        m_deferredBluetoothInitFrames = 120;
-        DebugLog::log("[init] Bluetooth manager initialization deferred for fast return");
-    } else {
-        bluetooth::Initialize();
-        DebugLog::log("[init] Bluetooth manager initialized");
-    }
+    DebugLog::log("[init] Bluetooth audio manager deferred until its Settings tab is opened");
     DebugLog::log("[init] Theme Shop HTTP runtime deferred until first request");
 
     DebugLog::log("[init] Config loaded (theme=%s, musicVol=%.2f, sfxVol=%.2f)",
@@ -286,8 +302,10 @@ bool WiiUMenuApp::onCreate() {
 
     DebugLog::log("[init] loadResources...");
     loadResources();
+    DebugLog::log("[init] loadResources done at %lums", initElapsedMs());
     DebugLog::log("[init] buildGrid...");
     buildGrid();
+    DebugLog::log("[init] buildGrid done at %lums", initElapsedMs());
 
 #ifdef SWITCHU_MENU
     if (m_startupFailure.result != 0 && m_dialog) {
@@ -335,7 +353,8 @@ bool WiiUMenuApp::onCreate() {
     switchu::menu::smi_cmd::menuReady();
 #endif
 
-    DebugLog::log("[init] DONE");
+    DebugLog::log("[init] DONE total=%lums fastReturn=%d",
+                  initElapsedMs(), fastReturn ? 1 : 0);
     return true;
 }
 
@@ -366,6 +385,16 @@ void WiiUMenuApp::onDestroy() {
     // only then shut down HTTP, Bluetooth, accessibility and audio.
     m_iconStreamer.cancelPending();
     m_threadPool.shutdown();
+
+    if (m_accessibilityFuture.valid()) {
+        try {
+            m_accessibilityFuture.get();
+        } catch (const std::exception& ex) {
+            DebugLog::log("[shutdown] accessibility task failed: %s", ex.what());
+        } catch (...) {
+            DebugLog::log("[shutdown] accessibility task failed: unknown exception");
+        }
+    }
 
     if (m_audioFuture.valid()) {
         try {
@@ -423,68 +452,86 @@ void WiiUMenuApp::loadResources() {
     m_appLoader.load(m_model, m_iconStreamer);
 }
 
-void WiiUMenuApp::buildUserAvatarBar() {
+void WiiUMenuApp::buildUserAvatarBar(bool loadImmediately) {
     m_userAvatarButtons.clear();
 
-    m_userAvatarBar = std::make_shared<nxui::Box>(nxui::Axis::ROW);
-    m_userAvatarBar->setMarginTop(17.f);
-    m_userAvatarBar->setGap(10.f);
-    m_userAvatarBar->setShrink(0.f);
-    m_userAvatarBar->setSize(0.f, 56.f);
-    m_userAvatarBar->setTag("userAvatarBar");
-    m_userAvatarBar->setWireframeEnabled(false);
+    if (!m_userAvatarBar) {
+        m_userAvatarBar = std::make_shared<nxui::Box>(nxui::Axis::ROW);
+        m_userAvatarBar->setMarginTop(17.f);
+        m_userAvatarBar->setGap(10.f);
+        m_userAvatarBar->setShrink(0.f);
+        m_userAvatarBar->setSize(0.f, 56.f);
+        m_userAvatarBar->setTag("userAvatarBar");
+        m_userAvatarBar->setWireframeEnabled(false);
+    } else {
+        m_userAvatarBar->clearChildren();
+        m_userAvatarBar->setSize(0.f, 56.f);
+    }
 
     AccountUid uids[8] = {};
     s32 count = 0;
     Result rc = accountListAllUsers(uids, 8, &count);
     DebugLog::log("[profiles] accountListAllUsers rc=0x%X count=%d", rc, count);
-    if (R_FAILED(rc) || count <= 0)
+    m_pendingProfileUids.clear();
+    m_pendingProfileIndex = 0;
+    if (R_SUCCEEDED(rc) && count > 0)
+        m_pendingProfileUids.assign(uids, uids + count);
+
+    if (loadImmediately) {
+        while (m_pendingProfileIndex < m_pendingProfileUids.size())
+            loadNextUserAvatar();
+    } else if (!m_pendingProfileUids.empty()) {
+        m_deferredProfileFrames = 1;
+        DebugLog::log("[profiles] %d avatars deferred until after first frame", count);
+    }
+}
+
+void WiiUMenuApp::loadNextUserAvatar() {
+    if (!m_userAvatarBar || m_pendingProfileIndex >= m_pendingProfileUids.size())
         return;
 
-    for (int i = 0; i < count; ++i) {
-        AccountProfile profile{};
-        rc = accountGetProfile(&profile, uids[i]);
-        if (R_FAILED(rc))
-            continue;
+    const AccountUid uid = m_pendingProfileUids[m_pendingProfileIndex++];
+    AccountProfile profile{};
+    Result rc = accountGetProfile(&profile, uid);
+    if (R_FAILED(rc))
+        return;
 
-        auto avatar = std::make_shared<UserAvatarButton>();
-        avatar->setSize(56.f, 56.f);
-        avatar->setMinWidth(56.f);
-        avatar->setMinHeight(56.f);
-        avatar->setShrink(0.f);
-        avatar->setCornerRadius(28.f);
-        avatar->setChromeEnabled(true);
-        avatar->setTheme(&m_theme);
-        avatar->setUid(uids[i]);
-        avatar->setFocusable(true);
+    auto avatar = std::make_shared<UserAvatarButton>();
+    avatar->setSize(56.f, 56.f);
+    avatar->setMinWidth(56.f);
+    avatar->setMinHeight(56.f);
+    avatar->setShrink(0.f);
+    avatar->setCornerRadius(28.f);
+    avatar->setChromeEnabled(true);
+    avatar->setTheme(&m_theme);
+    avatar->setUid(uid);
+    avatar->setFocusable(true);
 
-        AccountProfileBase base{};
-        AccountUserData userData{};
-        if (R_SUCCEEDED(accountProfileGet(&profile, &userData, &base)))
-            avatar->setNickname(base.nickname);
+    AccountProfileBase base{};
+    AccountUserData userData{};
+    if (R_SUCCEEDED(accountProfileGet(&profile, &userData, &base)))
+        avatar->setNickname(base.nickname);
 
-        u32 imgSize = 0;
-        if (R_SUCCEEDED(accountProfileGetImageSize(&profile, &imgSize)) && imgSize > 0) {
-            std::vector<uint8_t> imgBuf(imgSize);
-            u32 realSize = 0;
-            if (R_SUCCEEDED(accountProfileLoadImage(&profile, imgBuf.data(), imgSize, &realSize))
-                    && realSize > 0) {
-                avatar->loadAvatar(app().gpu(), app().renderer(), imgBuf.data(), realSize);
-            }
+    u32 imgSize = 0;
+    if (R_SUCCEEDED(accountProfileGetImageSize(&profile, &imgSize)) && imgSize > 0) {
+        std::vector<uint8_t> imgBuf(imgSize);
+        u32 realSize = 0;
+        if (R_SUCCEEDED(accountProfileLoadImage(&profile, imgBuf.data(), imgSize, &realSize))
+                && realSize > 0) {
+            avatar->loadAvatar(app().gpu(), app().renderer(), imgBuf.data(), realSize);
         }
-
-        AccountUid uid = uids[i];
-        avatar->setOnActivate([this, uid]() {
-            m_audio.playSfx(Sfx::Activate);
-#ifdef SWITCHU_MENU
-            m_launcher.launchUserPage(uid);
-#endif
-        });
-
-        accountProfileClose(&profile);
-        m_userAvatarButtons.push_back(avatar);
-        m_userAvatarBar->addChild(avatar);
     }
+
+    avatar->setOnActivate([this, uid]() {
+        m_audio.playSfx(Sfx::Activate);
+#ifdef SWITCHU_MENU
+        m_launcher.launchUserPage(uid);
+#endif
+    });
+
+    accountProfileClose(&profile);
+    m_userAvatarButtons.push_back(avatar);
+    m_userAvatarBar->addChild(avatar);
 
     if (!m_userAvatarButtons.empty()) {
         const float countF = static_cast<float>(m_userAvatarButtons.size());
@@ -494,6 +541,9 @@ void WiiUMenuApp::buildUserAvatarBar() {
         m_userAvatarButtons.back()->setCustomNavigation(nxui::FocusDirection::RIGHT,
                                                         m_userAvatarButtons.back().get());
     }
+
+    if (m_topHud)
+        m_topHud->layout();
 }
 
 WiiUMenuApp::GridLayoutMetrics WiiUMenuApp::computeGridLayoutMetrics() const {
@@ -1018,7 +1068,7 @@ void WiiUMenuApp::buildGrid() {
     m_battery->setForceLiquidGlass(true);
     m_battery->setBlurEnabled(false);
 
-    buildUserAvatarBar();
+    buildUserAvatarBar(!m_fastReturnRequested);
 
     m_titlePill = std::make_shared<TitlePillWidget>();
     m_titlePill->setPosition(0, 630.f);
@@ -1105,9 +1155,11 @@ void WiiUMenuApp::buildGrid() {
     }
 #endif
 
-    const bool returningFromSuspendedApp = m_launcher.suspendedTitleId() != 0;
-    if (returningFromSuspendedApp) {
-        m_deferredInitialAssetFrames = 1;
+    const bool fastReturn = m_fastReturnRequested;
+    if (fastReturn) {
+        // Application updates once before presenting its first frame. Two ticks
+        // keep sidebar uploads off the pre-first-frame critical path.
+        m_deferredInitialAssetFrames = 2;
         DebugLog::log("[init] return path: deferring initial icon/sidebar uploads");
     } else {
         // Load textures for the initial visible page.
@@ -1116,10 +1168,12 @@ void WiiUMenuApp::buildGrid() {
                                      m_grid->allIcons());
     }
 
-    if (returningFromSuspendedApp) {
+    if (fastReturn) {
         for (auto& icon : m_grid->allIcons())
             icon->forceVisible();
-        m_returnFadeTimer = kReturnFadeInDur;
+        // Placeholders cover progressively loaded artwork, so do not keep an
+        // already usable HOME scene hidden behind the old opaque fade.
+        m_returnFadeTimer = 0.f;
     } else {
         // The first visible page can animate again: the black-screen issue was
         // caused by a blocking GPU icon-upload wait, not by the appear tween.
@@ -1210,7 +1264,7 @@ void WiiUMenuApp::buildGrid() {
     };
 
     m_sidebar.build(app().gpu(), app().renderer(), SD_ASSETS, sidebarActions);
-    if (!returningFromSuspendedApp) {
+    if (!fastReturn) {
         m_sidebar.reloadAssets(app().gpu(), app().renderer(), SD_ASSETS,
                                resolveThemeAssetPath(m_effectivePreset, m_effectivePreset.icons.basePath));
     }
@@ -1580,11 +1634,33 @@ void WiiUMenuApp::onUpdate(float dt) {
 
     syncSoftwareDeletion();
 
-    if (m_grid && m_iconStreamer.needsVisibleLoads(
+    if (!m_accessibilityReady && m_accessibilityFuture.valid() &&
+        m_accessibilityFuture.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+        try {
+            m_accessibilityFuture.get();
+            m_accessibilityReady = true;
+            DebugLog::log("[init] accessibility background task completed");
+        } catch (const std::exception& ex) {
+            DebugLog::log("[init] accessibility task failed: %s", ex.what());
+        } catch (...) {
+            DebugLog::log("[init] accessibility task failed: unknown exception");
+        }
+    }
+
+    if (m_deferredInitialAssetFrames == 0 && m_grid && m_iconStreamer.needsVisibleLoads(
             m_grid->currentPage(), m_grid->iconsPerPage())) {
         m_iconStreamer.onPageChanged(m_grid->currentPage(), m_grid->iconsPerPage(),
                                      app().gpu(), app().renderer(),
                                      m_grid->allIcons());
+    }
+
+    if (m_deferredProfileFrames > 0) {
+        --m_deferredProfileFrames;
+    } else if (m_pendingProfileIndex < m_pendingProfileUids.size()) {
+        const bool visibleIconsBusy = m_grid && m_iconStreamer.needsVisibleLoads(
+            m_grid->currentPage(), m_grid->iconsPerPage());
+        if (!visibleIconsBusy)
+            loadNextUserAvatar();
     }
 
     if (m_returnFadeTimer > 0.f)
@@ -1598,6 +1674,7 @@ void WiiUMenuApp::onUpdate(float dt) {
     }
 
     syncThemePackageTransfer();
+    retryPendingBackgroundImage();
 
     if (m_deferredInitialAssetFrames > 0) {
         --m_deferredInitialAssetFrames;
@@ -1612,14 +1689,6 @@ void WiiUMenuApp::onUpdate(float dt) {
                                    resolveThemeAssetPath(m_effectivePreset,
                                                          m_effectivePreset.icons.basePath));
             DebugLog::log("[init] deferred initial icon/sidebar uploads done");
-        }
-    }
-
-    if (m_deferredBluetoothInitFrames > 0) {
-        --m_deferredBluetoothInitFrames;
-        if (m_deferredBluetoothInitFrames == 0) {
-            bluetooth::Initialize();
-            DebugLog::log("[init] Bluetooth manager initialized (deferred)");
         }
     }
 
@@ -1924,6 +1993,9 @@ std::vector<WiiUMenuApp::ActionHint> WiiUMenuApp::buildActionHints() {
     if (m_controllerTest && m_controllerTest->isActive())
         return hints;
 
+    if (m_gameOptions && m_gameOptions->isActive())
+        return hints;
+
     if (m_settings && m_settings->isActive()) {
         add(dpadGlyph(), i18n.tr("hint.navigate", "Navigate"));
         add(buttonGlyph(nxui::Button::A), i18n.tr("hint.select", "Select"));
@@ -2087,6 +2159,12 @@ void WiiUMenuApp::renderActionHintBar(nxui::Renderer& ren) {
 }
 
 void WiiUMenuApp::onRender(nxui::Renderer& ren) {
+    if (m_fastReturnStartupTick != 0) {
+        const auto elapsedMs = static_cast<unsigned long>(
+            armTicksToNs(armGetSystemTick() - m_fastReturnStartupTick) / 1'000'000ULL);
+        DebugLog::log("[first-frame] fast HOME return rendered in %lums", elapsedMs);
+        m_fastReturnStartupTick = 0;
+    }
     if (m_returnFadeTimer > 0.f) {
         float alpha = m_returnFadeTimer / kReturnFadeInDur;
         ren.drawRect({0, 0, 1280, 720}, nxui::Color(0, 0, 0, alpha));

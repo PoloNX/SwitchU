@@ -436,6 +436,18 @@ static bool rebuildAppCatalog(const char* reason, bool* outChanged = nullptr) {
         std::snprintf(fallbackName, sizeof(fallbackName), "%016lX",
                       static_cast<unsigned long>(tid));
         ent.name = fallbackName;
+
+        switchu::control_cache::Meta meta{};
+        if (switchu::control_cache::readMeta(tid, meta)) {
+            const std::size_t nameLength = strnlen(meta.name, sizeof(meta.name));
+            if (nameLength > 0 &&
+                switchu::control_cache::isValidUtf8(meta.name, nameLength + 1)) {
+                ent.name.assign(meta.name, nameLength);
+            }
+            ent.startupUserAccount = meta.startup_user_account;
+            ent.startupUserAccountOption = meta.startup_user_account_option;
+            ent.startupUserKnown = true;
+        }
         g_appCatalog.push_back(std::move(ent));
     }
 
@@ -1221,7 +1233,7 @@ static void handleMenuCommand() {
 
 static Result relaunchMenuAfterApplet(const char* appletName) {
     const auto status = buildSystemStatus();
-    const Result rc = daemon::menu_la::launch(smi::MenuStartMode::MainMenu, status);
+    const Result rc = daemon::menu_la::launch(smi::MenuStartMode::AppletReturn, status);
     switchu::FileLog::log(
         "[action] %s menu restore rc=0x%X module=%u desc=%u running=%d suspended=0x%016lX",
         appletName, rc, R_MODULE(rc), R_DESCRIPTION(rc), status.app_running ? 1 : 0,

@@ -5,6 +5,7 @@
 #include <espeak-ng/speak_lib.h>
 #include <string>
 #include <vector>
+#include <atomic>
 
 class AccessibilityManager {
 public:
@@ -13,6 +14,10 @@ public:
 
     bool initialize(bool enabled, const std::string& voice = "fr",
                     const std::string& dataRoot = {});
+    void configure(bool enabled, const std::string& voice);
+    bool initializeConfigured(const std::string& dataRoot,
+                              const std::string& voice,
+                              int speechRate);
     void shutdown();
 
     void setEnabled(bool enabled);
@@ -56,7 +61,7 @@ private:
     int m_sampleRate = 0;
     static AccessibilityManager* s_activeSynthTarget;
 
-    bool m_initialized = false;
+    std::atomic<bool> m_initialized{false};
     bool m_enabled = true;
     bool m_speakHints = true;
     bool m_speakContextEveryFocus = false;

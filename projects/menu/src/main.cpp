@@ -240,9 +240,10 @@ int main(int argc, char* argv[]) {
         DebugLog::log("[hb] app.shutdown...");
         app.shutdown();
 #else
-        auto makeMenuActivity = [sysStatus](bool fromTutorial = false) -> std::unique_ptr<nxui::Activity> {
+        auto makeMenuActivity = [sysStatus, startMode](bool fromTutorial = false) -> std::unique_ptr<nxui::Activity> {
             auto activity = std::make_unique<WiiUMenuApp>();
-            activity->setStartupStatus(sysStatus);
+            activity->setStartupStatus(sysStatus,
+                startMode == switchu::smi::MenuStartMode::AppletReturn);
             activity->setTutorialStartupFade(fromTutorial);
             return activity;
         };

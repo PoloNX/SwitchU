@@ -33,7 +33,7 @@ void ControllerTestScreen::show() {
     m_activeStick = ActiveStick::None;
     m_candidateStick = ActiveStick::None;
     m_candidateTime = 0.f;
-    m_smoothX = m_smoothY = 0.f;
+    m_stickX = m_stickY = 0.f;
     m_recordingTouch = false;
     m_touchFullscreen = false;
     m_bHoldTime = 0.f;
@@ -215,9 +215,10 @@ void ControllerTestScreen::update(float dt) {
     } else if (m_activeStick == ActiveStick::Right) {
         x = m_input->rightStickX(); y = m_input->rightStickY();
     }
-    const float smoothing = 1.f - std::exp(-dt * 18.f);
-    m_smoothX += (x - m_smoothX) * smoothing;
-    m_smoothY += (y - m_smoothY) * smoothing;
+    // A diagnostic view must display the hardware sample exactly. Filtering
+    // made fast circular movements visibly lag behind and miss the edge.
+    m_stickX = x;
+    m_stickY = y;
 }
 
 std::string ControllerTestScreen::directionLabel(float x, float y) const {
@@ -251,14 +252,14 @@ void ControllerTestScreen::drawStickPanel(nxui::Renderer& ren, const nxui::Rect&
     const float outer = 91.f;
     ren.drawCircle(center, outer, m_theme->panelBorder.withAlpha(0.24f * alpha), 48);
     ren.drawCircle(center, outer * kDeadzone, m_theme->cursorNormal.withAlpha(0.13f * alpha), 32);
-    ren.drawCircle({center.x + m_smoothX * (outer - 19.f), center.y - m_smoothY * (outer - 19.f)},
+    ren.drawCircle({center.x + m_stickX * (outer - 19.f), center.y - m_stickY * (outer - 19.f)},
                    19.f, m_theme->cursorNormal.withAlpha(0.92f * alpha), 32);
 
     char values[80]{};
-    std::snprintf(values, sizeof(values), "X %+0.3f     Y %+0.3f", m_smoothX, m_smoothY);
+    std::snprintf(values, sizeof(values), "X %+0.3f     Y %+0.3f", m_stickX, m_stickY);
     ren.drawText(values, {r.x + 24.f, r.bottom() - 72.f}, m_smallFont,
                  m_theme->textPrimary.withAlpha(alpha), 0.78f);
-    std::string direction = i18n.tr("controller_test.direction", "Direction") + ": " + directionLabel(m_smoothX, m_smoothY);
+    std::string direction = i18n.tr("controller_test.direction", "Direction") + ": " + directionLabel(m_stickX, m_stickY);
     ren.drawText(direction, {r.x + 24.f, r.bottom() - 42.f}, m_smallFont,
                  m_theme->textSecondary.withAlpha(alpha), 0.74f);
 }
