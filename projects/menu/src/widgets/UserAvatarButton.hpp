@@ -5,6 +5,7 @@
 #include <nxui/core/Texture.hpp>
 #include <nxui/core/GpuDevice.hpp>
 #include <nxui/core/Renderer.hpp>
+#include <nxui/Theme.hpp>
 #include <switch.h>
 
 #include <cstddef>
@@ -35,6 +36,7 @@ public:
     }
     const std::string& nickname() const { return m_nickname; }
     void setChromeEnabled(bool enabled);
+    void setTheme(const nxui::Theme* theme);
 
     void setOnActivate(ActivateCallback cb) { m_onActivate = std::move(cb); }
 

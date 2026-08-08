@@ -3,8 +3,9 @@
 #include "core/DebugLog.hpp"
 #include <nxui/third_party/stb/stb_image.h>
 #include <algorithm>
-#include <cstdlib>
+#include <chrono>
 #include <cstring>
+#include <unordered_map>
 
 
 void IconStreamer::init(int appCount) {
@@ -55,14 +56,24 @@ void IconStreamer::clearPinnedIndex() {
 }
 
 void IconStreamer::clear() {
+    cancelPending();
     m_pool.clear();
     m_compressed.clear();
     m_titleIds.clear();
     m_appToSlot.clear();
     m_freeSlots.clear();
+    m_pendingDecodes.clear();
+    m_failedTitleIds.clear();
     m_lastPage = -1;
     m_lastIconsPerPage = -1;
     m_pinnedIndex = -1;
+}
+
+void IconStreamer::cancelPending() {
+    for (auto& pending : m_pendingDecodes) {
+        if (pending.state)
+            pending.state->cancelled.store(true);
+    }
 }
 
 bool IconStreamer::swapIndices(int a, int b) {
@@ -97,6 +108,74 @@ bool IconStreamer::swapIndices(int a, int b) {
     return true;
 }
 
+void IconStreamer::reconcileTitleIds(const std::vector<uint64_t>& titleIds) {
+    const std::vector<uint64_t> oldTitleIds = m_titleIds;
+    const int oldPinnedIndex = m_pinnedIndex;
+    const uint64_t pinnedTitle = oldPinnedIndex >= 0 && oldPinnedIndex < (int)oldTitleIds.size()
+        ? oldTitleIds[(size_t)oldPinnedIndex] : 0;
+
+    std::unordered_map<uint64_t, int> newIndexByTitle;
+    newIndexByTitle.reserve(titleIds.size());
+    for (int i = 0; i < (int)titleIds.size(); ++i) {
+        if (titleIds[(size_t)i] != 0)
+            newIndexByTitle.emplace(titleIds[(size_t)i], i);
+    }
+
+    std::vector<int> newAppToSlot(titleIds.size(), -1);
+    m_freeSlots.clear();
+    for (int slotIndex = 0; slotIndex < (int)m_pool.size(); ++slotIndex) {
+        auto& slot = m_pool[(size_t)slotIndex];
+        if (!slot || slot->appIndex < 0 || slot->appIndex >= (int)oldTitleIds.size()) {
+            if (slot)
+                slot->appIndex = -1;
+            m_freeSlots.push_back(slotIndex);
+            continue;
+        }
+
+        const uint64_t titleId = oldTitleIds[(size_t)slot->appIndex];
+        auto next = newIndexByTitle.find(titleId);
+        if (titleId == 0 || next == newIndexByTitle.end() ||
+            newAppToSlot[(size_t)next->second] >= 0) {
+            slot->appIndex = -1;
+            m_freeSlots.push_back(slotIndex);
+            continue;
+        }
+
+        slot->appIndex = next->second;
+        newAppToSlot[(size_t)next->second] = slotIndex;
+    }
+
+    std::vector<std::vector<uint8_t>> newCompressed(titleIds.size());
+    for (int oldIndex = 0; oldIndex < (int)oldTitleIds.size(); ++oldIndex) {
+        auto next = newIndexByTitle.find(oldTitleIds[(size_t)oldIndex]);
+        if (next != newIndexByTitle.end() && oldIndex < (int)m_compressed.size())
+            newCompressed[(size_t)next->second] = std::move(m_compressed[(size_t)oldIndex]);
+    }
+
+    m_titleIds = titleIds;
+    m_compressed = std::move(newCompressed);
+    m_appToSlot = std::move(newAppToSlot);
+    m_pinnedIndex = -1;
+    if (pinnedTitle != 0) {
+        auto next = newIndexByTitle.find(pinnedTitle);
+        if (next != newIndexByTitle.end())
+            m_pinnedIndex = next->second;
+    }
+
+    m_failedTitleIds.clear();
+    m_lastPage = -1;
+    m_lastIconsPerPage = -1;
+}
+
+void IconStreamer::reconcileCatalog(IconStreamer&& catalog) {
+    reconcileTitleIds(catalog.m_titleIds);
+    const size_t count = std::min(m_compressed.size(), catalog.m_compressed.size());
+    for (size_t i = 0; i < count; ++i) {
+        if (m_compressed[i].empty() && !catalog.m_compressed[i].empty())
+            m_compressed[i] = std::move(catalog.m_compressed[i]);
+    }
+}
+
 bool IconStreamer::hasData(int index) const {
     if (index < 0 || index >= (int)m_appToSlot.size())
         return false;
@@ -105,22 +184,44 @@ bool IconStreamer::hasData(int index) const {
     return index < (int)m_titleIds.size() && m_titleIds[index] != 0 && (bool)m_iconLoader;
 }
 
+bool IconStreamer::needsVisibleLoads(int currentPage, int iconsPerPage) const {
+    if (iconsPerPage <= 0 || m_appToSlot.empty())
+        return false;
+    const int totalApps = static_cast<int>(m_appToSlot.size());
+    const int totalPages = (totalApps + iconsPerPage - 1) / iconsPerPage;
+    currentPage = std::clamp(currentPage, 0, std::max(0, totalPages - 1));
+    const int begin = currentPage * iconsPerPage;
+    const int end = std::min(totalApps, begin + iconsPerPage);
+    for (int i = begin; i < end; ++i) {
+        const uint64_t titleId = i < (int)m_titleIds.size() ? m_titleIds[(size_t)i] : 0;
+        const bool failed = std::find(m_failedTitleIds.begin(), m_failedTitleIds.end(), titleId)
+            != m_failedTitleIds.end();
+        const bool pending = std::any_of(
+            m_pendingDecodes.begin(), m_pendingDecodes.end(),
+            [titleId](const PendingDecode& decode) { return decode.titleId == titleId; });
+        if (m_appToSlot[i] < 0 && !failed && (pending || hasData(i)))
+            return true;
+    }
+    return false;
+}
+
 // ---------------------------------------------------------------------------
 // Decode a single compressed icon to RGBA, downscaling to kIconSize if needed.
 // ---------------------------------------------------------------------------
-IconStreamer::DecodedIcon IconStreamer::decodeAndScale(const std::vector<uint8_t>& data) const {
+IconStreamer::DecodedIcon IconStreamer::decodeAndScale(const std::vector<uint8_t>& data) {
     DecodedIcon out{};
     if (data.empty()) return out;
 
     int w, h, ch;
-    uint8_t* full = stbi_load_from_memory(data.data(), (int)data.size(),
-                                           &w, &h, &ch, 4);
-    if (!full) return out;
+    uint8_t* raw = stbi_load_from_memory(data.data(), (int)data.size(),
+                                         &w, &h, &ch, 4);
+    if (!raw) return out;
+    std::unique_ptr<uint8_t, decltype(&stbi_image_free)> full(raw, &stbi_image_free);
 
     if (w > kIconSize || h > kIconSize) {
         int dstW = kIconSize, dstH = kIconSize;
-        uint8_t* scaled = (uint8_t*)std::malloc((size_t)dstW * dstH * 4);
-        if (scaled) {
+        std::vector<uint8_t> scaled((size_t)dstW * dstH * 4);
+        if (!scaled.empty()) {
             float scaleX = (float)w / dstW;
             float scaleY = (float)h / dstH;
             for (int y = 0; y < dstH; ++y) {
@@ -133,11 +234,11 @@ IconStreamer::DecodedIcon IconStreamer::decodeAndScale(const std::vector<uint8_t
                     int x0 = (int)srcXf; if (x0 < 0) x0 = 0;
                     int x1 = x0 + 1;     if (x1 >= w) x1 = w - 1;
                     float fx = srcXf - x0;
-                    const uint8_t* p00 = full + ((size_t)y0 * w + x0) * 4;
-                    const uint8_t* p10 = full + ((size_t)y0 * w + x1) * 4;
-                    const uint8_t* p01 = full + ((size_t)y1 * w + x0) * 4;
-                    const uint8_t* p11 = full + ((size_t)y1 * w + x1) * 4;
-                    uint8_t* dst = scaled + ((size_t)y * dstW + x) * 4;
+                    const uint8_t* p00 = full.get() + ((size_t)y0 * w + x0) * 4;
+                    const uint8_t* p10 = full.get() + ((size_t)y0 * w + x1) * 4;
+                    const uint8_t* p01 = full.get() + ((size_t)y1 * w + x0) * 4;
+                    const uint8_t* p11 = full.get() + ((size_t)y1 * w + x1) * 4;
+                    uint8_t* dst = scaled.data() + ((size_t)y * dstW + x) * 4;
                     for (int c = 0; c < 4; ++c) {
                         dst[c] = (uint8_t)(
                             p00[c] * (1 - fx) * (1 - fy) +
@@ -147,18 +248,12 @@ IconStreamer::DecodedIcon IconStreamer::decodeAndScale(const std::vector<uint8_t
                     }
                 }
             }
-            stbi_image_free(full);
-            out.rgba = scaled;
+            out.rgba = std::move(scaled);
             out.w = dstW;
             out.h = dstH;
-            out.scaledWithMalloc = true;
-        } else {
-            out.rgba = full;
-            out.w = w;
-            out.h = h;
         }
     } else {
-        out.rgba = full;
+        out.rgba.assign(full.get(), full.get() + (size_t)w * h * 4);
         out.w = w;
         out.h = h;
     }
@@ -234,94 +329,134 @@ void IconStreamer::onPageChanged(int currentPage, int iconsPerPage,
         }
     }
 
-    // 3. Collect only visible apps that need loading. Neighbor pages are kept
-    //    when already loaded, but not decoded eagerly on this frame.
-    std::vector<int> toLoad;
-    for (int i = visibleStartApp; i < visibleEndApp; ++i) {
-        if (m_appToSlot[i] < 0 && hasData(i))
-            toLoad.push_back(i);
-    }
-
-    if (toLoad.empty()) return;
-
-    struct PendingIcon {
-        int appIndex;
-        std::vector<uint8_t> compressed;
-    };
-    std::vector<PendingIcon> pending;
-    pending.reserve(toLoad.size());
-
-    for (int appIndex : toLoad) {
-        std::vector<uint8_t> compressed;
-        if (appIndex < (int)m_compressed.size() && !m_compressed[appIndex].empty()) {
-            compressed = m_compressed[appIndex];
-        } else if (appIndex < (int)m_titleIds.size() && m_titleIds[appIndex] != 0 && m_iconLoader) {
-            compressed = m_iconLoader(m_titleIds[appIndex]);
+    // 3. Consume completed background decodes without ever waiting for them.
+    // GPU uploads remain on this thread, but are capped to one per frame so a
+    // page cannot monopolise rendering or starve audio updates. Keep the
+    // established synchronous upload handoff here: presenting a frame while a
+    // newly registered descriptor was still being filled produced a black
+    // screen on hardware even though the menu process stayed alive.
+    int uploads = 0;
+    for (size_t pendingIndex = 0;
+         pendingIndex < m_pendingDecodes.size() && uploads < kUploadsPerFrame;) {
+        auto& pending = m_pendingDecodes[pendingIndex];
+        if (pending.future.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
+            ++pendingIndex;
+            continue;
         }
 
-        if (!compressed.empty())
-            pending.push_back({appIndex, std::move(compressed)});
-    }
-
-    if (pending.empty()) return;
-
-    DebugLog::log("[streamer] page %d: loading %d icons [%d..%d)",
-                  currentPage, (int)pending.size(), visibleStartApp, visibleEndApp);
-
-    // 4. Decode icons.
-    struct Decoded {
-        int appIndex;
-        uint8_t* rgba = nullptr;
-        int w = 0, h = 0;
-        bool scaledWithMalloc = false;
-    };
-    std::vector<Decoded> decoded(pending.size());
-    for (int idx = 0; idx < (int)pending.size(); ++idx) {
-        auto result = decodeAndScale(pending[idx].compressed);
-        decoded[idx] = {pending[idx].appIndex, result.rgba, result.w, result.h, result.scaledWithMalloc};
-    }
-    pending.clear();
-
-    // 5. Upload to GPU (must happen on the main/render thread) and
-    //    wire the texture pointers on the corresponding GlossyIcons.
-
-    // Pre-reserve pool capacity so emplace_back() never reallocates.
-    // Reallocation would invalidate texture pointers already handed out
-    // to GlossyIcon widgets earlier in this loop.
-    {
-        int newSlots = 0;
-        int freeAvail = (int)m_freeSlots.size();
-        for (auto& d : decoded) {
-            if (!d.rgba) continue;
-            if (freeAvail > 0) --freeAvail;
-            else ++newSlots;
+        try {
+            pending.future.get();
+        } catch (...) {
+            pending.state->failed = true;
         }
-        m_pool.reserve(m_pool.size() + newSlots);
-    }
 
-    for (auto& d : decoded) {
-        if (!d.rgba) continue;
+        const uint64_t titleId = pending.titleId;
+        auto titleIt = std::find(m_titleIds.begin(), m_titleIds.end(), titleId);
+        const int appIndex = titleIt == m_titleIds.end()
+            ? -1 : static_cast<int>(titleIt - m_titleIds.begin());
+        const bool stillWanted = appIndex >= cacheStartApp && appIndex < cacheEndApp;
+        auto state = std::move(pending.state);
+        m_pendingDecodes[pendingIndex] = std::move(m_pendingDecodes.back());
+        m_pendingDecodes.pop_back();
 
-        // Acquire a pool slot.
-        int poolIdx;
+        if (state->cancelled.load())
+            continue;
+        if (state->failed || state->decoded.rgba.empty()) {
+            m_failedTitleIds.push_back(titleId);
+            DebugLog::log("[streamer] decode failed title=0x%016lX",
+                          static_cast<unsigned long>(titleId));
+            continue;
+        }
+        if (!stillWanted || m_appToSlot[(size_t)appIndex] >= 0)
+            continue;
+
+        int poolIdx = -1;
         if (!m_freeSlots.empty()) {
             poolIdx = m_freeSlots.back();
             m_freeSlots.pop_back();
         } else {
-            poolIdx = (int)m_pool.size();
+            poolIdx = static_cast<int>(m_pool.size());
             m_pool.emplace_back(std::make_unique<TexSlot>());
         }
 
-        auto& slot = *m_pool[poolIdx];
-        if (slot.texture.loadFromPixels(gpu, ren, d.rgba, d.w, d.h)) {
-            slot.appIndex = d.appIndex;
-            m_appToSlot[d.appIndex] = poolIdx;
-            if (d.appIndex < (int)allIcons.size())
-                allIcons[d.appIndex]->setTexture(&slot.texture);
+        auto& slot = *m_pool[(size_t)poolIdx];
+        auto& decoded = state->decoded;
+        if (slot.texture.loadFromPixels(gpu, ren, decoded.rgba.data(), decoded.w, decoded.h)) {
+            slot.appIndex = appIndex;
+            m_appToSlot[(size_t)appIndex] = poolIdx;
+            if (appIndex < (int)allIcons.size())
+                allIcons[(size_t)appIndex]->setTexture(&slot.texture);
+            DebugLog::log("[streamer] uploaded title=0x%016lX app=%d pending=%d",
+                          static_cast<unsigned long>(titleId), appIndex,
+                          static_cast<int>(m_pendingDecodes.size()));
+        } else {
+            slot.appIndex = -1;
+            m_freeSlots.push_back(poolIdx);
+            m_failedTitleIds.push_back(titleId);
+            DebugLog::log("[streamer] upload failed title=0x%016lX app=%d",
+                          static_cast<unsigned long>(titleId), appIndex);
         }
+        ++uploads;
+    }
 
-        if (d.scaledWithMalloc) std::free(d.rgba);
-        else stbi_image_free(d.rgba);
+    // 4. Fill the bounded decode queue for visible icons. Both the SD read and
+    // image conversion happen on a worker; this call returns immediately.
+    for (int appIndex = visibleStartApp;
+         appIndex < visibleEndApp &&
+         (int)m_pendingDecodes.size() < kMaxPendingDecodes;
+         ++appIndex) {
+        if (m_appToSlot[(size_t)appIndex] >= 0 || !hasData(appIndex))
+            continue;
+
+        const uint64_t titleId = m_titleIds[(size_t)appIndex];
+        const bool failed = std::find(m_failedTitleIds.begin(), m_failedTitleIds.end(), titleId)
+            != m_failedTitleIds.end();
+        const bool pending = std::any_of(
+            m_pendingDecodes.begin(), m_pendingDecodes.end(),
+            [titleId](const PendingDecode& decode) { return decode.titleId == titleId; });
+        if (titleId == 0 || failed || pending)
+            continue;
+
+        std::vector<uint8_t> compressed;
+        if (appIndex < (int)m_compressed.size())
+            compressed = std::move(m_compressed[(size_t)appIndex]);
+
+        auto state = std::make_shared<DecodeState>();
+        IconDataLoader loader = m_iconLoader;
+        auto work = [state, titleId, loader, compressed = std::move(compressed)]() mutable {
+            if (state->cancelled.load())
+                return;
+            if (compressed.empty() && loader)
+                compressed = loader(titleId);
+            if (state->cancelled.load())
+                return;
+            if (compressed.empty()) {
+                state->failed = true;
+                return;
+            }
+            state->decoded = IconStreamer::decodeAndScale(compressed);
+            state->failed = state->decoded.rgba.empty();
+        };
+
+        PendingDecode decode;
+        decode.titleId = titleId;
+        decode.state = state;
+        if (m_threadPool) {
+            decode.future = m_threadPool->submit(std::move(work));
+        } else {
+            std::promise<void> completed;
+            decode.future = completed.get_future();
+            try {
+                work();
+                completed.set_value();
+            } catch (...) {
+                completed.set_exception(std::current_exception());
+            }
+        }
+        m_pendingDecodes.push_back(std::move(decode));
+        DebugLog::log("[streamer] scheduled title=0x%016lX app=%d pending=%d",
+                      static_cast<unsigned long>(titleId), appIndex,
+                      static_cast<int>(m_pendingDecodes.size()));
     }
 }
 
@@ -339,6 +474,9 @@ void IconStreamer::forceReload(int currentPage, int iconsPerPage,
     // because a forceReload typically follows a full GPU reset.
     m_pool.clear();
     m_freeSlots.clear();
+    cancelPending();
+    m_pendingDecodes.clear();
+    m_failedTitleIds.clear();
 
     m_lastPage = -1;
     m_lastIconsPerPage = -1;

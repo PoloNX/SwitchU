@@ -150,12 +150,13 @@ Result registerExternalContent(uint64_t program_id, const char* exefs_path) {
     return 0;
 }
 
-void unregisterExternalContent(uint64_t program_id) {
+Result unregisterExternalContent(uint64_t program_id) {
     Result rc = ldrAtmosUnregisterExternalCode(program_id);
     if (R_FAILED(rc))
         switchu::FileLog::log("[ecs] Unregister FAIL: 0x%X", rc);
     else
         switchu::FileLog::log("[ecs] unregistered 0x%016lX", program_id);
+    return rc;
 }
 
 }

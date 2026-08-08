@@ -21,6 +21,7 @@ enum class MenuMessage : uint32_t {
     GameCardMountFailure  =  8,
     AppViewFlagsUpdate    =  9,
     BatteryStatusChanged  = 10,
+    OperationFailed       = 11,
 };
 
 enum class SystemMessage : uint32_t {
@@ -35,6 +36,7 @@ enum class SystemMessage : uint32_t {
     LaunchControllers     = 12,
     LaunchNetConnect      = 13,
     LaunchUserPage        = 14,
+    LaunchControllerRemapping = 15,
 
     EnterSleep            = 20,
     Shutdown              = 21,
@@ -57,8 +59,9 @@ enum class MenuStartMode : uint32_t {
 struct CommandHeader {
     uint32_t magic;
     uint32_t message;
+    uint64_t request_id;
 };
-static_assert(sizeof(CommandHeader) == 8);
+static_assert(sizeof(CommandHeader) == 16);
 
 struct LaunchAppArgs {
     uint64_t title_id;
@@ -71,13 +74,22 @@ struct UserArgs {
 };
 static_assert(sizeof(UserArgs) == 16);
 
+struct OperationOutcome {
+    uint64_t request_id;
+    uint64_t title_id;
+    uint32_t command;
+    uint32_t result;
+};
+static_assert(sizeof(OperationOutcome) == 24);
+
 struct SystemStatus {
     uint64_t  suspended_app_id;
     uint8_t   selected_user[16];
     bool      app_running;
     uint8_t   _pad[7];
+    OperationOutcome last_failure;
 };
-static_assert(sizeof(SystemStatus) == 32);
+static_assert(sizeof(SystemStatus) == 56);
 
 struct AppEntryHeader {
     uint64_t  title_id;

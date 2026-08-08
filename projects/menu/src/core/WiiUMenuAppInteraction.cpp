@@ -1,9 +1,13 @@
 #include "WiiUMenuApp.hpp"
 #include "widgets/GlossyIcon.hpp"
 #include "DebugLog.hpp"
+#ifdef SWITCHU_MENU
+#include <switchu/control_cache.hpp>
+#endif
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <nxui/core/I18n.hpp>
 
 bool WiiUMenuApp::isEditableIcon(nxui::Widget* w) const {
@@ -51,8 +55,8 @@ std::string WiiUMenuApp::accessibilityActionsFor(nxui::Widget* w) const {
         if (icon->titleId() == 0)
             return i18n.tr("accessibility.actions.empty_slot", "Directional pad to navigate. ZL or ZR to change page.");
         return icon->isNotLaunchable()
-            ? i18n.tr("accessibility.actions.game_blocked", "A to show the reason. Y to move. ZL or ZR to change page.")
-            : i18n.tr("accessibility.actions.game_launchable", "A to launch. X for options. Y to move. ZL or ZR to change page.");
+            ? i18n.tr("accessibility.actions.game_blocked", "A to show the reason. Plus for options. Y to move. ZL or ZR to change page.")
+            : i18n.tr("accessibility.actions.game_launchable", "A to launch. Plus for options. Y to move. ZL or ZR to change page.");
     }
     if (m_settings && w == m_settings.get())
         return i18n.tr("accessibility.actions.settings", "Up and down to choose a category. A or right to enter. B to close.");
@@ -549,6 +553,9 @@ void WiiUMenuApp::markSuspendedIcon(uint64_t titleId) {
 }
 
 void WiiUMenuApp::closeActiveOverlays() {
+    // Transfer input ownership before starting any exit animation. An overlay
+    // that is still visually fading out must never win focusRoot().
+    m_navigator.resetToHome();
     if (m_editMode)
         exitEditMode();
     if (m_userSelect && m_userSelect->isActive())
@@ -559,14 +566,29 @@ void WiiUMenuApp::closeActiveOverlays() {
         m_settings->hide();
     if (m_themeShop && m_themeShop->isActive())
         m_themeShop->hide();
+    if (m_gameOptions && m_gameOptions->isActive())
+        m_gameOptions->hide();
+    if (m_controllerTest && m_controllerTest->isActive())
+        m_controllerTest->hide();
 }
 
 nxui::Widget* WiiUMenuApp::focusRoot() {
     if (m_launchAnim && m_launchAnim->isPlaying()) return nullptr;
+    if (m_progressDialog && m_progressDialog->isActive()) return m_progressDialog.get();
     if (m_dialog && m_dialog->isActive()) return m_dialog.get();
-    if (m_themeShop && m_themeShop->isActive()) return m_themeShop.get();
-    if (m_settings && m_settings->isActive()) return m_settings.get();
     if (m_userSelect && m_userSelect->isActive()) return m_userSelect.get();
+    switch (m_navigator.route()) {
+        case switchu::navigation::Route::Settings:
+            return m_settings ? m_settings.get() : &rootBox();
+        case switchu::navigation::Route::ThemeShop:
+            return m_themeShop ? m_themeShop.get() : &rootBox();
+        case switchu::navigation::Route::GameOptions:
+            return m_gameOptions ? m_gameOptions.get() : &rootBox();
+        case switchu::navigation::Route::ControllerTest:
+            return m_controllerTest ? m_controllerTest.get() : &rootBox();
+        case switchu::navigation::Route::Home:
+            break;
+    }
     return &rootBox();
 }
 
@@ -578,6 +600,8 @@ void WiiUMenuApp::toggleAccessibilitySpeech() {
         m_settings->setAccessibilityEnabledState(enabled);
     if (m_themeShop)
         m_themeShop->setAccessibilityVoiceEnabled(enabled);
+    if (m_gameOptions)
+        m_gameOptions->setAccessibilityVoiceEnabled(enabled);
 
     if (enabled) {
         m_audio.playSfx(Sfx::ThemeToggle);
@@ -592,6 +616,8 @@ void WiiUMenuApp::toggleAccessibilitySpeech() {
 }
 
 bool WiiUMenuApp::handleAccessibilityToggleCombo() {
+    if (m_navigator.route() == switchu::navigation::Route::ControllerTest)
+        return false;
     auto& input = app().input();
     if (!input.isDown(nxui::Button::Plus) || !input.isDown(nxui::Button::Minus))
         return false;
@@ -608,10 +634,14 @@ void WiiUMenuApp::wireGlobalActions() {
     auto& root = rootBox();
 
     root.addAction(static_cast<uint64_t>(nxui::Button::L), [this]() {
+        if (m_navigator.route() == switchu::navigation::Route::ControllerTest)
+            return;
         m_accessibility.repeatLastAnnouncement();
     });
 
     root.addAction(static_cast<uint64_t>(nxui::Button::ZL), [this]() {
+        if (m_navigator.route() != switchu::navigation::Route::Home || focusRoot() != &rootBox())
+            return;
         int p = m_grid->currentPage() - 1;
         if (p >= 0 && !m_grid->isTransitioning()) {
             m_grid->startWaveTransition(p);
@@ -619,6 +649,8 @@ void WiiUMenuApp::wireGlobalActions() {
         }
     });
     root.addAction(static_cast<uint64_t>(nxui::Button::ZR), [this]() {
+        if (m_navigator.route() != switchu::navigation::Route::Home || focusRoot() != &rootBox())
+            return;
         int p = m_grid->currentPage() + 1;
         if (p < m_grid->totalPages() && !m_grid->isTransitioning()) {
             m_grid->startWaveTransition(p);
@@ -629,6 +661,8 @@ void WiiUMenuApp::wireGlobalActions() {
         if ((m_dialog && m_dialog->isActive()) ||
             (m_themeShop && m_themeShop->isActive()) ||
             (m_settings && m_settings->isActive()) ||
+            (m_gameOptions && m_gameOptions->isActive()) ||
+            (m_controllerTest && m_controllerTest->isActive()) ||
             (m_userSelect && m_userSelect->isActive())) {
             return;
         }
@@ -667,6 +701,8 @@ void WiiUMenuApp::wireGlobalActions() {
     });
 #ifdef SWITCHU_DEBUG_UI
     root.addAction(static_cast<uint64_t>(nxui::Button::Minus), [this]() {
+        if (m_navigator.route() == switchu::navigation::Route::ControllerTest)
+            return;
         if (handleAccessibilityToggleCombo())
             return;
         m_showDebugOverlay = !m_showDebugOverlay;
@@ -674,11 +710,15 @@ void WiiUMenuApp::wireGlobalActions() {
     });
 #else
     root.addAction(static_cast<uint64_t>(nxui::Button::Minus), [this]() {
+        if (m_navigator.route() == switchu::navigation::Route::ControllerTest)
+            return;
         handleAccessibilityToggleCombo();
     });
 #endif
 #ifdef SWITCHU_HOMEBREW
     root.addAction(static_cast<uint64_t>(nxui::Button::Plus), [this]() {
+        if (m_navigator.route() == switchu::navigation::Route::ControllerTest)
+            return;
         if (handleAccessibilityToggleCombo())
             return;
         m_plusExitPending = true;
@@ -686,7 +726,21 @@ void WiiUMenuApp::wireGlobalActions() {
     });
 #else
     root.addAction(static_cast<uint64_t>(nxui::Button::Plus), [this]() {
-        handleAccessibilityToggleCombo();
+        if (m_navigator.route() == switchu::navigation::Route::ControllerTest)
+            return;
+        if (handleAccessibilityToggleCombo())
+            return;
+        if (m_editMode || (m_dialog && m_dialog->isActive()) ||
+            (m_settings && m_settings->isActive()) ||
+            (m_themeShop && m_themeShop->isActive()) ||
+            (m_gameOptions && m_gameOptions->isActive()) ||
+            (m_controllerTest && m_controllerTest->isActive()) ||
+            (m_userSelect && m_userSelect->isActive()))
+            return;
+        auto* current = focusManager().current();
+        if (!isEditableIcon(current))
+            return;
+        showGameContextMenu(static_cast<GlossyIcon*>(current));
     });
 #endif
 
@@ -710,15 +764,9 @@ void WiiUMenuApp::wireGlobalActions() {
                 {i18n.tr("button.cancel", "Cancel"), [this]() {}, true},
                 {i18n.tr("button.close", "Close"),  [this]() {
                     m_launcher.terminateApplication();
-                    m_launcher.setAppRunning(false);
-                    m_launcher.setAppHasForeground(false);
-                    m_launcher.setSuspendedTitleId(0);
-                    for (auto& ic : m_grid->allIcons())
-                        ic->setSuspended(false);
-                    if (auto* cur = m_grid->focusManager().current()) {
-                        auto* icon = static_cast<GlossyIcon*>(cur);
-                        m_titlePill->setText(icon->title());
-                    }
+                    // Keep the visible suspended state until the daemon emits
+                    // ApplicationExited. Clearing it optimistically made a
+                    // failed termination indistinguishable from success.
                 }, true}
             },
             1,
@@ -728,6 +776,65 @@ void WiiUMenuApp::wireGlobalActions() {
     });
 #endif
 }
+
+#ifdef SWITCHU_MENU
+void WiiUMenuApp::showGameContextMenu(GlossyIcon* icon) {
+    if (!icon || !m_gameOptions || icon->titleId() == 0)
+        return;
+
+    const uint64_t titleId = icon->titleId();
+    const std::string title = icon->title();
+    auto& i18n = nxui::I18n::instance();
+    switchu::control_cache::Meta meta{};
+    const bool hasMeta = switchu::control_cache::readMeta(titleId, meta);
+    const std::string version = hasMeta && meta.display_version[0] != '\0'
+        ? std::string(meta.display_version)
+        : i18n.tr("game.version_unknown", "Unknown");
+
+    GameOptionsScreen::GameInfo game;
+    game.titleId = titleId;
+    game.name = title;
+    game.version = version;
+    game.publisher = hasMeta && meta.publisher[0] != '\0'
+        ? std::string(meta.publisher)
+        : i18n.tr("game.publisher_unknown", "Unknown publisher");
+    game.icon = icon->texture();
+    game.gameCard = icon->isGameCard();
+    game.suspended = m_launcher.isAppSuspended(titleId);
+    m_gameOptions->setGame(game);
+    m_gameOptions->onMove([this]() {
+        if (m_gameOptions) m_gameOptions->hide();
+        if (focusTitle(m_gameOptionsTitleId)) {
+            if (auto* focused = m_grid->focusManager().current())
+                focusManager().setFocus(focused);
+        }
+        enterEditMode();
+        m_audio.playSfx(Sfx::Activate);
+    });
+    m_gameOptions->onCloseSoftware([this]() { m_launcher.terminateApplication(); });
+    m_gameOptions->onDeleteSoftware([this, titleId, title]() {
+        auto& localI18n = nxui::I18n::instance();
+        m_dialogReturnFocus = m_gameOptions.get();
+        m_dialog->show(
+            localI18n.tr("game.uninstall_title", "Delete software"),
+            localI18n.tr("game.delete_confirmation", "The software will be deleted. Save data will remain.")
+                + std::string("\n") + title,
+            {
+                {localI18n.tr("button.cancel", "Cancel"), []() {}, true},
+                {localI18n.tr("button.delete", "Delete"), [this, titleId, title]() {
+                    startSoftwareDeletion(titleId, title, true);
+                }, true},
+            }, 0, {});
+        focusManager().setFocus(m_dialog.get());
+    });
+
+    m_audio.playSfx(Sfx::ModalShow);
+    m_gameOptionsTitleId = titleId;
+    m_navigator.navigate(switchu::navigation::Route::GameOptions);
+    m_gameOptions->show();
+    focusManager().setFocus(m_gameOptions.get());
+}
+#endif
 
 void WiiUMenuApp::handleTouch() {
     constexpr float kSwipeThreshold = 80.f;
@@ -876,9 +983,9 @@ void WiiUMenuApp::handleSystemAction(SysAction a) {
 #endif
 
 void WiiUMenuApp::updateCursor() {
-    if ((m_themeShop && m_themeShop->isActive()) ||
-        (m_settings && m_settings->isActive()) ||
+    if (m_navigator.route() != switchu::navigation::Route::Home ||
         (m_dialog && m_dialog->isActive()) ||
+        (m_progressDialog && m_progressDialog->isActive()) ||
         (m_userSelect && m_userSelect->isActive()))
         return;
 

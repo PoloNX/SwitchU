@@ -10,8 +10,20 @@ UserAvatarButton::UserAvatarButton() {
     setLiquidGlassEnabled(false);
     setBlurEnabled(false);
     setForceLiquidGlass(false);
-    setPanelOpacity(0.f);
-    setBorderWidth(0.f);
+    setPanelOpacity(0.90f);
+    setBorderWidth(1.f);
+    setPadding(4.f);
+    setBaseColor(nxui::Color(0.20f, 0.22f, 0.28f, 0.94f));
+    setBorderColor(nxui::Color::white().withAlpha(0.24f));
+    setHighlightColor(nxui::Color::white().withAlpha(0.08f));
+}
+
+void UserAvatarButton::setTheme(const nxui::Theme* theme) {
+    if (!theme)
+        return;
+    setBaseColor(theme->panelBase.withAlpha(theme->mode == nxui::ThemeMode::Dark ? 0.95f : 0.96f));
+    setBorderColor(theme->panelBorder.withAlpha(0.36f));
+    setHighlightColor(theme->panelHighlight.withAlpha(0.10f));
 }
 
 void UserAvatarButton::setChromeEnabled(bool enabled) {

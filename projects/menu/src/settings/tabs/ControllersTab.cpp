@@ -13,6 +13,48 @@ SettingsScreen::Tab settings::tabs::ControllersTab::build(SettingsScreen& screen
     t.name = i18n.tr("settings.tabs.controllers", "Controllers");
 
     {
+        SettingItem it;
+        it.label = i18n.tr("settings.controllers.test", "Test Input Devices");
+        it.description = i18n.tr(
+            "settings.controllers.test_desc",
+            "Test joysticks, buttons, and the touch screen.");
+        it.type = ItemType::Action;
+        it.onChange = [&screen](SettingItem&) {
+            if (screen.m_controllerTestCb)
+                screen.m_controllerTestCb();
+        };
+        t.items.push_back(std::move(it));
+    }
+
+    {
+        SettingItem it;
+        it.label = i18n.tr("settings.controllers.pairing", "Change Grip/Order");
+        it.description = i18n.tr(
+            "settings.controllers.pairing_desc",
+            "Pair controllers and change their player order.");
+        it.type = ItemType::Action;
+        it.onChange = [&screen](SettingItem&) {
+            if (screen.m_controllerPairingCb)
+                screen.m_controllerPairingCb();
+        };
+        t.items.push_back(std::move(it));
+    }
+
+    {
+        SettingItem it;
+        it.label = i18n.tr("settings.controllers.remapping", "Change Button Mapping");
+        it.description = i18n.tr(
+            "settings.controllers.remapping_desc",
+            "Open the system controller button mapping tool.");
+        it.type = ItemType::Action;
+        it.onChange = [&screen](SettingItem&) {
+            if (screen.m_controllerRemappingCb)
+                screen.m_controllerRemappingCb();
+        };
+        t.items.push_back(std::move(it));
+    }
+
+    {
         SettingItem it; it.label = i18n.tr("settings.controllers.vibration", "Vibration"); it.type = ItemType::Slider;
         float vol = 1.f;
         setsysGetVibrationMasterVolume(&vol);

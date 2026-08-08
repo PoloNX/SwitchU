@@ -99,6 +99,7 @@ public:
         addChild(m_left);
 
         m_label = std::make_shared<nxui::Label>(item.label);
+        m_label->setMultiline(item.wrapLabel);
         m_label->setScale(0.94f);
         m_label->setHAlign(nxui::Label::HAlign::Left);
         m_label->setVAlign(nxui::Label::VAlign::Top);
@@ -160,6 +161,9 @@ protected:
 
         m_left->setRect(leftRect);
         m_right->setRect(rightRect);
+
+        if (m_item.wrapLabel)
+            m_labelMeasure = m_label->measureWrappedText(std::max(1.f, leftRect.width));
 
         float totalTextH = m_labelMeasure.y;
         if (m_cachedShowDesc)
@@ -277,6 +281,7 @@ public:
     }
 protected:
     float preferredRightWidth(float rowWidth) const override {
+        if (m_item.infoText.empty()) return 0.f;
         return std::max(120.f, rowWidth * 0.42f);
     }
 

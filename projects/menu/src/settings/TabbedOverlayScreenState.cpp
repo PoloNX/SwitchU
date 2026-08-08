@@ -107,32 +107,31 @@ void TabbedOverlayScreen::warmup() {
 
     rebuildTabBar();
 
-    if (!usesCustomContentLayout()) {
-        for (int tabIndex = 0; tabIndex < (int)m_tabs.size(); ++tabIndex) {
-            m_tabIndex = tabIndex;
-            m_contentIdx = 0;
-            m_scrollTarget = 0.f;
-            m_scrollY = 0.f;
-            rebuildContentItems();
-        }
-
-        m_tabIndex = std::clamp(oldTab, 0, (int)m_tabs.size() - 1);
-        clampContentIdx();
-        if (focusableCount() > 0)
-            m_contentIdx = std::clamp(oldContent, 0, focusableCount() - 1);
-        else
-            m_contentIdx = 0;
-        m_scrollTarget = oldScrollTarget;
-        m_scrollY = oldScrollY;
-    }
-
+    // Deliberately instantiate only the selected tab. Building every tab used
+    // to synchronously enumerate storage, profiles, network and Bluetooth on
+    // the menu-opening frame.
     rebuildContentItems();
 }
 
 bool TabbedOverlayScreen::itemFocusable(const SettingItem& item) const {
     if (item.focusable())
         return true;
-    return m_accessibilityVoiceEnabled && (item.type == ItemType::Info || item.type == ItemType::Section);
+    const bool isSection = item.type == ItemType::Section;
+    if (item.type != ItemType::Info && !isSection)
+        return false;
+    if (m_accessibilityVoiceEnabled)
+        return true;
+    return !isSection && tabIsTextOnly();
+}
+
+bool TabbedOverlayScreen::tabIsTextOnly() const {
+    if (m_tabIndex < 0 || m_tabIndex >= static_cast<int>(m_tabs.size()))
+        return false;
+    for (const auto& item : m_tabs[m_tabIndex].items) {
+        if (item.focusable())
+            return false;
+    }
+    return true;
 }
 
 int TabbedOverlayScreen::focusableCount() const {
@@ -201,7 +200,9 @@ nxui::Rect TabbedOverlayScreen::tabsRect() const {
 }
 
 nxui::Rect TabbedOverlayScreen::tabsRect(const nxui::Rect& panel) const {
-    return { panel.x + kInnerPad, panel.y + kInnerPad, kTabWidth, panel.height - 2 * kInnerPad };
+    const float headerH = overlayHeaderHeight();
+    return { panel.x + kInnerPad, panel.y + kInnerPad + headerH,
+             overlayTabWidth(), panel.height - 2 * kInnerPad - headerH };
 }
 
 nxui::Rect TabbedOverlayScreen::contentRect() const {
@@ -210,15 +211,17 @@ nxui::Rect TabbedOverlayScreen::contentRect() const {
 }
 
 nxui::Rect TabbedOverlayScreen::contentRect(const nxui::Rect& panel) const {
-    float left = panel.x + kInnerPad + kTabWidth + kInnerPad;
-    return { left, panel.y + kInnerPad,
-             panel.right() - kInnerPad - left, panel.height - 2 * kInnerPad };
+    const float headerH = overlayHeaderHeight();
+    float left = panel.x + kInnerPad + overlayTabWidth() + kInnerPad;
+    return { left, panel.y + kInnerPad + headerH,
+             panel.right() - kInnerPad - left, panel.height - 2 * kInnerPad - headerH };
 }
 
 float TabbedOverlayScreen::contentTotalHeight() const {
     if (m_tabIndex < 0 || m_tabIndex >= (int)m_tabs.size()) return 0;
+    const float width = contentRect().width;
     float height = 0;
     for (auto& item : m_tabs[m_tabIndex].items)
-        height += (item.type == ItemType::Section ? kSectionHeight : kRowHeight);
+        height += itemHeight(item, width);
     return height;
 }

@@ -39,14 +39,14 @@
       "open": "A to open.",
       "open_user_page": "A to open the user page.",
       "grid_empty": "Use the directional pad to move to another slot.",
-      "game_launchable": "A to launch. X for options. Y to move. ZL or ZR to change page.",
-      "game_blocked": "A to show why this item is blocked."
+      "game_launchable": "A to launch. Plus for options. Y to move. ZL or ZR to change page.",
+      "game_blocked": "A to show why this item is blocked. Plus for options."
     },
     "actions": {
       "edit_mode": "Directional pad to choose the new position. Y to place. B to cancel.",
       "empty_slot": "Directional pad to navigate. ZL or ZR to change page.",
-      "game_blocked": "A to show the reason. Y to move. ZL or ZR to change page.",
-      "game_launchable": "A to launch. X for options. Y to move. ZL or ZR to change page.",
+      "game_blocked": "A to show the reason. Plus for options. Y to move. ZL or ZR to change page.",
+      "game_launchable": "A to launch. Plus for options. Y to move. ZL or ZR to change page.",
       "settings": "Up and down to choose a category. A or right to enter. B to close.",
       "themes": "Up and down to navigate. A to choose. B to close.",
       "dialog": "Left and right to change choice. A to confirm. B to cancel."
@@ -141,7 +141,8 @@
   },
   "hint": {
     "repeat": "Repeat",
-    "voice": "Voice"
+    "voice": "Voice",
+    "options": "Options"
   },
   "settings": {
     "tabs": {
@@ -250,6 +251,12 @@
       "dns_auto": "Auto (DHCP)"
     },
     "controllers": {
+      "test": "Test Input Devices",
+      "test_desc": "Test joysticks, buttons, and the touch screen.",
+      "pairing": "Change Grip/Order",
+      "pairing_desc": "Pair controllers and change their player order.",
+      "remapping": "Change Button Mapping",
+      "remapping_desc": "Open the system controller button mapping tool.",
       "vibration": "Vibration",
       "usb_wired": "USB Wired Communication",
       "usb_wired_desc": "Use USB wired mode to reduce latency on compatible controllers.",
@@ -365,11 +372,52 @@
     "title": "Who's playing?"
   },
   "game": {
+    "options": "Software Options",
+    "data_management": "Data Management",
+    "information": "Information",
     "move": "Move",
+    "move_desc": "Move this software to another position on the HOME menu.",
     "move_prefix": "Move: ",
+    "version": "Version",
+    "version_unknown": "Unknown",
+    "publisher_unknown": "Unknown publisher",
+    "title_id": "Title ID",
+    "delete_software": "Delete Software",
+    "delete_software_desc": "Deletes the software from the console. Save data is not deleted.",
+    "delete_gamecard_unavailable": "Game card software cannot be deleted from the console.",
+    "delete_confirmation": "The software will be deleted. Save data will remain.",
+    "close_desc": "Close the running software. Unsaved progress may be lost.",
+    "uninstall": "Uninstall",
+    "uninstall_title": "Uninstall software",
+    "uninstall_prefix": "Permanently delete",
+    "uninstall_failed": "Uninstall failed",
+    "uninstall_progress_title": "Deleting software",
+    "uninstall_progress": "Please wait. Do not turn off the console.",
     "close_title": "Close game",
     "close_prefix": "Close",
     "close_suffix": "?\nUnsaved progress will be lost."
+  },
+  "controller_test": {
+    "title": "Controller Test",
+    "opened": "Controller test. Tilt a stick briefly to select it. Hold B for one second or press HOME to close.",
+    "close_hint": "Hold B 1 s or press HOME to close",
+    "joysticks": "Joysticks",
+    "buttons": "Buttons",
+    "touchscreen": "Touch screen",
+    "touch_hint": "Touch or click and drag here",
+    "touch_fullscreen_opened": "Full-screen touch test. Press X to return. Hold B for one second or press HOME to close.",
+    "touch_fullscreen_hint": "Touch test · X: return · Hold B 1 s or HOME: close",
+    "tilt_to_select": "Tilt a stick briefly to select it",
+    "left_stick": "Left stick",
+    "right_stick": "Right stick",
+    "left_selected": "Left stick selected",
+    "right_selected": "Right stick selected",
+    "direction": "Direction",
+    "center": "Center",
+    "up": "Up",
+    "down": "Down",
+    "left": "Left",
+    "right": "Right"
   },
   "power": {
     "title": "Power",

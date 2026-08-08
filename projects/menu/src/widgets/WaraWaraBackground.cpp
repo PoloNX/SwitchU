@@ -8,9 +8,12 @@ namespace {
 constexpr int kBackgroundRenderReserveVertices = 13312;
 constexpr int kWorstCaseShapeVertices = 36;
 constexpr int kGlassShapeLayers = 3;
-constexpr int kGridRenderedShapeBudget = 448;
-constexpr int kFloatingRenderedShapeBudget = 160;
-constexpr int kDenseRenderCopyThreshold = 96;
+// Theme manifests are untrusted configuration. A 14x8 grid combined with
+// quad symmetry previously expanded to 448 shapes per frame. Preserve the
+// composition while bounding fill/geometry cost on the handheld GPU.
+constexpr int kGridRenderedShapeBudget = 160;
+constexpr int kFloatingRenderedShapeBudget = 80;
+constexpr int kDenseRenderCopyThreshold = 64;
 constexpr float kPi = 3.14159265358979323846f;
 constexpr float kHalfPi = kPi * 0.5f;
 constexpr float kShapeBodyAlphaMin = 0.84f;
@@ -133,7 +136,10 @@ bool WaraWaraBackground::loadImage(nxui::GpuDevice& gpu, nxui::Renderer& ren, co
     }
 
     nxui::Texture texture;
-    if (!texture.loadFromFile(gpu, ren, path, 0))
+    // Theme packages are untrusted input and may contain multi-megapixel
+    // backgrounds. The display is 1280x720, so larger images only increase
+    // decode time, heap pressure and GPU memory use.
+    if (!texture.loadFromFile(gpu, ren, path, 1280))
         return false;
 
     m_backgroundImage = std::move(texture);
@@ -263,20 +269,12 @@ nxui::Rect WaraWaraBackground::backgroundImageRect() const {
 }
 
 void WaraWaraBackground::onRender(nxui::Renderer& ren) {
-    ren.useShader(nxui::ShaderProgram::Gradient);
-    nxui::FsUniforms fs = {};
-    fs.useTexture = 0;
-    fs.param1 = m_time;
-    fs.extra[0] = m_accent.r;  fs.extra[1] = m_accent.g;
-    fs.extra[2] = m_accent.b;  fs.extra[3] = m_accent.a;
-    fs.extra[4] = m_secondary.r;  fs.extra[5] = m_secondary.g;
-    fs.extra[6] = m_secondary.b;  fs.extra[7] = m_secondary.a;
-    fs.extra[8]  = m_shapeColor.r * 2.f;  fs.extra[9]  = m_shapeColor.g * 2.f;
-    fs.extra[10] = m_shapeColor.b * 2.f;  fs.extra[11] = m_shapeColor.a;
-    ren.pushFsUniforms(fs);
-    ren.drawRect(m_rect, nxui::Color::white());
-    ren.flush();
-    ren.useShader(nxui::ShaderProgram::Basic);
+    // Keep the first fullscreen draw on the basic renderer path. The animated
+    // gradient shader was attractive but fragile as the very first draw after a
+    // menu applet launch: if shader constants or descriptor state are rejected
+    // on-device, the whole tree can fail before the activity debug pass runs.
+    // A batched gradient is cheaper, deterministic and visually close enough.
+    ren.drawGradientRect(m_rect, m_secondary, m_accent);
 
     if (m_backgroundImage.valid() && m_config.imageOpacity > 0.f) {
         ren.drawTexture(&m_backgroundImage,

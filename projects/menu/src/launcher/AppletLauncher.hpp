@@ -8,6 +8,7 @@ public:
     struct Callbacks {
         std::function<void()>     playSfxModalHide;
         std::function<void()>     requestExit;
+        std::function<bool()>     beforePowerAction;
     };
 
     void init(Callbacks cbs);
@@ -15,6 +16,7 @@ public:
     void launchAlbum();
     void launchMiiEditor();
     void launchControllerPairing();
+    void launchControllerRemapping();
     void launchNetConnect();
     void launchUserPage(AccountUid uid);
     void enterSleep();
@@ -40,6 +42,9 @@ public:
 #endif
 
 private:
+#ifdef SWITCHU_MENU
+    bool preparePowerAction();
+#endif
 #ifdef SWITCHU_MENU
     std::atomic<bool>     m_appRunning{false};
     std::atomic<bool>     m_appHasForeground{false};

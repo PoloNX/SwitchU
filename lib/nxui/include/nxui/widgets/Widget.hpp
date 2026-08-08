@@ -144,6 +144,9 @@ protected:
     virtual void onUpdate(float dt) {}
     virtual void onRender(Renderer& ren) {}
 
+    void beginChildTraversal();
+    void endChildTraversal();
+
     Rect  m_rect;
     float m_opacity = 1.f;
     bool  m_visible = true;
@@ -169,6 +172,19 @@ protected:
     Widget* m_parent = nullptr;
     std::vector<Ptr> m_children;
 
+private:
+    enum class ChildMutationType { Add, Remove, Clear };
+    struct ChildMutation {
+        ChildMutationType type;
+        Ptr child;
+        Widget* target = nullptr;
+    };
+    void applyChildMutations();
+
+    unsigned m_childTraversalDepth = 0;
+    std::vector<ChildMutation> m_childMutations;
+
+protected:
     // Custom navigation overrides (direction → target widget)
     std::unordered_map<int, Widget*> m_customNav;
 

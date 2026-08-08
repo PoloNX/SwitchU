@@ -418,17 +418,9 @@ SettingsScreen::Tab settings::tabs::StorageTab::build(SettingsScreen& screen) {
             i18n.tr("settings.storage.uninstall_confirm_title", "Uninstall Game"),
             message,
             {
-                { i18n.tr("button.delete", "Delete"), [app, &screen, &i18n]() {
-                    Result rc = nsDeleteApplicationCompletely(app.titleId);
-                    if (R_SUCCEEDED(rc)) {
-                        screen.requestToast(i18n.tr("settings.storage.uninstall_success", "Uninstalled successfully."), 2.8f);
-                        screen.rebuildCurrentTab();
-                    } else {
-                        screen.requestDialog(
-                            i18n.tr("settings.storage.uninstall_failed_title", "Uninstall Failed"),
-                            i18n.tr("settings.storage.uninstall_failed", "Failed to uninstall the selected title."),
-                            {{ i18n.tr("button.ok", "OK"), []() {} }});
-                    }
+                { i18n.tr("button.delete", "Delete"), [app, &screen]() {
+                    if (screen.m_softwareDeleteCb)
+                        screen.m_softwareDeleteCb(app.titleId, app.title);
                 } },
                 { i18n.tr("button.cancel", "Cancel"), []() {} }
             });

@@ -273,6 +273,25 @@ void Renderer::drawRoundedRectOutline(const Rect& r, const Color& c, float radiu
     }
 }
 
+void Renderer::drawFrostedInset(const Rect& r, const Color& tint,
+                                const Color& border, const Color& highlight,
+                                float radius, float opacity) {
+    const float alpha = std::clamp(opacity, 0.f, 1.f);
+    if (alpha <= 0.01f || r.width <= 0.f || r.height <= 0.f)
+        return;
+
+    drawRoundedRect({r.x, r.y + 3.f, r.width, r.height},
+                    Color::black().withAlpha(0.12f * alpha), radius);
+    drawRoundedRect(r, tint.withAlpha(tint.a * alpha), radius);
+    drawRoundedRectOutline(r, border.withAlpha(border.a * alpha), radius, 1.f);
+    drawRoundedRectOutline(r.shrunk(1.5f),
+                           highlight.withAlpha(highlight.a * alpha),
+                           std::max(0.f, radius - 1.5f), 1.f);
+    drawRoundedRectOutline(r.shrunk(3.f),
+                           Color::black().withAlpha(0.045f * alpha),
+                           std::max(0.f, radius - 3.f), 1.f);
+}
+
 void Renderer::drawCircle(const Vec2& center, float radius, const Color& c, int segments) {
     flush();
     m_texturing = false;
@@ -448,13 +467,6 @@ void Renderer::drawOffscreen(int target, const Rect& dest, const Color& tint) {
 void Renderer::drawOffscreenRounded(int target, const Rect& dest, float radius, const Color& tint) {
     (void)target;
     drawRoundedRect(dest, tint, radius);
-}
-
-void Renderer::drawLiquidGlass(int target, const Rect& panelRect, float radius,
-                               const Color& tint, float opacity, float shade) {
-    (void)target;
-    (void)shade;
-    drawRoundedRect(panelRect, tint.withAlpha(tint.a * opacity), radius);
 }
 
 void Renderer::applyBlur(float radius, int passes) {

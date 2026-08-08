@@ -62,6 +62,7 @@ SettingsScreen::Tab settings::tabs::AboutTab::build(SettingsScreen& /* screen */
                            "Special thanks to everyone who contributed to this project.");
         it.type  = ItemType::Info;
         it.infoText = "";
+        it.wrapLabel = true;
         t.items.push_back(std::move(it));
     }
 

@@ -27,7 +27,7 @@ bool GpuDevice::initialize() {
         dataSize += VTX_BUF_SIZE + 256;
         dataSize += IDX_BUF_SIZE + 256;
         dataSize += VS_UBO_SIZE + 256;
-        dataSize += FS_UBO_SIZE + 256;
+        dataSize += FS_UBO_SIZE * FS_UBO_RING + 256;
     }
     dataSize += MAX_TEXTURES * sizeof(DkImageDescriptor) + DK_IMAGE_DESCRIPTOR_ALIGNMENT;
     dataSize += MAX_SAMPLERS * sizeof(DkSamplerDescriptor) + DK_SAMPLER_DESCRIPTOR_ALIGNMENT;
@@ -38,7 +38,7 @@ bool GpuDevice::initialize() {
         m_vtxOff[i]   = m_dataPool.alloc(VTX_BUF_SIZE, 256);
         m_idxOff[i]   = m_dataPool.alloc(IDX_BUF_SIZE, 256);
         m_vsUboOff[i] = m_dataPool.alloc(VS_UBO_SIZE, DK_UNIFORM_BUF_ALIGNMENT);
-        m_fsUboOff[i] = m_dataPool.alloc(FS_UBO_SIZE, DK_UNIFORM_BUF_ALIGNMENT);
+        m_fsUboOff[i] = m_dataPool.alloc(FS_UBO_SIZE * FS_UBO_RING, DK_UNIFORM_BUF_ALIGNMENT);
     }
     m_imgDescOff = m_dataPool.alloc(MAX_TEXTURES * sizeof(DkImageDescriptor), DK_IMAGE_DESCRIPTOR_ALIGNMENT);
     m_samDescOff = m_dataPool.alloc(MAX_SAMPLERS * sizeof(DkSamplerDescriptor), DK_SAMPLER_DESCRIPTOR_ALIGNMENT);
@@ -170,6 +170,7 @@ dk::UniqueMemBlock GpuDevice::allocImageMemory(uint32_t size) {
 }
 
 void GpuDevice::freeImageMemory(uint32_t size) {
+    waitForTextureUploads();
     size = (size + kGpuAlign - 1) & ~(kGpuAlign - 1);
     if (size <= m_imageMemUsed)
         m_imageMemUsed -= size;
@@ -221,6 +222,25 @@ void GpuDevice::resetImagePool() {
 bool GpuDevice::uploadTexture(dk::Image& dst, const void* pixels, uint32_t size,
                               uint32_t w, uint32_t h)
 {
+    if (m_uploadBatchActive) {
+        const uint32_t stagingOffset = m_stagingPool.alloc(size, 256);
+        if (stagingOffset == UINT32_MAX) {
+            std::fprintf(stderr, "[GpuDevice] upload batch staging budget exceeded (%u bytes)\n", size);
+            return false;
+        }
+
+        std::memcpy(m_stagingPool.cpuAddr(stagingOffset), pixels, size);
+        dk::ImageView view{dst};
+        m_uploadCmdbuf.copyBufferToImage(
+            {m_stagingPool.gpuAddr(stagingOffset), 0, 0},
+            view,
+            {0, 0, 0, w, h, 1});
+        ++m_uploadBatchCount;
+        return true;
+    }
+
+    waitForTextureUploads();
+
     const void* srcCpu = nullptr;
     DkGpuAddr srcGpu = 0;
     dk::UniqueMemBlock tempStaging;
@@ -261,7 +281,41 @@ bool GpuDevice::uploadTexture(dk::Image& dst, const void* pixels, uint32_t size,
     return true;
 }
 
+void GpuDevice::beginTextureUploadBatch() {
+    if (m_uploadBatchActive)
+        return;
+    waitForTextureUploads();
+
+    m_stagingPool.used = 0;
+    m_uploadCmdbuf.clear();
+    m_uploadCmdbuf.addMemory(m_uploadCmdPool.block, 0, 64 * 1024);
+    m_uploadBatchCount = 0;
+    m_uploadBatchActive = true;
+}
+
+void GpuDevice::waitForTextureUploads() {
+    if (!m_uploadInFlight)
+        return;
+    m_uploadFence.wait();
+    m_uploadInFlight = false;
+}
+
+void GpuDevice::endTextureUploadBatch() {
+    if (!m_uploadBatchActive)
+        return;
+    m_uploadBatchActive = false;
+    if (m_uploadBatchCount == 0)
+        return;
+
+    m_uploadCmdbuf.signalFence(m_uploadFence);
+    m_queue.submitCommands(m_uploadCmdbuf.finishList());
+    m_uploadInFlight = true;
+    m_uploadBatchCount = 0;
+}
+
 void GpuDevice::shutdown() {
+    if (m_uploadBatchActive)
+        endTextureUploadBatch();
     if (m_queue) m_queue.waitIdle();
     m_swapchain    = {};
     for (int i = 0; i < NUM_FB; ++i)

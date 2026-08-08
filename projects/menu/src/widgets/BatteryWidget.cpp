@@ -50,7 +50,13 @@ void BatteryWidget::setBatteryStatus(uint32_t percentage, bool charging) {
 }
 
 void BatteryWidget::onContentUpdate(float dt) {
-    m_chargeAnim += dt;
+    if (m_charging)
+        m_chargeAnim += dt;
+#ifdef SWITCHU_MENU
+    // The daemon owns PSM and pushes state changes. Duplicating the query here
+    // woke both processes periodically and could race service teardown.
+    return;
+#else
     m_timer += dt;
     if (m_timer < 1.f && m_level >= 0.f) return;
     m_timer = 0.f;
@@ -65,6 +71,7 @@ void BatteryWidget::onContentUpdate(float dt) {
     PsmChargerType ct = PsmChargerType_Unconnected;
     if (R_SUCCEEDED(psmGetChargerType(&ct)))
         m_charging = (ct != PsmChargerType_Unconnected);
+#endif
 }
 
 void BatteryWidget::onContentRender(nxui::Renderer& ren) {

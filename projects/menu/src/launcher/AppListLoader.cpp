@@ -123,6 +123,12 @@ bool fetchDaemonCatalog(std::vector<PendingApp>& out) {
             a.iconData = switchu::control_cache::readIcon(ent.titleId);
         }
 
+        if (!switchu::control_cache::isValidUtf8(a.title.c_str(), a.title.size() + 1)) {
+            DebugLog::log("[loader] invalid UTF-8 title; using title id=%016lX",
+                          static_cast<unsigned long>(ent.titleId));
+            a.title = tidBuf;
+        }
+
         out.push_back(std::move(a));
     }
 
@@ -163,9 +169,9 @@ void registerEntries(std::vector<PendingApp>& apps,
 
 }
 
-void AppListLoader::fetchApps() {
+void AppListLoader::fetchApps(std::vector<PendingApp>& output) {
     char tidBuf[17];
-    m_pending.clear();
+    output.clear();
 
 #ifdef SWITCHU_HOMEBREW
     static const char* dummyNames[] = {
@@ -206,14 +212,14 @@ void AppListLoader::fetchApps() {
         if (i == 10) flags = (1u << 6);
         if (i == 15) flags = (1u << 13);
         a.viewFlags = flags;
-        m_pending.push_back(std::move(a));
+        output.push_back(std::move(a));
     }
     DebugLog::log("[loader] generated %d dummy apps", kDummyCount);
 
 #else
-    if (fetchDaemonCatalog(m_pending)) {
+    if (fetchDaemonCatalog(output)) {
         DebugLog::log("[loader] fetched %d apps via daemon catalog",
-                      (int)m_pending.size());
+                      (int)output.size());
         return;
     }
 
@@ -229,7 +235,7 @@ void AppListLoader::fetchApps() {
     std::vector<switchu::ns::ExtApplicationView> views;
     queryApplicationViews(records, views);
 
-    m_pending.reserve(records.size());
+    output.reserve(records.size());
 
     for (size_t i = 0; i < records.size(); ++i) {
         uint64_t tid = records[i].id;
@@ -250,7 +256,7 @@ void AppListLoader::fetchApps() {
             a.userRequired = requiresInteractiveUserSelection(a.startupUserAccount,
                                                               a.startupUserAccountOption);
             a.iconData = switchu::control_cache::readIcon(tid);
-            m_pending.push_back(std::move(a));
+            output.push_back(std::move(a));
             continue;
         }
 
@@ -263,10 +269,10 @@ void AppListLoader::fetchApps() {
         a.startupUserAccount = 1;
         a.startupUserAccountOption = 0;
         a.userRequired = requiresInteractiveUserSelection(a.startupUserAccount, a.startupUserAccountOption);
-        m_pending.push_back(std::move(a));
+        output.push_back(std::move(a));
     }
 #endif
-    DebugLog::log("[loader] fetched %d apps", (int)m_pending.size());
+    DebugLog::log("[loader] fetched %d apps", (int)output.size());
 }
 
 
@@ -284,7 +290,15 @@ std::vector<uint8_t> AppListLoader::loadIconData(uint64_t titleId) {
 
 
 void AppListLoader::load(GridModel& model, IconStreamer& streamer) {
-    fetchApps();
+    try {
+        fetchApps(m_pending);
+    } catch (const std::exception& ex) {
+        DebugLog::log("[loader] synchronous load failed: %s", ex.what());
+        m_pending.clear();
+    } catch (...) {
+        DebugLog::log("[loader] synchronous load failed: unknown exception");
+        m_pending.clear();
+    }
     if (m_pendingTransform)
         m_pendingTransform(m_pending);
     registerEntries(m_pending, model, streamer);
@@ -293,11 +307,24 @@ void AppListLoader::load(GridModel& model, IconStreamer& streamer) {
 
 
 void AppListLoader::startAsync(nxui::ThreadPool& pool) {
-    if (m_future.valid())
-        m_future.get();
+    if (m_future.valid()) {
+        try {
+            m_future.get();
+        } catch (...) {
+            // The shared state below carries task errors. This catch also
+            // handles a pool shutdown racing a rejected submission.
+        }
+    }
 
-    m_future = pool.submit([this]() {
-        fetchApps();
+    auto state = std::make_shared<AsyncLoadState>();
+    m_asyncState = state;
+    m_future = pool.submit([state]() {
+        try {
+            fetchApps(state->pending);
+        } catch (...) {
+            state->error = std::current_exception();
+            state->pending.clear();
+        }
     });
 }
 
@@ -306,12 +333,38 @@ bool AppListLoader::isReady() const {
            m_future.wait_for(std::chrono::seconds(0)) == std::future_status::ready;
 }
 
-void AppListLoader::finalize(GridModel& model, IconStreamer& streamer) {
-    if (m_future.valid())
-        m_future.get();
+bool AppListLoader::finalize(GridModel& model, IconStreamer& streamer) {
+    if (m_future.valid()) {
+        try {
+            m_future.get();
+        } catch (const std::exception& ex) {
+            DebugLog::log("[loader] async task failed: %s", ex.what());
+            return false;
+        } catch (...) {
+            DebugLog::log("[loader] async task failed: unknown exception");
+            return false;
+        }
+    }
+
+    auto state = std::move(m_asyncState);
+    if (!state)
+        return false;
+    if (state->error) {
+        try {
+            std::rethrow_exception(state->error);
+        } catch (const std::exception& ex) {
+            DebugLog::log("[loader] async load failed: %s", ex.what());
+        } catch (...) {
+            DebugLog::log("[loader] async load failed: unknown exception");
+        }
+        return false;
+    }
+
+    m_pending = std::move(state->pending);
 
     if (m_pendingTransform)
         m_pendingTransform(m_pending);
     registerEntries(m_pending, model, streamer);
     m_pending.clear();
+    return true;
 }

@@ -74,8 +74,7 @@ public:
                                  const nxui::Color& base,
                                  const nxui::Color& border,
                                  const nxui::Color& highlight,
-                                 float alpha,
-                                 int backdropTarget);
+                                 float alpha);
 
     void update(float dt) override;
     void render(nxui::Renderer& ren) override;
@@ -175,5 +174,4 @@ private:
     static constexpr float kUserAvatarSize = 96.f;
     static constexpr float kUserAvatarGap = 32.f;
     static constexpr float kUserTitleGap = 30.f;
-    static constexpr int   kBackdropCacheTarget = 1;
 };

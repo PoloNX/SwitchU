@@ -21,6 +21,8 @@
 #include "widgets/PageIndicator.hpp"
 #include "widgets/UserAvatarButton.hpp"
 #include "settings/SettingsScreen.hpp"
+#include "settings/GameOptionsScreen.hpp"
+#include "settings/ControllerTestScreen.hpp"
 #include "themeshop/ThemeShopScreen.hpp"
 #include "core/Config.hpp"
 #include "core/ThemePreset.hpp"
@@ -29,6 +31,8 @@
 #include "launcher/AppListLoader.hpp"
 #include "launcher/IconStreamer.hpp"
 #include "core/SystemMessages.hpp"
+#include "navigation/MenuNavigator.hpp"
+#include "services/ClockService.hpp"
 #ifdef SWITCHU_DEBUG_UI
 #include "debug/DebugImGuiOverlay.hpp"
 #endif
@@ -60,7 +64,7 @@ public:
     void setTutorialStartupFade(bool enabled);
 
 #ifdef SWITCHU_MENU
-    void setStartupStatus(uint64_t suspendedTitleId, bool appRunning);
+    void setStartupStatus(const switchu::smi::SystemStatus& status);
 #endif
 
     bool onCreate() override;
@@ -91,6 +95,9 @@ private:
     std::string resolveThemeAssetPath(const ThemePreset& preset, const std::string& rawPath) const;
     ThemePreset* findPresetPtr(const std::string& name);
     void deletePreset(const std::string& presetId);
+    void startSoftwareDeletion(uint64_t titleId, const std::string& title,
+                               bool closeGameOptionsOnSuccess);
+    void syncSoftwareDeletion();
     void updateCursor();
     struct ActionHint {
         std::string icon;
@@ -112,6 +119,8 @@ private:
     std::string accessibilityPositionFor(nxui::Widget* w) const;
     void createSettings();
     void createThemeShop();
+    void createGameOptions();
+    void createControllerTest();
     void reloadThemePresets();
     void refreshThemeShopState();
     std::vector<ThemeShopScreen::ThemeShopEntry> buildThemeShopEntries();
@@ -124,6 +133,7 @@ private:
     std::vector<std::string> scanAvailablePresets();
     void loadMenuLayout();
     void saveMenuLayout();
+    bool quiesceWritersForPowerAction();
     void applyMenuLayoutToPending(std::vector<PendingApp>& apps);
     void startEditGhost(GlossyIcon* sourceIcon);
     void stopEditGhost();
@@ -143,6 +153,7 @@ private:
     void refreshAppList();
     void finalizeRefresh();
     void handleSystemAction(SysAction a);
+    void showGameContextMenu(GlossyIcon* icon);
 #endif
 
     nxui::Font  m_fontNormal;
@@ -151,6 +162,7 @@ private:
 
     GridModel    m_model;
     nxui::Theme  m_theme;
+    switchu::services::ClockService m_clockService;
 
     std::string              m_activePresetName = "Default Light";
     ThemeColorSet            m_activeColors;
@@ -172,6 +184,8 @@ private:
     std::shared_ptr<ProgressDialog>    m_progressDialog;
     std::shared_ptr<SettingsScreen>    m_settings;
     std::shared_ptr<ThemeShopScreen>   m_themeShop;
+    std::shared_ptr<GameOptionsScreen> m_gameOptions;
+    std::shared_ptr<ControllerTestScreen> m_controllerTest;
 
     nxui::Texture m_gameCardTex;
 
@@ -187,6 +201,8 @@ private:
     AudioManager m_audio;
     AccessibilityManager m_accessibility;
     std::future<void>    m_audioFuture;
+    std::future<void>    m_configSaveFuture;
+    std::future<void>    m_themeDeleteFuture;
     bool                 m_audioStarted = false;
     std::vector<std::string> m_availablePresets;
     bool                 m_presetChangePending = false;
@@ -208,6 +224,7 @@ private:
     AppListLoader   m_appLoader;
     IconStreamer    m_iconStreamer;
     SystemMessages  m_sysMsg;
+    switchu::navigation::MenuNavigator m_navigator;
 
     bool m_showDebugOverlay  = false;
 #ifdef SWITCHU_DEBUG_UI
@@ -244,6 +261,7 @@ private:
     std::string m_loadedBackgroundImagePath;
     bool m_backgroundImageLoaded      = false;
     bool m_forceThemeResourceReload   = false;
+    std::uint64_t m_gameOptionsTitleId = 0;
     nxui::Widget* m_dialogReturnFocus = nullptr;
     bool m_dialogWasActive            = false;
     bool m_suppressNextNavigateSfx    = false;
@@ -251,13 +269,21 @@ private:
     int  m_deferredBluetoothInitFrames = 0;
     int  m_deferredInitialAssetFrames = 0;
     std::future<void> m_themePackageTransferFuture;
+    std::future<void> m_softwareDeleteFuture;
+    Result m_softwareDeleteResult = 0;
+    std::string m_softwareDeleteTitle;
+    bool m_softwareDeleteClosesGameOptions = false;
     std::shared_ptr<ThemePackageTransferShared> m_themePackageTransfer;
     std::uint64_t m_themePackageTransferUiRevision = 0;
     std::uint64_t m_themePackageTransferHandledRevision = 0;
+#ifdef SWITCHU_MENU
+    switchu::smi::OperationOutcome m_startupFailure{};
+#endif
     int m_themeRenderDebugFrames = 0;
 
     float m_returnFadeTimer = 0.f;
     float m_tutorialStartupFadeTimer = 0.f;
+    std::uint64_t m_tutorialStartupFadeDeadlineTick = 0;
     bool  m_tutorialStartupFade = false;
     bool m_hintPanelInitialized = false;
     bool m_accessibilityToggleComboHeld = false;

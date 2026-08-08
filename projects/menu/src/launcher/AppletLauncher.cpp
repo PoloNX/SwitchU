@@ -29,6 +29,15 @@ void AppletLauncher::setStartupStatus(uint64_t suspendedTitleId, bool appRunning
                   suspendedTitleId, appRunning);
 }
 
+bool AppletLauncher::preparePowerAction() {
+    if (!m_cb.beforePowerAction)
+        return true;
+    if (m_cb.beforePowerAction())
+        return true;
+    DebugLog::log("[launcher] power action cancelled: SD commit failed");
+    return false;
+}
+
 void AppletLauncher::launchAlbum() {
     DebugLog::log("[launcher] requesting Album launch via daemon");
     Result rc = switchu::menu::smi_cmd::sendSimple(switchu::smi::SystemMessage::LaunchAlbum);
@@ -59,6 +68,17 @@ void AppletLauncher::launchControllerPairing() {
     }
 }
 
+void AppletLauncher::launchControllerRemapping() {
+    DebugLog::log("[launcher] requesting controller remapping via daemon");
+    Result rc = switchu::menu::smi_cmd::sendSimple(
+        switchu::smi::SystemMessage::LaunchControllerRemapping);
+    DebugLog::log("[launcher] controller remapping rc=0x%X", rc);
+    if (R_SUCCEEDED(rc)) {
+        if (m_cb.playSfxModalHide) m_cb.playSfxModalHide();
+        if (m_cb.requestExit)      m_cb.requestExit();
+    }
+}
+
 void AppletLauncher::launchNetConnect() {
     DebugLog::log("[launcher] requesting NetConnect launch via daemon");
     Result rc = switchu::menu::smi_cmd::sendSimple(switchu::smi::SystemMessage::LaunchNetConnect);
@@ -80,16 +100,19 @@ void AppletLauncher::launchUserPage(AccountUid uid) {
 }
 
 void AppletLauncher::enterSleep() {
+    if (!preparePowerAction()) return;
     DebugLog::log("[launcher] requesting sleep");
     switchu::menu::smi_cmd::enterSleep();
 }
 
 void AppletLauncher::shutdown() {
+    if (!preparePowerAction()) return;
     DebugLog::log("[launcher] requesting shutdown");
     switchu::menu::smi_cmd::shutdown();
 }
 
 void AppletLauncher::reboot() {
+    if (!preparePowerAction()) return;
     DebugLog::log("[launcher] requesting reboot");
     switchu::menu::smi_cmd::reboot();
 }
@@ -121,7 +144,9 @@ void AppletLauncher::terminateApplication() {
         return;
     }
     DebugLog::log("[launcher] requesting terminate 0x%016lX", (uint64_t)m_suspendedTitleId);
-    switchu::menu::smi_cmd::terminateApplication();
+    const Result rc = switchu::menu::smi_cmd::terminateApplication();
+    if (R_FAILED(rc))
+        DebugLog::log("[launcher] terminate command FAIL: 0x%X", rc);
 }
 
 void AppletLauncher::checkRunningApplication() {
@@ -139,6 +164,7 @@ void AppletLauncher::setSuspendedTitleId(uint64_t)   {}
 void AppletLauncher::launchAlbum()             {}
 void AppletLauncher::launchMiiEditor()         {}
 void AppletLauncher::launchControllerPairing() {}
+void AppletLauncher::launchControllerRemapping() {}
 void AppletLauncher::launchNetConnect()        {}
 void AppletLauncher::launchUserPage(AccountUid) {}
 void AppletLauncher::enterSleep()              {}

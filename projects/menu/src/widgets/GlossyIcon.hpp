@@ -30,6 +30,7 @@ public:
 
     void setNotLaunchable(bool nl)  { m_notLaunchable = nl; }
     bool isNotLaunchable() const    { return m_notLaunchable; }
+    void setLoadingColor(const nxui::Color& color) { m_loadingColor = color; }
 
     void startAppear(float delay);
     void forceVisible();
@@ -54,6 +55,7 @@ private:
     bool        m_suspended = false;
     bool        m_isGameCard = false;
     bool        m_notLaunchable = false;
+    nxui::Color m_loadingColor = nxui::Color::white();
     float       m_suspendPulse = 0.f;
 
     nxui::AnimatedFloat m_animScale;

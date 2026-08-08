@@ -10,6 +10,8 @@
 #include <future>
 #include <cstdint>
 #include <functional>
+#include <exception>
+#include <memory>
 
 struct PendingApp {
     std::string         id;
@@ -35,16 +37,22 @@ public:
 
     bool isReady() const;
 
-    void finalize(GridModel& model, IconStreamer& streamer);
+    bool finalize(GridModel& model, IconStreamer& streamer);
 
     void setPendingTransform(PendingTransform transform) {
         m_pendingTransform = std::move(transform);
     }
 
 private:
-    void fetchApps();
+    static void fetchApps(std::vector<PendingApp>& output);
+
+    struct AsyncLoadState {
+        std::vector<PendingApp> pending;
+        std::exception_ptr error;
+    };
 
     std::future<void>       m_future;
     std::vector<PendingApp> m_pending;
+    std::shared_ptr<AsyncLoadState> m_asyncState;
     PendingTransform        m_pendingTransform;
 };

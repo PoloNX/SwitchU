@@ -58,11 +58,12 @@ public:
 
     static constexpr int MAX_TEXTURES   = 2048;
     static constexpr int MAX_SAMPLERS   = 16;
-    static constexpr int MAX_VERTICES   = 65536;
-    static constexpr int VTX_BUF_SIZE   = MAX_VERTICES * 32;
+    static constexpr int MAX_VERTICES   = 32768;
+    static constexpr int VTX_BUF_SIZE   = MAX_VERTICES * 56;
     static constexpr int IDX_BUF_SIZE   = 256;
     static constexpr int VS_UBO_SIZE    = 256;
     static constexpr int FS_UBO_SIZE    = 256;
+    static constexpr int FS_UBO_RING    = 512;
     static constexpr int CMD_BUF_SIZE   = 256 * 1024;
     static constexpr int CODE_POOL_SIZE = 256 * 1024;
 
@@ -100,6 +101,12 @@ public:
     void*     vsUboCpuAddr(int frame) const { return m_dataPool.cpuAddr(m_vsUboOff[frame]); }
     DkGpuAddr fsUboGpuAddr(int frame) const { return m_dataPool.gpuAddr(m_fsUboOff[frame]); }
     void*     fsUboCpuAddr(int frame) const { return m_dataPool.cpuAddr(m_fsUboOff[frame]); }
+    DkGpuAddr nextFsUboGpuAddr(int frame) {
+        const uint32_t index = m_fsUboRingPos[frame];
+        m_fsUboRingPos[frame] = (index + 1u) % FS_UBO_RING;
+        return m_dataPool.gpuAddr(m_fsUboOff[frame] + index * FS_UBO_SIZE);
+    }
+    void resetFsUboRing(int frame) { m_fsUboRingPos[frame] = 0; }
 
     struct ImageAlloc {
         dk::MemBlock block;
@@ -116,6 +123,9 @@ public:
     uint64_t imageMemoryUsed() const { return m_imageMemUsed; }
 
     bool uploadTexture(dk::Image& dst, const void* pixels, uint32_t size, uint32_t width, uint32_t height);
+    void beginTextureUploadBatch();
+    void endTextureUploadBatch();
+    void waitForTextureUploads();
 
     static constexpr int NUM_OFFSCREEN = 3;
     dk::Image&       offscreenImage(int i)       { return m_offImages[i]; }
@@ -168,11 +178,16 @@ private:
     // Per-slot fences: signalled in endFrame, waited in beginFrame, so that
     // the CPU never overwrites command/vertex memory the GPU is still reading.
     dk::Fence  m_frameFences[NUM_FB];
+    dk::Fence  m_uploadFence;
+    bool       m_uploadBatchActive = false;
+    bool       m_uploadInFlight = false;
+    unsigned   m_uploadBatchCount = 0;
 
     uint32_t m_vtxOff[NUM_FB] {};
     uint32_t m_idxOff[NUM_FB] {};
     uint32_t m_vsUboOff[NUM_FB] {};
     uint32_t m_fsUboOff[NUM_FB] {};
+    uint32_t m_fsUboRingPos[NUM_FB] {};
     uint32_t m_imgDescOff = 0;
     uint32_t m_samDescOff = 0;
 

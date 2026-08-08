@@ -23,12 +23,16 @@ void Box::onRender(Renderer& /*ren*/) {
 void Box::render(Renderer& ren) {
     if (!m_visible || m_opacity <= 0.f) return;
 
+    beginChildTraversal();
+
     // Allow Box subclasses (e.g. GlassPanel/GlassWidget) to render their body.
     onRender(ren);
 
-    // Then render children (snapshot — tree may be modified during render).
-    auto kids = m_children;
-    for (auto& c : kids) c->render(ren);
+    // Structural changes requested by callbacks are committed after traversal.
+    for (auto& child : m_children)
+        child->render(ren);
+
+    endChildTraversal();
 
     // Optional debug wireframe overlay for all Box widgets, on top.
     if (!ren.boxWireframeEnabled() || !m_wireframeEnabled) return;

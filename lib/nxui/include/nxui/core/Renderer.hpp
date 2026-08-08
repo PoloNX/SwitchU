@@ -17,8 +17,12 @@ struct Vertex2D {
     float x, y;         // Position
     float u, v;         // Texture coordinate
     float r, g, b, a;   // Color (premultiplied alpha)
+    float sx, sy;       // Position relative to rounded-shape centre
+    float hx, hy;       // Rounded-shape half extent
+    float rad;          // Corner radius; zero disables the mask
+    float thick;        // Stroke width; zero fills the shape
 };
-static_assert(sizeof(Vertex2D) == 32);
+static_assert(sizeof(Vertex2D) == 56);
 
 struct VsUniforms {
     float projection[16];   // Ortho matrix (top-left origin)
@@ -39,7 +43,6 @@ enum class ShaderProgram {
     BlurH,
     BlurV,
     Wave,
-    LiquidGlass,
     Gradient,
     Count
 };
@@ -94,6 +97,8 @@ public:
     void drawRectOutline(const Rect& r, const Color& c, float thickness = 1.f);
     void drawRoundedRect(const Rect& r, const Color& c, float radius);
     void drawRoundedRectOutline(const Rect& r, const Color& c, float radius, float thickness = 1.f);
+    void drawFrostedInset(const Rect& r, const Color& tint, const Color& border,
+                          const Color& highlight, float radius, float opacity = 1.f);
     void drawCircle(const Vec2& center, float radius, const Color& c, int segments = 32);
     void drawTriangle(const Vec2& p1, const Vec2& p2, const Vec2& p3, const Color& c);
     void drawLine(const Vec2& from, const Vec2& to, const Color& c, float thickness = 1.f);
@@ -109,8 +114,6 @@ public:
     void drawOffscreen(int target, const Rect& dest, const Color& tint = Color::white());
     void drawOffscreenRounded(int target, const Rect& dest, float radius,
                               const Color& tint = Color::white());
-    void drawLiquidGlass(int target, const Rect& panelRect, float radius,
-                         const Color& tint, float opacity = 1.f, float shade = 0.f);
     void applyBlur(float radius = 1.0f, int passes = 2);
     void applyWave(float time, float amplitude, float frequency);
 
@@ -157,6 +160,15 @@ public:
 
 private:
     // Emit geometry helpers
+    Vec2  m_shapeCentre {0.f, 0.f};
+    Vec2  m_shapeHalf {0.f, 0.f};
+    float m_shapeRadius = 0.f;
+    float m_shapeThickness = 0.f;
+
+    void beginShape(const Rect& dest, float radius, float thickness = 0.f);
+    void endShape();
+    void drawRoundedMasked(const Rect& dest, float radius, const Color& color,
+                           const Rect& uv, float thickness = 0.f);
     void addVertex(float x, float y, float u, float v, const Color& c);
     void addQuad(float x0, float y0, float x1, float y1,
                  float u0, float v0, float u1, float v1, const Color& c);

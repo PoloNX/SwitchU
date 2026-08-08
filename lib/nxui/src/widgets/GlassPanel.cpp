@@ -91,38 +91,21 @@ void GlassPanel::onRender(Renderer& ren) {
         ren.drawRoundedRect(r, m_backingColor.withAlpha(op), m_radius);
     }
 
-    float shortestSide = std::max(1.0f, std::min(r.width, r.height));
-    float longestSide = std::max(r.width, r.height);
-    float aspectRatio = longestSide / shortestSide;
-
-    // Very wide panels use a softer frosted fallback unless explicitly forced.
-    bool useLiquidGlassShader = m_liquidGlassEnabled
-        && m_liquidGlassShaderEnabled
-        && (m_forceLiquidGlass || aspectRatio <= 1.35f);
-    bool useWideLiquidGlassFallback = m_liquidGlassEnabled && !useLiquidGlassShader;
-    bool useAnyLiquidGlass = useLiquidGlassShader || useWideLiquidGlassFallback;
-    bool needsBackdrop = (m_blurEnabled || useAnyLiquidGlass) && op > 0.01f;
-    bool canReuseBackdropCapture = useAnyLiquidGlass && !m_blurEnabled;
-
-    if (needsBackdrop) {
-        ren.captureToOffscreen(canReuseBackdropCapture);
+    // "Liquid glass" is retained as a styling intent for API compatibility,
+    // but the production material is now a cheap Wii U-like frosted inset.
+    // Local live backdrop captures caused a full render-target transition for
+    // every small control and dominated steady-state GPU time.
+    if (m_blurEnabled && op > 0.01f) {
+        ren.captureToOffscreen(false);
         if (m_blurEnabled) {
             ren.applyBlur(m_blurRadius, m_blurPasses);
         }
     }
 
-    if (useLiquidGlassShader && op > 0.01f) {
-        if (ren.liquidGlassDebugRawBackdrop()) {
-            ren.drawOffscreenRounded(0, r, m_radius, Color::white().withAlpha(op));
-        } else {
-            ren.drawLiquidGlass(0, r, m_radius, m_base, op, m_liquidGlassShade);
-        }
-    } else if (useWideLiquidGlassFallback && op > 0.01f) {
-        ren.drawOffscreenRounded(0, r, m_radius, Color::white().withAlpha(op));
-
+    if (m_liquidGlassEnabled && op > 0.01f) {
         Color body = m_base;
-        body.a *= 0.70f;
-        ren.drawRoundedRect(r, body.withAlpha(body.a * op), m_radius);
+        body.a = std::max(body.a, 0.16f);
+        ren.drawFrostedInset(r, body, m_border, m_highlight, m_radius, op);
     } else {
         if (m_blurEnabled && op > 0.01f) {
             ren.drawOffscreenRounded(0, r, m_radius, Color::white().withAlpha(op));
@@ -135,30 +118,16 @@ void GlassPanel::onRender(Renderer& ren) {
         drawPanelMaterialTexture(ren, r, m_radius, op, m_materialTextureIntensity);
     }
 
-    if (useAnyLiquidGlass) {
-        if (m_highlight.a > 0.01f && op > 0.01f) {
-            ren.drawRoundedRectOutline(r.shrunk(1.f),
-                                       m_highlight.withAlpha(m_highlight.a * 0.55f * op),
-                                       std::max(0.0f, m_radius - 1.f), 1.f);
-        }
-
-        if (m_borderW > 0.f) {
-            ren.drawRoundedRectOutline(r,
-                                       m_border.withAlpha(m_border.a * 0.80f * op),
-                                       m_radius, m_borderW);
-        }
+    if (m_liquidGlassEnabled)
         return;
-    }
 
-    bool drawClassicOutline = !useAnyLiquidGlass;
-
-    if (drawClassicOutline && m_highlight.a > 0.01f && op > 0.01f) {
+    if (m_highlight.a > 0.01f && op > 0.01f) {
         ren.drawRoundedRectOutline(r.shrunk(0.5f),
                                    m_highlight.withAlpha(m_highlight.a * 0.55f * op),
                                    m_radius - 0.5f, 1.f);
     }
 
-    if (drawClassicOutline && m_borderW > 0.f)
+    if (m_borderW > 0.f)
         ren.drawRoundedRectOutline(r, m_border.withAlpha(m_border.a * op),
                                    m_radius, m_borderW);
 }

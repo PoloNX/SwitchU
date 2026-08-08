@@ -87,9 +87,9 @@ void OverlayDialog::buildWidgetTree() {
     setWireframeEnabled(false);
     setPanelOpacity(0.94f);
     if (m_theme) {
-        setBaseColor(m_theme->panelBase.withAlpha(std::clamp(m_theme->panelBase.a * 0.82f, 0.18f, 0.32f)));
-        setBorderColor(m_theme->panelBorder.withAlpha(std::clamp(m_theme->panelBorder.a * 0.95f, 0.14f, 0.36f)));
-        setHighlightColor(m_theme->panelHighlight.withAlpha(std::clamp(m_theme->panelHighlight.a * 0.70f, 0.03f, 0.10f)));
+        setBaseColor(m_theme->panelBase.withAlpha(m_theme->mode == nxui::ThemeMode::Dark ? 0.95f : 0.96f));
+        setBorderColor(m_theme->panelBorder.withAlpha(0.42f));
+        setHighlightColor(m_theme->panelHighlight.withAlpha(0.10f));
     }
 
     if (titleFont && !m_title.empty()) {
@@ -228,9 +228,9 @@ void OverlayDialog::buildUserSelect() {
     setWireframeEnabled(false);
     setPanelOpacity(0.94f);
     if (m_theme) {
-        setBaseColor(m_theme->panelBase.withAlpha(std::clamp(m_theme->panelBase.a * 0.82f, 0.18f, 0.32f)));
-        setBorderColor(m_theme->panelBorder.withAlpha(std::clamp(m_theme->panelBorder.a * 0.95f, 0.14f, 0.36f)));
-        setHighlightColor(m_theme->panelHighlight.withAlpha(std::clamp(m_theme->panelHighlight.a * 0.70f, 0.03f, 0.10f)));
+        setBaseColor(m_theme->panelBase.withAlpha(m_theme->mode == nxui::ThemeMode::Dark ? 0.95f : 0.96f));
+        setBorderColor(m_theme->panelBorder.withAlpha(0.42f));
+        setHighlightColor(m_theme->panelHighlight.withAlpha(0.10f));
     }
 
     m_userAvatarRects.resize(m_users.size());
@@ -810,46 +810,24 @@ void OverlayDialog::renderGlassPanel(nxui::Renderer& ren,
                                      const nxui::Color& base,
                                      const nxui::Color& border,
                                      const nxui::Color& highlight,
-                                     float alpha,
-                                     int backdropTarget) {
+                                     float alpha) {
     if (alpha <= 0.01f)
         return;
 
-    const auto& tuning = settings::debug::settingsGlassTuning();
-    nxui::LiquidGlassSettings savedGlass = ren.liquidGlassSettings();
-    auto& glass = ren.liquidGlassSettings();
-    glass.refractionIntensity = std::clamp(tuning.refractionIntensity, 0.0f, 1.5f);
-    glass.blurIntensity = std::max(0.0f, tuning.shaderBlurIntensity);
-    glass.noiseIntensity = 0.0f;
-    glass.glowIntensity = std::max(0.0f, tuning.glowIntensity);
-    glass.saturation = std::max(0.0f, tuning.saturation);
-    glass.opacityMultiplier = 1.0f;
-    glass.roughness = std::max(0.0f, tuning.roughness);
-    glass.powerFactor = std::max(1.001f, tuning.powerFactor);
-
     nxui::Color glassTint = theme
-        ? theme->panelBase.withAlpha(theme->mode == nxui::ThemeMode::Dark
-            ? std::clamp(tuning.tintAlphaDark, 0.0f, 1.0f)
-            : std::clamp(tuning.tintAlphaLight, 0.0f, 1.0f))
-        : base.withAlpha(0.14f);
+        ? theme->panelBase.withAlpha(theme->mode == nxui::ThemeMode::Dark ? 0.95f : 0.96f)
+        : base.withAlpha(0.95f);
+    const auto& tuning = settings::debug::settingsGlassTuning();
     nxui::Rect glassRect = panel.shrunk(std::max(0.0f, tuning.inset));
     float glassRadius = std::max(12.0f, radius - std::max(0.0f, tuning.inset) * 0.5f);
 
-    ren.drawLiquidGlass(backdropTarget,
-                        glassRect,
-                        glassRadius,
-                        glassTint,
-                        alpha,
-                        std::clamp(tuning.shade, 0.0f, 1.0f));
-    ren.drawRoundedRectOutline(glassRect,
-                               border.withAlpha(std::clamp(border.a * 0.90f, 0.14f, 0.34f) * alpha),
-                               glassRadius,
-                               1.2f);
-    ren.drawRoundedRectOutline(glassRect.shrunk(1.5f),
-                               highlight.withAlpha(std::clamp(highlight.a * 0.90f, 0.04f, 0.10f) * alpha),
-                               std::max(0.0f, glassRadius - 1.5f),
-                               1.0f);
-    ren.liquidGlassSettings() = savedGlass;
+    ren.drawFrostedInset(
+        glassRect,
+        glassTint,
+        border.withAlpha(std::clamp(border.a * 0.90f, 0.14f, 0.34f)),
+        highlight.withAlpha(std::clamp(highlight.a * 0.90f, 0.04f, 0.10f)),
+        glassRadius,
+        alpha);
 }
 
 void OverlayDialog::render(nxui::Renderer& ren) {
@@ -859,24 +837,8 @@ void OverlayDialog::render(nxui::Renderer& ren) {
     if (alpha < 0.01f) return;
 
     nxui::Rect panel = scaledRect(rect(), scale());
-    const auto& tuning = settings::debug::settingsGlassTuning();
-    bool needsBackdropRefresh = !m_backdropCacheValid
-        || std::abs(m_cachedPreBlurRadius - tuning.preBlurRadius) > 0.001f
-        || m_cachedBlurIterations != tuning.blurIterations;
-
-    if (needsBackdropRefresh) {
-        ren.captureToOffscreen(false);
-        if (tuning.blurIterations > 0 && tuning.preBlurRadius > 0.001f) {
-            ren.applyBlur(tuning.preBlurRadius, tuning.blurIterations);
-        }
-        ren.copyOffscreen(0, kBackdropCacheTarget);
-        m_backdropCacheValid = true;
-        m_cachedPreBlurRadius = tuning.preBlurRadius;
-        m_cachedBlurIterations = tuning.blurIterations;
-    }
-
     renderGlassPanel(ren, m_theme, panel, kPanelRadius, m_base, m_border, m_highlight,
-                     alpha, kBackdropCacheTarget);
+                     alpha);
 
     if (m_mode == DialogMode::UserSelect) {
         renderUserContent(ren, alpha);

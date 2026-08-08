@@ -1,4 +1,5 @@
 #include "WiiUMenuApp.hpp"
+#include <switchu/sd_commit.hpp>
 #include "widgets/GlossyIcon.hpp"
 #include "themeshop/ThemeHttp.hpp"
 #include <nxui/core/Animation.hpp>
@@ -227,13 +228,15 @@ void WiiUMenuApp::setTutorialStartupFade(bool enabled) {
 }
 
 #ifdef SWITCHU_MENU
-void WiiUMenuApp::setStartupStatus(uint64_t suspendedTitleId, bool appRunning) {
-    m_launcher.setStartupStatus(suspendedTitleId, appRunning);
+void WiiUMenuApp::setStartupStatus(const switchu::smi::SystemStatus& status) {
+    m_launcher.setStartupStatus(status.suspended_app_id, status.app_running);
+    m_startupFailure = status.last_failure;
 }
 #endif
 
 bool WiiUMenuApp::onCreate() {
     DebugLog::log("[init] onCreate enter");
+    m_iconStreamer.setThreadPool(&m_threadPool);
     m_config.load();
     loadMenuLayout();
     m_appLoader.setPendingTransform([this](std::vector<PendingApp>& apps) {
@@ -277,6 +280,7 @@ bool WiiUMenuApp::onCreate() {
     m_launcher.init({
         .playSfxModalHide = [this]() { m_audio.playSfx(Sfx::ModalHide); },
         .requestExit = [this]() { app().requestExit(); },
+        .beforePowerAction = [this]() { return quiesceWritersForPowerAction(); },
     });
 
 
@@ -284,6 +288,36 @@ bool WiiUMenuApp::onCreate() {
     loadResources();
     DebugLog::log("[init] buildGrid...");
     buildGrid();
+
+#ifdef SWITCHU_MENU
+    if (m_startupFailure.result != 0 && m_dialog) {
+        auto commandName = [](uint32_t command) -> const char* {
+            using Message = switchu::smi::SystemMessage;
+            switch (static_cast<Message>(command)) {
+                case Message::LaunchAlbum: return "Album";
+                case Message::LaunchMiiEditor: return "MiiEditor";
+                case Message::LaunchControllers: return "Controllers";
+                case Message::LaunchNetConnect: return "NetConnect";
+                case Message::LaunchUserPage: return "UserPage";
+                case Message::LaunchControllerRemapping: return "ControllerRemapping";
+                default: return "SystemAction";
+            }
+        };
+        char details[240]{};
+        std::snprintf(details, sizeof(details),
+                      "%s failed.\nCommand: %u · Request: %lu\nResult: 0x%X · Module: %u · Description: %u",
+                      commandName(m_startupFailure.command),
+                      m_startupFailure.command,
+                      static_cast<unsigned long>(m_startupFailure.request_id),
+                      m_startupFailure.result,
+                      R_MODULE(m_startupFailure.result),
+                      R_DESCRIPTION(m_startupFailure.result));
+        m_dialog->show(nxui::I18n::instance().tr("error.operation_failed", "Operation failed"),
+                       details,
+                       {{nxui::I18n::instance().tr("button.ok", "OK"), {}, true}});
+        focusManager().setFocus(m_dialog.get());
+    }
+#endif
 
 #ifdef SWITCHU_DEBUG_UI
     m_debugOverlay = std::make_unique<DebugImGuiOverlay>();
@@ -305,8 +339,52 @@ bool WiiUMenuApp::onCreate() {
     return true;
 }
 
+bool WiiUMenuApp::quiesceWritersForPowerAction() {
+    // Power actions do not destroy the activity first, so explicitly wait for
+    // every SD writer owned by the menu. Keep the futures valid where normal
+    // UI completion code still consumes their results.
+    if (m_configSaveFuture.valid())
+        m_configSaveFuture.wait();
+    if (m_themeDeleteFuture.valid())
+        m_themeDeleteFuture.wait();
+    if (m_themePackageTransferFuture.valid())
+        m_themePackageTransferFuture.wait();
+    if (m_softwareDeleteFuture.valid())
+        m_softwareDeleteFuture.wait();
+    if (m_layoutDirty)
+        saveMenuLayout();
+
+    const bool committed = switchu::commitSdCard("power action");
+    DebugLog::log("[power] writers quiesced; SD commit=%s",
+                  committed ? "ok" : "failed");
+    return committed;
+}
+
 void WiiUMenuApp::onDestroy() {
-    if (m_audioFuture.valid()) m_audioFuture.get();
+    // All background jobs may reference services or members owned by this
+    // activity. Drain them while the entire object graph is still alive, and
+    // only then shut down HTTP, Bluetooth, accessibility and audio.
+    m_iconStreamer.cancelPending();
+    m_threadPool.shutdown();
+
+    if (m_audioFuture.valid()) {
+        try {
+            m_audioFuture.get();
+        } catch (const std::exception& ex) {
+            DebugLog::log("[shutdown] audio task failed: %s", ex.what());
+        } catch (...) {
+            DebugLog::log("[shutdown] audio task failed: unknown exception");
+        }
+    }
+    if (m_themePackageTransferFuture.valid()) {
+        try {
+            m_themePackageTransferFuture.get();
+        } catch (const std::exception& ex) {
+            DebugLog::log("[shutdown] theme transfer failed: %s", ex.what());
+        } catch (...) {
+            DebugLog::log("[shutdown] theme transfer failed: unknown exception");
+        }
+    }
 
 #ifdef SWITCHU_DEBUG_UI
     if (m_debugOverlay) {
@@ -375,6 +453,8 @@ void WiiUMenuApp::buildUserAvatarBar() {
         avatar->setMinHeight(56.f);
         avatar->setShrink(0.f);
         avatar->setCornerRadius(28.f);
+        avatar->setChromeEnabled(true);
+        avatar->setTheme(&m_theme);
         avatar->setUid(uids[i]);
         avatar->setFocusable(true);
 
@@ -530,10 +610,12 @@ void WiiUMenuApp::reflowHomeGrid() {
     }
 
     m_model = std::move(rebuiltModel);
-    m_iconStreamer.resize(m_model.count());
     m_iconStreamer.setIconDataLoader(AppListLoader::loadIconData);
+    std::vector<uint64_t> reflowedTitleIds;
+    reflowedTitleIds.reserve((size_t)std::max(0, m_model.count()));
     for (int i = 0; i < m_model.count(); ++i)
-        m_iconStreamer.setTitleId(i, m_model.at(i).titleId);
+        reflowedTitleIds.push_back(m_model.at(i).titleId);
+    m_iconStreamer.reconcileTitleIds(reflowedTitleIds);
 
     GridLayoutMetrics gridMetrics = computeGridLayoutMetrics();
     m_grid->setup(std::move(icons), cols, rows,
@@ -735,6 +817,7 @@ std::shared_ptr<GlossyIcon> WiiUMenuApp::makeIcon(const AppEntry& entry) {
         : i18n.tr("accessibility.hints.game_blocked", "A to show why this item is blocked."));
     // Texture is set by IconStreamer::onPageChanged() — not here.
     icon->setCornerRadius(m_theme.iconCornerRadius);
+    icon->setLoadingColor(m_theme.cursorNormal);
     icon->setIsGameCard(entry.isGameCard());
     icon->setGameCardTexture(&m_gameCardTex);
     icon->setNotLaunchable(!entry.isLaunchable());
@@ -920,6 +1003,7 @@ void WiiUMenuApp::buildGrid() {
     m_clock->setMarginLeft(24.f);
     m_clock->setFont(&m_fontNormal);
     m_clock->setSmallFont(&m_fontSmall);
+    m_clock->setClockService(&m_clockService);
     m_clock->setUse12HourClock(m_config.clockUse12Hour);
     m_clock->setCornerRadius(m_theme.cellCornerRadius);
     m_clock->setForceLiquidGlass(true);
@@ -1037,10 +1121,19 @@ void WiiUMenuApp::buildGrid() {
             icon->forceVisible();
         m_returnFadeTimer = kReturnFadeInDur;
     } else {
+        // The first visible page can animate again: the black-screen issue was
+        // caused by a blocking GPU icon-upload wait, not by the appear tween.
         m_grid->startAppearAnimation();
     }
-    if (m_tutorialStartupFade)
+    if (m_tutorialStartupFade) {
         m_tutorialStartupFadeTimer = kTutorialStartupFadeDur;
+        const std::uint64_t freq = armGetSystemTickFreq();
+        m_tutorialStartupFadeDeadlineTick =
+            armGetSystemTick() + static_cast<std::uint64_t>(
+                kTutorialStartupFadeDur * static_cast<float>(freq));
+    } else {
+        m_tutorialStartupFadeDeadlineTick = 0;
+    }
 
     SidebarManager::Actions sidebarActions;
 #ifdef SWITCHU_MENU
@@ -1055,6 +1148,7 @@ void WiiUMenuApp::buildGrid() {
     sidebarActions.onSettings = [this]() {
         m_audio.playSfx(Sfx::ModalShow);
         if (m_settings) {
+            m_navigator.navigate(switchu::navigation::Route::Settings);
             if (m_themeShop && m_themeShop->isActive())
                 m_themeShop->hide();
             m_settings->show();
@@ -1107,6 +1201,7 @@ void WiiUMenuApp::buildGrid() {
     sidebarActions.onMiiverse = [this]() {
         m_audio.playSfx(Sfx::ModalShow);
         if (!m_themeShop) return;
+        m_navigator.navigate(switchu::navigation::Route::ThemeShop);
         if (m_settings && m_settings->isActive())
             m_settings->hide();
         refreshThemeShopState();
@@ -1177,6 +1272,8 @@ void WiiUMenuApp::buildGrid() {
 
     createSettings();
     createThemeShop();
+    createGameOptions();
+    createControllerTest();
 
     m_overlayLayer->addChild(m_dialog);
     m_overlayLayer->addChild(m_progressDialog);
@@ -1191,6 +1288,8 @@ void WiiUMenuApp::buildGrid() {
         if (auto* firstIcon = m_grid->focusManager().current())
             focusManager().setFocus(firstIcon);
     }
+    updateCursor();
+    m_themeRenderDebugFrames = 12;
 
     if (m_layoutDirty)
         saveMenuLayout();
@@ -1400,7 +1499,11 @@ void WiiUMenuApp::finalizeRefresh() {
 
     GridModel refreshedModel;
     IconStreamer refreshedStreamer;
-    m_appLoader.finalize(refreshedModel, refreshedStreamer);
+    if (!m_appLoader.finalize(refreshedModel, refreshedStreamer)) {
+        DebugLog::log("[refresh] failed; preserving the current grid");
+        m_refreshCooldownFrames = 20;
+        return;
+    }
     DebugLog::log("[refresh] found %d apps", refreshedModel.count());
 
     if (gridModelsRefreshEquivalent(m_model, refreshedModel)) {
@@ -1411,10 +1514,13 @@ void WiiUMenuApp::finalizeRefresh() {
         return;
     }
 
-    app().gpu().waitIdle();
-    m_grid->clearChildren();
+    // Keep already-uploaded textures mapped by title. Destroying and
+    // rebuilding the complete streamer here forced a GPU idle and made every
+    // icon reappear progressively after even a one-title catalogue change.
+    // The refreshed compressed bytes were fetched on the worker already; move
+    // those in as well so newly added titles do not need a second SD read.
+    m_iconStreamer.reconcileCatalog(std::move(refreshedStreamer));
     m_model = std::move(refreshedModel);
-    m_iconStreamer = std::move(refreshedStreamer);
 
     std::vector<std::shared_ptr<GlossyIcon>> icons;
     for (int i = 0; i < m_model.count(); ++i) {
@@ -1447,7 +1553,11 @@ void WiiUMenuApp::finalizeRefresh() {
                                  app().gpu(), app().renderer(),
                                  m_grid->allIcons());
 
-    m_grid->startAppearAnimation();
+    // A refresh updates the model in place visually. Existing entries should
+    // not replay the startup cascade; new entries use the loading placeholder
+    // until their background decode completes.
+    for (auto& icon : m_grid->allIcons())
+        icon->forceVisible();
     if (auto* firstIcon = m_grid->focusManager().current())
         focusManager().setFocus(firstIcon);
 
@@ -1468,10 +1578,24 @@ void WiiUMenuApp::onUpdate(float dt) {
     }
 #endif
 
+    syncSoftwareDeletion();
+
+    if (m_grid && m_iconStreamer.needsVisibleLoads(
+            m_grid->currentPage(), m_grid->iconsPerPage())) {
+        m_iconStreamer.onPageChanged(m_grid->currentPage(), m_grid->iconsPerPage(),
+                                     app().gpu(), app().renderer(),
+                                     m_grid->allIcons());
+    }
+
     if (m_returnFadeTimer > 0.f)
         m_returnFadeTimer = std::max(0.f, m_returnFadeTimer - dt);
     if (m_tutorialStartupFadeTimer > 0.f)
         m_tutorialStartupFadeTimer = std::max(0.f, m_tutorialStartupFadeTimer - dt);
+    if (m_tutorialStartupFadeDeadlineTick != 0 &&
+        armGetSystemTick() >= m_tutorialStartupFadeDeadlineTick) {
+        m_tutorialStartupFadeTimer = 0.f;
+        m_tutorialStartupFadeDeadlineTick = 0;
+    }
 
     syncThemePackageTransfer();
 
@@ -1596,6 +1720,28 @@ void WiiUMenuApp::onUpdate(float dt) {
                                   charging ? 1 : 0);
                 }
                 break;
+            case switchu::smi::MenuMessage::WakeUp:
+                m_clockService.invalidate();
+                break;
+            case switchu::smi::MenuMessage::OperationFailed:
+                if (m_dialog) {
+                    char message[96]{};
+                    std::snprintf(message, sizeof(message),
+                                  "%s (0x%08X)",
+                                  nxui::I18n::instance().tr(
+                                      "error.operation_failed", "Operation failed").c_str(),
+                                  notif.payload);
+                    m_dialogReturnFocus = focusManager().current();
+                    m_dialog->show(
+                        nxui::I18n::instance().tr(
+                            "error.operation_failed", "Operation failed"),
+                        message,
+                        {{nxui::I18n::instance().tr("button.ok", "OK"),
+                          []() {}, true}},
+                        0, {});
+                    focusManager().setFocus(m_dialog.get());
+                }
+                break;
             default:
                 break;
             }
@@ -1646,6 +1792,8 @@ void WiiUMenuApp::onUpdate(float dt) {
         && !(m_dialog && m_dialog->isActive())
         && !(m_themeShop && m_themeShop->isActive())
         && !(m_settings && m_settings->isActive())
+        && !(m_gameOptions && m_gameOptions->isActive())
+        && !(m_controllerTest && m_controllerTest->isActive())
         && !(m_userSelect && m_userSelect->isActive()))
     {
         handleTouch();
@@ -1658,8 +1806,16 @@ void WiiUMenuApp::onUpdate(float dt) {
     if (!debugTouchBlocked && m_themeShop && m_themeShop->isActive())
         m_themeShop->handleTouch(app().input());
 
-    if (!debugTouchBlocked && m_settings && m_settings->isActive())
+    if (!debugTouchBlocked && m_settings && m_settings->isActive()
+        && !(m_controllerTest && m_controllerTest->isActive())) {
         m_settings->handleTouch(app().input());
+    }
+
+    if (!debugTouchBlocked && m_gameOptions && m_gameOptions->isActive())
+        m_gameOptions->handleTouch(app().input());
+
+    if (!debugTouchBlocked && m_controllerTest && m_controllerTest->isActive())
+        m_controllerTest->handleTouch(app().input());
 
     if (m_dialogWasActive && !dialogActiveNow) {
         if (isCurrentFocusableWidget(m_dialogReturnFocus)) {
@@ -1681,6 +1837,10 @@ void WiiUMenuApp::onUpdate(float dt) {
         if (!cur || !cur->isFocusable()) {
             if (m_themeShop && m_themeShop->isActive()) {
                 focusManager().setFocus(m_themeShop.get());
+            } else if (m_controllerTest && m_controllerTest->isActive()) {
+                focusManager().setFocus(m_controllerTest.get());
+            } else if (m_gameOptions && m_gameOptions->isActive()) {
+                focusManager().setFocus(m_gameOptions.get());
             } else if (m_settings && m_settings->isActive()) {
                 focusManager().setFocus(m_settings.get());
             } else {
@@ -1761,6 +1921,9 @@ std::vector<WiiUMenuApp::ActionHint> WiiUMenuApp::buildActionHints() {
         return hints;
     }
 
+    if (m_controllerTest && m_controllerTest->isActive())
+        return hints;
+
     if (m_settings && m_settings->isActive()) {
         add(dpadGlyph(), i18n.tr("hint.navigate", "Navigate"));
         add(buttonGlyph(nxui::Button::A), i18n.tr("hint.select", "Select"));
@@ -1788,6 +1951,7 @@ std::vector<WiiUMenuApp::ActionHint> WiiUMenuApp::buildActionHints() {
                     : i18n.tr("hint.launch", "Launch"));
             if (m_launcher.isAppSuspended(icon->titleId()))
                 add(buttonGlyph(nxui::Button::X), i18n.tr("hint.close", "Close"));
+            add(buttonGlyph(nxui::Button::Plus), i18n.tr("hint.options", "Options"));
 #else
             add(buttonGlyph(nxui::Button::A), i18n.tr("hint.open", "Open"));
 #endif
@@ -1893,22 +2057,11 @@ void WiiUMenuApp::renderActionHintBar(nxui::Renderer& ren) {
                         nxui::Color(0.f, 0.f, 0.f, 0.12f),
                         radius);
 
-    nxui::LiquidGlassSettings savedGlass = ren.liquidGlassSettings();
-    auto& glass = ren.liquidGlassSettings();
-    glass.refractionIntensity = 0.018f;
-    glass.blurIntensity = 0.10f;
-    glass.noiseIntensity = 0.0f;
-    glass.glowIntensity = 0.035f;
-    glass.saturation = 0.96f;
-    glass.opacityMultiplier = 1.0f;
-    glass.roughness = 0.004f;
-    glass.powerFactor = 18.0f;
-
     nxui::Color tint = m_theme.panelBase.withAlpha(m_theme.mode == nxui::ThemeMode::Dark ? 0.22f : 0.18f);
-    ren.drawLiquidGlass(0, panel, radius, tint, 0.86f, m_theme.mode == nxui::ThemeMode::Dark ? 0.08f : 0.04f);
-    ren.liquidGlassSettings() = savedGlass;
-
-    ren.drawRoundedRect(panel, m_theme.panelBase.withAlpha(m_theme.mode == nxui::ThemeMode::Dark ? 0.10f : 0.08f), radius);
+    ren.drawFrostedInset(panel, tint,
+                         m_theme.panelBorder.withAlpha(0.26f),
+                         m_theme.panelHighlight.withAlpha(0.09f),
+                         radius, 0.86f);
 
     ren.pushClipRect(panel.shrunk(3.f));
 
@@ -1938,10 +2091,15 @@ void WiiUMenuApp::onRender(nxui::Renderer& ren) {
         float alpha = m_returnFadeTimer / kReturnFadeInDur;
         ren.drawRect({0, 0, 1280, 720}, nxui::Color(0, 0, 0, alpha));
     }
-    if (m_tutorialStartupFadeTimer > 0.f) {
+    if (m_tutorialStartupFadeTimer > 0.f &&
+        (m_tutorialStartupFadeDeadlineTick == 0 ||
+         armGetSystemTick() < m_tutorialStartupFadeDeadlineTick)) {
         float t = std::clamp(m_tutorialStartupFadeTimer / kTutorialStartupFadeDur, 0.f, 1.f);
         float alpha = nxui::Easing::outCubic(t);
         ren.drawRect({0, 0, 1280, 720}, nxui::Color(1.f, 1.f, 1.f, alpha));
+    } else if (m_tutorialStartupFadeTimer > 0.f) {
+        m_tutorialStartupFadeTimer = 0.f;
+        m_tutorialStartupFadeDeadlineTick = 0;
     }
 
     if (m_touchHitIndex >= 0 && !m_touchOnFocused && app().input().isTouching()) {

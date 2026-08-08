@@ -242,7 +242,7 @@ int main(int argc, char* argv[]) {
 #else
         auto makeMenuActivity = [sysStatus](bool fromTutorial = false) -> std::unique_ptr<nxui::Activity> {
             auto activity = std::make_unique<WiiUMenuApp>();
-            activity->setStartupStatus(sysStatus.suspended_app_id, sysStatus.app_running);
+            activity->setStartupStatus(sysStatus);
             activity->setTutorialStartupFade(fromTutorial);
             return activity;
         };

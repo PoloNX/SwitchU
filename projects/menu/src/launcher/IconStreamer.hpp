@@ -2,10 +2,13 @@
 #include <nxui/core/Texture.hpp>
 #include <nxui/core/GpuDevice.hpp>
 #include <nxui/core/Renderer.hpp>
+#include <nxui/core/ThreadPool.hpp>
 #include <vector>
 #include <memory>
 #include <cstdint>
 #include <functional>
+#include <future>
+#include <atomic>
 
 class GlossyIcon;
 
@@ -19,6 +22,7 @@ public:
     // Prepare icon metadata for all apps after the app list has been fetched.
     void init(int appCount);
     void setIconDataLoader(IconDataLoader loader);
+    void setThreadPool(nxui::ThreadPool* pool) { m_threadPool = pool; }
     void setTitleId(int appIndex, uint64_t titleId);
     void setIconData(int appIndex, std::vector<uint8_t> compressed);
     void resize(int appCount);
@@ -41,28 +45,50 @@ public:
 
     // Release everything (textures + compressed data).
     void clear();
+    void cancelPending();
 
     // Keep internal compressed data and loaded-slot mappings aligned when
     // app entries are swapped in the grid model.
     bool swapIndices(int a, int b);
 
+    // Update indices after a catalogue refresh while retaining textures for
+    // titles that still exist. This avoids tearing down the complete GPU icon
+    // cache just because one application was installed or removed.
+    void reconcileTitleIds(const std::vector<uint64_t>& titleIds);
+    void reconcileCatalog(IconStreamer&& catalog);
+
     int  iconCount()         const { return (int)m_appToSlot.size(); }
     bool hasData(int index)  const;
+    bool needsVisibleLoads(int currentPage, int iconsPerPage) const;
 
 private:
     struct DecodedIcon {
-        uint8_t* rgba = nullptr;
+        std::vector<uint8_t> rgba;
         int w = 0, h = 0;
-        bool scaledWithMalloc = false;
     };
 
-    DecodedIcon decodeAndScale(const std::vector<uint8_t>& data) const;
+    static DecodedIcon decodeAndScale(const std::vector<uint8_t>& data);
+
+    struct DecodeState {
+        DecodedIcon decoded;
+        bool failed = false;
+        std::atomic<bool> cancelled{false};
+    };
+
+    struct PendingDecode {
+        uint64_t titleId = 0;
+        std::shared_ptr<DecodeState> state;
+        std::future<void> future;
+    };
 
     // Transient compressed JPEG/PNG bytes, normally only used for prefetched
     // data. App icons are otherwise fetched on demand and released after upload.
     std::vector<std::vector<uint8_t>> m_compressed;
     std::vector<uint64_t> m_titleIds;
     IconDataLoader m_iconLoader;
+    nxui::ThreadPool* m_threadPool = nullptr;
+    std::vector<PendingDecode> m_pendingDecodes;
+    std::vector<uint64_t> m_failedTitleIds;
 
     // Pool of reusable GPU textures.
     struct TexSlot {
@@ -83,4 +109,6 @@ private:
 
     static constexpr int kPageCacheRadius = 2;
     static constexpr int kIconSize        = 160;
+    static constexpr int kUploadsPerFrame = 1;
+    static constexpr int kMaxPendingDecodes = 4;
 };

@@ -40,9 +40,9 @@ protected:
     float m_borderW      = 1.f;
     float m_scale        = 1.f;
     float m_panelOpacity = 1.f;
-    Color m_base      {0.14f, 0.14f, 0.22f, 0.40f};
-    Color m_border    {0.50f, 0.50f, 0.65f, 0.22f};
-    Color m_highlight {1.f, 1.f, 1.f, 0.05f};
+    Color m_base      {0.14f, 0.14f, 0.22f, 0.94f};
+    Color m_border    {0.50f, 0.50f, 0.65f, 0.34f};
+    Color m_highlight {1.f, 1.f, 1.f, 0.08f};
 };
 
 } // namespace nxui

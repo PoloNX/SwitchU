@@ -152,8 +152,6 @@ void GlossyIcon::onRender(nxui::Renderer& ren) {
 }
 
 void GlossyIcon::onContentRender(nxui::Renderer& ren) {
-    if (!m_tex || !m_tex->valid()) return;
-
     float s = scale();
     float rad = cornerRadius();
 
@@ -165,6 +163,33 @@ void GlossyIcon::onContentRender(nxui::Renderer& ren) {
         r.y += (r.height - h) * 0.5f;
         r.width  = w;
         r.height = h;
+    }
+
+    if (!m_tex || !m_tex->valid()) {
+        if (m_titleId == 0)
+            return;
+
+        const nxui::Vec2 center{r.x + r.width * 0.5f, r.y + r.height * 0.5f};
+        const float outerRadius = std::clamp(std::min(r.width, r.height) * 0.105f,
+                                             8.f, 16.f) * s;
+        const float innerRadius = outerRadius * 0.48f;
+        constexpr int kSpokes = 10;
+        constexpr float kStep = 6.28318530718f / (float)kSpokes;
+        const float angleBase = m_suspendPulse * 2.8f;
+        for (int i = 0; i < kSpokes; ++i) {
+            const float angle = angleBase + kStep * (float)i;
+            const float weight = 1.f - (float)i / (float)kSpokes;
+            const nxui::Color color = m_loadingColor.withAlpha(
+                (0.14f + 0.72f * weight) * m_opacity);
+            ren.drawLine(
+                {center.x + std::cos(angle) * innerRadius,
+                 center.y + std::sin(angle) * innerRadius},
+                {center.x + std::cos(angle) * outerRadius,
+                 center.y + std::sin(angle) * outerRadius},
+                color,
+                std::max(1.f, (2.4f - 0.9f * ((float)i / (float)kSpokes)) * s));
+        }
+        return;
     }
 
     float inset = 8.f * s;

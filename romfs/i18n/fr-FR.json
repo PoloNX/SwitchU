@@ -39,14 +39,14 @@
       "open": "A pour ouvrir.",
       "open_user_page": "A pour ouvrir la page utilisateur.",
       "grid_empty": "Utilise la croix directionnelle pour changer de case.",
-      "game_launchable": "A pour lancer. X pour les options. Y grec pour déplacer. ZL ou ZR pour changer de page.",
-      "game_blocked": "A pour afficher la raison du blocage."
+      "game_launchable": "A pour lancer. Plus pour les options. Y grec pour déplacer. ZL ou ZR pour changer de page.",
+      "game_blocked": "A pour afficher la raison du blocage. Plus pour les options."
     },
     "actions": {
       "edit_mode": "Croix directionnelle pour choisir la nouvelle position. Y pour placer. B pour annuler.",
       "empty_slot": "Croix directionnelle pour naviguer. ZL ou ZR pour changer de page.",
-      "game_blocked": "A pour afficher la raison. Y grec pour déplacer. ZL ou ZR pour changer de page.",
-      "game_launchable": "A pour lancer. X pour les options. Y grec pour déplacer. ZL ou ZR pour changer de page.",
+      "game_blocked": "A pour afficher la raison. Plus pour les options. Y grec pour déplacer. ZL ou ZR pour changer de page.",
+      "game_launchable": "A pour lancer. Plus pour les options. Y grec pour déplacer. ZL ou ZR pour changer de page.",
       "settings": "Haut et bas pour choisir une catégorie. A ou droite pour entrer. B pour fermer.",
       "themes": "Haut et bas pour naviguer. A pour choisir. B pour fermer.",
       "dialog": "Gauche et droite pour changer de choix. A pour valider. B pour annuler."
@@ -141,7 +141,8 @@
   },
   "hint": {
     "repeat": "Répéter",
-    "voice": "Voix"
+    "voice": "Voix",
+    "options": "Options"
   },
   "settings": {
     "tabs": {
@@ -250,6 +251,12 @@
       "dns_auto": "Auto (DHCP)"
     },
     "controllers": {
+      "test": "Tester les périphériques",
+      "test_desc": "Teste les joysticks, les boutons et l'écran tactile.",
+      "pairing": "Changer le style/l'ordre",
+      "pairing_desc": "Associe les manettes et modifie leur ordre de joueur.",
+      "remapping": "Modifier les boutons",
+      "remapping_desc": "Ouvre l'outil système de remappage des boutons.",
       "vibration": "Vibration",
       "usb_wired": "Communication USB filaire",
       "usb_wired_desc": "Utilise l'USB filaire pour réduire la latence des manettes compatibles.",
@@ -365,11 +372,52 @@
     "title": "Qui joue ?"
   },
   "game": {
+    "options": "Options du logiciel",
+    "data_management": "Gestion des données",
+    "information": "Informations",
     "move": "Déplacer",
+    "move_desc": "Déplace ce logiciel à une autre position du menu HOME.",
     "move_prefix": "Déplacer : ",
+    "version": "Version",
+    "version_unknown": "Inconnue",
+    "publisher_unknown": "Éditeur inconnu",
+    "title_id": "ID du titre",
+    "delete_software": "Effacer le logiciel",
+    "delete_software_desc": "Efface le logiciel. Les sauvegardes sont conservées.",
+    "delete_gamecard_unavailable": "Le logiciel d'une carte de jeu ne peut pas être effacé de la console.",
+    "delete_confirmation": "Le logiciel va être effacé. Les données de sauvegarde seront conservées.",
+    "close_desc": "Ferme le logiciel en cours. La progression non sauvegardée peut être perdue.",
+    "uninstall": "Désinstaller",
+    "uninstall_title": "Désinstaller le logiciel",
+    "uninstall_prefix": "Supprimer définitivement",
+    "uninstall_failed": "Échec de la désinstallation",
+    "uninstall_progress_title": "Suppression du logiciel",
+    "uninstall_progress": "Veuillez patienter. N'éteignez pas la console.",
     "close_title": "Fermer le jeu",
     "close_prefix": "Fermer",
     "close_suffix": " ?\nLa progression non sauvegardée sera perdue."
+  },
+  "controller_test": {
+    "title": "Test des manettes",
+    "opened": "Test des manettes. Inclinez brièvement un joystick pour le sélectionner. Maintenez B une seconde ou appuyez sur HOME pour fermer.",
+    "close_hint": "Maintenir B 1 s ou appuyer sur HOME pour quitter",
+    "joysticks": "Joysticks",
+    "buttons": "Boutons",
+    "touchscreen": "Écran tactile",
+    "touch_hint": "Touchez ou cliquez-glissez dans cette zone",
+    "touch_fullscreen_opened": "Test tactile plein écran. Appuyez sur X pour revenir. Maintenez B une seconde ou appuyez sur HOME pour fermer.",
+    "touch_fullscreen_hint": "Test tactile · X : retour · B 1 s ou HOME : quitter",
+    "tilt_to_select": "Inclinez brièvement un joystick pour le sélectionner",
+    "left_stick": "Joystick gauche",
+    "right_stick": "Joystick droit",
+    "left_selected": "Joystick gauche sélectionné",
+    "right_selected": "Joystick droit sélectionné",
+    "direction": "Direction",
+    "center": "Centre",
+    "up": "Haut",
+    "down": "Bas",
+    "left": "Gauche",
+    "right": "Droite"
   },
   "power": {
     "title": "Alimentation",

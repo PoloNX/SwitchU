@@ -137,9 +137,6 @@ bool Renderer::loadShaders() {
     ok = loadDksh(m_vertShaders[(int)ShaderProgram::Wave], s_shaderBasePath + "pass_vsh.dksh") && ok;
     ok = loadDksh(m_fragShaders[(int)ShaderProgram::Wave], s_shaderBasePath + "wave_fsh.dksh") && ok;
 
-    ok = loadDksh(m_vertShaders[(int)ShaderProgram::LiquidGlass], s_shaderBasePath + "pass_vsh.dksh") && ok;
-    ok = loadDksh(m_fragShaders[(int)ShaderProgram::LiquidGlass], s_shaderBasePath + "liquid_glass_fsh.dksh") && ok;
-
     ok = loadDksh(m_vertShaders[(int)ShaderProgram::Gradient], s_shaderBasePath + "basic_vsh.dksh") && ok;
     ok = loadDksh(m_fragShaders[(int)ShaderProgram::Gradient], s_shaderBasePath + "gradient_fsh.dksh") && ok;
 
@@ -220,7 +217,7 @@ void Renderer::pushFsUniforms(const FsUniforms& fs) {
     flush();
     int slot = m_gpu.slot();
     auto cmd = m_gpu.cmdBuf();
-    auto fsUboAddr = m_gpu.fsUboGpuAddr(slot);
+    auto fsUboAddr = m_gpu.nextFsUboGpuAddr(slot);
     cmd.pushConstants(fsUboAddr, GpuDevice::FS_UBO_SIZE, 0, sizeof(fs), &fs);
     cmd.bindUniformBuffer(DkStage_Fragment, 1, fsUboAddr, GpuDevice::FS_UBO_SIZE);
 }
@@ -233,6 +230,9 @@ void Renderer::beginFrame() {
     m_curTexSlot = -1;
     m_texturing  = false;
     m_curShader  = ShaderProgram::Basic;
+    m_shapeRadius = 0.f;
+    m_shapeThickness = 0.f;
+    m_gpu.resetFsUboRing(slot);
     m_clipStack.clear();
     m_reusableOffscreenCaptureValid = false;
 
@@ -262,10 +262,13 @@ void Renderer::beginFrame() {
     cmd.bindDepthStencilState(dk::DepthStencilState{}.setDepthTestEnable(false));
     cmd.bindRasterizerState(dk::RasterizerState{}.setCullMode(DkFace_None));
 
-    static const std::array<DkVtxAttribState, 3> attribs = {{
+    static const std::array<DkVtxAttribState, 6> attribs = {{
         DkVtxAttribState{0, 0, offsetof(Vertex2D, x), DkVtxAttribSize_2x32, DkVtxAttribType_Float, 0},
         DkVtxAttribState{0, 0, offsetof(Vertex2D, u), DkVtxAttribSize_2x32, DkVtxAttribType_Float, 0},
         DkVtxAttribState{0, 0, offsetof(Vertex2D, r), DkVtxAttribSize_4x32, DkVtxAttribType_Float, 0},
+        DkVtxAttribState{0, 0, offsetof(Vertex2D, sx), DkVtxAttribSize_2x32, DkVtxAttribType_Float, 0},
+        DkVtxAttribState{0, 0, offsetof(Vertex2D, hx), DkVtxAttribSize_2x32, DkVtxAttribType_Float, 0},
+        DkVtxAttribState{0, 0, offsetof(Vertex2D, rad), DkVtxAttribSize_2x32, DkVtxAttribType_Float, 0},
     }};
     static const DkVtxBufferState bufState = {sizeof(Vertex2D), 0};
     cmd.bindVtxAttribState(attribs);
@@ -315,7 +318,7 @@ void Renderer::flush() {
     if (m_curShader == ShaderProgram::Basic) {
         FsUniforms fs = {};
         fs.useTexture = m_texturing ? 1 : 0;
-        auto fsUboAddr = m_gpu.fsUboGpuAddr(slot);
+        auto fsUboAddr = m_gpu.nextFsUboGpuAddr(slot);
         cmd.pushConstants(fsUboAddr, GpuDevice::FS_UBO_SIZE,
                           0, sizeof(int32_t) * 4, &fs);
         cmd.bindUniformBuffer(DkStage_Fragment, 1, fsUboAddr, GpuDevice::FS_UBO_SIZE);
@@ -449,129 +452,21 @@ void Renderer::drawOffscreen(int target, const Rect& dest, const Color& tint) {
 void Renderer::drawOffscreenRounded(int target, const Rect& dest, float radius, const Color& tint) {
     if (target < 0 || target >= GpuDevice::NUM_OFFSCREEN) return;
     useShader(ShaderProgram::Backdrop);
-    if (radius <= 0.f) {
-        float u0 = dest.x / (float)m_gpu.width();
-        float v0 = dest.y / (float)m_gpu.height();
-        float u1 = dest.right() / (float)m_gpu.width();
-        float v1 = dest.bottom() / (float)m_gpu.height();
-        bindTexture(m_offDescSlot[target]);
-        addQuad(dest.x, dest.y, dest.right(), dest.bottom(), u0, v0, u1, v1, tint);
-        flush();
-        useShader(ShaderProgram::Basic);
-        return;
-    }
-
-    float rad = std::min(radius, std::min(dest.width, dest.height) * 0.5f);
     bindTexture(m_offDescSlot[target]);
-
-    float cx = dest.x + dest.width * 0.5f;
-    float cy = dest.y + dest.height * 0.5f;
-
-    auto toUV = [&](float px, float py) -> Vec2 {
-        return {
-            px / (float)m_gpu.width(),
-            py / (float)m_gpu.height(),
-        };
-    };
-
-    constexpr int segs = 8;
-    constexpr int maxPts = (segs + 1) * 4;
-    const float pi2 = 3.14159265f * 0.5f;
-
-    struct { float cx, cy; float a0; } corners[4] = {
-        {dest.right() - rad, dest.y + rad,          0},
-        {dest.x + rad,       dest.y + rad,          pi2},
-        {dest.x + rad,       dest.bottom() - rad,   pi2 * 2},
-        {dest.right() - rad, dest.bottom() - rad,   pi2 * 3},
-    };
-
-    Vec2 pts[maxPts];
-    int ptCount = 0;
-    for (auto& cn : corners) {
-        for (int i = 0; i <= segs; ++i) {
-            float a = cn.a0 + pi2 * i / segs;
-            pts[ptCount++] = {cn.cx + std::cos(a) * rad,
-                              cn.cy - std::sin(a) * rad};
-        }
-    }
-
-    Vec2 cuv = toUV(cx, cy);
-    for (int i = 0; i < ptCount; ++i) {
-        auto& p0 = pts[i];
-        auto& p1 = pts[(i + 1) % ptCount];
-        Vec2 uv0 = toUV(p0.x, p0.y);
-        Vec2 uv1 = toUV(p1.x, p1.y);
-        addVertex(cx,  cy,  cuv.x, cuv.y, tint);
-        addVertex(p0.x, p0.y, uv0.x, uv0.y, tint);
-        addVertex(p1.x, p1.y, uv1.x, uv1.y, tint);
+    const Rect uv{dest.x / static_cast<float>(m_gpu.width()),
+                  dest.y / static_cast<float>(m_gpu.height()),
+                  dest.width / static_cast<float>(m_gpu.width()),
+                  dest.height / static_cast<float>(m_gpu.height())};
+    if (radius > 0.f) {
+        drawRoundedMasked(dest,
+                          std::min(radius, std::min(dest.width, dest.height) * 0.5f),
+                          tint, uv);
+    } else {
+        addQuad(dest.x, dest.y, dest.right(), dest.bottom(),
+                uv.x, uv.y, uv.right(), uv.bottom(), tint);
     }
 
     flush();
-    useShader(ShaderProgram::Basic);
-}
-
-void Renderer::drawLiquidGlass(int target, const Rect& panelRect, float radius,
-                               const Color& tint, float opacity, float shade) {
-    if (opacity <= 0.01f || target < 0 || target >= GpuDevice::NUM_OFFSCREEN) return;
-    if (!m_gpu.offscreenReady()) {
-        drawRoundedRect(panelRect, tint.withAlpha(tint.a * opacity), radius);
-        return;
-    }
-
-    useShader(ShaderProgram::LiquidGlass);
-
-    const auto& lg = m_liquidGlassSettings;
-    auto clamp01 = [](float value) {
-        return std::clamp(value, 0.0f, 1.0f);
-    };
-
-    FsUniforms fs = {};
-    fs.useTexture = 1;
-    fs.param1 = lg.refractionIntensity;
-    fs.param2 = lg.blurIntensity;
-    fs.param3 = lg.noiseIntensity;
-
-    fs.extra[0] = lg.glowIntensity;
-    fs.extra[1] = lg.saturation;
-    fs.extra[2] = clamp01(lg.opacityMultiplier);
-    fs.extra[3] = lg.roughness;
-
-    fs.extra[4] = lg.animSpeed;
-    fs.extra[5] = lg.time;
-    fs.extra[6] = lg.powerFactor;
-    fs.extra[7] = lg.fPower;
-
-    fs.extra[8] = lg.refA;
-    fs.extra[9] = lg.refB;
-    fs.extra[10] = lg.refC;
-    fs.extra[11] = lg.refD;
-
-    fs.extra[12] = lg.glowWeight;
-    fs.extra[13] = lg.glowBias;
-    fs.extra[14] = lg.glowEdge0;
-    fs.extra[15] = lg.glowEdge1;
-
-    fs.extra[16] = tint.r * lg.tintBoost.r;
-    fs.extra[17] = tint.g * lg.tintBoost.g;
-    fs.extra[18] = tint.b * lg.tintBoost.b;
-    fs.extra[19] = tint.a * lg.tintBoost.a;
-
-    fs.extra[20] = panelRect.x;
-    fs.extra[21] = panelRect.y;
-    fs.extra[22] = panelRect.width;
-    fs.extra[23] = panelRect.height;
-
-    fs.extra[24] = (float)m_gpu.width();
-    fs.extra[25] = (float)m_gpu.height();
-    fs.extra[26] = clamp01(shade);
-    fs.extra[27] = 0.0f;
-
-    pushFsUniforms(fs);
-    bindTexture(m_offDescSlot[target]);
-    addQuad(panelRect.x, panelRect.y, panelRect.right(), panelRect.bottom(), 0, 0, 1, 1,
-            Color::white().withAlpha(opacity));
-    flush();
-
     useShader(ShaderProgram::Basic);
 }
 
@@ -644,6 +539,9 @@ void Renderer::addVertex(float x, float y, float u, float v, const Color& c) {
     auto& vtx  = m_vtxBase[m_vtxCount++];
     vtx.x = x; vtx.y = y;
     vtx.u = u; vtx.v = v;
+    vtx.sx = x - m_shapeCentre.x; vtx.sy = y - m_shapeCentre.y;
+    vtx.hx = m_shapeHalf.x; vtx.hy = m_shapeHalf.y;
+    vtx.rad = m_shapeRadius; vtx.thick = m_shapeThickness;
     vtx.r = c.r; vtx.g = c.g; vtx.b = c.b; vtx.a = c.a;
 }
 
@@ -692,93 +590,68 @@ void Renderer::drawGradientRect(const Rect& r, const Color& top, const Color& bo
 
 void Renderer::drawRoundedRect(const Rect& r, const Color& c, float radius) {
     if (radius <= 0.f) { drawRect(r, c); return; }
-    float rad = std::min(radius, std::min(r.width, r.height) * 0.5f);
-
     bindTexture(-1);
-
-    auto cx = r.x + r.width * 0.5f;
-    auto cy = r.y + r.height * 0.5f;
-
-    constexpr int segs = 8;
-    constexpr int maxPts = (segs + 1) * 4;
-    const float pi2 = 3.14159265f * 0.5f;
-
-    struct {float cx, cy; float a0;} corners[4] = {
-        {r.right() - rad, r.y + rad,          0},
-        {r.x + rad,       r.y + rad,          pi2},
-        {r.x + rad,       r.bottom() - rad,   pi2*2},
-        {r.right() - rad, r.bottom() - rad,   pi2*3},
-    };
-
-    Vec2 pts[maxPts];
-    int ptCount = 0;
-    for (auto& cn : corners) {
-        for (int i = 0; i <= segs; ++i) {
-            float a = cn.a0 + pi2 * i / segs;
-            pts[ptCount++] = {cn.cx + std::cos(a) * rad, cn.cy - std::sin(a) * rad};
-        }
-    }
-
-    for (int i = 0; i < ptCount; ++i) {
-        auto& p0 = pts[i];
-        auto& p1 = pts[(i + 1) % ptCount];
-        addVertex(cx, cy, 0, 0, c);
-        addVertex(p0.x, p0.y, 0, 0, c);
-        addVertex(p1.x, p1.y, 0, 0, c);
-    }
+    drawRoundedMasked(r, std::min(radius, std::min(r.width, r.height) * 0.5f),
+                      c, Rect{0.f, 0.f, 1.f, 1.f});
 }
 
 void Renderer::drawRoundedRectOutline(const Rect& r, const Color& c, float radius, float t) {
     if (radius <= 0.f) { drawRectOutline(r, c, t); return; }
-    float rad = std::min(radius, std::min(r.width, r.height) * 0.5f);
-
+    if (t <= 0.f || r.width <= 0.f || r.height <= 0.f) return;
+    const float rad = std::min(radius, std::min(r.width, r.height) * 0.5f);
     bindTexture(-1);
+    const float band = t + 2.f;
+    if (band * 2.f >= std::min(r.width, r.height)) {
+        drawRoundedMasked(r, rad, c, Rect{0.f, 0.f, 1.f, 1.f}, t);
+        return;
+    }
 
-    constexpr int segs = 8;
-    constexpr int maxPts = (segs + 1) * 4;
-    const float pi2 = 3.14159265f * 0.5f;
-
-    struct {float cx, cy; float a0;} corners[4] = {
-        {r.right() - rad, r.y + rad,          0},
-        {r.x + rad,       r.y + rad,          pi2},
-        {r.x + rad,       r.bottom() - rad,   pi2*2},
-        {r.right() - rad, r.bottom() - rad,   pi2*3},
+    beginShape(r, rad, t);
+    const float x0 = r.x - 1.f, y0 = r.y - 1.f;
+    const float x1 = r.right() + 1.f, y1 = r.bottom() + 1.f;
+    const float corner = rad + 1.f;
+    const float middleWidth = r.width - 2.f * rad;
+    const float middleHeight = r.height - 2.f * rad;
+    auto quad = [&](float x, float y, float width, float height) {
+        if (width > 0.f && height > 0.f)
+            addQuad(x, y, x + width, y + height, 0.f, 0.f, 1.f, 1.f, c);
     };
+    quad(x0, y0, corner, corner);
+    quad(x1 - corner, y0, corner, corner);
+    quad(x0, y1 - corner, corner, corner);
+    quad(x1 - corner, y1 - corner, corner, corner);
+    quad(r.x + rad, y0, middleWidth, band);
+    quad(r.x + rad, y1 - band, middleWidth, band);
+    quad(x0, r.y + rad, band, middleHeight);
+    quad(x1 - band, r.y + rad, band, middleHeight);
+    endShape();
+}
 
-    Vec2 outer[maxPts], inner[maxPts];
-    int ptCount = 0;
-    for (auto& cn : corners) {
-        for (int i = 0; i <= segs; ++i) {
-            float a = cn.a0 + pi2 * i / segs;
-            float ca = std::cos(a), sa = std::sin(a);
-            outer[ptCount] = {cn.cx + ca * rad,       cn.cy - sa * rad};
-            inner[ptCount] = {cn.cx + ca * (rad - t), cn.cy - sa * (rad - t)};
-            ptCount++;
-        }
-    }
+void Renderer::drawFrostedInset(const Rect& r, const Color& tint,
+                                const Color& border, const Color& highlight,
+                                float radius, float opacity) {
+    const float alpha = std::clamp(opacity, 0.f, 1.f);
+    if (alpha <= 0.01f || r.width <= 0.f || r.height <= 0.f)
+        return;
 
-    for (int i = 0; i < ptCount; ++i) {
-        int j = (i + 1) % ptCount;
-        addVertex(outer[i].x, outer[i].y, 0, 0, c);
-        addVertex(inner[i].x, inner[i].y, 0, 0, c);
-        addVertex(outer[j].x, outer[j].y, 0, 0, c);
-
-        addVertex(inner[i].x, inner[i].y, 0, 0, c);
-        addVertex(inner[j].x, inner[j].y, 0, 0, c);
-        addVertex(outer[j].x, outer[j].y, 0, 0, c);
-    }
+    drawRoundedRect({r.x, r.y + 3.f, r.width, r.height},
+                    Color::black().withAlpha(0.12f * alpha), radius);
+    drawRoundedRect(r, tint.withAlpha(tint.a * alpha), radius);
+    drawRoundedRectOutline(r, border.withAlpha(border.a * alpha), radius, 1.f);
+    drawRoundedRectOutline(r.shrunk(1.5f),
+                           highlight.withAlpha(highlight.a * alpha),
+                           std::max(0.f, radius - 1.5f), 1.f);
+    drawRoundedRectOutline(r.shrunk(3.f),
+                           Color::black().withAlpha(0.045f * alpha),
+                           std::max(0.f, radius - 3.f), 1.f);
 }
 
 void Renderer::drawCircle(const Vec2& center, float radius, const Color& c, int segments) {
+    (void)segments;
+    if (radius <= 0.f) return;
     bindTexture(-1);
-    const float pi2 = 3.14159265f * 2.f;
-    for (int i = 0; i < segments; ++i) {
-        float a0 = pi2 * i / segments;
-        float a1 = pi2 * (i + 1) / segments;
-        addVertex(center.x, center.y, 0, 0, c);
-        addVertex(center.x + std::cos(a0) * radius, center.y + std::sin(a0) * radius, 0, 0, c);
-        addVertex(center.x + std::cos(a1) * radius, center.y + std::sin(a1) * radius, 0, 0, c);
-    }
+    const Rect box{center.x - radius, center.y - radius, radius * 2.f, radius * 2.f};
+    drawRoundedMasked(box, radius, c, Rect{0.f, 0.f, 1.f, 1.f});
 }
 
 void Renderer::drawTriangle(const Vec2& p1, const Vec2& p2, const Vec2& p3, const Color& c) {
@@ -818,52 +691,33 @@ void Renderer::drawTextureSub(const Texture* tex, const Rect& src, const Rect& d
     addQuad(dest.x, dest.y, dest.right(), dest.bottom(), u0, v0, u1, v1, tint);
 }
 
+void Renderer::beginShape(const Rect& dest, float radius, float thickness) {
+    m_shapeCentre = {dest.x + dest.width * 0.5f, dest.y + dest.height * 0.5f};
+    m_shapeHalf = {dest.width * 0.5f, dest.height * 0.5f};
+    m_shapeRadius = radius;
+    m_shapeThickness = thickness;
+}
+
+void Renderer::endShape() {
+    m_shapeRadius = 0.f;
+    m_shapeThickness = 0.f;
+}
+
+void Renderer::drawRoundedMasked(const Rect& dest, float radius, const Color& color,
+                                 const Rect& uv, float thickness) {
+    beginShape(dest, radius, thickness);
+    addQuad(dest.x, dest.y, dest.right(), dest.bottom(),
+            uv.x, uv.y, uv.right(), uv.bottom(), color);
+    endShape();
+}
+
 void Renderer::drawTextureRounded(const Texture* tex, const Rect& dest, float radius, const Color& tint) {
     if (!tex) { return; }
     if (radius <= 0) { drawTexture(tex, dest, tint); return; }
-    float rad = std::min(radius, std::min(dest.width, dest.height) * 0.5f);
-
     bindTexture(tex->descriptorSlot());
-
-    float fcx = dest.x + dest.width * 0.5f;
-    float fcy = dest.y + dest.height * 0.5f;
-
-    auto toUV = [&](float px, float py) -> Vec2 {
-        return {(px - dest.x) / dest.width,
-                (py - dest.y) / dest.height};
-    };
-
-    constexpr int segs = 8;
-    constexpr int maxPts = (segs + 1) * 4;
-    const float pi2 = 3.14159265f * 0.5f;
-
-    struct { float cx, cy; float a0; } corners[4] = {
-        {dest.right() - rad, dest.y + rad,          0},
-        {dest.x + rad,       dest.y + rad,          pi2},
-        {dest.x + rad,       dest.bottom() - rad,   pi2 * 2},
-        {dest.right() - rad, dest.bottom() - rad,   pi2 * 3},
-    };
-
-    Vec2 pts[maxPts];
-    int ptCount = 0;
-    for (auto& cn : corners) {
-        for (int i = 0; i <= segs; ++i) {
-            float a = cn.a0 + pi2 * i / segs;
-            pts[ptCount++] = {cn.cx + std::cos(a) * rad,
-                              cn.cy - std::sin(a) * rad};
-        }
-    }
-
-    Vec2 cuv = toUV(fcx, fcy);
-    for (int i = 0; i < ptCount; ++i) {
-        auto& p0 = pts[i];
-        auto& p1 = pts[(i + 1) % ptCount];
-        Vec2 uv0 = toUV(p0.x, p0.y);
-        Vec2 uv1 = toUV(p1.x, p1.y);
-        addVertex(fcx,  fcy,  cuv.x, cuv.y, tint);
-        addVertex(p0.x, p0.y, uv0.x, uv0.y, tint);
-        addVertex(p1.x, p1.y, uv1.x, uv1.y, tint);
-    }
+    drawRoundedMasked(dest,
+                      std::min(radius, std::min(dest.width, dest.height) * 0.5f),
+                      tint, Rect{0.f, 0.f, 1.f, 1.f});
 }
 
 void Renderer::drawText(const std::string& text, const Vec2& pos, Font* font,

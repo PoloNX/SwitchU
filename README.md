@@ -22,7 +22,7 @@
 - [How to build](#how-to-build)
 - [Help me](#help-me)
 - [Credits](#credits)
-- [License](#license)
+- [License](#license)  Moyenne	Confirmé
 
 
 ## Screenshots

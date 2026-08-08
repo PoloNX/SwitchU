@@ -7,9 +7,12 @@
 #include <switchu/control_cache.hpp>
 #include <switchu/ns_ext.hpp>
 #include <switchu/file_log.hpp>
+#include <switchu/sd_commit.hpp>
 #include "app_manager.hpp"
 #include "ecs.hpp"
+#include "library_applet_runner.hpp"
 #include "menu_launcher.hpp"
+#include "system_action_queue.hpp"
 #include <cstdio>
 #include <cstring>
 #include <atomic>
@@ -184,6 +187,11 @@ extern "C" void __appExit(void) {
 }
 
 static std::atomic<bool> g_running{true};
+static std::atomic<bool> g_powerSequenceStarted{false};
+static UEvent g_mainWakeEvent{};
+static UEvent g_controlCacheWakeEvent{};
+static Event g_generalChannelEvent{};
+static bool g_generalChannelEventReady = false;
 static std::atomic<bool> g_eventRefreshPending{false};
 static std::atomic<bool> g_eventGcMountFailure{false};
 static std::atomic<bool> g_batteryRefreshPending{true};
@@ -211,36 +219,26 @@ struct DaemonAppCatalogEntry {
 
 static std::vector<DaemonAppCatalogEntry> g_appCatalog;
 static std::atomic<bool> g_appCatalogRefreshPending{false};
+// A catalogue rebuild can complete while a full-application homebrew owns the
+// foreground and the menu process is absent. Preserve that edge so the freshly
+// relaunched menu receives one coalesced refresh instead of keeping a stale
+// catalogue until the daemon is restarted.
+static std::atomic<bool> g_catalogChangedWhileMenuAway{false};
 static int g_appCatalogRefreshDelay = 0;
 static constexpr const char* kAppCatalogPath = "sdmc:/config/SwitchU/applist.bin";
 static constexpr const char* kAppCatalogTmpPath = "sdmc:/config/SwitchU/applist.tmp";
+static constexpr const char* kAppCatalogBackupPath = "sdmc:/config/SwitchU/applist.bak";
 static std::mutex g_controlCacheQueueMutex;
 static std::vector<uint64_t> g_controlCacheQueue;
 static std::atomic<bool> g_controlCacheRefreshPending{false};
 static std::atomic<int> g_controlCacheRefreshDelay{0};
 
-enum class ActionType : uint32_t {
-    LaunchApplication,
-    ResumeApplication,
-    OpenAlbum,
-    OpenMiiEditor,
-    OpenControllers,
-    OpenNetConnect,
-    OpenUserPage,
-};
-
-struct Action {
-    ActionType type;
-    uint64_t title_id = 0;
-    AccountUid uid = {};
-};
-
-static std::vector<Action> g_actionQueue;
+static daemon::SystemActionQueue g_actionQueue;
+static smi::OperationOutcome g_lastOperationFailure{};
 static bool g_foregroundAppletActive = false;
 static bool g_pendingForegroundAppletHome = false;
 static uint8_t g_lastBatteryPercent = 0xFF;
 static PsmChargerType g_lastChargerType = (PsmChargerType)0xFF;
-static int g_batteryPollCountdown = 0;
 
 static bool shouldDeferViewPolling() {
     return daemon::app::isRunning() &&
@@ -314,6 +312,7 @@ static bool queryApplicationViews(const std::vector<switchu::ns::ExtApplicationR
 }
 
 static void enqueueControlCacheRecords(const std::vector<switchu::ns::ExtApplicationRecord>& records) {
+    bool queued = false;
     std::lock_guard<std::mutex> lock(g_controlCacheQueueMutex);
     for (const auto& record : records) {
         if (record.id == 0 || switchu::control_cache::hasMeta(record.id))
@@ -321,8 +320,11 @@ static void enqueueControlCacheRecords(const std::vector<switchu::ns::ExtApplica
         if (std::find(g_controlCacheQueue.begin(), g_controlCacheQueue.end(), record.id) ==
             g_controlCacheQueue.end()) {
             g_controlCacheQueue.push_back(record.id);
+            queued = true;
         }
     }
+    if (queued)
+        ueventSignal(&g_controlCacheWakeEvent);
 }
 
 static bool popControlCacheTitle(uint64_t& outTitleId) {
@@ -375,16 +377,39 @@ static bool writeAppCatalogFile() {
         return false;
     }
 
+    // FAT does not guarantee replace-existing rename semantics. Keep the last
+    // complete catalog until the new file is in place so a power loss never
+    // leaves the menu with only a truncated/absent catalog.
     fsEc.clear();
-    std::filesystem::remove(kAppCatalogPath, fsEc);
+    std::filesystem::remove(kAppCatalogBackupPath, fsEc);
+    fsEc.clear();
+    if (std::filesystem::exists(kAppCatalogPath, fsEc)) {
+        fsEc.clear();
+        std::filesystem::rename(kAppCatalogPath, kAppCatalogBackupPath, fsEc);
+        if (fsEc) {
+            std::filesystem::remove(kAppCatalogTmpPath, fsEc);
+            switchu::FileLog::log("[catalog] backup rename FAIL");
+            return false;
+        }
+    }
+
     fsEc.clear();
     std::filesystem::rename(kAppCatalogTmpPath, kAppCatalogPath, fsEc);
     if (fsEc) {
+        std::error_code restoreEc;
+        if (std::filesystem::exists(kAppCatalogBackupPath, restoreEc)) {
+            restoreEc.clear();
+            std::filesystem::rename(kAppCatalogBackupPath, kAppCatalogPath, restoreEc);
+        }
         fsEc.clear();
         std::filesystem::remove(kAppCatalogTmpPath, fsEc);
-        switchu::FileLog::log("[catalog] rename FAIL");
+        switchu::FileLog::log("[catalog] commit rename FAIL restore=%d",
+                              restoreEc ? 0 : 1);
         return false;
     }
+
+    fsEc.clear();
+    std::filesystem::remove(kAppCatalogBackupPath, fsEc);
 
     return true;
 }
@@ -460,7 +485,29 @@ static smi::SystemStatus buildSystemStatus() {
     smi::SystemStatus st{};
     st.suspended_app_id = daemon::app::suspendedTitleId();
     st.app_running = daemon::app::isRunning();
+    st.last_failure = g_lastOperationFailure;
     return st;
+}
+
+static void recordOperationResult(uint64_t requestId,
+                                  smi::SystemMessage command,
+                                  Result result,
+                                  uint64_t titleId = 0) {
+    if (R_SUCCEEDED(result)) {
+        g_lastOperationFailure = {};
+        return;
+    }
+
+    g_lastOperationFailure = {
+        .request_id = requestId,
+        .title_id = titleId,
+        .command = static_cast<uint32_t>(command),
+        .result = static_cast<uint32_t>(result),
+    };
+    switchu::FileLog::log(
+        "[operation] request=%lu command=%u title=0x%016lX FAIL=0x%X",
+        static_cast<unsigned long>(requestId),
+        static_cast<unsigned>(command), titleId, result);
 }
 
 static void pushNotification(smi::MenuMessage msg,
@@ -560,19 +607,66 @@ static bool takeForegroundFromRunningApp(const char* source) {
     return true;
 }
 
+static Result startControlCacheWorker();
+static void stopControlCacheWorker();
+static Result startEventManager();
+static void stopEventManager();
+
+static void requestPowerStateChange(const char* source, bool reboot) {
+    Result rc = spsmInitialize();
+    if (R_SUCCEEDED(rc)) {
+        rc = spsmShutdown(reboot);
+        spsmExit();
+        if (R_SUCCEEDED(rc))
+            return;
+    }
+
+    char message[128]{};
+    std::snprintf(message, sizeof(message),
+                  "[power] %s spsm failed rc=0x%X; using applet fallback",
+                  source, rc);
+    svcOutputDebugString(message, std::strlen(message));
+    if (reboot)
+        appletStartRebootSequence();
+    else
+        appletStartShutdownSequence();
+}
+
 static void startPowerSequence(const char* source, smi::SystemMessage action) {
     cancelViewPolling(source);
     takeForegroundFromRunningApp(source);
 
+    // Sleep keeps the filesystem mounted and the daemon alive. Stopping its
+    // workers here would leave notifications and metadata caching disabled
+    // after wake, which is an unsafe side effect of the fork implementation.
+    if (action == smi::SystemMessage::EnterSleep) {
+        appletStartSleepSequence(true);
+        return;
+    }
+
+    g_powerSequenceStarted.store(true);
+
+    // The menu committed its writers before sending this command. The daemon
+    // can still write cache/catalog/log data in the small IPC gap, so join all
+    // of its background writers and commit once more from this process.
+    stopEventManager();
+    stopControlCacheWorker();
+    if (!switchu::commitSdCard("daemon power handoff")) {
+        constexpr const char* failure =
+            "[SwitchU-daemon] SD commit failed; power cancelled";
+        svcOutputDebugString(failure, std::strlen(failure));
+        g_powerSequenceStarted.store(false);
+        startControlCacheWorker();
+        startEventManager();
+        return;
+    }
+
     switch (action) {
-        case smi::SystemMessage::EnterSleep:
-            appletStartSleepSequence(true);
-            break;
         case smi::SystemMessage::Shutdown:
-            appletStartShutdownSequence();
+            requestPowerStateChange(source, false);
             break;
         case smi::SystemMessage::Reboot:
-            appletStartRebootSequence();
+            requestPowerStateChange(source, true);
             break;
         default:
             break;
@@ -758,6 +852,17 @@ static void handleAppletMessages() {
     }
 }
 
+static void pumpForegroundAppletMessages() {
+    handleGeneralChannel();
+    handleAppletMessages();
+}
+
+static bool consumeForegroundAppletHomeRequest() {
+    if (!g_pendingForegroundAppletHome)
+        return false;
+    g_pendingForegroundAppletHome = false;
+    return true;
+}
 
 static Result launchLibraryApplet(AppletId id, const char* name,
                                   const void* inData = nullptr, size_t inDataSize = 0,
@@ -767,84 +872,89 @@ static Result launchLibraryApplet(AppletId id, const char* name,
     Result fgRc = appletRequestToGetForeground();
     switchu::FileLog::log("[applet] %s RequestToGetForeground rc=0x%X", name, fgRc);
 
-    AppletHolder holder;
-    switchu::FileLog::log("[applet] %s create call", name);
-    Result rc = appletCreateLibraryApplet(&holder, id, LibAppletMode_AllForeground);
-    if (R_FAILED(rc)) {
-        switchu::FileLog::log("[applet] %s create FAIL: 0x%X", name, rc);
-        return rc;
-    }
-    switchu::FileLog::log("[applet] %s create ok", name);
-
-    if (libAppletVersion != 0) {
-        LibAppletArgs args;
-        libappletArgsCreate(&args, libAppletVersion);
-        libappletArgsSetPlayStartupSound(&args, true);
-        rc = libappletArgsPush(&args, &holder);
-        if (R_FAILED(rc)) {
-            switchu::FileLog::log("[applet] %s args FAIL: 0x%X", name, rc);
-            appletHolderClose(&holder);
-            return rc;
-        }
-        switchu::FileLog::log("[applet] %s args ok", name);
-    }
-
-    if (inData && inDataSize > 0) {
-        AppletStorage inStor;
-        rc = appletCreateStorage(&inStor, inDataSize);
-        if (R_FAILED(rc)) {
-            switchu::FileLog::log("[applet] %s in storage FAIL: 0x%X", name, rc);
-            appletHolderClose(&holder);
-            return rc;
-        }
-        rc = appletStorageWrite(&inStor, 0, inData, inDataSize);
-        if (R_FAILED(rc)) {
-            switchu::FileLog::log("[applet] %s in data write FAIL: 0x%X", name, rc);
-            appletStorageClose(&inStor);
-            appletHolderClose(&holder);
-            return rc;
-        }
-        rc = appletHolderPushInData(&holder, &inStor);
-        if (R_FAILED(rc)) {
-            switchu::FileLog::log("[applet] %s in data push FAIL: 0x%X", name, rc);
-            appletStorageClose(&inStor);
-            appletHolderClose(&holder);
-            return rc;
-        }
-        switchu::FileLog::log("[applet] %s in data ok", name);
-        appletStorageClose(&inStor);
-    }
-
-    switchu::FileLog::log("[applet] %s start call", name);
-    rc = appletHolderStart(&holder);
-    if (R_FAILED(rc)) {
-        switchu::FileLog::log("[applet] %s start FAIL: 0x%X", name, rc);
-        appletHolderClose(&holder);
-        return rc;
-    }
-    switchu::FileLog::log("[applet] %s start ok", name);
-
     g_foregroundAppletActive = true;
     g_pendingForegroundAppletHome = false;
-
-    while (appletHolderActive(&holder) && !appletHolderCheckFinished(&holder)) {
-        handleGeneralChannel();
-        handleAppletMessages();
-
-        if (g_pendingForegroundAppletHome) {
-            g_pendingForegroundAppletHome = false;
-            switchu::FileLog::log("[applet] %s exiting on HOME request", name);
-            appletHolderRequestExitOrTerminate(&holder, 5'000'000'000ULL);
-        }
-
-        svcSleepThread(10'000'000ULL);
-    }
-
+    daemon::LibraryAppletInput input{inData, inDataSize};
+    const daemon::LibraryAppletRequest request{
+        .id = id,
+        .name = name,
+        .version = libAppletVersion,
+        .pushCommonArgs = libAppletVersion != 0,
+        .playStartupSound = true,
+        .inputs = inData && inDataSize ? &input : nullptr,
+        .inputCount = inData && inDataSize ? 1U : 0U,
+    };
+    const Result rc = daemon::runLibraryApplet(
+        request, pumpForegroundAppletMessages,
+        consumeForegroundAppletHomeRequest);
     g_foregroundAppletActive = false;
-    appletHolderJoin(&holder);
-    appletHolderClose(&holder);
-    switchu::FileLog::log("[applet] %s closed", name);
+    return rc;
+}
+
+static u32 controllerAppletVersion() {
+    if (hosversionAtLeast(11, 0, 0)) return 0x8;
+    if (hosversionAtLeast(8, 0, 0)) return 0x7;
+    if (hosversionAtLeast(6, 0, 0)) return 0x5;
+    if (hosversionAtLeast(3, 0, 0)) return 0x4;
+    return 0x3;
+}
+
+static Result setupControllerPrivateArg(HidLaControllerSupportArgPrivate& privateArg,
+                                        HidLaControllerSupportMode mode,
+                                        size_t publicArgSize,
+                                        bool homeMenuStyle) {
+    privateArg.private_size = sizeof(privateArg);
+    privateArg.arg_size = publicArgSize;
+    privateArg.flag0 = homeMenuStyle ? 1 : 0;
+    privateArg.flag1 = 1;
+    privateArg.mode = mode;
+    if (hosversionAtLeast(3, 0, 0)) {
+        Result setupRc = hidGetSupportedNpadStyleSet(&privateArg.npad_style_set);
+        HidNpadJoyHoldType holdType{};
+        if (R_SUCCEEDED(setupRc))
+            setupRc = hidGetNpadJoyHoldType(&holdType);
+        privateArg.npad_joy_hold_type = holdType;
+        return setupRc;
+    } else {
+        privateArg.npad_style_set = 0;
+        privateArg.npad_joy_hold_type = HidNpadJoyHoldType_Horizontal;
+    }
     return 0;
+}
+
+static Result runControllerApplet(const char* name,
+                                  HidLaControllerSupportArgPrivate& privateArg,
+                                  const void* publicArg,
+                                  size_t publicArgSize) {
+    HidLaControllerSupportResultInfoInternal output{};
+    const daemon::LibraryAppletInput inputs[] = {
+        {&privateArg, sizeof(privateArg)},
+        {publicArg, publicArgSize},
+    };
+    daemon::LibraryAppletRequest request{
+        .id = AppletId_LibraryAppletController,
+        .name = name,
+        .version = controllerAppletVersion(),
+        .playStartupSound = true,
+        .inputs = inputs,
+        .inputCount = 2,
+        .output = &output,
+        .outputSize = sizeof(output),
+    };
+
+    appletRequestToGetForeground();
+    g_foregroundAppletActive = true;
+    g_pendingForegroundAppletHome = false;
+    Result rc = daemon::runLibraryApplet(
+        request, pumpForegroundAppletMessages,
+        consumeForegroundAppletHomeRequest);
+    g_foregroundAppletActive = false;
+    switchu::FileLog::log(
+        "[applet] %s output res=0x%X players=%d selected=%u runner=0x%X",
+        name, output.res, output.info.player_count, output.info.selected_id, rc);
+    if (R_SUCCEEDED(rc) && output.res != 0)
+        rc = MAKERESULT(Module_Libnx, LibnxError_LibAppletBadExit);
+    return rc;
 }
 
 static Result launchControllerPairing() {
@@ -853,11 +963,88 @@ static Result launchControllerPairing() {
     hidLaCreateControllerSupportArg(&arg);
     arg.hdr.player_count_max = 8;
     arg.hdr.enable_single_mode = false;
-    Result rc = hidLaShowControllerSupportForSystem(nullptr, &arg, true);
+
+    HidLaControllerSupportArgV3 legacyArg{};
+    const void* publicArg = &arg;
+    size_t publicArgSize = sizeof(arg);
+    if (hosversionBefore(8, 0, 0)) {
+        legacyArg.hdr = arg.hdr;
+        std::memcpy(legacyArg.identification_color, arg.identification_color,
+                    sizeof(legacyArg.identification_color));
+        legacyArg.enable_explain_text = arg.enable_explain_text;
+        std::memcpy(legacyArg.explain_text, arg.explain_text,
+                    sizeof(legacyArg.explain_text));
+        legacyArg.hdr.player_count_min = std::min<s8>(legacyArg.hdr.player_count_min, 4);
+        legacyArg.hdr.player_count_max = std::min<s8>(legacyArg.hdr.player_count_max, 4);
+        publicArg = &legacyArg;
+        publicArgSize = sizeof(legacyArg);
+    }
+
+    HidLaControllerSupportArgPrivate privateArg{};
+    Result rc = setupControllerPrivateArg(
+        privateArg, HidLaControllerSupportMode_ShowControllerSupport,
+        publicArgSize, true);
+    if (R_SUCCEEDED(rc))
+        rc = runControllerApplet("Controllers", privateArg, publicArg, publicArgSize);
     if (R_FAILED(rc))
         switchu::FileLog::log("[applet] Controller FAIL: 0x%X", rc);
     else
         switchu::FileLog::log("[applet] Controller pairing done");
+    return rc;
+}
+
+static Result launchControllerRemapping() {
+    if (hosversionBefore(11, 0, 0))
+        return MAKERESULT(Module_Libnx, LibnxError_IncompatSysVer);
+
+    HidLaControllerKeyRemappingArg arg{};
+    hidLaCreateControllerKeyRemappingArg(&arg);
+    HidLaControllerSupportArgPrivate privateArg{};
+    privateArg.controller_support_caller = HidLaControllerSupportCaller_System;
+    Result rc = setupControllerPrivateArg(
+        privateArg,
+        HidLaControllerSupportMode_ShowControllerKeyRemappingForSystem,
+        sizeof(arg), false);
+    // setup initializes individual fields but deliberately preserves caller.
+    privateArg.controller_support_caller = HidLaControllerSupportCaller_System;
+    if (R_SUCCEEDED(rc))
+        rc = runControllerApplet("ControllerRemapping", privateArg, &arg, sizeof(arg));
+    return rc;
+}
+
+static Result launchUserProfile(AccountUid uid) {
+    FriendsLaArg current{};
+    current.hdr.type = FriendsLaArgType_ShowMyProfile;
+    current.hdr.uid = uid;
+
+    FriendsLaArgV1 legacy{};
+    const void* input = &current;
+    size_t inputSize = sizeof(current);
+    u32 version = 0x10000;
+    if (hosversionBefore(9, 0, 0)) {
+        legacy.hdr = current.hdr;
+        legacy.data = current.data.common;
+        input = &legacy;
+        inputSize = sizeof(legacy);
+        version = 0x1;
+    }
+
+    appletRequestToGetForeground();
+    g_foregroundAppletActive = true;
+    g_pendingForegroundAppletHome = false;
+    const daemon::LibraryAppletInput appletInput{input, inputSize};
+    const daemon::LibraryAppletRequest request{
+        .id = AppletId_LibraryAppletMyPage,
+        .name = "UserProfile",
+        .version = version,
+        .playStartupSound = true,
+        .inputs = &appletInput,
+        .inputCount = 1,
+    };
+    const Result rc = daemon::runLibraryApplet(
+        request, pumpForegroundAppletMessages,
+        consumeForegroundAppletHomeRequest);
+    g_foregroundAppletActive = false;
     return rc;
 }
 
@@ -871,6 +1058,7 @@ static void handleMenuCommand() {
     if (!reader.valid()) return;
 
     auto msg = reader.systemMessage();
+    const uint64_t requestId = reader.requestId();
     switchu::FileLog::log("[smi] command=%u", (u32)msg);
 
     Result result = 0;
@@ -878,75 +1066,110 @@ static void handleMenuCommand() {
     switch (msg) {
     case smi::SystemMessage::LaunchApplication: {
         auto args = reader.pop<smi::LaunchAppArgs>();
-        Action action{};
-        action.type = ActionType::LaunchApplication;
-        action.title_id = args.title_id;
+        daemon::SystemAction action{};
+        action.type = daemon::SystemActionType::LaunchApplication;
+        action.requestId = requestId;
+        action.titleId = args.title_id;
         std::memcpy(&action.uid, args.user_uid, sizeof(action.uid));
-        g_actionQueue.push_back(action);
+        result = g_actionQueue.enqueue(action);
+        recordOperationResult(requestId, msg, result, args.title_id);
         switchu::FileLog::log("[smi] queued launch 0x%016lX (actions=%zu)", args.title_id, g_actionQueue.size());
         break;
     }
 
     case smi::SystemMessage::ResumeApplication:
         {
-            Action action{};
-            action.type = ActionType::ResumeApplication;
-            g_actionQueue.push_back(action);
+            daemon::SystemAction action{};
+            action.type = daemon::SystemActionType::ResumeApplication;
+            action.requestId = requestId;
+            result = g_actionQueue.enqueue(action);
+            recordOperationResult(requestId, msg, result,
+                                  daemon::app::suspendedTitleId());
         }
         switchu::FileLog::log("[smi] queued resume (actions=%zu)", g_actionQueue.size());
         break;
 
     case smi::SystemMessage::TerminateApplication:
+        {
+        const uint64_t terminatingTitleId = daemon::app::suspendedTitleId();
         result = daemon::app::terminate();
+        recordOperationResult(requestId, msg, result, terminatingTitleId);
         if (R_SUCCEEDED(result)) {
             pushNotification(smi::MenuMessage::ApplicationExited);
+        } else {
+            pushNotification(smi::MenuMessage::OperationFailed,
+                             terminatingTitleId,
+                             static_cast<uint32_t>(result));
+        }
         }
         break;
 
     case smi::SystemMessage::LaunchAlbum:
         {
-            Action action{};
-            action.type = ActionType::OpenAlbum;
-            g_actionQueue.push_back(action);
+            daemon::SystemAction action{};
+            action.type = daemon::SystemActionType::OpenAlbum;
+            action.requestId = requestId;
+            result = g_actionQueue.enqueue(action);
+            recordOperationResult(requestId, msg, result);
         }
         switchu::FileLog::log("[smi] queued album launch (actions=%zu)", g_actionQueue.size());
         break;
 
     case smi::SystemMessage::LaunchMiiEditor:
         {
-            Action action{};
-            action.type = ActionType::OpenMiiEditor;
-            g_actionQueue.push_back(action);
+            daemon::SystemAction action{};
+            action.type = daemon::SystemActionType::OpenMiiEditor;
+            action.requestId = requestId;
+            result = g_actionQueue.enqueue(action);
+            recordOperationResult(requestId, msg, result);
         }
         switchu::FileLog::log("[smi] queued Mii Editor launch (actions=%zu)", g_actionQueue.size());
         break;
 
     case smi::SystemMessage::LaunchNetConnect:
         {
-            Action action{};
-            action.type = ActionType::OpenNetConnect;
-            g_actionQueue.push_back(action);
+            daemon::SystemAction action{};
+            action.type = daemon::SystemActionType::OpenNetConnect;
+            action.requestId = requestId;
+            result = g_actionQueue.enqueue(action);
+            recordOperationResult(requestId, msg, result);
         }
         switchu::FileLog::log("[smi] queued NetConnect launch (actions=%zu)", g_actionQueue.size());
         break;
 
     case smi::SystemMessage::LaunchUserPage: {
         auto args = reader.pop<smi::UserArgs>();
-        Action action{};
-        action.type = ActionType::OpenUserPage;
+        daemon::SystemAction action{};
+        action.type = daemon::SystemActionType::OpenUserPage;
+        action.requestId = requestId;
         std::memcpy(&action.uid, args.user_uid, sizeof(action.uid));
-        g_actionQueue.push_back(action);
+        result = g_actionQueue.enqueue(action);
+        recordOperationResult(requestId, msg, result);
         switchu::FileLog::log("[smi] queued User Page launch (actions=%zu)", g_actionQueue.size());
         break;
     }
 
     case smi::SystemMessage::LaunchControllers:
         {
-            Action action{};
-            action.type = ActionType::OpenControllers;
-            g_actionQueue.push_back(action);
+            daemon::SystemAction action{};
+            action.type = daemon::SystemActionType::OpenControllers;
+            action.requestId = requestId;
+            result = g_actionQueue.enqueue(action);
+            recordOperationResult(requestId, msg, result);
         }
         switchu::FileLog::log("[smi] queued Controller launch (actions=%zu)", g_actionQueue.size());
+        break;
+
+    case smi::SystemMessage::LaunchControllerRemapping:
+        {
+            daemon::SystemAction action{};
+            action.type = daemon::SystemActionType::OpenControllerRemapping;
+            action.requestId = requestId;
+            result = g_actionQueue.enqueue(action);
+            recordOperationResult(requestId, msg, result);
+        }
+        switchu::FileLog::log("[smi] queued controller remapping (actions=%zu)",
+                              g_actionQueue.size());
         break;
 
     case smi::SystemMessage::EnterSleep:
@@ -984,6 +1207,7 @@ static void handleMenuCommand() {
 
     case smi::SystemMessage::MenuReady:
         switchu::FileLog::log("[smi] menu ready");
+        g_lastOperationFailure = {};
         g_batteryRefreshPending.store(true);
         break;
 
@@ -993,52 +1217,63 @@ static void handleMenuCommand() {
 
     }
 
-    if (msg != smi::SystemMessage::MenuClosing) {
-        smi::StorageWriter writer(result);
-        AppletStorage respSt;
-        Result respRc = writer.createStorage(respSt);
-        if (R_SUCCEEDED(respRc))
-            daemon::menu_la::pushStorage(&respSt);
-        else
-            switchu::FileLog::log("[smi] response create FAIL: 0x%X", respRc);
-    }
 }
 
-static bool handleAction(Action& action) {
+static Result relaunchMenuAfterApplet(const char* appletName) {
+    const auto status = buildSystemStatus();
+    const Result rc = daemon::menu_la::launch(smi::MenuStartMode::MainMenu, status);
+    switchu::FileLog::log(
+        "[action] %s menu restore rc=0x%X module=%u desc=%u running=%d suspended=0x%016lX",
+        appletName, rc, R_MODULE(rc), R_DESCRIPTION(rc), status.app_running ? 1 : 0,
+        status.suspended_app_id);
+    return rc;
+}
+
+static bool handleAction(daemon::SystemAction& action) {
     if (daemon::menu_la::hasHolder() || g_foregroundAppletActive)
         return false;
 
     switchu::FileLog::log("[action] handling type=%u", (u32)action.type);
     switch (action.type) {
-        case ActionType::LaunchApplication: {
-            Result rc = daemon::app::launch(action.title_id, action.uid);
-            if (R_FAILED(rc))
-                switchu::FileLog::log("[action] launch 0x%016lX FAIL: 0x%X", action.title_id, rc);
+        case daemon::SystemActionType::LaunchApplication: {
+            Result rc = daemon::app::launch(action.titleId, action.uid);
+            recordOperationResult(action.requestId, smi::SystemMessage::LaunchApplication,
+                                  rc, action.titleId);
+            if (R_FAILED(rc)) {
+                switchu::FileLog::log("[action] launch 0x%016lX FAIL: 0x%X", action.titleId, rc);
+                daemon::menu_la::launch(smi::MenuStartMode::MainMenu,
+                                        buildSystemStatus());
+            }
             return true;
         }
 
-        case ActionType::ResumeApplication: {
+        case daemon::SystemActionType::ResumeApplication: {
             Result rc = daemon::app::resume();
-            if (R_FAILED(rc))
+            recordOperationResult(action.requestId, smi::SystemMessage::ResumeApplication,
+                                  rc, daemon::app::suspendedTitleId());
+            if (R_FAILED(rc)) {
                 switchu::FileLog::log("[action] resume FAIL: 0x%X", rc);
+                daemon::menu_la::launch(smi::MenuStartMode::MainMenu,
+                                        buildSystemStatus());
+            }
             return true;
         }
 
-        case ActionType::OpenAlbum: {
+        case daemon::SystemActionType::OpenAlbum: {
             const u8 albumArg = AlbumLaArg_ShowAllAlbumFilesForHomeMenu;
             Result rc = launchLibraryApplet(AppletId_LibraryAppletPhotoViewer,
                                             "Album",
                                             &albumArg,
                                             sizeof(albumArg),
                                             0x10000);
+            recordOperationResult(action.requestId, smi::SystemMessage::LaunchAlbum, rc);
             if (R_FAILED(rc))
                 switchu::FileLog::log("[action] album FAIL: 0x%X", rc);
-            switchu::FileLog::log("[action] relaunching menu after album");
-            daemon::menu_la::launch(smi::MenuStartMode::MainMenu, buildSystemStatus());
+            relaunchMenuAfterApplet("Album");
             return true;
         }
 
-        case ActionType::OpenMiiEditor: {
+        case daemon::SystemActionType::OpenMiiEditor: {
             const auto miiVer = hosversionAtLeast(10, 2, 0) ? 0x4 : 0x3;
             const MiiLaAppletInput in = {
                 .version = miiVer,
@@ -1047,40 +1282,50 @@ static bool handleAction(Action& action) {
             };
             Result rc = launchLibraryApplet(AppletId_LibraryAppletMiiEdit,
                                             "MiiEditor", &in, sizeof(in));
+            recordOperationResult(action.requestId, smi::SystemMessage::LaunchMiiEditor, rc);
             if (R_FAILED(rc))
                 switchu::FileLog::log("[action] Mii Editor FAIL: 0x%X", rc);
-            switchu::FileLog::log("[action] relaunching menu after Mii Editor");
-            daemon::menu_la::launch(smi::MenuStartMode::MainMenu, buildSystemStatus());
+            relaunchMenuAfterApplet("MiiEditor");
             return true;
         }
 
-        case ActionType::OpenControllers: {
+        case daemon::SystemActionType::OpenControllers: {
             Result rc = launchControllerPairing();
+            recordOperationResult(action.requestId, smi::SystemMessage::LaunchControllers, rc);
             if (R_FAILED(rc))
                 switchu::FileLog::log("[action] Controllers FAIL: 0x%X", rc);
-            switchu::FileLog::log("[action] relaunching menu after Controllers");
-            daemon::menu_la::launch(smi::MenuStartMode::MainMenu, buildSystemStatus());
+            relaunchMenuAfterApplet("Controllers");
             return true;
         }
 
-        case ActionType::OpenNetConnect: {
+        case daemon::SystemActionType::OpenControllerRemapping: {
+            Result rc = launchControllerRemapping();
+            recordOperationResult(action.requestId,
+                                  smi::SystemMessage::LaunchControllerRemapping, rc);
+            if (R_FAILED(rc))
+                switchu::FileLog::log("[action] Controller remapping FAIL: 0x%X", rc);
+            relaunchMenuAfterApplet("ControllerRemapping");
+            return true;
+        }
+
+        case daemon::SystemActionType::OpenNetConnect: {
             const u32 netType = 1;
             Result rc = launchLibraryApplet(AppletId_LibraryAppletNetConnect,
                                             "NetConnect", &netType,
                                             sizeof(netType), 1);
+            recordOperationResult(action.requestId, smi::SystemMessage::LaunchNetConnect, rc);
             if (R_FAILED(rc))
                 switchu::FileLog::log("[action] NetConnect FAIL: 0x%X", rc);
-            switchu::FileLog::log("[action] relaunching menu after NetConnect");
-            daemon::menu_la::launch(smi::MenuStartMode::MainMenu, buildSystemStatus());
+            relaunchMenuAfterApplet("NetConnect");
             return true;
         }
 
-        case ActionType::OpenUserPage: {
-            Result rc = friendsLaShowMyProfileForHomeMenu(action.uid);
+        case daemon::SystemActionType::OpenUserPage: {
+            Result rc = launchUserProfile(action.uid);
+            recordOperationResult(action.requestId, smi::SystemMessage::LaunchUserPage, rc);
             if (R_FAILED(rc))
                 switchu::FileLog::log("[action] User Page FAIL: 0x%X", rc);
-            switchu::FileLog::log("[action] relaunching menu after User Page");
-            daemon::menu_la::launch(smi::MenuStartMode::MainMenu, buildSystemStatus());
+            relaunchMenuAfterApplet("UserPage");
             return true;
         }
     }
@@ -1089,22 +1334,25 @@ static bool handleAction(Action& action) {
 }
 
 static bool consumeOneAction() {
-    if (g_actionQueue.empty())
+    if (g_actionQueue.empty() || daemon::menu_la::hasHolder() ||
+        g_foregroundAppletActive)
         return false;
 
-    for (size_t i = 0; i < g_actionQueue.size(); ++i) {
-        if (handleAction(g_actionQueue[i])) {
-            g_actionQueue.erase(g_actionQueue.begin() + i);
-            return true;
-        }
-    }
-    return false;
+    daemon::SystemAction action{};
+    if (!g_actionQueue.pop(action))
+        return false;
+    return handleAction(action);
 }
 
 static void mainLoop() {
     handleGeneralChannel();
     handleAppletMessages();
     handleMenuCommand();
+
+    // SPSM terminates the process asynchronously. Do not schedule catalogue,
+    // cache or logging work after the power request has begun.
+    if (g_powerSequenceStarted.load())
+        return;
 
     bool didWork = false;
 
@@ -1130,8 +1378,12 @@ static void mainLoop() {
         g_appCatalogRefreshPending.store(false);
         bool catalogChanged = false;
         if (rebuildAppCatalog("record-event", &catalogChanged)) {
-            if (catalogChanged && daemon::menu_la::isActive())
-                pushNotification(smi::MenuMessage::AppRecordsChanged);
+            if (catalogChanged) {
+                if (daemon::menu_la::isActive())
+                    pushNotification(smi::MenuMessage::AppRecordsChanged);
+                else
+                    g_catalogChangedWhileMenuAway.store(true);
+            }
             didWork = true;
         }
     }
@@ -1140,6 +1392,8 @@ static void mainLoop() {
     } else if (g_controlCacheRefreshPending.exchange(false)) {
         if (daemon::menu_la::isActive())
             pushNotification(smi::MenuMessage::AppRecordsChanged);
+        else
+            g_catalogChangedWhileMenuAway.store(true);
         didWork = true;
     }
     if (g_eventPollsRemaining > 0 && shouldDeferViewPolling()) {
@@ -1149,6 +1403,8 @@ static void mainLoop() {
         if (needFullReload) {
             if (daemon::menu_la::isActive())
                 pushNotification(smi::MenuMessage::AppRecordsChanged);
+            else
+                g_catalogChangedWhileMenuAway.store(true);
             g_eventPollsRemaining = 0;
         } else {
             --g_eventPollsRemaining;
@@ -1164,27 +1420,33 @@ static void mainLoop() {
     }
     if (g_batteryRefreshPending.exchange(false)) {
         pushBatteryStatusNotification(true);
-        g_batteryPollCountdown = 50;
-    } else if (daemon::menu_la::isActive()) {
-        if (g_batteryPollCountdown > 0)
-            --g_batteryPollCountdown;
-        if (g_batteryPollCountdown <= 0) {
-            pushBatteryStatusNotification(false);
-            g_batteryPollCountdown = 50;
-        }
+    }
+
+    if (g_catalogChangedWhileMenuAway.load() && daemon::menu_la::isActive()) {
+        g_catalogChangedWhileMenuAway.store(false);
+        switchu::FileLog::log(
+            "[catalog] delivering coalesced refresh after menu relaunch");
+        pushNotification(smi::MenuMessage::AppRecordsChanged);
+        didWork = true;
     }
 
     if (g_menuRelaunchCooldown > 0)
         --g_menuRelaunchCooldown;
 
     if (daemon::menu_la::checkFinished()) {
-        switchu::FileLog::log("[main] menu exited (reason=%d)",
-            (int)daemon::menu_la::exitReason());
-        ++g_menuFastExitCount;
+        const uint64_t runtimeNs = daemon::menu_la::lastRuntimeNs();
+        switchu::FileLog::log("[main] menu exited (reason=%d runtime=%lums)",
+            (int)daemon::menu_la::exitReason(),
+            static_cast<unsigned long>(runtimeNs / 1'000'000ULL));
+        if (runtimeNs < 1'000'000'000ULL)
+            ++g_menuFastExitCount;
+        else
+            g_menuFastExitCount = 0;
         if (g_menuFastExitCount >= 3) {
             g_menuRelaunchCooldown = 500;
             switchu::FileLog::log("[main] menu fast-exit guard active count=%d cooldown=%d",
                                   g_menuFastExitCount, g_menuRelaunchCooldown);
+            g_menuFastExitCount = 0;
         }
         didWork = true;
     }
@@ -1206,6 +1468,70 @@ static void mainLoop() {
         !g_foregroundAppletActive) {
         switchu::FileLog::log("[main] no app/menu active; relaunching menu");
         daemon::menu_la::launch(smi::MenuStartMode::MainMenu, buildSystemStatus());
+    }
+}
+
+static bool mainLoopNeedsFastTick() {
+    if (g_powerSequenceStarted.load())
+        return false;
+    return g_eventPollsRemaining > 0
+        || g_appCatalogRefreshPending.load()
+        || g_controlCacheRefreshPending.load()
+        || g_menuRelaunchCooldown > 0
+        || !g_actionQueue.empty();
+}
+
+static void waitForMainWork() {
+    Waiter waiters[6]{};
+    s32 waiterCount = 0;
+
+    if (Event* messageEvent = appletGetMessageEvent())
+        waiters[waiterCount++] = waiterForEvent(messageEvent);
+    if (g_generalChannelEventReady)
+        waiters[waiterCount++] = waiterForEvent(&g_generalChannelEvent);
+
+    waiters[waiterCount++] = waiterForUEvent(&g_mainWakeEvent);
+
+    if (Event* commandEvent = daemon::menu_la::commandEvent())
+        waiters[waiterCount++] = waiterForEvent(commandEvent);
+    if (Event* menuStateEvent = daemon::menu_la::stateChangedEvent())
+        waiters[waiterCount++] = waiterForEvent(menuStateEvent);
+    if (Event* appStateEvent = daemon::app::stateChangedEvent())
+        waiters[waiterCount++] = waiterForEvent(appStateEvent);
+
+    if (waiterCount == 0) {
+        svcSleepThread(1'000'000'000ULL);
+        return;
+    }
+
+    s32 signalledIndex = -1;
+    const u64 timeout = mainLoopNeedsFastTick()
+        ? 10'000'000ULL
+        : 1'000'000'000ULL;
+    static Result s_lastWaitFailure = 0;
+    static uint32_t s_waitFailureRepeatCount = 0;
+    const Result rc = waitObjects(&signalledIndex, waiters, waiterCount, timeout);
+    if (R_FAILED(rc) && rc != KERNELRESULT(TimedOut)) {
+        if (rc == s_lastWaitFailure) {
+            ++s_waitFailureRepeatCount;
+        } else {
+            s_lastWaitFailure = rc;
+            s_waitFailureRepeatCount = 1;
+        }
+        if (s_waitFailureRepeatCount <= 3 || (s_waitFailureRepeatCount % 120) == 0) {
+            switchu::FileLog::log("[main] waitObjects FAIL: 0x%X count=%u waiters=%d",
+                                  rc,
+                                  (unsigned)s_waitFailureRepeatCount,
+                                  (int)waiterCount);
+        }
+        // Applet holder or applet-manager events can be rejected by waitObjects
+        // while foreground ownership is changing. The next main-loop tick polls
+        // all holders and channels again, so keep a conservative backoff instead
+        // of turning an invalid waiter into a hot loop.
+        svcSleepThread(100'000'000ULL);
+    } else {
+        s_lastWaitFailure = 0;
+        s_waitFailureRepeatCount = 0;
     }
 }
 
@@ -1283,6 +1609,7 @@ static void eventManagerThreadFunc(void* arg) {
 
             g_appCatalogRefreshPending.store(true);
             g_eventRefreshPending.store(true);
+            ueventSignal(&g_mainWakeEvent);
         } else if (evIdx == 1 && hasGcEvent) {
             eventClear(&gcMountFailEvent);
 
@@ -1291,11 +1618,13 @@ static void eventManagerThreadFunc(void* arg) {
 
             g_eventGcMountRc.store(failRc);
             g_eventGcMountFailure.store(true);
+            ueventSignal(&g_mainWakeEvent);
         } else if ((hasGcEvent && hasPsmEvent && evIdx == 2) ||
                    (!hasGcEvent && hasPsmEvent && evIdx == 1)) {
             eventClear(&psmSession.StateChangeEvent);
             switchu::FileLog::log("[event] PSM state change fired");
             g_batteryRefreshPending.store(true);
+            ueventSignal(&g_mainWakeEvent);
         }
 
         svcSleepThread(100'000ULL);
@@ -1344,7 +1673,7 @@ static void controlCacheThreadFunc(void* arg) {
     while (g_controlCacheRunning.load()) {
         uint64_t titleId = 0;
         if (!popControlCacheTitle(titleId)) {
-            svcSleepThread(100'000'000ULL);
+            waitSingle(waiterForUEvent(&g_controlCacheWakeEvent), UINT64_MAX);
             continue;
         }
 
@@ -1379,6 +1708,7 @@ static void controlCacheThreadFunc(void* arg) {
             if (ok) {
                 g_controlCacheRefreshPending.store(true);
                 g_controlCacheRefreshDelay.store(60);
+                ueventSignal(&g_mainWakeEvent);
             }
         } else {
             switchu::FileLog::log("[control-cache] GetControlData FAIL title=0x%016lX rc=0x%X size=%zu elapsed=%lums",
@@ -1420,6 +1750,7 @@ static void stopControlCacheWorker() {
     if (!g_controlCacheStarted)
         return;
     g_controlCacheRunning.store(false);
+    ueventSignal(&g_controlCacheWakeEvent);
     threadWaitForExit(&g_controlCacheThread);
     threadClose(&g_controlCacheThread);
     g_controlCacheStarted = false;
@@ -1428,6 +1759,13 @@ static void stopControlCacheWorker() {
 
 int main(int argc, char* argv[]) {
     switchu::FileLog::log("[daemon] main() entry");
+
+    ueventCreate(&g_mainWakeEvent, true);
+    ueventCreate(&g_controlCacheWakeEvent, true);
+    Result generalEventRc = appletGetPopFromGeneralChannelEvent(&g_generalChannelEvent);
+    g_generalChannelEventReady = R_SUCCEEDED(generalEventRc);
+    if (R_FAILED(generalEventRc))
+        switchu::FileLog::log("[daemon] general channel event unavailable: 0x%X", generalEventRc);
 
     appletLoadAndApplyIdlePolicySettings();
 
@@ -1448,13 +1786,17 @@ int main(int argc, char* argv[]) {
 
     while (g_running.load()) {
         mainLoop();
-        svcSleepThread(10'000'000ULL);
+        waitForMainWork();
     }
 
     stopEventManager();
     stopControlCacheWorker();
     daemon::menu_la::terminate();
     daemon::app::cleanup();
+    if (g_generalChannelEventReady) {
+        eventClose(&g_generalChannelEvent);
+        g_generalChannelEventReady = false;
+    }
     switchu::FileLog::log("[daemon] shutdown complete");
     return 0;
 }

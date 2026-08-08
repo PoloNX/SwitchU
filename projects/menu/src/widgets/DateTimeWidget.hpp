@@ -4,6 +4,9 @@
 #include <nxui/core/Types.hpp>
 #include <string>
 
+namespace switchu::services {
+class ClockService;
+}
 
 class DateTimeWidget : public nxui::GlassWidget {
 public:
@@ -12,6 +15,7 @@ public:
     void setSmallFont(nxui::Font* sf) { m_smallFont = sf; }
     void setTextColor(const nxui::Color& c) { m_textColor = c; }
     void setSecondaryTextColor(const nxui::Color& c) { m_secondaryColor = c; }
+    void setClockService(switchu::services::ClockService* service) { m_clockService = service; }
     void setUse12HourClock(bool enabled);
 
 protected:
@@ -26,6 +30,7 @@ private:
     std::string m_timeStr;
     std::string m_dateStr;
     bool m_use12HourClock = false;
+    switchu::services::ClockService* m_clockService = nullptr;
     nxui::Color m_textColor      {1.f, 1.f, 1.f, 1.f};
     nxui::Color m_secondaryColor {0.7f, 0.7f, 0.8f, 0.8f};
 };

@@ -9,6 +9,7 @@
 #include <cctype>
 #include <chrono>
 #include <filesystem>
+#include <fmt/format.h>
 #include <fstream>
 #include <nlohmann/json.hpp>
 #include <system_error>
@@ -312,6 +313,8 @@ void WiiUMenuApp::createSettings() {
             m_settings->setAccessibilityVoiceEnabled(enabled);
         if (m_themeShop)
             m_themeShop->setAccessibilityVoiceEnabled(enabled);
+        if (m_gameOptions)
+            m_gameOptions->setAccessibilityVoiceEnabled(enabled);
         if (enabled) {
             m_accessibility.setEnabled(true);
             m_accessibility.announce(nxui::I18n::instance().tr(
@@ -332,6 +335,9 @@ void WiiUMenuApp::createSettings() {
         if (m_themeShop)
             m_themeShop->setAccessibilitySpeechPreferences(m_config.accessibilitySpeakHints,
                                                            m_config.accessibilitySpeakPosition);
+        if (m_gameOptions)
+            m_gameOptions->setAccessibilitySpeechPreferences(m_config.accessibilitySpeakHints,
+                                                              m_config.accessibilitySpeakPosition);
         if (m_dialog)
             m_dialog->setAccessibilitySpeechPreferences(m_config.accessibilitySpeakHints,
                                                         m_config.accessibilitySpeakPosition);
@@ -351,6 +357,9 @@ void WiiUMenuApp::createSettings() {
         if (m_themeShop)
             m_themeShop->setAccessibilitySpeechPreferences(m_config.accessibilitySpeakHints,
                                                            m_config.accessibilitySpeakPosition);
+        if (m_gameOptions)
+            m_gameOptions->setAccessibilitySpeechPreferences(m_config.accessibilitySpeakHints,
+                                                              m_config.accessibilitySpeakPosition);
         if (m_dialog)
             m_dialog->setAccessibilitySpeechPreferences(m_config.accessibilitySpeakHints,
                                                         m_config.accessibilitySpeakPosition);
@@ -365,6 +374,24 @@ void WiiUMenuApp::createSettings() {
     m_settings->onNetConnect([this]() {
         m_pendingNetConnect = true;
         m_settings->hide();
+    });
+    m_settings->onControllerPairing([this]() {
+        if (m_settings) m_settings->hide();
+        m_launcher.launchControllerPairing();
+    });
+    m_settings->onControllerRemapping([this]() {
+        if (m_settings) m_settings->hide();
+        m_launcher.launchControllerRemapping();
+    });
+    m_settings->onControllerTest([this]() {
+        if (!m_controllerTest) return;
+        m_navigator.navigate(switchu::navigation::Route::ControllerTest);
+        m_controllerTest->show();
+        focusManager().setFocus(m_controllerTest.get());
+        m_audio.playSfx(Sfx::ModalShow);
+    });
+    m_settings->onSoftwareDelete([this](uint64_t titleId, const std::string& title) {
+        startSoftwareDeletion(titleId, title, false);
     });
     m_settings->onSleepRequest([this]() {
         if (m_settings) m_settings->hide();
@@ -409,7 +436,10 @@ void WiiUMenuApp::createSettings() {
         focusManager().setFocus(m_dialog.get());
     });
     m_settings->onClosed([this]() {
-        m_threadPool.submit([cfg = m_config]() {
+        m_navigator.routeDidClose(switchu::navigation::Route::Settings);
+        if (m_configSaveFuture.valid())
+            m_configSaveFuture.wait();
+        m_configSaveFuture = m_threadPool.submit([cfg = m_config]() {
             cfg.save();
         });
         DebugLog::log("[config] save queued");
@@ -419,6 +449,60 @@ void WiiUMenuApp::createSettings() {
         }
     });
 
+}
+
+void WiiUMenuApp::createGameOptions() {
+    if (m_gameOptions) return;
+    m_gameOptions = std::make_shared<GameOptionsScreen>();
+    if (m_overlayLayer) m_overlayLayer->addChild(m_gameOptions);
+    m_gameOptions->setFont(&m_fontNormal);
+    m_gameOptions->setSmallFont(&m_fontSmall);
+    m_gameOptions->setTheme(&m_theme);
+    m_gameOptions->setAccessibilityVoiceEnabled(m_config.accessibilityEnabled);
+    m_gameOptions->setAccessibilitySpeechPreferences(m_config.accessibilitySpeakHints,
+                                                     m_config.accessibilitySpeakPosition);
+    m_gameOptions->onNavigateSfx([this]() { m_audio.playSfx(Sfx::Navigate); });
+    m_gameOptions->onActivateSfx([this]() { m_audio.playSfx(Sfx::Activate); });
+    m_gameOptions->onCloseSfx([this]() { m_audio.playSfx(Sfx::ModalHide); });
+    m_gameOptions->onAccessibilityAnnouncement([this](const std::string& text) {
+        m_accessibility.announce(text);
+    });
+    m_gameOptions->onAccessibilityStructuredAnnouncement(
+        [this](const std::string& context, const std::string& position,
+               const std::string& summary, bool forceRepeat, bool forceContext) {
+            m_accessibility.announceStructuredFocus(context, position, summary, forceRepeat, forceContext);
+        });
+    m_gameOptions->onClosed([this]() {
+        m_navigator.routeDidClose(switchu::navigation::Route::GameOptions);
+        if (focusTitle(m_gameOptionsTitleId)) {
+            if (auto* focused = m_grid->focusManager().current())
+                focusManager().setFocus(focused);
+        }
+    });
+}
+
+void WiiUMenuApp::createControllerTest() {
+    if (m_controllerTest) return;
+    m_controllerTest = std::make_shared<ControllerTestScreen>();
+    if (m_overlayLayer) m_overlayLayer->addChild(m_controllerTest);
+    m_controllerTest->setFont(&m_fontNormal);
+    m_controllerTest->setSmallFont(&m_fontSmall);
+    m_controllerTest->setTheme(&m_theme);
+    m_controllerTest->setInput(&app().input());
+    m_controllerTest->onCloseSfx([this]() { m_audio.playSfx(Sfx::ModalHide); });
+    m_controllerTest->onAccessibilityAnnouncement([this](const std::string& text) {
+        m_accessibility.announce(text);
+    });
+    m_controllerTest->onClosed([this]() {
+        if (m_navigator.route() == switchu::navigation::Route::ControllerTest) {
+            if (m_settings && m_settings->isActive())
+                m_navigator.navigate(switchu::navigation::Route::Settings);
+            else
+                m_navigator.resetToHome();
+        }
+        if (m_settings && m_settings->isActive())
+            focusManager().setFocus(m_settings.get());
+    });
 }
 
 void WiiUMenuApp::createThemeShop() {
@@ -634,7 +718,10 @@ void WiiUMenuApp::createThemeShop() {
         focusManager().setFocus(m_dialog.get());
     });
     m_themeShop->onClosed([this, clearCompletedThemeTransferState]() {
-        m_threadPool.submit([cfg = m_config]() {
+        m_navigator.routeDidClose(switchu::navigation::Route::ThemeShop);
+        if (m_configSaveFuture.valid())
+            m_configSaveFuture.wait();
+        m_configSaveFuture = m_threadPool.submit([cfg = m_config]() {
             cfg.save();
         });
         DebugLog::log("[config] save queued");
@@ -1151,6 +1238,7 @@ void WiiUMenuApp::applyTheme() {
         icon->setBorderColor(m_theme.panelBorder);
         icon->setHighlightColor(m_theme.panelHighlight);
         icon->setCornerRadius(m_theme.iconCornerRadius);
+        icon->setLoadingColor(m_theme.cursorNormal);
     }
     DebugLog::log("[theme-apply] widget recolor grid icons done");
 
@@ -1161,6 +1249,10 @@ void WiiUMenuApp::applyTheme() {
         m_pointerCursor->setColor(m_theme.cursorNormal);
         m_pointerCursor->setCornerRadius(15.f);
         m_pointerCursor->setBorderWidth(2.5f);
+    }
+    for (auto& avatar : m_userAvatarButtons) {
+        if (avatar)
+            avatar->setTheme(&m_theme);
     }
     DebugLog::log("[theme-apply] widget recolor cursors done");
 
@@ -1209,6 +1301,10 @@ void WiiUMenuApp::applyTheme() {
         m_settings->setTheme(&m_theme);
     if (m_themeShop)
         m_themeShop->setTheme(&m_theme);
+    if (m_gameOptions)
+        m_gameOptions->setTheme(&m_theme);
+    if (m_controllerTest)
+        m_controllerTest->setTheme(&m_theme);
 
     m_sidebar.applyTheme(m_theme);
     DebugLog::log("[theme-apply] widget recolor complete");
@@ -1276,7 +1372,13 @@ void WiiUMenuApp::deletePreset(const std::string& presetId) {
     ThemePreset::saveUserPresets(userPresets);
 
     if (source == ThemePresetSource::InstalledPackage && !installPath.empty()) {
-        removeDirectoryRecursive(installPath);
+        if (m_themeDeleteFuture.valid())
+            m_themeDeleteFuture.wait();
+        m_themeDeleteFuture = m_threadPool.submit([installPath]() {
+            const bool removed = removeDirectoryRecursive(installPath);
+            DebugLog::log("[theme-delete] async removal %s: %s",
+                          removed ? "complete" : "failed", safeLogPath(installPath));
+        });
     }
 
     if (!soundPreset.empty() && m_config.soundPreset == soundPreset) {
@@ -1302,4 +1404,87 @@ void WiiUMenuApp::deletePreset(const std::string& presetId) {
 
     refreshThemeShopState();
     m_audio.playSfx(Sfx::ConfirmPositive);
+}
+
+void WiiUMenuApp::startSoftwareDeletion(uint64_t titleId, const std::string& title,
+                                        bool closeGameOptionsOnSuccess) {
+    if (m_softwareDeleteFuture.valid()
+        && m_softwareDeleteFuture.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
+        return;
+    }
+
+    auto& i18n = nxui::I18n::instance();
+    m_softwareDeleteTitle = title;
+    m_softwareDeleteClosesGameOptions = closeGameOptionsOnSuccess;
+    m_dialogReturnFocus = closeGameOptionsOnSuccess
+        ? static_cast<nxui::Widget*>(m_gameOptions.get())
+        : static_cast<nxui::Widget*>(m_settings.get());
+    if (m_progressDialog) {
+        m_progressDialog->show(
+            i18n.tr("game.uninstall_progress_title", "Deleting software"),
+            i18n.tr("game.uninstall_progress", "Please wait. Do not turn off the console.")
+                + std::string("\n") + title,
+            -1.f);
+        focusManager().setFocus(m_progressDialog.get());
+    }
+
+    DebugLog::log("[software-delete] queued title=%016llX",
+                  static_cast<unsigned long long>(titleId));
+    m_softwareDeleteResult = MAKERESULT(Module_Libnx, LibnxError_BadInput);
+    m_softwareDeleteFuture = m_threadPool.submit([this, titleId]() {
+        m_softwareDeleteResult = nsDeleteApplicationCompletely(titleId);
+    });
+}
+
+void WiiUMenuApp::syncSoftwareDeletion() {
+    if (!m_softwareDeleteFuture.valid()
+        || m_softwareDeleteFuture.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
+        return;
+    }
+
+    Result rc = MAKERESULT(Module_Libnx, LibnxError_BadInput);
+    try {
+        m_softwareDeleteFuture.get();
+        rc = m_softwareDeleteResult;
+    } catch (const std::exception& ex) {
+        DebugLog::log("[software-delete] worker exception: %s", ex.what());
+    } catch (...) {
+        DebugLog::log("[software-delete] worker exception: unknown");
+    }
+
+    if (m_progressDialog)
+        m_progressDialog->hide();
+
+    auto& i18n = nxui::I18n::instance();
+    if (R_SUCCEEDED(rc)) {
+        DebugLog::log("[software-delete] complete: %s", m_softwareDeleteTitle.c_str());
+        m_audio.playSfx(Sfx::ConfirmPositive);
+        if (m_softwareDeleteClosesGameOptions && m_gameOptions) {
+            m_gameOptions->hide();
+        } else if (m_settings) {
+            m_settings->requestToast(
+                i18n.tr("settings.storage.uninstall_success", "Uninstalled successfully."), 2.8f);
+            m_settings->rebuildCurrentTab();
+            focusManager().setFocus(m_settings.get());
+        }
+        m_refreshQueued = true;
+        m_deferredRefreshFrames = std::max(m_deferredRefreshFrames, 3);
+    } else {
+        DebugLog::log("[software-delete] failed rc=0x%08X module=%u description=%u",
+                      rc, R_MODULE(rc), R_DESCRIPTION(rc));
+        const std::string details = fmt::format(
+            "{}\nResult: 0x{:08X} (module {}, description {})",
+            i18n.tr("settings.storage.uninstall_failed", "Failed to uninstall the selected title."),
+            rc, R_MODULE(rc), R_DESCRIPTION(rc));
+        if (m_dialog) {
+            m_dialog->show(
+                i18n.tr("settings.storage.uninstall_failed_title", "Uninstall Failed"),
+                details,
+                {{i18n.tr("button.ok", "OK"), []() {}, true}});
+            focusManager().setFocus(m_dialog.get());
+        }
+    }
+
+    m_softwareDeleteTitle.clear();
+    m_softwareDeleteClosesGameOptions = false;
 }

@@ -60,16 +60,22 @@ public:
     float touchDuration() const;  // seconds since touch began (valid on touchUp)
 
     bool  virtualPointerEnabled() const { return m_virtualPointerEnabled; }
+    bool  hasUserActivity() const;
     float virtualPointerX() const { return m_virtualPointerX; }
     float virtualPointerY() const { return m_virtualPointerY; }
     float virtualPointerSensitivity() const { return m_virtualPointerSensitivity; }
     void  setVirtualPointerSensitivity(float sensitivity) { m_virtualPointerSensitivity = sensitivity; }
+    void  setVirtualPointerShortcutsEnabled(bool enabled);
+    bool  virtualPointerShortcutsEnabled() const { return m_virtualPointerShortcutsEnabled; }
     bool  pointerConsumesButton(Button b) const {
         return b == Button::A && m_virtualPointerEnabled;
     }
 
 private:
     void recenterVirtualPointer();
+    void startVirtualPointerSensors();
+    void stopVirtualPointerSensors();
+    void setVirtualPointerEnabled(bool enabled);
     bool readActiveSixAxisState(HidSixAxisSensorState& out) const;
 
     PadState m_pad{};
@@ -84,7 +90,9 @@ private:
     bool  m_hasHandheldSixAxis = false;
     bool  m_hasFullKeySixAxis  = false;
     bool  m_hasJoyDualSixAxis  = false;
+    bool  m_sixAxisRunning = false;
     bool  m_virtualPointerEnabled = false;
+    bool  m_virtualPointerShortcutsEnabled = true;
     float m_virtualPointerX = 640.f;
     float m_virtualPointerY = 360.f;
     float m_virtualPointerSensitivity = 7000.f;

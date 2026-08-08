@@ -31,6 +31,7 @@ public:
     enum class ScreenMode {
         Settings,
         ThemeShop,
+        GameOptions,
     };
 
     explicit TabbedOverlayScreen(ScreenMode mode = ScreenMode::Settings);
@@ -106,6 +107,7 @@ public:
         std::vector<std::string> options;
         std::string              infoText;
         float                    anim01 = 0.f;
+        bool                     wrapLabel = false;
 
         std::function<void(SettingItem&)> onChange;
 
@@ -123,6 +125,7 @@ public:
 
 protected:
     virtual void buildTabs() = 0;
+    virtual void ensureTabLoaded(int tabIndex) { (void)tabIndex; }
     virtual bool usesCustomContentLayout() const { return false; }
     virtual void drawCustomContent(nxui::Renderer&, const nxui::Rect&, const nxui::Rect&, float) {}
     virtual void updateCustomContent(float) {}
@@ -134,6 +137,9 @@ protected:
     virtual bool handleCustomNavLeft() { return false; }
     virtual bool handleCustomNavRight() { return false; }
     virtual bool handleCustomTouch(nxui::Input&, const nxui::Rect&, const nxui::Rect&, const nxui::Rect&) { return false; }
+    virtual float overlayHeaderHeight() const { return 0.f; }
+    virtual float overlayTabWidth() const { return kTabWidth; }
+    virtual void drawOverlayHeader(nxui::Renderer&, const nxui::Rect&, float) {}
 
     void onRender(nxui::Renderer& ren) override;
     void onContentRender(nxui::Renderer& ren) override;
@@ -185,6 +191,7 @@ protected:
     int rawIndexFromFocusable(int focIdx) const;
     int focusableCount() const;
     bool itemFocusable(const SettingItem& item) const;
+    bool tabIsTextOnly() const;
     void clampContentIdx();
     float visibilityProgress() const;
     void syncPanelState(float eased);
@@ -192,6 +199,7 @@ protected:
 
     static constexpr float kPanelMargin   = 32.f;
     static constexpr float kTabWidth      = 260.f;
+    float itemHeight(const SettingItem& item, float contentWidth) const;
     static constexpr float kRowHeight     = 68.f;
     static constexpr float kSectionHeight = 48.f;
     static constexpr float kTabRowHeight  = 58.f;

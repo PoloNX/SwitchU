@@ -9,11 +9,19 @@ namespace nxui {
 
 void Widget::addChild(Ptr child) {
     if (!child) return;
+    if (m_childTraversalDepth > 0) {
+        m_childMutations.push_back({ChildMutationType::Add, std::move(child), nullptr});
+        return;
+    }
     child->m_parent = this;
     m_children.push_back(std::move(child));
 }
 
 void Widget::removeChild(Widget* child) {
+    if (m_childTraversalDepth > 0) {
+        m_childMutations.push_back({ChildMutationType::Remove, {}, child});
+        return;
+    }
     m_children.erase(
         std::remove_if(m_children.begin(), m_children.end(),
             [child](const auto& c) {
@@ -24,8 +32,45 @@ void Widget::removeChild(Widget* child) {
 }
 
 void Widget::clearChildren() {
+    if (m_childTraversalDepth > 0) {
+        m_childMutations.push_back({ChildMutationType::Clear, {}, nullptr});
+        return;
+    }
     for (auto& c : m_children) c->m_parent = nullptr;
     m_children.clear();
+}
+
+void Widget::beginChildTraversal() {
+    ++m_childTraversalDepth;
+}
+
+void Widget::endChildTraversal() {
+    if (m_childTraversalDepth == 0)
+        return;
+    --m_childTraversalDepth;
+    if (m_childTraversalDepth == 0)
+        applyChildMutations();
+}
+
+void Widget::applyChildMutations() {
+    if (m_childMutations.empty())
+        return;
+
+    auto mutations = std::move(m_childMutations);
+    m_childMutations.clear();
+    for (auto& mutation : mutations) {
+        switch (mutation.type) {
+            case ChildMutationType::Add:
+                addChild(std::move(mutation.child));
+                break;
+            case ChildMutationType::Remove:
+                removeChild(mutation.target);
+                break;
+            case ChildMutationType::Clear:
+                clearChildren();
+                break;
+        }
+    }
 }
 
 // Content rect
@@ -143,18 +188,20 @@ void Widget::collectFocusable(std::vector<Widget*>& out) {
 
 void Widget::update(float dt) {
     if (!m_visible) return;
+    beginChildTraversal();
     onUpdate(dt);
-    // Snapshot children — onUpdate() may modify m_children.
-    auto kids = m_children;
-    for (auto& c : kids) c->update(dt);
+    for (auto& child : m_children)
+        child->update(dt);
+    endChildTraversal();
 }
 
 void Widget::render(Renderer& ren) {
     if (!m_visible || m_opacity <= 0.f) return;
+    beginChildTraversal();
     onRender(ren);
-    // Snapshot children — onRender() may modify m_children.
-    auto kids = m_children;
-    for (auto& c : kids) c->render(ren);
+    for (auto& child : m_children)
+        child->render(ren);
+    endChildTraversal();
 }
 
 } // namespace nxui

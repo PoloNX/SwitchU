@@ -30,6 +30,17 @@ void Input::initialize() {
     recenterVirtualPointer();
     m_prevUpdateTick = armGetSystemTick();
 
+}
+
+void Input::shutdown() {
+    stopVirtualPointerSensors();
+    m_virtualPointerEnabled = false;
+}
+
+void Input::startVirtualPointerSensors() {
+    if (m_sixAxisRunning)
+        return;
+
     m_hasHandheldSixAxis = R_SUCCEEDED(hidGetSixAxisSensorHandles(
         &m_handheldSixAxisHandle, 1, HidNpadIdType_Handheld, HidNpadStyleTag_NpadHandheld));
     m_hasFullKeySixAxis = R_SUCCEEDED(hidGetSixAxisSensorHandles(
@@ -45,9 +56,12 @@ void Input::initialize() {
         hidStartSixAxisSensor(m_joyDualSixAxisHandles[0]);
         hidStartSixAxisSensor(m_joyDualSixAxisHandles[1]);
     }
+    m_sixAxisRunning = m_hasHandheldSixAxis || m_hasFullKeySixAxis || m_hasJoyDualSixAxis;
 }
 
-void Input::shutdown() {
+void Input::stopVirtualPointerSensors() {
+    if (!m_sixAxisRunning)
+        return;
     if (m_hasHandheldSixAxis) {
         hidStopSixAxisSensor(m_handheldSixAxisHandle);
         m_hasHandheldSixAxis = false;
@@ -61,8 +75,23 @@ void Input::shutdown() {
         hidStopSixAxisSensor(m_joyDualSixAxisHandles[1]);
         m_hasJoyDualSixAxis = false;
     }
+    m_sixAxisRunning = false;
+}
 
-    m_virtualPointerEnabled = false;
+void Input::setVirtualPointerEnabled(bool enabled) {
+    if (m_virtualPointerEnabled == enabled)
+        return;
+    m_virtualPointerEnabled = enabled;
+    if (enabled)
+        startVirtualPointerSensors();
+    else
+        stopVirtualPointerSensors();
+}
+
+void Input::setVirtualPointerShortcutsEnabled(bool enabled) {
+    m_virtualPointerShortcutsEnabled = enabled;
+    if (!enabled)
+        setVirtualPointerEnabled(false);
 }
 
 void Input::recenterVirtualPointer() {
@@ -134,13 +163,13 @@ void Input::update() {
         std::abs(m_ry) >= kNavStickDisableThreshold;
 
     if (hardwareTouching || navInputUsed) {
-        m_virtualPointerEnabled = false;
+        setVirtualPointerEnabled(false);
     }
 
-    if (isDown(Button::LStick)) {
-        m_virtualPointerEnabled = !m_virtualPointerEnabled;
+    if (m_virtualPointerShortcutsEnabled && isDown(Button::LStick)) {
+        setVirtualPointerEnabled(!m_virtualPointerEnabled);
     }
-    if (isDown(Button::RStick)) {
+    if (m_virtualPointerShortcutsEnabled && isDown(Button::RStick)) {
         recenterVirtualPointer();
     }
 
@@ -192,5 +221,15 @@ float Input::touchDuration() const {
 bool Input::isDown(Button b) const { return m_kDown & static_cast<uint64_t>(b); }
 bool Input::isUp(Button b)   const { return m_kUp   & static_cast<uint64_t>(b); }
 bool Input::isHeld(Button b) const { return m_kHeld & static_cast<uint64_t>(b); }
+
+bool Input::hasUserActivity() const {
+    constexpr float kActivityStickThreshold = 0.08f;
+    return m_kDown != 0 || m_kUp != 0 || m_touching || m_touchDown || m_touchUp
+        || m_virtualPointerEnabled
+        || std::abs(m_lx) >= kActivityStickThreshold
+        || std::abs(m_ly) >= kActivityStickThreshold
+        || std::abs(m_rx) >= kActivityStickThreshold
+        || std::abs(m_ry) >= kActivityStickThreshold;
+}
 
 } // namespace nxui

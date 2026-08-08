@@ -3,7 +3,15 @@
   "name": "Default Dark",
   "version": "1.0.0",
   "theme": {
-    "mode": "dark"
+    "mode": "dark",
+    "colors": {
+      "background": [0.6667, 0.3333, 0.06],
+      "backgroundAccent": [0.6944, 0.5, 0.12],
+      "shapes": [0.7024, 0.3684, 0.38]
+    },
+    "background": {
+      "opacity": 0.18
+    }
   },
   "audio": {
     "preset": "wiiu"

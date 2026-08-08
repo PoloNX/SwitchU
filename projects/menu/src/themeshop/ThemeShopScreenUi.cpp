@@ -33,7 +33,6 @@ constexpr int kEntriesPerPage = kGridCols * kVisibleRows;
 constexpr float kPageButtonWidth = 124.f;
 constexpr float kPageCounterWidth = 96.f;
 constexpr float kActionButtonRadius = 16.f;
-constexpr int kThemeShopBackdropCacheTarget = 2;
 constexpr size_t kTextMeasureCacheLimit = 1024;
 constexpr size_t kEllipsizeCacheLimit = 1024;
 
@@ -396,7 +395,7 @@ void drawActionButtonChip(nxui::Renderer& ren,
     }
 }
 
-void drawLiquidGlassPanel(nxui::Renderer& ren,
+void drawFrostedInsetPanel(nxui::Renderer& ren,
                           const nxui::Theme* theme,
                           const nxui::Rect& rect,
                           float radius,
@@ -406,38 +405,18 @@ void drawLiquidGlassPanel(nxui::Renderer& ren,
         return;
 
     const auto& tuning = settings::debug::settingsGlassTuning();
-    nxui::LiquidGlassSettings savedGlass = ren.liquidGlassSettings();
-    auto& glass = ren.liquidGlassSettings();
-    glass.refractionIntensity = std::clamp(tuning.refractionIntensity, 0.0f, 1.5f);
-    glass.blurIntensity = std::max(0.0f, tuning.shaderBlurIntensity);
-    glass.noiseIntensity = 0.0f;
-    glass.glowIntensity = std::max(0.0f, tuning.glowIntensity);
-    glass.saturation = std::max(0.0f, tuning.saturation);
-    glass.opacityMultiplier = 1.0f;
-    glass.roughness = std::max(0.0f, tuning.roughness);
-    glass.powerFactor = std::max(1.001f, tuning.powerFactor);
-
     nxui::Rect glassRect = rect.shrunk(std::max(0.0f, tuning.inset));
     float glassRadius = std::max(12.0f, radius - std::max(0.0f, tuning.inset) * 0.5f);
-    nxui::Color glassTint = theme->panelBase.withAlpha(theme->mode == nxui::ThemeMode::Dark
-        ? std::clamp(tuning.tintAlphaDark, 0.0f, 1.0f)
-        : std::clamp(tuning.tintAlphaLight, 0.0f, 1.0f));
+    nxui::Color glassTint = theme->panelBase.withAlpha(
+        theme->mode == nxui::ThemeMode::Dark ? 0.95f : 0.96f);
 
-    ren.drawLiquidGlass(kThemeShopBackdropCacheTarget,
-                        glassRect,
-                        glassRadius,
-                        glassTint,
-                        opacity,
-                        std::clamp(tuning.shade, 0.0f, 1.0f));
-    ren.drawRoundedRectOutline(glassRect,
-                               theme->panelBorder.withAlpha(0.24f * borderBoost * opacity),
-                               glassRadius,
-                               1.2f);
-    ren.drawRoundedRectOutline(glassRect.shrunk(1.5f),
-                               theme->panelHighlight.withAlpha(0.08f * opacity),
-                               std::max(0.f, glassRadius - 1.5f),
-                               1.0f);
-    ren.liquidGlassSettings() = savedGlass;
+    ren.drawFrostedInset(
+        glassRect,
+        glassTint,
+        theme->panelBorder.withAlpha(0.24f * borderBoost),
+        theme->panelHighlight.withAlpha(0.08f),
+        glassRadius,
+        opacity);
 }
 
 void drawPreviewPlaceholder(nxui::Renderer& ren,
@@ -1878,10 +1857,10 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
         return;
 
     float detailOpacity = contentOpacity * detailT;
-    ren.drawRoundedRect(content, nxui::Color(0.f, 0.f, 0.f, 0.24f * detailOpacity), 26.f);
+    ren.drawRoundedRect(content, nxui::Color(0.f, 0.f, 0.f, 0.42f * detailOpacity), 26.f);
     nxui::Rect dialog = detailDialogRect(content);
     dialog = scaledRect(dialog, 0.96f + 0.04f * detailT);
-    drawLiquidGlassPanel(ren, m_theme, dialog, 24.f, detailOpacity, 1.4f);
+    drawFrostedInsetPanel(ren, m_theme, dialog, 24.f, detailOpacity, 1.4f);
 
     nxui::Rect preview = detailPreviewRect(dialog);
     std::string detailTitle;

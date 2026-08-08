@@ -10,14 +10,14 @@ class StorageWriter {
 public:
     explicit StorageWriter(SystemMessage msg) {
         m_buf.resize(kStorageSize, 0);
-        CommandHeader hdr{kCommandMagic, static_cast<uint32_t>(msg)};
+        CommandHeader hdr{kCommandMagic, static_cast<uint32_t>(msg), 0};
         std::memcpy(m_buf.data(), &hdr, sizeof(hdr));
         m_pos = sizeof(CommandHeader);
     }
 
     explicit StorageWriter(Result rc) {
         m_buf.resize(kStorageSize, 0);
-        CommandHeader hdr{kCommandMagic, static_cast<uint32_t>(rc)};
+        CommandHeader hdr{kCommandMagic, static_cast<uint32_t>(rc), 0};
         std::memcpy(m_buf.data(), &hdr, sizeof(hdr));
         m_pos = sizeof(CommandHeader);
     }
@@ -80,6 +80,13 @@ public:
 
     SystemMessage systemMessage() const {
         return static_cast<SystemMessage>(messageOrResult());
+    }
+
+    uint64_t requestId() const {
+        CommandHeader hdr{};
+        if (m_buf.size() >= sizeof(hdr))
+            std::memcpy(&hdr, m_buf.data(), sizeof(hdr));
+        return hdr.request_id;
     }
 
     template<typename T>

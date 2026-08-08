@@ -94,7 +94,7 @@ void ProgressDialog::render(nxui::Renderer& ren) {
     ren.drawRect({0.f, 0.f, 1280.f, 720.f}, nxui::Color(0.f, 0.f, 0.f, 0.50f * alpha));
 
     nxui::Rect panel = scaledRect(panelRect(), m_panelScale.value());
-    nxui::Color panelFill = m_theme->panelBase.withAlpha((m_theme->mode == nxui::ThemeMode::Dark ? 0.82f : 0.76f) * alpha);
+    nxui::Color panelFill = m_theme->panelBase.withAlpha((m_theme->mode == nxui::ThemeMode::Dark ? 0.95f : 0.96f) * alpha);
     ren.drawRoundedRect(panel, panelFill, kPanelRadius);
     ren.drawRoundedRectOutline(panel, m_theme->panelBorder.withAlpha(0.34f * alpha), kPanelRadius, 1.2f);
     ren.drawRoundedRectOutline(panel.shrunk(1.5f), m_theme->panelHighlight.withAlpha(0.08f * alpha), kPanelRadius - 1.5f, 1.f);

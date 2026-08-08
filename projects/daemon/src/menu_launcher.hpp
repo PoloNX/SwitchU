@@ -16,6 +16,8 @@ static bool g_active = false;
 static bool g_holderCreated = false;
 static bool g_externalRegistered = false;
 static LibAppletExitReason g_lastExitReason = LibAppletExitReason_Normal;
+static uint64_t g_startedAtTick = 0;
+static uint64_t g_lastRuntimeNs = 0;
 
 inline bool hasHolder() {
     return g_holderCreated;
@@ -23,6 +25,14 @@ inline bool hasHolder() {
 
 inline bool isActive() {
     return g_active && appletHolderActive(&g_holder);
+}
+
+inline Event* stateChangedEvent() {
+    return g_holderCreated ? &g_holder.StateChangedEvent : nullptr;
+}
+
+inline Event* commandEvent() {
+    return g_holderCreated ? &g_holder.PopInteractiveOutDataEvent : nullptr;
 }
 
 inline Result create() {
@@ -41,24 +51,39 @@ inline Result create() {
     return 0;
 }
 
-inline void cleanupHolder() {
+inline Result cleanupHolder() {
     if (g_holderCreated) {
         appletHolderClose(&g_holder);
+        g_holder = {};
         g_holderCreated = false;
     }
     g_active = false;
     if (g_externalRegistered) {
-        switchu::daemon::unregisterExternalContent(switchu::smi::kMenuTakeoverProgramId);
+        const Result rc = switchu::daemon::unregisterExternalContent(
+            switchu::smi::kMenuTakeoverProgramId);
+        if (R_FAILED(rc))
+            return rc;
         g_externalRegistered = false;
     }
+    return 0;
 }
 
-inline void terminate();
+inline Result terminate();
 
 inline Result prepare() {
     if (g_holderCreated) {
         switchu::FileLog::log("[menu_la] prepare requested while holder exists; terminating first");
-        terminate();
+        const Result terminateRc = terminate();
+        if (R_FAILED(terminateRc))
+            return terminateRc;
+    } else if (g_externalRegistered) {
+        // A previous unregister failure must be resolved before registering a
+        // new takeover. Otherwise ldr can retain a stale external-code mapping.
+        const Result unregisterRc = switchu::daemon::unregisterExternalContent(
+            switchu::smi::kMenuTakeoverProgramId);
+        if (R_FAILED(unregisterRc))
+            return unregisterRc;
+        g_externalRegistered = false;
     }
     if (kEnableExternalContentLaunch) {
         Result ecsRc = switchu::daemon::registerExternalContent(
@@ -110,6 +135,7 @@ inline Result startPrepared(smi::MenuStartMode mode, const smi::SystemStatus& st
     }
 
     g_active = true;
+    g_startedAtTick = armGetSystemTick();
     switchu::FileLog::log("[menu_la] started (mode=%u holderActive=%d)",
                           static_cast<u32>(mode),
                           appletHolderActive(&g_holder) ? 1 : 0);
@@ -122,8 +148,9 @@ inline Result launch(smi::MenuStartMode mode, const smi::SystemStatus& status) {
     return startPrepared(mode, status);
 }
 
-inline void terminate() {
-    if (!g_holderCreated) return;
+inline Result terminate() {
+    if (!g_holderCreated)
+        return cleanupHolder();
     switchu::FileLog::log("[menu_la] terminate begin holderActive=%d",
                           (g_active && appletHolderActive(&g_holder)) ? 1 : 0);
     if (g_active) {
@@ -131,19 +158,26 @@ inline void terminate() {
         switchu::FileLog::log("[menu_la] terminate request rc=0x%X", rc);
         g_lastExitReason = R_SUCCEEDED(rc) ? appletHolderGetExitReason(&g_holder)
                                            : LibAppletExitReason_Unexpected;
+        if (g_startedAtTick != 0)
+            g_lastRuntimeNs = armTicksToNs(armGetSystemTick() - g_startedAtTick);
     }
-    cleanupHolder();
+    const Result cleanupRc = cleanupHolder();
     switchu::FileLog::log("[menu_la] terminate done reason=%d", (int)g_lastExitReason);
+    return cleanupRc;
 }
 
 inline bool checkFinished() {
     if (!g_active) return false;
     if (appletHolderCheckFinished(&g_holder)) {
+        if (g_startedAtTick != 0)
+            g_lastRuntimeNs = armTicksToNs(armGetSystemTick() - g_startedAtTick);
         g_lastExitReason = appletHolderGetExitReason(&g_holder);
         switchu::FileLog::log("[menu_la] holder finished reason=%d",
                               (int)g_lastExitReason);
         appletHolderJoin(&g_holder);
-        cleanupHolder();
+        const Result cleanupRc = cleanupHolder();
+        if (R_FAILED(cleanupRc))
+            switchu::FileLog::log("[menu_la] finished cleanup FAIL: 0x%X", cleanupRc);
         return true;
     }
     return false;
@@ -153,6 +187,10 @@ inline LibAppletExitReason exitReason() {
     if (g_active)
         return appletHolderGetExitReason(&g_holder);
     return g_lastExitReason;
+}
+
+inline uint64_t lastRuntimeNs() {
+    return g_lastRuntimeNs;
 }
 
 inline Result pushStorage(AppletStorage* st) {

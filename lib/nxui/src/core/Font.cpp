@@ -34,6 +34,12 @@ bool Font::load(GpuDevice& gpu, Renderer& ren,
 
 Vec2 Font::measure(const std::string& text) const {
     if (!m_font || text.empty()) return {0, 0};
+    // Rendered strings already carry their exact dimensions. Avoid invoking
+    // SDL_ttf again for every label on every frame.
+    const auto cached = m_lruMap.find(text);
+    if (cached != m_lruMap.end())
+        return {static_cast<float>(cached->second->w),
+                static_cast<float>(cached->second->h)};
     int w = 0, h = 0;
     TTF_SizeUTF8(m_font, text.c_str(), &w, &h);
     return {(float)w, (float)h};

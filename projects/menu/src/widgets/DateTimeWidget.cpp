@@ -1,6 +1,6 @@
 #include "DateTimeWidget.hpp"
+#include "services/ClockService.hpp"
 #include <nxui/core/Renderer.hpp>
-#include <ctime>
 #include <cstdio>
 
 void DateTimeWidget::setUse12HourClock(bool enabled) {
@@ -17,22 +17,30 @@ void DateTimeWidget::onContentUpdate(float dt) {
     if (m_timer < 1.f && !m_timeStr.empty()) return;
     m_timer = 0.f;
 
-    std::time_t t = std::time(nullptr);
-    std::tm* tm   = std::localtime(&t);
-    if (!tm) return;
+    if (!m_clockService)
+        return;
+    const auto snapshot = m_clockService->refresh();
+    if (!snapshot.valid)
+        return;
+    const auto& calendar = snapshot.calendar;
+
     char buf[64];
     if (m_use12HourClock) {
-        int hour = tm->tm_hour % 12;
+        int hour = calendar.hour % 12;
         if (hour == 0)
             hour = 12;
-        std::snprintf(buf, sizeof(buf), "%d:%02d %s", hour, tm->tm_min,
-                      tm->tm_hour >= 12 ? "PM" : "AM");
+        std::snprintf(buf, sizeof(buf), "%d:%02d %s", hour, calendar.minute,
+                      calendar.hour >= 12 ? "PM" : "AM");
     } else {
-        std::snprintf(buf, sizeof(buf), "%02d:%02d", tm->tm_hour, tm->tm_min);
+        std::snprintf(buf, sizeof(buf), "%02u:%02u",
+                      static_cast<unsigned>(calendar.hour),
+                      static_cast<unsigned>(calendar.minute));
     }
     m_timeStr = buf;
-    std::snprintf(buf, sizeof(buf), "%02d/%02d/%04d",
-                  tm->tm_mday, tm->tm_mon + 1, tm->tm_year + 1900);
+    std::snprintf(buf, sizeof(buf), "%02u/%02u/%04u",
+                  static_cast<unsigned>(calendar.day),
+                  static_cast<unsigned>(calendar.month),
+                  static_cast<unsigned>(calendar.year));
     m_dateStr = buf;
 }
 

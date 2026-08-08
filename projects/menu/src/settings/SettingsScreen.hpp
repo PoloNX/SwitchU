@@ -1,6 +1,7 @@
 #pragma once
 
 #include "TabbedOverlayScreen.hpp"
+#include <future>
 
 namespace settings::tabs {
 class SystemTab;
@@ -32,6 +33,11 @@ public:
     void onAccessibilitySpeakPositionChange(BoolCb cb) { m_accessibilitySpeakPositionCb = std::move(cb); }
     void onAccessibilitySpeechRateChange(IntCb cb) { m_accessibilitySpeechRateCb = std::move(cb); }
     void onNetConnect(VoidCb cb)        { m_netConnectCb = std::move(cb); }
+    void onControllerPairing(VoidCb cb) { m_controllerPairingCb = std::move(cb); }
+    void onControllerRemapping(VoidCb cb) { m_controllerRemappingCb = std::move(cb); }
+    void onControllerTest(VoidCb cb) { m_controllerTestCb = std::move(cb); }
+    using SoftwareDeleteCb = std::function<void(uint64_t, const std::string&)>;
+    void onSoftwareDelete(SoftwareDeleteCb cb) { m_softwareDeleteCb = std::move(cb); }
     void onSleepRequest(VoidCb cb)      { m_sleepCb = std::move(cb); }
     void onShutdownRequest(VoidCb cb)   { m_shutdownCb = std::move(cb); }
     void onRebootRequest(VoidCb cb)     { m_rebootCb = std::move(cb); }
@@ -65,6 +71,8 @@ public:
 
 protected:
     void buildTabs() override;
+    void ensureTabLoaded(int tabIndex) override;
+    void onContentUpdate(float dt) override;
 
 private:
     friend class settings::tabs::SystemTab;
@@ -90,6 +98,10 @@ private:
     BoolCb m_accessibilitySpeakPositionCb;
     IntCb m_accessibilitySpeechRateCb;
     VoidCb m_netConnectCb;
+    VoidCb m_controllerPairingCb;
+    VoidCb m_controllerRemappingCb;
+    VoidCb m_controllerTestCb;
+    SoftwareDeleteCb m_softwareDeleteCb;
     VoidCb m_sleepCb;
     VoidCb m_shutdownCb;
     VoidCb m_rebootCb;
@@ -105,4 +117,14 @@ private:
     bool m_accessibilitySpeakContextEveryFocus = false;
     bool m_accessibilitySpeakPosition = true;
     int m_accessibilitySpeechRate = 190;
+    std::vector<bool> m_loadedTabs;
+    std::vector<bool> m_loadingTabs;
+    std::vector<std::future<Tab>> m_tabTasks;
+    int m_nextPrefetchTab = 0;
+
+    Tab buildTabNow(int tabIndex);
+    Tab makeLoadingTab(int tabIndex) const;
+    void startAsyncTabLoad(int tabIndex);
+    void pollTabLoaders();
+    void prefetchOneTab();
 };
