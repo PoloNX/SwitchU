@@ -237,6 +237,7 @@ private:
     std::future<void>    m_configSaveFuture;
     std::future<void>    m_themeDeleteFuture;
     bool                 m_audioStarted = false;
+    bool                 m_musicFadeActive = false;
     std::vector<std::string> m_availablePresets;
     bool                 m_presetChangePending = false;
     std::string          m_loadedSoundPreset;

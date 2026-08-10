@@ -1,5 +1,6 @@
 #include "AudioManager.hpp"
 #include <SDL2/SDL.h>
+#include <algorithm>
 #include <cstdio>
 
 AudioManager::~AudioManager() { shutdown(); }
@@ -89,9 +90,18 @@ void AudioManager::nextTrack() {
     m_playing.store(true);
 }
 
+void AudioManager::applyMusicVolume() {
+    Mix_VolumeMusic((int)(m_volume * m_musicFade * MIX_MAX_VOLUME));
+}
+
 void AudioManager::setVolume(float vol) {
     m_volume = vol;
-    Mix_VolumeMusic((int)(vol * MIX_MAX_VOLUME));
+    applyMusicVolume();
+}
+
+void AudioManager::setMusicFade(float fade) {
+    m_musicFade = std::clamp(fade, 0.f, 1.f);
+    applyMusicVolume();
 }
 
 void AudioManager::loadSfx(Sfx id, const std::string& path) {

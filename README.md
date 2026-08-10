@@ -83,7 +83,7 @@ Build outputs are generated under `build/cross/aarch64/<mode>/`.
 ## Know issues
 - Some settings are not implemented yet
 - Current icons are very ugly, feel free to replace them with better ones
-- You may experience somme crash when using a lot of sysmodules. I tried to reduce the ram usage but I still get some instability when launching a game.
+- You may experience some crash when using a lot of sysmodules. I tried to reduce the ram usage but I still get some instability when launching a game.
 
 ## TODO
 - Add a pannel when pressing + on a game to show more information about it

@@ -38,6 +38,9 @@ public:
     float volume() const { return m_volume; }
     bool  isPlaying() const { return m_playing; }
 
+    void setMusicFade(float fade);
+    float musicFade() const { return m_musicFade; }
+
     void loadSfx(Sfx id, const std::string& path);
     void clearSfx();
     void playSfx(Sfx id);
@@ -50,10 +53,13 @@ private:
     static std::atomic<AudioManager*> s_instance;
     static void onTrackFinished();
 
+    void applyMusicVolume();
+
     std::mutex m_trackMutex;
     std::vector<Mix_Music*> m_tracks;
     int   m_current = 0;
     float m_volume  = 0.5f;
+    float m_musicFade = 1.f;
     std::atomic<bool> m_playing{false};
     bool  m_initialized = false;
 

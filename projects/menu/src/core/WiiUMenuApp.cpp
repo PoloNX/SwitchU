@@ -2122,6 +2122,15 @@ void WiiUMenuApp::onUpdate(float dt) {
         m_tutorialStartupFadeDeadlineTick = 0;
     }
 
+    if (m_launchAnim && m_launchAnim->isPlaying()) { // fade out music while the launch animation is playing
+        const float t = m_launchAnim->musicFadeProgress();
+        m_audio.setMusicFade(1.f - nxui::Easing::outQuad(t));
+        m_musicFadeActive = true;
+    } else if (m_musicFadeActive) { // cancel fade if the animation was interrupted
+        m_musicFadeActive = false;
+        m_audio.setMusicFade(1.f);
+    }
+
     syncThemePackageTransfer();
     retryPendingBackgroundImage();
 
