@@ -315,6 +315,8 @@ void WiiUMenuApp::createSettings() {
             m_themeShop->setAccessibilityVoiceEnabled(enabled);
         if (m_gameOptions)
             m_gameOptions->setAccessibilityVoiceEnabled(enabled);
+        if (m_folderOptions)
+            m_folderOptions->setAccessibilityVoiceEnabled(enabled);
         if (enabled) {
             m_accessibility.setEnabled(true);
             m_accessibility.announce(nxui::I18n::instance().tr(
@@ -338,6 +340,9 @@ void WiiUMenuApp::createSettings() {
         if (m_gameOptions)
             m_gameOptions->setAccessibilitySpeechPreferences(m_config.accessibilitySpeakHints,
                                                               m_config.accessibilitySpeakPosition);
+        if (m_folderOptions)
+            m_folderOptions->setAccessibilitySpeechPreferences(m_config.accessibilitySpeakHints,
+                                                                m_config.accessibilitySpeakPosition);
         if (m_dialog)
             m_dialog->setAccessibilitySpeechPreferences(m_config.accessibilitySpeakHints,
                                                         m_config.accessibilitySpeakPosition);
@@ -360,6 +365,9 @@ void WiiUMenuApp::createSettings() {
         if (m_gameOptions)
             m_gameOptions->setAccessibilitySpeechPreferences(m_config.accessibilitySpeakHints,
                                                               m_config.accessibilitySpeakPosition);
+        if (m_folderOptions)
+            m_folderOptions->setAccessibilitySpeechPreferences(m_config.accessibilitySpeakHints,
+                                                                m_config.accessibilitySpeakPosition);
         if (m_dialog)
             m_dialog->setAccessibilitySpeechPreferences(m_config.accessibilitySpeakHints,
                                                         m_config.accessibilitySpeakPosition);
@@ -475,6 +483,37 @@ void WiiUMenuApp::createGameOptions() {
     m_gameOptions->onClosed([this]() {
         m_navigator.routeDidClose(switchu::navigation::Route::GameOptions);
         if (focusTitle(m_gameOptionsTitleId)) {
+            if (auto* focused = m_grid->focusManager().current())
+                focusManager().setFocus(focused);
+        }
+    });
+}
+
+void WiiUMenuApp::createFolderOptions() {
+    if (m_folderOptions) return;
+    m_folderOptions = std::make_shared<FolderOptionsScreen>();
+    if (m_overlayLayer) m_overlayLayer->addChild(m_folderOptions);
+    m_folderOptions->setFont(&m_fontNormal);
+    m_folderOptions->setSmallFont(&m_fontSmall);
+    m_folderOptions->setTheme(&m_theme);
+    m_folderOptions->setAccessibilityVoiceEnabled(m_config.accessibilityEnabled);
+    m_folderOptions->setAccessibilitySpeechPreferences(m_config.accessibilitySpeakHints,
+                                                       m_config.accessibilitySpeakPosition);
+    m_folderOptions->onNavigateSfx([this]() { m_audio.playSfx(Sfx::Navigate); });
+    m_folderOptions->onActivateSfx([this]() { m_audio.playSfx(Sfx::Activate); });
+    m_folderOptions->onCloseSfx([this]() { m_audio.playSfx(Sfx::ModalHide); });
+    m_folderOptions->onAccessibilityAnnouncement([this](const std::string& text) {
+        m_accessibility.announce(text);
+    });
+    m_folderOptions->onAccessibilityStructuredAnnouncement(
+        [this](const std::string& context, const std::string& position,
+               const std::string& summary, bool forceRepeat, bool forceContext) {
+            m_accessibility.announceStructuredFocus(context, position, summary,
+                                                    forceRepeat, forceContext);
+        });
+    m_folderOptions->onClosed([this]() {
+        m_navigator.routeDidClose(switchu::navigation::Route::FolderOptions);
+        if (focusTitle(folderTitleId(m_folderOptionsId))) {
             if (auto* focused = m_grid->focusManager().current())
                 focusManager().setFocus(focused);
         }
@@ -1324,15 +1363,23 @@ void WiiUMenuApp::applyTheme() {
     m_battery->setHighlightColor(m_theme.panelHighlight);
     m_battery->setTextColor(m_theme.textPrimary);
 
-    m_titlePill->setBaseColor(m_theme.panelBase);
-    m_titlePill->setBorderColor(m_theme.panelBorder);
-    m_titlePill->setHighlightColor(m_theme.panelHighlight);
+    m_titlePill->setBaseColor(m_theme.panelBase.withAlpha(
+        m_theme.mode == nxui::ThemeMode::Dark ? 0.90f : 0.86f));
+    m_titlePill->setBorderColor(m_theme.panelBorder.withAlpha(0.84f));
+    m_titlePill->setHighlightColor(m_theme.panelHighlight.withAlpha(0.42f));
     m_titlePill->setTextColor(m_theme.textPrimary);
 
     m_pageIndicator->setBaseColor(m_theme.panelBase);
     m_pageIndicator->setBorderColor(m_theme.panelBorder);
     m_pageIndicator->setHighlightColor(m_theme.panelHighlight);
     m_pageIndicator->setTheme(&m_theme);
+    if (m_folderHeader) {
+        m_folderHeader->setBaseColor(m_theme.panelBase);
+        m_folderHeader->setBorderColor(m_theme.panelBorder);
+        m_folderHeader->setHighlightColor(m_theme.panelHighlight);
+    }
+    if (m_folderHeaderLabel)
+        m_folderHeaderLabel->setTextColor(m_theme.textPrimary);
     for (auto& avatar : m_userAvatarButtons) {
         avatar->setBaseColor(m_theme.iconDefault.withAlpha(
             m_theme.mode == nxui::ThemeMode::Dark ? 0.92f : 0.94f));
@@ -1361,6 +1408,8 @@ void WiiUMenuApp::applyTheme() {
         m_themeShop->setTheme(&m_theme);
     if (m_gameOptions)
         m_gameOptions->setTheme(&m_theme);
+    if (m_folderOptions)
+        m_folderOptions->setTheme(&m_theme);
     if (m_controllerTest)
         m_controllerTest->setTheme(&m_theme);
 

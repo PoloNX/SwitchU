@@ -26,6 +26,18 @@ void UserAvatarButton::setTheme(const nxui::Theme* theme) {
     setHighlightColor(theme->panelHighlight.withAlpha(0.10f));
 }
 
+void UserAvatarButton::setAddUserMode(bool enabled) {
+    m_addUserMode = enabled;
+    if (!enabled)
+        return;
+    auto& i18n = nxui::I18n::instance();
+    m_nickname = i18n.tr("userselect.add_user", "Add user");
+    setAccessibilityLabel(m_nickname);
+    setAccessibilityRole(i18n.tr("accessibility.roles.action", "action"));
+    setAccessibilityHint(i18n.tr("userselect.add_user_hint",
+                                  "A to create a new user."));
+}
+
 void UserAvatarButton::setChromeEnabled(bool enabled) {
     m_chromeEnabled = enabled;
     setPadding(enabled ? 4.f : 0.f);
@@ -51,6 +63,19 @@ void UserAvatarButton::onContentRender(nxui::Renderer& ren) {
     const float radius = m_chromeEnabled
         ? std::max(0.f, cornerRadius() - padding().top)
         : side * 0.5f;
+
+    if (m_addUserMode) {
+        const nxui::Vec2 center{avatarRect.x + side * 0.5f,
+                                avatarRect.y + side * 0.5f};
+        const float arm = side * 0.25f;
+        const float bar = std::max(3.f, side * 0.075f);
+        const nxui::Color plus = nxui::Color::white().withAlpha(0.92f * alpha);
+        ren.drawRoundedRect({center.x - arm, center.y - bar * 0.5f,
+                             arm * 2.f, bar}, plus, bar * 0.5f);
+        ren.drawRoundedRect({center.x - bar * 0.5f, center.y - arm,
+                             bar, arm * 2.f}, plus, bar * 0.5f);
+        return;
+    }
 
     if (m_avatarTexture.valid()) {
         ren.drawTextureRounded(&m_avatarTexture,

@@ -2,6 +2,7 @@
 #include <nxui/widgets/GlassWidget.hpp>
 #include <nxui/core/Texture.hpp>
 #include <nxui/core/Animation.hpp>
+#include "core/GridModel.hpp"
 #include <string>
 
 
@@ -31,6 +32,11 @@ public:
     void setNotLaunchable(bool nl)  { m_notLaunchable = nl; }
     bool isNotLaunchable() const    { return m_notLaunchable; }
     void setLoadingColor(const nxui::Color& color) { m_loadingColor = color; }
+    void setEntryKind(GridEntryKind kind) { m_entryKind = kind; }
+    GridEntryKind entryKind() const { return m_entryKind; }
+    void setFolderPreviewCount(int count) { m_folderPreviewCount = count; }
+    void setFolderVisualSeed(std::uint32_t seed) { m_folderVisualSeed = seed; }
+    void setFolderColorIndex(int index) { m_folderColorIndex = index; }
 
     void startAppear(float delay);
     void forceVisible();
@@ -65,4 +71,8 @@ private:
     float         m_appearDelay = 0.f;
     float         m_appearTimer = 0.f;
     bool          m_appearing   = false;
+    GridEntryKind m_entryKind = GridEntryKind::Application;
+    int           m_folderPreviewCount = 0;
+    std::uint32_t m_folderVisualSeed = 0;
+    int           m_folderColorIndex = 0;
 };

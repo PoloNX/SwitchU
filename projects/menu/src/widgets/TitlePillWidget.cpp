@@ -2,18 +2,53 @@
 #include <nxui/core/Renderer.hpp>
 #include <algorithm>
 
+namespace {
+
+void removeLastUtf8Codepoint(std::string& text) {
+    if (text.empty()) return;
+    std::size_t start = text.size() - 1;
+    while (start > 0 &&
+           (static_cast<unsigned char>(text[start]) & 0xC0u) == 0x80u)
+        --start;
+    text.erase(start);
+}
+
+std::string ellipsize(nxui::Font* font, const std::string& text, float maxWidth) {
+    if (!font || font->measure(text).x <= maxWidth)
+        return text;
+    std::string fitted = text;
+    constexpr const char* suffix = "...";
+    while (!fitted.empty() && font->measure(fitted + suffix).x > maxWidth)
+        removeLastUtf8Codepoint(fitted);
+    return fitted.empty() ? suffix : fitted + suffix;
+}
+
+}
+
 TitlePillWidget::TitlePillWidget() {
-    setLiquidGlassShaderEnabled(false);
+    setLiquidGlassEnabled(true);
+    setForceLiquidGlass(true);
+    setLiquidGlassShaderEnabled(true);
+    setPanelOpacity(0.98f);
+    setBorderWidth(0.f);
+}
+
+void TitlePillWidget::onRender(nxui::Renderer& ren) {
+    if (m_rect.width <= 0.5f || m_rect.height <= 0.5f)
+        return;
+    nxui::GlassWidget::onRender(ren);
 }
 
 void TitlePillWidget::setText(const std::string& text, float screenWidth) {
-    if (m_text == text && m_layoutInitialized)
+    if (m_sourceText == text && m_layoutInitialized)
         return;
 
     const bool wasVisible = isVisible();
     m_hideOnCollapse = false;
     setVisible(true);
-    m_text = text;
+    const float maxContentWidth = std::max(120.f, std::min(736.f, screenWidth - 420.f));
+    m_sourceText = text;
+    m_text = ellipsize(m_font, text, maxContentWidth);
     sizeToFit();
     setCornerRadius(m_rect.height * 0.5f);
     float targetW = m_rect.width;
@@ -66,6 +101,7 @@ void TitlePillWidget::onContentUpdate(float dt) {
         m_rect.width = m_animW.value();
         if (m_hideOnCollapse && m_animW.value() <= 0.5f) {
             m_hideOnCollapse = false;
+            m_sourceText.clear();
             m_text.clear();
             setVisible(false);
         }

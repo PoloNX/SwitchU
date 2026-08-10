@@ -20,6 +20,7 @@
 - [Features](#features)
 - [Screenshots](#screenshots)
 - [How to build](#how-to-build)
+- [SwitchU Manager](#switchu-manager)
 - [Help me](#help-me)
 - [Credits](#credits)
 - [License](#license)
@@ -74,6 +75,10 @@ xmake clean
 ```
 
 Build outputs are generated under `build/cross/aarch64/<mode>/`.
+
+## SwitchU Manager
+
+`SwitchU-Manager.nro` enables or disables SwitchU
 
 ## Know issues
 - Some settings are not implemented yet

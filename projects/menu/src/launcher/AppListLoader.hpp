@@ -23,6 +23,10 @@ struct PendingApp {
     uint8_t             startupUserAccount = 1;
     uint8_t             startupUserAccountOption = 0;
     std::vector<uint8_t> iconData;
+    GridEntryKind        kind = GridEntryKind::Application;
+    std::uint32_t        folderId = 0;
+    int                  folderPreviewCount = 0;
+    int                  folderColorIndex = 0;
 };
 
 class AppListLoader {

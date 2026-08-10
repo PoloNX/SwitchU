@@ -469,6 +469,17 @@ void Renderer::drawOffscreenRounded(int target, const Rect& dest, float radius, 
     drawRoundedRect(dest, tint, radius);
 }
 
+void Renderer::drawLiquidGlass(int target, const Rect& panelRect, float radius,
+                               const Color& tint, float opacity, float shade) {
+    (void)target;
+    (void)shade;
+    drawFrostedInset(panelRect,
+                     tint.withAlpha(std::max(0.18f, tint.a)),
+                     Color::white().withAlpha(0.20f),
+                     Color::white().withAlpha(0.10f),
+                     radius, opacity);
+}
+
 void Renderer::applyBlur(float radius, int passes) {
     (void)radius; (void)passes;
     // No-op: blur not available in SDL2 backend.

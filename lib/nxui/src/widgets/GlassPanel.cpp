@@ -91,18 +91,19 @@ void GlassPanel::onRender(Renderer& ren) {
         ren.drawRoundedRect(r, m_backingColor.withAlpha(op), m_radius);
     }
 
-    // "Liquid glass" is retained as a styling intent for API compatibility,
-    // but the production material is now a cheap Wii U-like frosted inset.
-    // Local live backdrop captures caused a full render-target transition for
-    // every small control and dominated steady-state GPU time.
-    if (m_blurEnabled && op > 0.01f) {
-        ren.captureToOffscreen(false);
-        if (m_blurEnabled) {
+    const bool useShaderGlass = m_liquidGlassEnabled
+        && m_liquidGlassShaderEnabled
+        && ren.gpu().offscreenReady();
+    const bool needsBackdrop = (m_blurEnabled || useShaderGlass) && op > 0.01f;
+    if (needsBackdrop) {
+        ren.captureToOffscreen(useShaderGlass && !m_blurEnabled);
+        if (m_blurEnabled)
             ren.applyBlur(m_blurRadius, m_blurPasses);
-        }
     }
 
-    if (m_liquidGlassEnabled && op > 0.01f) {
+    if (useShaderGlass && op > 0.01f) {
+        ren.drawLiquidGlass(0, r, m_radius, m_base, op, m_liquidGlassShade);
+    } else if (m_liquidGlassEnabled && op > 0.01f) {
         Color body = m_base;
         body.a = std::max(body.a, 0.16f);
         ren.drawFrostedInset(r, body, m_border, m_highlight, m_radius, op);
@@ -118,8 +119,16 @@ void GlassPanel::onRender(Renderer& ren) {
         drawPanelMaterialTexture(ren, r, m_radius, op, m_materialTextureIntensity);
     }
 
-    if (m_liquidGlassEnabled)
+    if (m_liquidGlassEnabled) {
+        if (m_highlight.a > 0.01f && op > 0.01f)
+            ren.drawRoundedRectOutline(r.shrunk(1.f),
+                                       m_highlight.withAlpha(m_highlight.a * 0.55f * op),
+                                       std::max(0.f, m_radius - 1.f), 1.f);
+        if (m_borderW > 0.f)
+            ren.drawRoundedRectOutline(r, m_border.withAlpha(m_border.a * 0.80f * op),
+                                       m_radius, m_borderW);
         return;
+    }
 
     if (m_highlight.a > 0.01f && op > 0.01f) {
         ren.drawRoundedRectOutline(r.shrunk(0.5f),

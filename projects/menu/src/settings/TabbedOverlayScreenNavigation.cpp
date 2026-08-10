@@ -109,6 +109,8 @@ void TabbedOverlayScreen::currentAccessibilityParts(std::string& context,
             ? i18n.tr("accessibility.context.themes", "Themes")
             : m_mode == ScreenMode::GameOptions
                 ? i18n.tr("game.options", "Software options")
+                : m_mode == ScreenMode::FolderOptions
+                    ? i18n.tr("folder.options", "Folder options")
                 : i18n.tr("accessibility.context.settings", "Settings");
         if (m_accessibilitySpeakPosition) {
             position = std::to_string(m_tabIndex + 1) + " "

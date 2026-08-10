@@ -131,8 +131,7 @@ void SelectionCursor::onRender(nxui::Renderer& ren) {
         float a = bloomAlpha[i] * m_opacity * (0.8f + 0.2f * wave);
         nxui::Color gc = m_color.withAlpha(a);
         ren.drawRoundedRect(glowRect, gc, cr + expand + 2.f);
-    }
-
+}
     nxui::Color mainC = m_color.withAlpha(m_opacity);
     ren.drawRoundedRectOutline(r, mainC, cr, m_borderWidth);
 
@@ -140,4 +139,3 @@ void SelectionCursor::onRender(nxui::Renderer& ren) {
     nxui::Color innerC = nxui::Color(0.3f, 0.85f, 1.f, 0.25f * m_opacity * (0.7f + 0.3f * wave));
     ren.drawRoundedRectOutline(inner, innerC, cr - 2.f, 1.5f);
 }
-

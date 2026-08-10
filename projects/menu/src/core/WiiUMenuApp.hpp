@@ -20,11 +20,14 @@
 #include "widgets/AppletButton.hpp"
 #include "widgets/PageIndicator.hpp"
 #include "widgets/UserAvatarButton.hpp"
+#include "widgets/FolderBackdrop.hpp"
 #include "settings/SettingsScreen.hpp"
 #include "settings/GameOptionsScreen.hpp"
+#include "settings/FolderOptionsScreen.hpp"
 #include "settings/ControllerTestScreen.hpp"
 #include "themeshop/ThemeShopScreen.hpp"
 #include "core/Config.hpp"
+#include "core/FolderStore.hpp"
 #include "core/ThemePreset.hpp"
 #include "sidebar/SidebarManager.hpp"
 #include "launcher/AppletLauncher.hpp"
@@ -38,12 +41,15 @@
 #endif
 #include <nxui/widgets/Background.hpp>
 #include <nxui/widgets/Box.hpp>
+#include <nxui/widgets/GlassPanel.hpp>
+#include <nxui/widgets/Label.hpp>
 #include <cstdint>
 #include <memory>
 #include <vector>
 #include <mutex>
 #include <atomic>
 #include <future>
+#include <utility>
 #include <switch.h>
 #ifdef SWITCHU_MENU
 #include <switchu/smi_protocol.hpp>
@@ -84,10 +90,27 @@ private:
 
     void loadResources();
     GridLayoutMetrics computeGridLayoutMetrics() const;
+    GridLayoutMetrics computeGridLayoutMetrics(int columns, int rows) const;
+    std::pair<int, int> folderGridDimensions(std::uint32_t folderId) const;
     void reflowHomeGrid();
     void buildGrid();
     void buildUserAvatarBar(bool loadImmediately = true);
     void loadNextUserAvatar();
+    void appendAddUserButton();
+    void wireUserAvatarNavigation();
+    void composeRootPending(std::vector<PendingApp>& apps);
+    GridModel buildRootFolderModel();
+    GridModel buildOpenFolderModel(std::uint32_t folderId) const;
+    void applyDisplayModel(GridModel model, std::uint64_t focusId, bool animate);
+    void requestOpenFolder(std::uint32_t folderId);
+    void openCapturedFolder();
+    void closeFolder(bool preserveEditMode = false);
+    void createFolder(int targetSlot = -1);
+    void renameFolder(std::uint32_t folderId);
+    void showFolderContextMenu(std::uint32_t folderId);
+    bool saveFoldersOrReport(const char* operation);
+    std::string promptFolderName(const std::string& initial,
+                                 const std::string& guide);
     void applyTheme();
     void applyThemeResources(const ThemePreset& preset);
     void retryPendingBackgroundImage();
@@ -122,6 +145,7 @@ private:
     void createSettings();
     void createThemeShop();
     void createGameOptions();
+    void createFolderOptions();
     void createControllerTest();
     void reloadThemePresets();
     void refreshThemeShopState();
@@ -138,9 +162,12 @@ private:
     bool quiesceWritersForPowerAction();
     void applyMenuLayoutToPending(std::vector<PendingApp>& apps);
     void startEditGhost(GlossyIcon* sourceIcon);
+    void detachEditSourceIcon();
+    void reattachEditSourceIcon();
     void stopEditGhost();
     void updateEditGhost(float dt);
     bool commitEditModePlacement();
+    bool activateEditModeTarget();
     bool moveFocusedIcon(nxui::FocusDirection dir);
     void enterEditMode();
     void exitEditMode();
@@ -187,6 +214,7 @@ private:
     std::shared_ptr<SettingsScreen>    m_settings;
     std::shared_ptr<ThemeShopScreen>   m_themeShop;
     std::shared_ptr<GameOptionsScreen> m_gameOptions;
+    std::shared_ptr<FolderOptionsScreen> m_folderOptions;
     std::shared_ptr<ControllerTestScreen> m_controllerTest;
 
     nxui::Texture m_gameCardTex;
@@ -198,6 +226,9 @@ private:
     std::shared_ptr<nxui::Box> m_leftSidebar;
     std::shared_ptr<nxui::Box> m_rightSidebar;
     std::shared_ptr<nxui::Box> m_userAvatarBar;
+    std::shared_ptr<FolderBackdrop> m_folderBackdrop;
+    std::shared_ptr<nxui::GlassPanel> m_folderHeader;
+    std::shared_ptr<nxui::Label> m_folderHeaderLabel;
     std::vector<std::shared_ptr<UserAvatarButton>> m_userAvatarButtons;
 
     AudioManager m_audio;
@@ -235,6 +266,10 @@ private:
     bool m_showWireframe     = false;
     bool m_editMode          = false;
     int  m_editSourceIndex   = -1;
+    int  m_editOriginRootSlot = -1;
+    int  m_editOriginFolderIndex = -1;
+    std::uint32_t m_editOriginFolderId = 0;
+    std::uint64_t m_editHeldTitleId = 0;
     std::string m_editHeldTitle;
     GlossyIcon* m_editBoundIcon = nullptr;
     GlossyIcon* m_editSourceIcon = nullptr;
@@ -243,6 +278,12 @@ private:
     float m_editGhostPulse = 0.f;
     std::vector<uint64_t> m_layoutSlots;
     bool m_layoutDirty = false;
+    switchu::folders::FolderStore m_folderStore;
+    std::vector<AppEntry> m_allApps;
+    std::uint32_t m_openFolderId = 0;
+    std::uint32_t m_requestedFolderId = 0;
+    bool m_folderCaptureRequested = false;
+    bool m_folderCaptureReady = false;
 
     int  m_touchHitIndex     = -1;
     bool m_touchOnFocused    = false;
@@ -267,6 +308,7 @@ private:
     int m_backgroundImageRetryAttempts = 0;
     bool m_forceThemeResourceReload   = false;
     std::uint64_t m_gameOptionsTitleId = 0;
+    std::uint32_t m_folderOptionsId = 0;
     nxui::Widget* m_dialogReturnFocus = nullptr;
     bool m_dialogWasActive            = false;
     bool m_suppressNextNavigateSfx    = false;

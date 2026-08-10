@@ -17,12 +17,14 @@ public:
     void hideAnimated(float screenWidth = 1280.f);
 
 protected:
+    void onRender(nxui::Renderer& ren) override;
     void onContentUpdate(float dt) override;
     void onContentRender(nxui::Renderer& ren) override;
     nxui::Vec2 computeContentSize() const override;
 
 private:
     nxui::Font*       m_font = nullptr;
+    std::string m_sourceText;
     std::string m_text;
     nxui::Color       m_textColor {1.f, 1.f, 1.f, 1.f};
     nxui::AnimatedFloat m_animX{0.f};

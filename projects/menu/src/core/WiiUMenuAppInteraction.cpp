@@ -14,7 +14,12 @@ bool WiiUMenuApp::isEditableIcon(nxui::Widget* w) const {
     if (!w || w->tag() != "glossy_icon")
         return false;
     auto* icon = static_cast<GlossyIcon*>(w);
-    return icon->titleId() != 0;
+    const int index = findTitleIndex(icon->titleId());
+    if (index < 0)
+        return false;
+    return m_openFolderId != 0
+        ? m_model.at(index).isApplication()
+        : (m_model.at(index).isApplication() || m_model.at(index).isFolder());
 }
 
 std::string WiiUMenuApp::accessibilityContextFor(nxui::Widget* w) const {
@@ -49,11 +54,16 @@ std::string WiiUMenuApp::accessibilityActionsFor(nxui::Widget* w) const {
     if (!w)
         return {};
     if (m_editMode && w->tag() == "glossy_icon")
-        return i18n.tr("accessibility.actions.edit_mode", "Directional pad to choose the new position. Y to place. B to cancel.");
+        return m_openFolderId != 0
+            ? i18n.tr("accessibility.actions.edit_mode_folder", "Directional pad to choose the position. A to place. B to leave the folder while keeping the software selected.")
+            : i18n.tr("accessibility.actions.edit_mode", "Directional pad to choose the new position. A to place or enter a folder. B to cancel.");
     if (w->tag() == "glossy_icon") {
         auto* icon = static_cast<GlossyIcon*>(w);
         if (icon->titleId() == 0)
-            return i18n.tr("accessibility.actions.empty_slot", "Directional pad to navigate. ZL or ZR to change page.");
+            return i18n.tr("accessibility.actions.empty_slot", "Directional pad to navigate. Plus to create a folder. ZL or ZR to change page.");
+        const int index = findTitleIndex(icon->titleId());
+        if (index >= 0 && m_model.at(index).isFolder())
+            return i18n.tr("folder.open_hint", "A to open. Plus for folder options. Y to move.");
         return icon->isNotLaunchable()
             ? i18n.tr("accessibility.actions.game_blocked", "A to show the reason. Plus for options. Y to move. ZL or ZR to change page.")
             : i18n.tr("accessibility.actions.game_launchable", "A to launch. Plus for options. Y to move. ZL or ZR to change page.");
@@ -175,14 +185,34 @@ void WiiUMenuApp::startEditGhost(GlossyIcon* sourceIcon) {
 }
 
 void WiiUMenuApp::stopEditGhost() {
-    m_iconStreamer.clearPinnedIndex();
-
-    if (m_editSourceIcon)
-        m_editSourceIcon->setOpacity(1.f);
-    m_editSourceIcon = nullptr;
+    detachEditSourceIcon();
 
     m_editGhostIcon.reset();
     m_editGhostPulse = 0.f;
+}
+
+void WiiUMenuApp::detachEditSourceIcon() {
+    m_iconStreamer.clearPinnedIndex();
+    if (m_editSourceIcon)
+        m_editSourceIcon->setOpacity(1.f);
+    m_editSourceIcon = nullptr;
+}
+
+void WiiUMenuApp::reattachEditSourceIcon() {
+    if (!m_editMode || !m_grid || m_editHeldTitleId == 0)
+        return;
+    const int index = findTitleIndex(m_editHeldTitleId);
+    if (index < 0 || index >= static_cast<int>(m_grid->allIcons().size())) {
+        m_editSourceIndex = -1;
+        return;
+    }
+    auto& icon = m_grid->allIcons()[static_cast<std::size_t>(index)];
+    if (!icon)
+        return;
+    m_editSourceIndex = index;
+    m_editSourceIcon = icon.get();
+    m_editSourceIcon->setOpacity(0.10f);
+    m_iconStreamer.setPinnedIndex(index);
 }
 
 void WiiUMenuApp::updateEditGhost(float dt) {
@@ -221,10 +251,16 @@ void WiiUMenuApp::bindEditActions(GlossyIcon* icon) {
     unbindEditActions();
     m_editBoundIcon = icon;
 
-    icon->addAction(static_cast<uint64_t>(nxui::Button::A), []() {});
+    icon->addAction(static_cast<uint64_t>(nxui::Button::A), [this]() {
+        activateEditModeTarget();
+    });
     icon->addAction(static_cast<uint64_t>(nxui::Button::B), [this]() {
-        exitEditMode();
-        m_audio.playSfx(Sfx::ModalHide);
+        if (m_openFolderId != 0) {
+            closeFolder(true);
+        } else {
+            exitEditMode();
+            m_audio.playSfx(Sfx::ModalHide);
+        }
     });
 }
 
@@ -236,6 +272,10 @@ void WiiUMenuApp::enterEditMode() {
     auto* icon = static_cast<GlossyIcon*>(cur);
     m_editMode = true;
     m_editSourceIndex = m_grid ? m_grid->focusedGlobalIndex() : -1;
+    m_editHeldTitleId = icon->titleId();
+    m_editOriginFolderId = m_openFolderId;
+    m_editOriginFolderIndex = m_openFolderId != 0 ? m_editSourceIndex : -1;
+    m_editOriginRootSlot = m_openFolderId == 0 ? m_editSourceIndex : -1;
     m_editHeldTitle = icon->title();
     startEditGhost(icon);
     bindEditActions(icon);
@@ -253,6 +293,10 @@ void WiiUMenuApp::exitEditMode() {
     m_editMode = false;
     unbindEditActions();
     m_editSourceIndex = -1;
+    m_editOriginRootSlot = -1;
+    m_editOriginFolderIndex = -1;
+    m_editOriginFolderId = 0;
+    m_editHeldTitleId = 0;
     m_editHeldTitle.clear();
     stopEditGhost();
 
@@ -316,6 +360,65 @@ bool WiiUMenuApp::commitEditModePlacement() {
     }
 
     updateCursor();
+    return true;
+}
+
+bool WiiUMenuApp::activateEditModeTarget() {
+    if (!m_editMode || !m_grid)
+        return false;
+
+    const int target = m_grid->focusedGlobalIndex();
+    if (target < 0 || target >= m_model.count() || m_editHeldTitleId == 0)
+        return false;
+
+    const AppEntry targetEntry = m_model.at(target);
+    if (m_openFolderId == 0 && targetEntry.isFolder() &&
+        m_editHeldTitleId < kFolderTitleIdPrefix) {
+        detachEditSourceIcon();
+        unbindEditActions();
+        requestOpenFolder(targetEntry.folderId);
+        return true;
+    }
+
+    if (m_openFolderId != 0 && m_editHeldTitleId < kFolderTitleIdPrefix) {
+        const std::uint32_t targetFolderId = m_openFolderId;
+        if (!m_folderStore.placeTitle(targetFolderId, m_editHeldTitleId,
+                                      static_cast<std::size_t>(target)) ||
+            !saveFoldersOrReport("place_in_folder"))
+            return false;
+
+        if (m_editOriginFolderId == 0 && m_editOriginRootSlot >= 0 &&
+            m_editOriginRootSlot < static_cast<int>(m_layoutSlots.size())) {
+            m_layoutSlots[static_cast<std::size_t>(m_editOriginRootSlot)] = 0;
+            m_layoutDirty = true;
+        }
+        const std::uint64_t titleId = m_editHeldTitleId;
+        exitEditMode();
+        applyDisplayModel(buildOpenFolderModel(targetFolderId), titleId, false);
+        m_audio.playSfx(Sfx::ConfirmPositive);
+        return true;
+    }
+
+    if (m_openFolderId == 0 && targetEntry.kind == GridEntryKind::Empty &&
+        m_editOriginFolderId != 0 &&
+        target < static_cast<int>(m_layoutSlots.size())) {
+        if (!m_folderStore.removeTitle(m_editOriginFolderId, m_editHeldTitleId) ||
+            !saveFoldersOrReport("move_out_of_folder"))
+            return false;
+        const std::uint64_t titleId = m_editHeldTitleId;
+        m_layoutSlots[static_cast<std::size_t>(target)] = titleId;
+        m_layoutDirty = true;
+        exitEditMode();
+        applyDisplayModel(buildRootFolderModel(), titleId, false);
+        m_audio.playSfx(Sfx::ConfirmPositive);
+        return true;
+    }
+
+    if (m_editSourceIndex < 0)
+        return false;
+    commitEditModePlacement();
+    exitEditMode();
+    m_audio.playSfx(Sfx::ConfirmPositive);
     return true;
 }
 
@@ -568,12 +671,17 @@ void WiiUMenuApp::closeActiveOverlays() {
         m_themeShop->hide();
     if (m_gameOptions && m_gameOptions->isActive())
         m_gameOptions->hide();
+    if (m_folderOptions && m_folderOptions->isActive())
+        m_folderOptions->hide();
     if (m_controllerTest && m_controllerTest->isActive())
         m_controllerTest->hide();
+    if (m_openFolderId != 0)
+        closeFolder();
 }
 
 nxui::Widget* WiiUMenuApp::focusRoot() {
     if (m_launchAnim && m_launchAnim->isPlaying()) return nullptr;
+    if (m_folderCaptureRequested) return nullptr;
     if (m_progressDialog && m_progressDialog->isActive()) return m_progressDialog.get();
     if (m_dialog && m_dialog->isActive()) return m_dialog.get();
     if (m_userSelect && m_userSelect->isActive()) return m_userSelect.get();
@@ -584,6 +692,8 @@ nxui::Widget* WiiUMenuApp::focusRoot() {
             return m_themeShop ? m_themeShop.get() : &rootBox();
         case switchu::navigation::Route::GameOptions:
             return m_gameOptions ? m_gameOptions.get() : &rootBox();
+        case switchu::navigation::Route::FolderOptions:
+            return m_folderOptions ? m_folderOptions.get() : &rootBox();
         case switchu::navigation::Route::ControllerTest:
             return m_controllerTest ? m_controllerTest.get() : &rootBox();
         case switchu::navigation::Route::Home:
@@ -602,6 +712,8 @@ void WiiUMenuApp::toggleAccessibilitySpeech() {
         m_themeShop->setAccessibilityVoiceEnabled(enabled);
     if (m_gameOptions)
         m_gameOptions->setAccessibilityVoiceEnabled(enabled);
+    if (m_folderOptions)
+        m_folderOptions->setAccessibilityVoiceEnabled(enabled);
 
     if (enabled) {
         m_audio.playSfx(Sfx::ThemeToggle);
@@ -633,6 +745,19 @@ bool WiiUMenuApp::handleAccessibilityToggleCombo() {
 void WiiUMenuApp::wireGlobalActions() {
     auto& root = rootBox();
 
+    root.addAction(static_cast<uint64_t>(nxui::Button::B), [this]() {
+        if ((m_dialog && m_dialog->isActive()) ||
+            (m_settings && m_settings->isActive()) ||
+            (m_themeShop && m_themeShop->isActive()) ||
+            (m_gameOptions && m_gameOptions->isActive()) ||
+            (m_folderOptions && m_folderOptions->isActive()) ||
+            (m_controllerTest && m_controllerTest->isActive()) ||
+            (m_userSelect && m_userSelect->isActive()))
+            return;
+        if (m_openFolderId != 0 && !(m_dialog && m_dialog->isActive()))
+            closeFolder();
+    });
+
     root.addAction(static_cast<uint64_t>(nxui::Button::L), [this]() {
         if (m_navigator.route() == switchu::navigation::Route::ControllerTest)
             return;
@@ -640,7 +765,8 @@ void WiiUMenuApp::wireGlobalActions() {
     });
 
     root.addAction(static_cast<uint64_t>(nxui::Button::ZL), [this]() {
-        if (m_navigator.route() != switchu::navigation::Route::Home || focusRoot() != &rootBox())
+        if (m_navigator.route() != switchu::navigation::Route::Home || focusRoot() != &rootBox() ||
+            m_openFolderId != 0)
             return;
         int p = m_grid->currentPage() - 1;
         if (p >= 0 && !m_grid->isTransitioning()) {
@@ -649,7 +775,8 @@ void WiiUMenuApp::wireGlobalActions() {
         }
     });
     root.addAction(static_cast<uint64_t>(nxui::Button::ZR), [this]() {
-        if (m_navigator.route() != switchu::navigation::Route::Home || focusRoot() != &rootBox())
+        if (m_navigator.route() != switchu::navigation::Route::Home || focusRoot() != &rootBox() ||
+            m_openFolderId != 0)
             return;
         int p = m_grid->currentPage() + 1;
         if (p < m_grid->totalPages() && !m_grid->isTransitioning()) {
@@ -662,37 +789,15 @@ void WiiUMenuApp::wireGlobalActions() {
             (m_themeShop && m_themeShop->isActive()) ||
             (m_settings && m_settings->isActive()) ||
             (m_gameOptions && m_gameOptions->isActive()) ||
+            (m_folderOptions && m_folderOptions->isActive()) ||
             (m_controllerTest && m_controllerTest->isActive()) ||
             (m_userSelect && m_userSelect->isActive())) {
             return;
         }
 
-        if (m_editMode) {
-            const std::string movedTitle = m_editHeldTitle;
-            bool changed = commitEditModePlacement();
-            exitEditMode();
-            if (!movedTitle.empty()) {
-                auto* focused = focusManager().current();
-                std::string summary = nxui::I18n::instance().tr(
-                    changed ? "accessibility.move_mode.placed" : "accessibility.move_mode.cancelled",
-                    changed ? "Game moved: " : "Move cancelled: ") + movedTitle;
-                if (focused) {
-                    std::string context = accessibilityContextFor(focused);
-                    std::string position = accessibilityPositionFor(focused);
-                    if (!position.empty())
-                        context = context.empty() ? position : context + ". " + position;
-                    if (!context.empty())
-                        summary += ". " + context;
-                    if (!focused->accessibilitySummary().empty())
-                        summary += ". " + focused->accessibilitySummary();
-                }
-                m_accessibility.announce(summary, true, true);
-            }
-            m_audio.playSfx(changed ? Sfx::ConfirmPositive : Sfx::ModalHide);
-            return;
-        }
-
         auto* cur = focusManager().current();
+        if (m_editMode)
+            return;
         if (!isEditableIcon(cur))
             return;
 
@@ -723,24 +828,6 @@ void WiiUMenuApp::wireGlobalActions() {
             return;
         m_plusExitPending = true;
         m_plusExitPendingTimer = 0.80f;
-    });
-#else
-    root.addAction(static_cast<uint64_t>(nxui::Button::Plus), [this]() {
-        if (m_navigator.route() == switchu::navigation::Route::ControllerTest)
-            return;
-        if (handleAccessibilityToggleCombo())
-            return;
-        if (m_editMode || (m_dialog && m_dialog->isActive()) ||
-            (m_settings && m_settings->isActive()) ||
-            (m_themeShop && m_themeShop->isActive()) ||
-            (m_gameOptions && m_gameOptions->isActive()) ||
-            (m_controllerTest && m_controllerTest->isActive()) ||
-            (m_userSelect && m_userSelect->isActive()))
-            return;
-        auto* current = focusManager().current();
-        if (!isEditableIcon(current))
-            return;
-        showGameContextMenu(static_cast<GlossyIcon*>(current));
     });
 #endif
 
@@ -801,6 +888,7 @@ void WiiUMenuApp::showGameContextMenu(GlossyIcon* icon) {
     game.icon = icon->texture();
     game.gameCard = icon->isGameCard();
     game.suspended = m_launcher.isAppSuspended(titleId);
+    game.canMove = m_openFolderId == 0;
     m_gameOptions->setGame(game);
     m_gameOptions->onMove([this]() {
         if (m_gameOptions) m_gameOptions->hide();
@@ -827,12 +915,80 @@ void WiiUMenuApp::showGameContextMenu(GlossyIcon* icon) {
             }, 0, {});
         focusManager().setFocus(m_dialog.get());
     });
-
     m_audio.playSfx(Sfx::ModalShow);
     m_gameOptionsTitleId = titleId;
     m_navigator.navigate(switchu::navigation::Route::GameOptions);
     m_gameOptions->show();
     focusManager().setFocus(m_gameOptions.get());
+}
+
+void WiiUMenuApp::showFolderContextMenu(std::uint32_t folderId) {
+    const auto* folder = m_folderStore.find(folderId);
+    if (!folder || !m_folderOptions || !m_dialog) return;
+
+    const std::string name = folder->name;
+    FolderOptionsScreen::FolderInfo info;
+    info.id = folder->id;
+    info.name = folder->name;
+    info.itemCount = static_cast<int>(folder->titleIds.size());
+    info.colorIndex = folder->colorIndex;
+    info.sizeIndex = folder->sizeIndex;
+    m_folderOptions->setFolder(info);
+    m_folderOptions->onOpen([this, folderId]() {
+        if (m_folderOptions) m_folderOptions->hide();
+        m_navigator.resetToHome();
+        requestOpenFolder(folderId);
+    });
+    m_folderOptions->onRename([this, folderId]() {
+        if (m_folderOptions) m_folderOptions->hide();
+        m_navigator.resetToHome();
+        renameFolder(folderId);
+    });
+    m_folderOptions->onColorChange([this, folderId](int colorIndex) {
+        if (!m_folderStore.setColorIndex(folderId, colorIndex) ||
+            !saveFoldersOrReport("folder_color"))
+            return;
+        const std::uint64_t id = folderTitleId(folderId);
+        const int index = findTitleIndex(id);
+        if (index >= 0 && index < m_model.count()) {
+            m_model.at(index).folderColorIndex = colorIndex;
+            const auto& icons = m_grid->allIcons();
+            if (index < static_cast<int>(icons.size()) && icons[static_cast<std::size_t>(index)])
+                icons[static_cast<std::size_t>(index)]->setFolderColorIndex(colorIndex);
+        }
+    });
+    m_folderOptions->onSizeChange([this, folderId](int sizeIndex) {
+        if (!m_folderStore.setSizeIndex(folderId, sizeIndex))
+            return;
+        saveFoldersOrReport("folder_size");
+    });
+    m_folderOptions->onDelete([this, folderId, name]() {
+        auto& local = nxui::I18n::instance();
+        m_dialogReturnFocus = m_folderOptions.get();
+        m_dialog->show(local.tr("folder.delete", "Delete folder"),
+                       local.tr("folder.delete_desc", "Games inside will return to the HOME menu.") + "\n" + name,
+                       {
+                           {local.tr("button.cancel", "Cancel"), {}, true},
+                           {local.tr("button.delete", "Delete"), [this, folderId]() {
+                               m_folderStore.remove(folderId);
+                               if (!saveFoldersOrReport("delete")) return;
+                               const auto pseudo = folderTitleId(folderId);
+                               std::replace(m_layoutSlots.begin(), m_layoutSlots.end(), pseudo, std::uint64_t{0});
+                               m_layoutDirty = true;
+                               if (m_folderOptions) m_folderOptions->hide();
+                               m_navigator.resetToHome();
+                               applyDisplayModel(buildRootFolderModel(), 0, false);
+                               m_audio.playSfx(Sfx::ConfirmPositive);
+                           }, true}
+                       }, 0, {});
+        focusManager().setFocus(m_dialog.get());
+    });
+
+    m_audio.playSfx(Sfx::ModalShow);
+    m_folderOptionsId = folderId;
+    m_navigator.navigate(switchu::navigation::Route::FolderOptions);
+    m_folderOptions->show();
+    focusManager().setFocus(m_folderOptions.get());
 }
 #endif
 
@@ -943,8 +1099,7 @@ void WiiUMenuApp::handleTouch() {
         }
 
         if (m_editMode && m_touchEditDragActive) {
-            bool changed = commitEditModePlacement();
-            exitEditMode();
+            bool changed = activateEditModeTarget();
             m_audio.playSfx(changed ? Sfx::ConfirmPositive : Sfx::ModalHide);
             m_touchHitIndex = -1;
             m_touchEditDragActive = false;
