@@ -38,10 +38,6 @@ public:
     float volume() const { return m_volume; }
     bool  isPlaying() const { return m_playing; }
 
-    // Transient attenuation applied on top of the configured volume, e.g. to fade
-    // the music out during the launch animation. Kept separate from m_volume so
-    // volume() keeps reporting the user's setting: it seeds the Theme Shop slider,
-    // which writes back into the persisted config.
     void setMusicFade(float fade);
     float musicFade() const { return m_musicFade; }
 

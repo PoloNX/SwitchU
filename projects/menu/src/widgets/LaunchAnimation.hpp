@@ -22,10 +22,7 @@ public:
     bool isPlaying() const { return m_playing; }
     void stop() { m_playing = false; m_tex = nullptr; }
 
-    /// 0 at the first frame, 1 once the screen is fully black — one kBlackHold
-    /// (0.10 s) before the launch command is sent. Drives the music fade-out so
-    /// the applet is torn down on silence instead of cutting the track dead.
-    float musicFadeProgress() const {
+    float musicFadeProgress() const { // between 0 and 1, where 0 is the initial state
         return m_playing ? std::min(m_timer / kMusicFadeDur, 1.f) : 1.f;
     }
 
