@@ -14,6 +14,7 @@ public:
         nxui::Texture* icon = nullptr;
         bool gameCard = false;
         bool suspended = false;
+        bool canMove = true;
     };
 
     GameOptionsScreen();

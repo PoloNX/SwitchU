@@ -40,12 +40,14 @@ void GameOptionsScreen::buildTabs() {
     Tab data;
     data.name = i18n.tr("game.data_management", "Data Management");
 
-    SettingItem move;
-    move.label = i18n.tr("game.move", "Move");
-    move.description = i18n.tr("game.move_desc", "Move this software to another position on the HOME menu.");
-    move.type = ItemType::Action;
-    move.onChange = [this](SettingItem&) { if (m_moveCb) m_moveCb(); };
-    data.items.push_back(std::move(move));
+    if (m_game.canMove) {
+        SettingItem move;
+        move.label = i18n.tr("game.move", "Move");
+        move.description = i18n.tr("game.move_desc", "Move this software to another position on the HOME menu.");
+        move.type = ItemType::Action;
+        move.onChange = [this](SettingItem&) { if (m_moveCb) m_moveCb(); };
+        data.items.push_back(std::move(move));
+    }
 
     if (m_game.suspended) {
         SettingItem close;

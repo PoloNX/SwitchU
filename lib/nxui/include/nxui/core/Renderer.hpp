@@ -43,6 +43,7 @@ enum class ShaderProgram {
     BlurH,
     BlurV,
     Wave,
+    LiquidGlass,
     Gradient,
     Count
 };
@@ -114,6 +115,9 @@ public:
     void drawOffscreen(int target, const Rect& dest, const Color& tint = Color::white());
     void drawOffscreenRounded(int target, const Rect& dest, float radius,
                               const Color& tint = Color::white());
+    void drawLiquidGlass(int target, const Rect& panelRect, float radius,
+                         const Color& tint, float opacity = 1.f,
+                         float shade = 0.f);
     void applyBlur(float radius = 1.0f, int passes = 2);
     void applyWave(float time, float amplitude, float frequency);
 

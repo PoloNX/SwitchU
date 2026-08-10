@@ -35,6 +35,8 @@ public:
         setAccessibilityHint(i18n.tr("accessibility.hints.open_user_page", "A to open the user page."));
     }
     const std::string& nickname() const { return m_nickname; }
+    void setAddUserMode(bool enabled);
+    bool addUserMode() const { return m_addUserMode; }
     void setChromeEnabled(bool enabled);
     void setTheme(const nxui::Theme* theme);
 
@@ -62,4 +64,5 @@ private:
     bool m_focusable = true;
     bool m_focused = false;
     bool m_chromeEnabled = true;
+    bool m_addUserMode = false;
 };

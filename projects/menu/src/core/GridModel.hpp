@@ -6,6 +6,17 @@
 #include <utility>
 
 
+enum class GridEntryKind : std::uint8_t {
+    Empty,
+    Application,
+    Folder,
+};
+
+inline constexpr std::uint64_t kFolderTitleIdPrefix = 0xF100000000000000ULL;
+inline constexpr std::uint64_t folderTitleId(std::uint32_t folderId) {
+    return kFolderTitleIdPrefix | static_cast<std::uint64_t>(folderId);
+}
+
 struct AppEntry {
     std::string id;
     std::string title;
@@ -17,6 +28,13 @@ struct AppEntry {
     bool        startupUserKnown = true;
     uint8_t     startupUserAccount = 1;
     uint8_t     startupUserAccountOption = 0;
+    GridEntryKind kind = GridEntryKind::Empty;
+    std::uint32_t folderId = 0;
+    int folderPreviewCount = 0;
+    int folderColorIndex = 0;
+
+    bool isApplication() const { return kind == GridEntryKind::Application; }
+    bool isFolder() const { return kind == GridEntryKind::Folder; }
 
     bool isGameCard() const {
         return switchu::ns::viewHasFlag(viewFlags, switchu::ns::AppViewFlag_IsGameCard);

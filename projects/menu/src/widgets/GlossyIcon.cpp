@@ -80,6 +80,11 @@ void GlossyIcon::onRender(nxui::Renderer& ren) {
     float savedOp = m_opacity;
     m_opacity = a * savedOp;
 
+    ren.drawRoundedRect({drawRect.x + 1.f, drawRect.y + 6.f,
+                         drawRect.width, drawRect.height},
+                        nxui::Color(0.02f, 0.04f, 0.06f,
+                                    (m_entryKind == GridEntryKind::Empty ? 0.12f : 0.20f) * m_opacity),
+                        cornerRadius() + 1.f);
     nxui::GlassWidget::onRender(ren);
 
     m_opacity = savedOp;
@@ -94,7 +99,8 @@ void GlossyIcon::onRender(nxui::Renderer& ren) {
     if (focusGlow > 0.01f && s > 0.5f) {
         float breathe = 0.5f + 0.5f * std::sin(m_suspendPulse * 1.8f + 0.4f);
         nxui::Color focusColor = nxui::Color(0.65f, 0.90f, 1.f, (0.08f + 0.04f * breathe) * focusGlow * a);
-        ren.drawRoundedRect(r.expanded(7.f * focusGlow), focusColor, rad + 7.f);
+        ren.drawRoundedRectOutline(r.expanded(5.f * focusGlow), focusColor,
+                                   rad + 5.f, 2.f);
     }
 
     if (m_isGameCard && !m_notLaunchable && s > 0.5f) {
@@ -163,6 +169,82 @@ void GlossyIcon::onContentRender(nxui::Renderer& ren) {
         r.y += (r.height - h) * 0.5f;
         r.width  = w;
         r.height = h;
+    }
+
+    if (m_entryKind == GridEntryKind::Empty) {
+        ren.drawRoundedRectOutline(r.shrunk(2.f * s),
+                                   nxui::Color::white().withAlpha(0.42f * m_opacity),
+                                   std::max(8.f, rad - 2.f * s), 1.5f * s);
+        return;
+    }
+
+    if (m_entryKind == GridEntryKind::Folder) {
+        static const nxui::Color kFolderColors[] = {
+            {0.22f, 0.68f, 0.86f, 1.f}, // light blue
+            {0.28f, 0.82f, 0.31f, 1.f}, // green
+            {0.98f, 0.77f, 0.12f, 1.f}, // yellow
+            {1.00f, 0.49f, 0.13f, 1.f}, // orange
+            {0.93f, 0.28f, 0.30f, 1.f}, // red
+            {0.94f, 0.30f, 0.64f, 1.f}, // pink
+            {0.57f, 0.29f, 0.88f, 1.f}, // purple
+            {0.38f, 0.40f, 0.43f, 1.f}, // grey
+        };
+        const int colorCount = static_cast<int>(sizeof(kFolderColors) / sizeof(kFolderColors[0]));
+        const int colorIndex = std::clamp(m_folderColorIndex, 0, colorCount - 1);
+        nxui::Color accent = kFolderColors[colorIndex];
+
+        const float inset = 10.f * s;
+        const nxui::Rect shell = r.shrunk(inset);
+        const float shellRadius = std::max(12.f, rad - 2.f);
+        ren.drawRoundedRect({shell.x, shell.y + 4.f * s, shell.width, shell.height},
+                            nxui::Color(0.03f, 0.05f, 0.08f, 0.30f * m_opacity),
+                            shellRadius);
+        ren.drawRoundedRect(shell,
+                            nxui::Color(0.94f, 0.97f, 0.96f, 0.96f * m_opacity),
+                            shellRadius);
+        ren.drawRoundedRect(shell.shrunk(3.f * s),
+                            nxui::Color(0.72f, 0.78f, 0.79f, 0.28f * m_opacity),
+                            std::max(8.f, shellRadius - 3.f * s));
+        ren.drawRoundedRectOutline(shell.shrunk(1.f * s),
+                                   nxui::Color::white().withAlpha(0.92f * m_opacity),
+                                   std::max(8.f, shellRadius - 1.f * s), 2.f * s);
+
+        const float cell = std::min(shell.width, shell.height) * 0.185f;
+        const float gap = cell * 0.18f;
+        const float gridSize = cell * 3.f + gap * 2.f;
+        const float gridX = shell.x + (shell.width - gridSize) * 0.5f;
+        const float gridY = shell.y + (shell.height - gridSize) * 0.5f;
+        for (int i = 0; i < 9; ++i) {
+            const int col = i % 3;
+            const int row = i / 3;
+            const nxui::Rect cellRect{gridX + col * (cell + gap),
+                                      gridY + row * (cell + gap), cell, cell};
+            ren.drawRoundedRect({cellRect.x, cellRect.y + 1.8f * s,
+                                 cellRect.width, cellRect.height},
+                                nxui::Color(0.05f, 0.08f, 0.10f,
+                                            0.16f * m_opacity),
+                                cell * 0.20f);
+            const float variation = 0.92f + 0.035f * static_cast<float>((i + row) % 3);
+            nxui::Color cellColor(
+                std::min(1.f, accent.r * variation),
+                std::min(1.f, accent.g * variation),
+                std::min(1.f, accent.b * variation),
+                0.94f * m_opacity);
+            ren.drawRoundedRect(cellRect, cellColor, cell * 0.20f);
+            ren.drawRoundedRect({cellRect.x + cell * 0.10f,
+                                 cellRect.y + cell * 0.08f,
+                                 cellRect.width * 0.80f,
+                                 std::max(1.f, cellRect.height * 0.13f)},
+                                nxui::Color::white().withAlpha(0.18f * m_opacity),
+                                cell * 0.08f);
+        }
+
+        if (m_focused) {
+            ren.drawRoundedRectOutline(shell.expanded(2.f * s),
+                                       accent.withAlpha(0.42f * m_opacity),
+                                       shellRadius + 2.f * s, 2.f * s);
+        }
+        return;
     }
 
     if (!m_tex || !m_tex->valid()) {

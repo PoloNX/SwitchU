@@ -32,6 +32,7 @@ public:
         Settings,
         ThemeShop,
         GameOptions,
+        FolderOptions,
     };
 
     explicit TabbedOverlayScreen(ScreenMode mode = ScreenMode::Settings);

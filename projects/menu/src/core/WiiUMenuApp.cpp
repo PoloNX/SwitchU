@@ -24,6 +24,7 @@
 #include <filesystem>
 #include <nlohmann/json.hpp>
 #include <system_error>
+#include <tuple>
 
 namespace {
 
@@ -202,7 +203,11 @@ bool appEntriesRefreshEquivalent(const AppEntry& a, const AppEntry& b) {
            a.userRequired == b.userRequired &&
            a.startupUserKnown == b.startupUserKnown &&
            a.startupUserAccount == b.startupUserAccount &&
-           a.startupUserAccountOption == b.startupUserAccountOption;
+           a.startupUserAccountOption == b.startupUserAccountOption &&
+           a.kind == b.kind &&
+           a.folderId == b.folderId &&
+           a.folderPreviewCount == b.folderPreviewCount &&
+           a.folderColorIndex == b.folderColorIndex;
 }
 
 bool gridModelsRefreshEquivalent(const GridModel& a, const GridModel& b) {
@@ -245,6 +250,8 @@ bool WiiUMenuApp::onCreate() {
     m_iconStreamer.setThreadPool(&m_threadPool);
     m_config.load();
     loadMenuLayout();
+    if (!m_folderStore.load())
+        DebugLog::log("[folders] store unavailable; continuing with an empty folder list");
     m_appLoader.setPendingTransform([this](std::vector<PendingApp>& apps) {
         applyMenuLayoutToPending(apps);
     });
@@ -318,6 +325,7 @@ bool WiiUMenuApp::onCreate() {
                 case Message::LaunchNetConnect: return "NetConnect";
                 case Message::LaunchUserPage: return "UserPage";
                 case Message::LaunchControllerRemapping: return "ControllerRemapping";
+                case Message::LaunchUserCreator: return "UserCreator";
                 default: return "SystemAction";
             }
         };
@@ -480,9 +488,58 @@ void WiiUMenuApp::buildUserAvatarBar(bool loadImmediately) {
     if (loadImmediately) {
         while (m_pendingProfileIndex < m_pendingProfileUids.size())
             loadNextUserAvatar();
+        appendAddUserButton();
     } else if (!m_pendingProfileUids.empty()) {
         m_deferredProfileFrames = 1;
         DebugLog::log("[profiles] %d avatars deferred until after first frame", count);
+    } else {
+        appendAddUserButton();
+    }
+}
+
+void WiiUMenuApp::appendAddUserButton() {
+    if (!m_userAvatarBar || m_pendingProfileUids.size() >= 8)
+        return;
+    if (!m_userAvatarButtons.empty() && m_userAvatarButtons.back()->addUserMode())
+        return;
+
+    auto add = std::make_shared<UserAvatarButton>();
+    add->setSize(56.f, 56.f);
+    add->setMinWidth(56.f);
+    add->setMinHeight(56.f);
+    add->setShrink(0.f);
+    add->setCornerRadius(28.f);
+    add->setChromeEnabled(true);
+    add->setTheme(&m_theme);
+    add->setAddUserMode(true);
+    add->setFocusable(true);
+    add->setOnActivate([this]() {
+        m_audio.playSfx(Sfx::Activate);
+#ifdef SWITCHU_MENU
+        m_launcher.launchUserCreator();
+#endif
+    });
+    m_userAvatarButtons.push_back(add);
+    m_userAvatarBar->addChild(add);
+
+    const float countF = static_cast<float>(m_userAvatarButtons.size());
+    m_userAvatarBar->setSize(countF * 56.f + (countF - 1.f) * 10.f, 56.f);
+    wireUserAvatarNavigation();
+    if (m_topHud)
+        m_topHud->layout();
+    DebugLog::log("[profiles] add-user tile appended count=%d",
+                  static_cast<int>(m_pendingProfileUids.size()));
+}
+
+void WiiUMenuApp::wireUserAvatarNavigation() {
+    for (std::size_t i = 0; i < m_userAvatarButtons.size(); ++i) {
+        auto* current = m_userAvatarButtons[i].get();
+        auto* left = i > 0 ? m_userAvatarButtons[i - 1].get() : current;
+        auto* right = i + 1 < m_userAvatarButtons.size()
+            ? m_userAvatarButtons[i + 1].get()
+            : current;
+        current->setCustomNavigation(nxui::FocusDirection::LEFT, left);
+        current->setCustomNavigation(nxui::FocusDirection::RIGHT, right);
     }
 }
 
@@ -536,19 +593,26 @@ void WiiUMenuApp::loadNextUserAvatar() {
     if (!m_userAvatarButtons.empty()) {
         const float countF = static_cast<float>(m_userAvatarButtons.size());
         m_userAvatarBar->setSize(countF * 56.f + (countF - 1.f) * 10.f, 56.f);
-        m_userAvatarButtons.front()->setCustomNavigation(nxui::FocusDirection::LEFT,
-                                                         m_userAvatarButtons.front().get());
-        m_userAvatarButtons.back()->setCustomNavigation(nxui::FocusDirection::RIGHT,
-                                                        m_userAvatarButtons.back().get());
+        wireUserAvatarNavigation();
     }
 
     if (m_topHud)
         m_topHud->layout();
+
+    if (m_pendingProfileIndex >= m_pendingProfileUids.size())
+        appendAddUserButton();
 }
 
 WiiUMenuApp::GridLayoutMetrics WiiUMenuApp::computeGridLayoutMetrics() const {
     const int cols = std::clamp(m_config.gridColumns, 3, 8);
     const int rows = std::clamp(m_config.gridRows, 2, 5);
+    return computeGridLayoutMetrics(cols, rows);
+}
+
+WiiUMenuApp::GridLayoutMetrics WiiUMenuApp::computeGridLayoutMetrics(int cols,
+                                                                      int rows) const {
+    cols = std::clamp(cols, 3, 8);
+    rows = std::clamp(rows, 2, 5);
 
     const float baseGridW = cols * kGridBaseCellW + (cols - 1) * kGridBasePadX;
     const float baseGridH = rows * kGridBaseCellH + (rows - 1) * kGridBasePadY;
@@ -568,9 +632,32 @@ WiiUMenuApp::GridLayoutMetrics WiiUMenuApp::computeGridLayoutMetrics() const {
     return m;
 }
 
+std::pair<int, int> WiiUMenuApp::folderGridDimensions(std::uint32_t folderId) const {
+    const auto* folder = m_folderStore.find(folderId);
+    const int size = folder ? std::clamp(folder->sizeIndex, 0, 2) : 1;
+    switch (size) {
+        case 0: return {4, 2};
+        case 2: return {6, 4};
+        default: return {5, 3};
+    }
+}
+
 void WiiUMenuApp::reflowHomeGrid() {
     if (!m_grid)
         return;
+
+    // Folder-aware models include synthetic entries which must never be sent
+    // to the icon loader as application title IDs. Rebuild them through the
+    // same composition path used at startup when grid dimensions change.
+    if (!m_allApps.empty() && m_openFolderId == 0) {
+        std::uint64_t focused = 0;
+        if (auto* current = m_grid->focusManager().current();
+            current && current->tag() == "glossy_icon")
+            focused = static_cast<GlossyIcon*>(current)->titleId();
+        applyDisplayModel(buildRootFolderModel(), focused, false);
+        if (m_layoutDirty) saveMenuLayout();
+        return;
+    }
 
     const int oldFocusedIndex = m_grid->focusedGlobalIndex();
     const int oldPage = m_grid->currentPage();
@@ -765,23 +852,58 @@ void WiiUMenuApp::saveMenuLayout() {
 }
 
 void WiiUMenuApp::applyMenuLayoutToPending(std::vector<PendingApp>& apps) {
+    composeRootPending(apps);
+}
+
+void WiiUMenuApp::composeRootPending(std::vector<PendingApp>& apps) {
     const int cols = std::clamp(m_config.gridColumns, 3, 8);
     const int rows = std::clamp(m_config.gridRows, 2, 5);
     const int perPage = std::max(1, cols * rows);
 
+    m_allApps.clear();
+    m_allApps.reserve(apps.size());
+    for (const auto& pending : apps) {
+        if (pending.titleId == 0)
+            continue;
+        AppEntry entry;
+        entry.id = pending.id;
+        entry.title = pending.title;
+        entry.titleId = pending.titleId;
+        entry.viewFlags = pending.viewFlags;
+        entry.userRequired = pending.userRequired;
+        entry.startupUserKnown = pending.startupUserKnown;
+        entry.startupUserAccount = pending.startupUserAccount;
+        entry.startupUserAccountOption = pending.startupUserAccountOption;
+        entry.kind = GridEntryKind::Application;
+        m_allApps.push_back(std::move(entry));
+    }
+
     std::unordered_map<uint64_t, PendingApp> byId;
-    byId.reserve(apps.size());
+    byId.reserve(apps.size() + m_folderStore.all().size());
+    std::vector<uint64_t> itemOrder;
+    itemOrder.reserve(apps.size() + m_folderStore.all().size());
     for (auto& app : apps) {
-        if (app.titleId != 0)
+        if (app.titleId != 0 && m_folderStore.folderForTitle(app.titleId) == 0) {
+            itemOrder.push_back(app.titleId);
             byId.emplace(app.titleId, std::move(app));
+        }
+    }
+    for (const auto& folder : m_folderStore.all()) {
+        PendingApp item;
+        item.id = "folder:" + std::to_string(folder.id);
+        item.title = folder.name;
+        item.titleId = folderTitleId(folder.id);
+        item.kind = GridEntryKind::Folder;
+        item.folderId = folder.id;
+        item.folderPreviewCount = static_cast<int>(folder.titleIds.size());
+        item.folderColorIndex = folder.colorIndex;
+        itemOrder.push_back(item.titleId);
+        byId.emplace(item.titleId, std::move(item));
     }
 
     std::vector<uint64_t> slots = m_layoutSlots;
     if (slots.empty()) {
-        slots.reserve(apps.size());
-        for (const auto& app : apps)
-            if (app.titleId != 0)
-                slots.push_back(app.titleId);
+        slots = itemOrder;
     }
 
     std::unordered_set<uint64_t> placed;
@@ -797,17 +919,17 @@ void WiiUMenuApp::applyMenuLayoutToPending(std::vector<PendingApp>& apps) {
         placed.insert(slotTid);
     }
 
-    for (const auto& app : apps) {
-        if (app.titleId == 0 || placed.count(app.titleId))
+    for (uint64_t itemId : itemOrder) {
+        if (itemId == 0 || placed.count(itemId))
             continue;
 
         auto emptyIt = std::find(slots.begin(), slots.end(), 0);
         if (emptyIt != slots.end())
-            *emptyIt = app.titleId;
+            *emptyIt = itemId;
         else
-            slots.push_back(app.titleId);
+            slots.push_back(itemId);
 
-        placed.insert(app.titleId);
+        placed.insert(itemId);
     }
 
     int minSlots = std::max(perPage * kMinHomePages, (int)slots.size());
@@ -819,14 +941,18 @@ void WiiUMenuApp::applyMenuLayoutToPending(std::vector<PendingApp>& apps) {
     ordered.reserve(slots.size());
     for (uint64_t tid : slots) {
         if (tid == 0) {
-            ordered.emplace_back();
+            PendingApp empty;
+            empty.kind = GridEntryKind::Empty;
+            ordered.push_back(std::move(empty));
             continue;
         }
         auto it = byId.find(tid);
         if (it != byId.end()) {
             ordered.push_back(std::move(it->second));
         } else {
-            ordered.emplace_back();
+            PendingApp empty;
+            empty.kind = GridEntryKind::Empty;
+            ordered.push_back(std::move(empty));
         }
     }
 
@@ -838,9 +964,272 @@ void WiiUMenuApp::applyMenuLayoutToPending(std::vector<PendingApp>& apps) {
     apps = std::move(ordered);
 }
 
+GridModel WiiUMenuApp::buildRootFolderModel() {
+    GridModel model;
+    std::unordered_map<std::uint64_t, AppEntry> entries;
+    for (const auto& app : m_allApps) {
+        if (m_folderStore.folderForTitle(app.titleId) == 0)
+            entries.emplace(app.titleId, app);
+    }
+    for (const auto& folder : m_folderStore.all()) {
+        AppEntry entry;
+        entry.id = "folder:" + std::to_string(folder.id);
+        entry.title = folder.name;
+        entry.titleId = folderTitleId(folder.id);
+        entry.kind = GridEntryKind::Folder;
+        entry.folderId = folder.id;
+        entry.folderPreviewCount = static_cast<int>(folder.titleIds.size());
+        entry.folderColorIndex = folder.colorIndex;
+        entries.emplace(entry.titleId, std::move(entry));
+    }
+
+    const int perPage = std::max(1, std::clamp(m_config.gridColumns, 3, 8) *
+                                     std::clamp(m_config.gridRows, 2, 5));
+    if (m_layoutSlots.empty()) {
+        for (const auto& app : m_allApps)
+            if (entries.count(app.titleId)) m_layoutSlots.push_back(app.titleId);
+        for (const auto& folder : m_folderStore.all())
+            m_layoutSlots.push_back(folderTitleId(folder.id));
+    }
+    for (const auto& pair : entries) {
+        if (std::find(m_layoutSlots.begin(), m_layoutSlots.end(), pair.first) == m_layoutSlots.end()) {
+            auto empty = std::find(m_layoutSlots.begin(), m_layoutSlots.end(), 0);
+            if (empty == m_layoutSlots.end()) m_layoutSlots.push_back(pair.first);
+            else *empty = pair.first;
+            m_layoutDirty = true;
+        }
+    }
+    const int minimum = perPage * kMinHomePages;
+    const int rounded = ((std::max(minimum, static_cast<int>(m_layoutSlots.size())) + perPage - 1) / perPage) * perPage;
+    if (static_cast<int>(m_layoutSlots.size()) < rounded) {
+        m_layoutSlots.resize(rounded, 0);
+        m_layoutDirty = true;
+    }
+
+    for (auto titleId : m_layoutSlots) {
+        auto found = entries.find(titleId);
+        if (found != entries.end()) {
+            model.addEntry(found->second);
+        } else {
+            model.addEntry({});
+        }
+    }
+    return model;
+}
+
+GridModel WiiUMenuApp::buildOpenFolderModel(std::uint32_t folderId) const {
+    GridModel model;
+    const auto* folder = m_folderStore.find(folderId);
+    if (!folder)
+        return model;
+    for (std::uint64_t titleId : folder->titleIds) {
+        auto found = std::find_if(m_allApps.begin(), m_allApps.end(),
+            [titleId](const AppEntry& app) { return app.titleId == titleId; });
+        if (found != m_allApps.end())
+            model.addEntry(*found);
+        else
+            DebugLog::log("[folders] missing title ignored folder=%u tid=%016lX",
+                          folderId, static_cast<unsigned long>(titleId));
+    }
+    const auto [folderCols, folderRows] = folderGridDimensions(folderId);
+    const int perPage = std::max(1, folderCols * folderRows);
+    const int count = std::max(perPage, ((model.count() + perPage - 1) / perPage) * perPage);
+    while (model.count() < count)
+        model.addEntry({});
+    return model;
+}
+
+void WiiUMenuApp::applyDisplayModel(GridModel model, std::uint64_t focusId, bool animate) {
+    if (!m_grid)
+        return;
+    m_model = std::move(model);
+    std::vector<std::shared_ptr<GlossyIcon>> icons;
+    std::vector<std::uint64_t> titleIds;
+    icons.reserve(m_model.count());
+    titleIds.reserve(m_model.count());
+    for (int i = 0; i < m_model.count(); ++i) {
+        auto icon = makeIcon(m_model.at(i));
+        icon->setBaseColor(m_theme.iconDefault);
+        icons.push_back(std::move(icon));
+        titleIds.push_back(m_model.at(i).isApplication() ? m_model.at(i).titleId : 0);
+    }
+    m_iconStreamer.reconcileTitleIds(titleIds);
+    int columns = std::clamp(m_config.gridColumns, 3, 8);
+    int rows = std::clamp(m_config.gridRows, 2, 5);
+    if (m_openFolderId != 0)
+        std::tie(columns, rows) = folderGridDimensions(m_openFolderId);
+    auto metrics = computeGridLayoutMetrics(columns, rows);
+    if (m_openFolderId != 0) {
+        // Reserve a real title band above and a title-pill band below. Scaling
+        // the cells, rather than merely shrinking the grid rect, prevents the
+        // centered first/last rows from escaping those bands.
+        metrics.cellW *= 0.92f;
+        metrics.cellH *= 0.92f;
+        metrics.padX *= 0.92f;
+        metrics.padY *= 0.92f;
+    }
+    m_grid->setup(std::move(icons), columns, rows, metrics.cellW, metrics.cellH,
+                  metrics.padX, metrics.padY);
+    wireFocusCallback();
+    m_grid->onPageSwitched([this]() {
+        m_iconStreamer.onPageChanged(m_grid->currentPage(), m_grid->iconsPerPage(),
+                                     app().gpu(), app().renderer(), m_grid->allIcons());
+        if (auto* target = m_grid->focusManager().current())
+            focusManager().setFocus(target);
+        updateCursor();
+    });
+    if (!focusTitle(focusId)) {
+        if (auto* first = m_grid->focusManager().current())
+            focusManager().setFocus(first);
+    }
+    m_iconStreamer.onPageChanged(m_grid->currentPage(), m_grid->iconsPerPage(),
+                                 app().gpu(), app().renderer(), m_grid->allIcons());
+    if (animate) m_grid->startAppearAnimation();
+    else for (auto& icon : m_grid->allIcons()) icon->forceVisible();
+    updateCursor();
+}
+
+std::string WiiUMenuApp::promptFolderName(const std::string& initial,
+                                          const std::string& guide) {
+#ifdef SWITCHU_MENU
+    SwkbdConfig keyboard{};
+    char text[97]{};
+    Result rc = swkbdCreate(&keyboard, 0);
+    if (R_FAILED(rc)) {
+        DebugLog::log("[folders] keyboard create failed rc=0x%X", rc);
+        auto& i18n = nxui::I18n::instance();
+        m_dialog->show(i18n.tr("folder.error_title", "Folder error"),
+                       i18n.tr("folder.keyboard_error", "The keyboard could not be opened."),
+                       {{i18n.tr("button.ok", "OK"), {}, true}});
+        focusManager().setFocus(m_dialog.get());
+        return {};
+    }
+    swkbdConfigMakePresetDefault(&keyboard);
+    swkbdConfigSetGuideText(&keyboard, guide.c_str());
+    swkbdConfigSetStringLenMax(&keyboard, 48);
+    swkbdConfigSetInitialText(&keyboard, initial.c_str());
+    rc = swkbdShow(&keyboard, text, sizeof(text));
+    swkbdClose(&keyboard);
+    if (R_FAILED(rc)) {
+        DebugLog::log("[folders] keyboard cancelled/failed rc=0x%X", rc);
+        return {};
+    }
+    return text;
+#else
+    (void)guide;
+    return initial.empty() ? "Folder" : initial;
+#endif
+}
+
+bool WiiUMenuApp::saveFoldersOrReport(const char* operation) {
+    if (m_folderStore.save())
+        return true;
+    DebugLog::log("[folders] operation failed op=%s", operation ? operation : "unknown");
+    m_folderStore.load();
+    auto& i18n = nxui::I18n::instance();
+    m_dialog->show(i18n.tr("folder.error_title", "Folder error"),
+                   i18n.tr("folder.save_error", "The folder change could not be saved."),
+                   {{i18n.tr("button.ok", "OK"), {}, true}});
+    focusManager().setFocus(m_dialog.get());
+    return false;
+}
+
+void WiiUMenuApp::createFolder(int targetSlot) {
+    auto& i18n = nxui::I18n::instance();
+    const std::string name = promptFolderName(
+        "", i18n.tr("folder.name_guide", "Enter a folder name"));
+    if (name.empty())
+        return;
+    DebugLog::log("[folders] create requested slot=%d name=%s", targetSlot, name.c_str());
+    const std::uint32_t id = m_folderStore.create(name);
+    if (id == 0 || !saveFoldersOrReport("create")) return;
+    if (targetSlot >= 0 && targetSlot < static_cast<int>(m_layoutSlots.size()) &&
+        m_layoutSlots[static_cast<std::size_t>(targetSlot)] == 0) {
+        m_layoutSlots[static_cast<std::size_t>(targetSlot)] = folderTitleId(id);
+        m_layoutDirty = true;
+        saveMenuLayout();
+    }
+    m_audio.playSfx(Sfx::ConfirmPositive);
+    applyDisplayModel(buildRootFolderModel(), folderTitleId(id), true);
+}
+
+void WiiUMenuApp::renameFolder(std::uint32_t folderId) {
+    const auto* folder = m_folderStore.find(folderId);
+    if (!folder) return;
+    const std::string oldName = folder->name;
+    const std::string name = promptFolderName(oldName,
+        nxui::I18n::instance().tr("folder.rename_guide", "Rename folder"));
+    if (name.empty() || name == oldName) return;
+    m_folderStore.rename(folderId, name);
+    if (!saveFoldersOrReport("rename")) return;
+    if (m_openFolderId == folderId && m_folderHeaderLabel)
+        m_folderHeaderLabel->setText(name);
+    else
+        applyDisplayModel(buildRootFolderModel(), folderTitleId(folderId), false);
+}
+
+void WiiUMenuApp::requestOpenFolder(std::uint32_t folderId) {
+    if (!m_folderStore.find(folderId) || m_folderCaptureRequested) return;
+    m_requestedFolderId = folderId;
+    m_folderCaptureRequested = true;
+    m_folderCaptureReady = false;
+    if (m_cursor) m_cursor->setVisible(false);
+}
+
+void WiiUMenuApp::openCapturedFolder() {
+    const auto* folder = m_folderStore.find(m_requestedFolderId);
+    if (!folder) return;
+    m_openFolderId = m_requestedFolderId;
+    m_requestedFolderId = 0;
+    m_folderCaptureReady = false;
+    if (m_folderBackdrop) m_folderBackdrop->show();
+    if (m_folderHeader) m_folderHeader->setVisible(true);
+    if (m_topHud) m_topHud->setVisible(false);
+    if (m_leftSidebar) m_leftSidebar->setVisible(false);
+    if (m_rightSidebar) m_rightSidebar->setVisible(false);
+    if (m_pageIndicator) m_pageIndicator->setVisible(false);
+    if (m_folderHeaderLabel) {
+        m_folderHeaderLabel->setText(folder->name);
+        m_folderHeaderLabel->setTextColor(m_theme.textPrimary);
+    }
+    m_grid->setRect({kGridRectX, 148.f, kGridRectW, 470.f});
+    applyDisplayModel(buildOpenFolderModel(m_openFolderId), 0, false);
+    if (m_editMode)
+        reattachEditSourceIcon();
+    m_audio.playSfx(Sfx::ModalShow);
+}
+
+void WiiUMenuApp::closeFolder(bool preserveEditMode) {
+    if (m_openFolderId == 0) return;
+    const std::uint32_t oldId = m_openFolderId;
+    if (preserveEditMode) {
+        detachEditSourceIcon();
+        unbindEditActions();
+    }
+    m_openFolderId = 0;
+    if (m_folderBackdrop) m_folderBackdrop->hide();
+    if (m_folderHeader) m_folderHeader->setVisible(false);
+    if (m_topHud) m_topHud->setVisible(true);
+    if (m_leftSidebar) m_leftSidebar->setVisible(true);
+    if (m_rightSidebar) m_rightSidebar->setVisible(true);
+    if (m_pageIndicator) m_pageIndicator->setVisible(true);
+    m_grid->setRect({kGridRectX, kGridRectY, kGridRectW, kGridRectH});
+    applyDisplayModel(buildRootFolderModel(), folderTitleId(oldId), false);
+    if (preserveEditMode) {
+        reattachEditSourceIcon();
+        m_titlePill->setText(nxui::I18n::instance().tr("game.move_prefix", "Move: ") + m_editHeldTitle);
+        m_titlePill->setVisible(true);
+    }
+    m_audio.playSfx(Sfx::ModalHide);
+}
+
 std::shared_ptr<GlossyIcon> WiiUMenuApp::makeIcon(const AppEntry& entry) {
     auto icon = std::make_shared<GlossyIcon>();
-    if (entry.titleId == 0) {
+    icon->setEntryKind(entry.kind);
+    icon->setFolderPreviewCount(entry.folderPreviewCount);
+    icon->setFolderVisualSeed(entry.folderId);
+    icon->setFolderColorIndex(entry.folderColorIndex);
+    if (entry.kind == GridEntryKind::Empty) {
         icon->setTag("glossy_icon");
         icon->setTitle("");
         icon->setTitleId(0);
@@ -848,9 +1237,31 @@ std::shared_ptr<GlossyIcon> WiiUMenuApp::makeIcon(const AppEntry& entry) {
         auto& i18n = nxui::I18n::instance();
         icon->setAccessibilityLabel(i18n.tr("accessibility.grid.empty_slot", "Empty slot"));
         icon->setAccessibilityRole(i18n.tr("accessibility.roles.slot", "slot"));
-        icon->setAccessibilityHint(i18n.tr("accessibility.hints.grid_empty", "Use the directional pad to move to another slot."));
+        icon->setAccessibilityHint(i18n.tr(
+            "accessibility.hints.grid_empty",
+            "Plus creates a folder. A places software being moved out of a folder."));
         icon->setNotLaunchable(false);
         icon->setCornerRadius(m_theme.iconCornerRadius);
+        icon->setPanelOpacity(0.96f);
+        return icon;
+    }
+
+    if (entry.isFolder()) {
+        icon->setTag("glossy_icon");
+        icon->setTitle(entry.title);
+        icon->setTitleId(entry.titleId);
+        icon->setFocusable(true);
+        icon->setCornerRadius(m_theme.iconCornerRadius);
+        icon->setBaseColor(m_theme.iconDefault);
+        icon->setAccessibilityLabel(entry.title);
+        auto& i18n = nxui::I18n::instance();
+        icon->setAccessibilityRole(i18n.tr("accessibility.roles.folder", "folder"));
+        icon->setAccessibilityHint(i18n.tr(
+            "folder.open_hint", "A to open. Plus for folder options. Y to move."));
+        const std::uint32_t folderId = entry.folderId;
+        icon->setOnActivate([this, folderId]() {
+            requestOpenFolder(folderId);
+        });
         return icon;
     }
 
@@ -1286,6 +1697,29 @@ void WiiUMenuApp::buildGrid() {
     m_contentLayer->setTag("contentLayer");
     m_contentLayer->setWireframeEnabled(false);
 
+    m_folderBackdrop = std::make_shared<FolderBackdrop>();
+    m_folderBackdrop->setRect({0, 0, 1280, 720});
+    m_folderBackdrop->setVisible(false);
+
+    m_folderHeader = std::make_shared<nxui::GlassPanel>();
+    m_folderHeader->setRect({410.f, 78.f, 460.f, 58.f});
+    m_folderHeader->setCornerRadius(22.f);
+    m_folderHeader->setLiquidGlassEnabled(true);
+    m_folderHeader->setForceLiquidGlass(true);
+    m_folderHeader->setBlurEnabled(false);
+    m_folderHeader->setVisible(false);
+    m_folderHeaderLabel = std::make_shared<nxui::Label>("");
+    // nxui child rectangles are screen-space; using {18, 6} placed this
+    // label outside its bubble in the upper-left corner.
+    m_folderHeaderLabel->setRect({428.f, 84.f, 424.f, 46.f});
+    m_folderHeaderLabel->setFont(&m_fontNormal);
+    m_folderHeaderLabel->setScale(0.66f);
+    m_folderHeaderLabel->setMultiline(true);
+    m_folderHeaderLabel->setLineSpacing(1.0f);
+    m_folderHeaderLabel->setHAlign(nxui::Label::HAlign::Center);
+    m_folderHeaderLabel->setVAlign(nxui::Label::VAlign::Center);
+    m_folderHeader->addChild(m_folderHeaderLabel);
+
     m_topHud = std::make_shared<nxui::Box>(nxui::Axis::ROW);
     m_topHud->setRect({0, 0, 1280, 90});
     m_topHud->setTag("topHud");
@@ -1310,7 +1744,9 @@ void WiiUMenuApp::buildGrid() {
     for (auto& btn : m_sidebar.rightButtons())
         m_rightSidebar->addChild(btn);
 
+    m_contentLayer->addChild(m_folderBackdrop);
     m_contentLayer->addChild(m_grid);
+    m_contentLayer->addChild(m_folderHeader);
     m_contentLayer->addChild(m_leftSidebar);
     m_contentLayer->addChild(m_rightSidebar);
     m_contentLayer->addChild(m_topHud);
@@ -1327,6 +1763,7 @@ void WiiUMenuApp::buildGrid() {
     createSettings();
     createThemeShop();
     createGameOptions();
+    createFolderOptions();
     createControllerTest();
 
     m_overlayLayer->addChild(m_dialog);
@@ -1574,6 +2011,16 @@ void WiiUMenuApp::finalizeRefresh() {
     // The refreshed compressed bytes were fetched on the worker already; move
     // those in as well so newly added titles do not need a second SD read.
     m_iconStreamer.reconcileCatalog(std::move(refreshedStreamer));
+    if (m_openFolderId != 0) {
+        auto* focusedWidget = m_grid ? m_grid->focusManager().current() : nullptr;
+        const std::uint64_t focused = focusedWidget && focusedWidget->tag() == "glossy_icon"
+            ? static_cast<GlossyIcon*>(focusedWidget)->titleId() : 0;
+        applyDisplayModel(buildOpenFolderModel(m_openFolderId), focused, false);
+        m_refreshCooldownFrames = 20;
+        if (m_layoutDirty) saveMenuLayout();
+        DebugLog::log("[refresh] folder view restored folder=%u", m_openFolderId);
+        return;
+    }
     m_model = std::move(refreshedModel);
 
     std::vector<std::shared_ptr<GlossyIcon>> icons;
@@ -1626,6 +2073,8 @@ void WiiUMenuApp::finalizeRefresh() {
 #endif
 
 void WiiUMenuApp::onUpdate(float dt) {
+    if (m_folderCaptureReady)
+        openCapturedFolder();
 #ifdef SWITCHU_DEBUG_UI
     if (m_debugOverlay) {
         m_debugOverlay->setDeltaTime(dt);
@@ -1853,6 +2302,50 @@ void WiiUMenuApp::onUpdate(float dt) {
     if (!app().input().isDown(nxui::Button::Plus) || !app().input().isDown(nxui::Button::Minus))
         m_accessibilityToggleComboHeld = false;
 
+#ifdef SWITCHU_MENU
+    // Handle Plus directly from the frame input. The root action depended on
+    // the focused icon still being attached through every transient grid
+    // rebuild, which could make Plus silently disappear after a page/model
+    // update even though the icon remained visibly selected.
+    if (app().input().isDown(nxui::Button::Plus) &&
+        !app().input().isDown(nxui::Button::Minus) &&
+        m_navigator.route() == switchu::navigation::Route::Home &&
+        !m_editMode &&
+        !(m_dialog && m_dialog->isActive()) &&
+        !(m_settings && m_settings->isActive()) &&
+        !(m_themeShop && m_themeShop->isActive()) &&
+        !(m_gameOptions && m_gameOptions->isActive()) &&
+        !(m_folderOptions && m_folderOptions->isActive()) &&
+        !(m_controllerTest && m_controllerTest->isActive()) &&
+        !(m_userSelect && m_userSelect->isActive())) {
+        auto* current = focusManager().current();
+        if (current && current->tag() == "glossy_icon" && m_grid) {
+            auto* icon = static_cast<GlossyIcon*>(current);
+            const auto& icons = m_grid->allIcons();
+            const auto found = std::find_if(
+                icons.begin(), icons.end(),
+                [icon](const auto& candidate) { return candidate.get() == icon; });
+            const int index = found == icons.end()
+                ? -1 : static_cast<int>(std::distance(icons.begin(), found));
+            if (index >= 0 && index < m_model.count()) {
+                DebugLog::log("[plus] direct index=%d kind=%u title=0x%016lX",
+                              index, static_cast<unsigned>(m_model.at(index).kind),
+                              static_cast<unsigned long>(m_model.at(index).titleId));
+                // titleId=0 is the canonical empty-slot marker. Keep this
+                // defensive check even if a stale loader entry carries the
+                // wrong kind so Plus can never route an empty slot as a game.
+                if (m_model.at(index).titleId == 0 ||
+                    m_model.at(index).kind == GridEntryKind::Empty)
+                    createFolder(index);
+                else if (m_model.at(index).isFolder())
+                    showFolderContextMenu(m_model.at(index).folderId);
+                else if (m_model.at(index).isApplication())
+                    showGameContextMenu(icon);
+            }
+        }
+    }
+#endif
+
     if (m_plusExitPending) {
         m_plusExitPendingTimer -= dt;
         if (m_plusExitPendingTimer <= 0.f) {
@@ -1871,6 +2364,7 @@ void WiiUMenuApp::onUpdate(float dt) {
         && !(m_themeShop && m_themeShop->isActive())
         && !(m_settings && m_settings->isActive())
         && !(m_gameOptions && m_gameOptions->isActive())
+        && !(m_folderOptions && m_folderOptions->isActive())
         && !(m_controllerTest && m_controllerTest->isActive())
         && !(m_userSelect && m_userSelect->isActive()))
     {
@@ -1891,6 +2385,9 @@ void WiiUMenuApp::onUpdate(float dt) {
 
     if (!debugTouchBlocked && m_gameOptions && m_gameOptions->isActive())
         m_gameOptions->handleTouch(app().input());
+
+    if (!debugTouchBlocked && m_folderOptions && m_folderOptions->isActive())
+        m_folderOptions->handleTouch(app().input());
 
     if (!debugTouchBlocked && m_controllerTest && m_controllerTest->isActive())
         m_controllerTest->handleTouch(app().input());
@@ -1919,6 +2416,8 @@ void WiiUMenuApp::onUpdate(float dt) {
                 focusManager().setFocus(m_controllerTest.get());
             } else if (m_gameOptions && m_gameOptions->isActive()) {
                 focusManager().setFocus(m_gameOptions.get());
+            } else if (m_folderOptions && m_folderOptions->isActive()) {
+                focusManager().setFocus(m_folderOptions.get());
             } else if (m_settings && m_settings->isActive()) {
                 focusManager().setFocus(m_settings.get());
             } else {
@@ -2005,6 +2504,9 @@ std::vector<WiiUMenuApp::ActionHint> WiiUMenuApp::buildActionHints() {
     if (m_gameOptions && m_gameOptions->isActive())
         return hints;
 
+    if (m_folderOptions && m_folderOptions->isActive())
+        return hints;
+
     if (m_settings && m_settings->isActive()) {
         add(dpadGlyph(), i18n.tr("hint.navigate", "Navigate"));
         add(buttonGlyph(nxui::Button::A), i18n.tr("hint.select", "Select"));
@@ -2015,28 +2517,47 @@ std::vector<WiiUMenuApp::ActionHint> WiiUMenuApp::buildActionHints() {
 
     if (m_editMode) {
         add(dpadGlyph(), i18n.tr("hint.move", "Move"));
-        add(buttonGlyph(nxui::Button::Y), i18n.tr("hint.place", "Place"));
-        add(buttonGlyph(nxui::Button::B), i18n.tr("hint.cancel", "Cancel"));
+        add(buttonGlyph(nxui::Button::A), i18n.tr("hint.place", "Place"));
+        add(buttonGlyph(nxui::Button::B), m_openFolderId != 0
+            ? i18n.tr("folder.leave_while_moving", "Leave folder")
+            : i18n.tr("hint.cancel", "Cancel"));
         addVoiceControls();
         return hints;
     }
+
+    if (m_openFolderId != 0)
+        add(buttonGlyph(nxui::Button::B), i18n.tr("hint.back", "Back"));
 
     nxui::Widget* cur = focusManager().current();
     if (cur && cur->tag() == "glossy_icon") {
         auto* icon = static_cast<GlossyIcon*>(cur);
         if (icon->titleId() != 0) {
+            const int index = findTitleIndex(icon->titleId());
+            const AppEntry* entry = index >= 0 ? &m_model.at(index) : nullptr;
+            if (entry && entry->isFolder()) {
+                add(buttonGlyph(nxui::Button::A), i18n.tr("folder.open", "Open"));
+                add(buttonGlyph(nxui::Button::Plus), i18n.tr("hint.options", "Options"));
+                if (m_openFolderId == 0)
+                    add(buttonGlyph(nxui::Button::Y), i18n.tr("hint.move", "Move"));
+            } else {
 #ifdef SWITCHU_MENU
-            add(buttonGlyph(nxui::Button::A),
-                m_launcher.isAppSuspended(icon->titleId())
-                    ? i18n.tr("hint.resume", "Resume")
-                    : i18n.tr("hint.launch", "Launch"));
-            if (m_launcher.isAppSuspended(icon->titleId()))
-                add(buttonGlyph(nxui::Button::X), i18n.tr("hint.close", "Close"));
-            add(buttonGlyph(nxui::Button::Plus), i18n.tr("hint.options", "Options"));
+                add(buttonGlyph(nxui::Button::A),
+                    m_launcher.isAppSuspended(icon->titleId())
+                        ? i18n.tr("hint.resume", "Resume")
+                        : i18n.tr("hint.launch", "Launch"));
+                if (m_launcher.isAppSuspended(icon->titleId()))
+                    add(buttonGlyph(nxui::Button::X), i18n.tr("hint.close", "Close"));
+                add(buttonGlyph(nxui::Button::Plus), i18n.tr("hint.options", "Options"));
 #else
-            add(buttonGlyph(nxui::Button::A), i18n.tr("hint.open", "Open"));
+                add(buttonGlyph(nxui::Button::A), i18n.tr("hint.open", "Open"));
 #endif
-            add(buttonGlyph(nxui::Button::Y), i18n.tr("hint.move", "Move"));
+                if (m_openFolderId == 0)
+                    add(buttonGlyph(nxui::Button::Y), i18n.tr("hint.move", "Move"));
+                else
+                    add(buttonGlyph(nxui::Button::Y), i18n.tr("folder.move_out", "Move out"));
+            }
+        } else if (m_openFolderId == 0) {
+            add(buttonGlyph(nxui::Button::Plus), i18n.tr("folder.create", "Create folder"));
         }
     } else if (cur) {
         for (const auto& btn : m_sidebar.leftButtons()) {
@@ -2059,7 +2580,7 @@ std::vector<WiiUMenuApp::ActionHint> WiiUMenuApp::buildActionHints() {
         }
     }
 
-    if (m_grid && m_grid->totalPages() > 1) {
+    if (m_grid && m_grid->totalPages() > 1 && m_openFolderId == 0) {
         add(buttonGlyph(nxui::Button::ZL), i18n.tr("hint.prev_page", "Prev page"));
         add(buttonGlyph(nxui::Button::ZR), i18n.tr("hint.next_page", "Next page"));
     }
@@ -2168,6 +2689,18 @@ void WiiUMenuApp::renderActionHintBar(nxui::Renderer& ren) {
 }
 
 void WiiUMenuApp::onRender(nxui::Renderer& ren) {
+    if (m_folderCaptureRequested) {
+        if (ren.gpu().offscreenReady()) {
+            // Cache one complete HOME frame, then use the fork's compact,
+            // overlapping blur kernel. Keeping the sample spread below 2.5
+            // avoids the visible square lattice produced by wide taps.
+            ren.captureToOffscreen(false);
+            ren.applyBlur(4.f, 2);
+            ren.copyOffscreen(0, 2);
+        }
+        m_folderCaptureRequested = false;
+        m_folderCaptureReady = true;
+    }
     if (m_fastReturnStartupTick != 0) {
         const auto elapsedMs = static_cast<unsigned long>(
             armTicksToNs(armGetSystemTick() - m_fastReturnStartupTick) / 1'000'000ULL);

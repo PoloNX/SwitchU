@@ -410,6 +410,7 @@ std::shared_ptr<nxui::Box> TabbedOverlayScreen::makeItemWidget(SettingItem& item
     auto content = settings::widgets::createSettingItemWidget(item, ctx);
     return std::make_shared<SettingsItemCard>(item, content);
 }
+
 void TabbedOverlayScreen::onRender(nxui::Renderer& ren) {
     if (!m_active && !m_animating)
         return;
@@ -425,12 +426,30 @@ void TabbedOverlayScreen::onRender(nxui::Renderer& ren) {
     if (m_tabContent) m_tabContent->setRect(contentRect(p));
 
     const auto& tuning = settings::debug::settingsGlassTuning();
+    if (ren.gpu().offscreenReady() &&
+        (!m_backdropCacheValid ||
+         std::abs(m_cachedPreBlurRadius - tuning.preBlurRadius) > 0.01f ||
+         m_cachedBlurIterations != tuning.blurIterations)) {
+        // Capture before drawing the overlay. The result is stable until the
+        // overlay closes, so pronounced blur costs only on opening rather
+        // than stealing time from every 60 fps frame.
+        ren.captureToOffscreen(false);
+        if (tuning.preBlurRadius > 0.01f && tuning.blurIterations > 0)
+            ren.applyBlur(tuning.preBlurRadius, tuning.blurIterations);
+        ren.copyOffscreen(0, 2);
+        m_backdropCacheValid = true;
+        m_cachedPreBlurRadius = tuning.preBlurRadius;
+        m_cachedBlurIterations = tuning.blurIterations;
+    }
+
     drawBackground(ren, p, opacity * 0.72f);
 
     if (opacity > 0.01f) {
         nxui::Color glassTint = m_theme
-            ? m_theme->panelBase.withAlpha(m_theme->mode == nxui::ThemeMode::Dark ? 0.94f : 0.96f)
-            : m_base.withAlpha(0.94f);
+            ? m_theme->panelBase.withAlpha(m_theme->mode == nxui::ThemeMode::Dark
+                                               ? tuning.tintAlphaDark
+                                               : tuning.tintAlphaLight)
+            : m_base.withAlpha(tuning.tintAlphaDark);
         nxui::Rect glassRect = p.shrunk(std::max(0.0f, tuning.inset));
         float glassRadius = std::max(12.0f, kPanelRadius - std::max(0.0f, tuning.inset) * 0.5f);
 
@@ -440,8 +459,31 @@ void TabbedOverlayScreen::onRender(nxui::Renderer& ren) {
         const nxui::Color highlight = m_theme
             ? m_theme->panelHighlight.withAlpha(0.11f)
             : nxui::Color::white().withAlpha(0.08f);
-        ren.drawFrostedInset(glassRect, glassTint, border, highlight,
-                             glassRadius, opacity);
+        ren.drawRoundedRect({glassRect.x, glassRect.y + 8.f,
+                             glassRect.width, glassRect.height},
+                            nxui::Color(0.f, 0.f, 0.f, 0.20f * opacity),
+                            glassRadius);
+        if (m_backdropCacheValid) {
+            const auto saved = ren.liquidGlassSettings();
+            auto& glass = ren.liquidGlassSettings();
+            glass.refractionIntensity = tuning.refractionIntensity;
+            glass.blurIntensity = tuning.shaderBlurIntensity;
+            glass.glowIntensity = tuning.glowIntensity;
+            glass.saturation = tuning.saturation;
+            glass.roughness = tuning.roughness;
+            glass.powerFactor = tuning.powerFactor;
+            ren.drawLiquidGlass(2, glassRect, glassRadius, glassTint,
+                                opacity * 0.98f, tuning.shade);
+            ren.liquidGlassSettings() = saved;
+            ren.drawRoundedRectOutline(glassRect.shrunk(2.f),
+                                       nxui::Color::white().withAlpha(0.18f * opacity),
+                                       std::max(0.f, glassRadius - 2.f), 1.5f);
+            ren.drawRoundedRectOutline(glassRect, border.withAlpha(0.48f * opacity),
+                                       glassRadius, 1.5f);
+        } else {
+            ren.drawFrostedInset(glassRect, glassTint, border, highlight,
+                                 glassRadius, opacity);
+        }
     }
 
     onContentRender(ren);

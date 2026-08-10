@@ -137,6 +137,9 @@ bool Renderer::loadShaders() {
     ok = loadDksh(m_vertShaders[(int)ShaderProgram::Wave], s_shaderBasePath + "pass_vsh.dksh") && ok;
     ok = loadDksh(m_fragShaders[(int)ShaderProgram::Wave], s_shaderBasePath + "wave_fsh.dksh") && ok;
 
+    ok = loadDksh(m_vertShaders[(int)ShaderProgram::LiquidGlass], s_shaderBasePath + "pass_vsh.dksh") && ok;
+    ok = loadDksh(m_fragShaders[(int)ShaderProgram::LiquidGlass], s_shaderBasePath + "liquid_glass_fsh.dksh") && ok;
+
     ok = loadDksh(m_vertShaders[(int)ShaderProgram::Gradient], s_shaderBasePath + "basic_vsh.dksh") && ok;
     ok = loadDksh(m_fragShaders[(int)ShaderProgram::Gradient], s_shaderBasePath + "gradient_fsh.dksh") && ok;
 
@@ -470,8 +473,72 @@ void Renderer::drawOffscreenRounded(int target, const Rect& dest, float radius, 
     useShader(ShaderProgram::Basic);
 }
 
+void Renderer::drawLiquidGlass(int target, const Rect& panelRect, float radius,
+                               const Color& tint, float opacity, float shade) {
+    if (opacity <= 0.01f || target < 0 || target >= GpuDevice::NUM_OFFSCREEN)
+        return;
+    if (!m_gpu.offscreenReady()) {
+        drawFrostedInset(panelRect, tint, Color::white().withAlpha(0.18f),
+                         Color::white().withAlpha(0.08f), radius, opacity);
+        return;
+    }
+
+    useShader(ShaderProgram::LiquidGlass);
+    const auto& glass = m_liquidGlassSettings;
+    FsUniforms fs{};
+    fs.useTexture = 1;
+    fs.param1 = glass.refractionIntensity;
+    fs.param2 = std::clamp(glass.blurIntensity, 0.f, 2.5f);
+    fs.param3 = glass.noiseIntensity;
+    fs.extra[0] = glass.glowIntensity;
+    fs.extra[1] = glass.saturation;
+    fs.extra[2] = glass.opacityMultiplier;
+    fs.extra[3] = glass.roughness;
+    fs.extra[4] = glass.animSpeed;
+    fs.extra[5] = glass.time;
+    fs.extra[6] = glass.powerFactor;
+    fs.extra[7] = glass.fPower;
+    fs.extra[8] = glass.refA;
+    fs.extra[9] = glass.refB;
+    fs.extra[10] = glass.refC;
+    fs.extra[11] = glass.refD;
+    fs.extra[12] = glass.glowWeight;
+    fs.extra[13] = glass.glowBias;
+    fs.extra[14] = glass.glowEdge0;
+    fs.extra[15] = glass.glowEdge1;
+    fs.extra[16] = tint.r;
+    fs.extra[17] = tint.g;
+    fs.extra[18] = tint.b;
+    fs.extra[19] = tint.a;
+    fs.extra[20] = panelRect.x;
+    fs.extra[21] = panelRect.y;
+    fs.extra[22] = panelRect.width;
+    fs.extra[23] = panelRect.height;
+    fs.extra[24] = static_cast<float>(m_gpu.width());
+    fs.extra[25] = static_cast<float>(m_gpu.height());
+    fs.extra[26] = std::clamp(shade, 0.f, 1.f);
+    fs.extra[27] = std::max(0.f, radius);
+    pushFsUniforms(fs);
+    bindTexture(m_offDescSlot[target]);
+    addQuad(panelRect.x, panelRect.y, panelRect.right(), panelRect.bottom(),
+            0.f, 0.f, 1.f, 1.f, Color::white().withAlpha(opacity));
+    flush();
+    useShader(ShaderProgram::Basic);
+}
+
 void Renderer::applyBlur(float radius, int passes) {
     if (!m_gpu.offscreenReady()) return;
+
+    constexpr float kMaxSpread = 2.5f;
+    constexpr int kMaxPasses = 24;
+    if (radius > kMaxSpread && passes > 0) {
+        const float widen = radius / kMaxSpread;
+        passes = std::min(kMaxPasses,
+                          static_cast<int>(std::ceil(passes * widen * widen)));
+        radius = kMaxSpread;
+    }
+    radius = std::max(0.f, radius);
+    passes = std::max(0, passes);
 
     m_reusableOffscreenCaptureValid = false;
 

@@ -37,6 +37,7 @@ enum class SystemMessage : uint32_t {
     LaunchNetConnect      = 13,
     LaunchUserPage        = 14,
     LaunchControllerRemapping = 15,
+    LaunchUserCreator     = 16,
 
     EnterSleep            = 20,
     Shutdown              = 21,

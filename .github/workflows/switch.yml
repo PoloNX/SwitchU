@@ -104,6 +104,7 @@ jobs:
           if-no-files-found: error
           path: |
             build/cross/aarch64/${{ matrix.mode }}/SwitchU.nro
+            build/cross/aarch64/${{ matrix.mode }}/SwitchU-Manager.nro
             dist/homebrew/${{ matrix.mode }}/
 
       - name: Upload sysmodule artifact

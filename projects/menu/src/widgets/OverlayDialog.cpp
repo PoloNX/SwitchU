@@ -60,8 +60,13 @@ void OverlayDialog::buildWidgetTree() {
     m_panelW = kPanelW;
     float contentW = m_panelW - kPanelPadX * 2.f;
 
-    float titleH = (titleFont && !m_title.empty())
-                       ? titleFont->measure(m_title).y : 0.f;
+    float titleH = 0.f;
+    if (titleFont && !m_title.empty()) {
+        nxui::Label probe(m_title, titleFont);
+        probe.setScale(0.92f);
+        probe.setMultiline(true);
+        titleH = probe.measureWrappedText(contentW).y;
+    }
     float msgH   = 0.f;
     if (bodyFont && !m_message.empty()) {
         nxui::Label probe(m_message, bodyFont);
@@ -95,6 +100,9 @@ void OverlayDialog::buildWidgetTree() {
     if (titleFont && !m_title.empty()) {
         m_titleLabel = std::make_shared<nxui::Label>(m_title, titleFont);
         m_titleLabel->setTextColor(textPrimary);
+        m_titleLabel->setScale(0.92f);
+        m_titleLabel->setMultiline(true);
+        m_titleLabel->setLineSpacing(1.04f);
         m_titleLabel->setHAlign(nxui::Label::HAlign::Center);
         m_titleLabel->setVAlign(nxui::Label::VAlign::Center);
         m_titleLabel->setRect({0, 0, contentW, titleH});
@@ -136,7 +144,12 @@ void OverlayDialog::buildWidgetTree() {
         auto lbl = std::make_shared<nxui::Label>(m_buttons[i].label);
         lbl->setFont(bodyFont ? bodyFont : titleFont);
         lbl->setTextColor(textPrimary);
-        lbl->setScale(0.94f);
+        float labelScale = 0.94f;
+        if (bodyFont && bodyFont->measure(m_buttons[i].label).x > 0.f)
+            labelScale = std::clamp((btnW - 16.f) /
+                                    bodyFont->measure(m_buttons[i].label).x,
+                                    0.58f, labelScale);
+        lbl->setScale(labelScale);
         lbl->setHAlign(nxui::Label::HAlign::Center);
         lbl->setVAlign(nxui::Label::VAlign::Center);
         lbl->setRect({0, 0, btnW, kButtonH});
@@ -464,27 +477,6 @@ void OverlayDialog::setupActions() {
 void OverlayDialog::setupUserActions() {
     clearActions();
 
-    auto selectPrevious = [this]() {
-        if (!m_active || m_animatingOut || m_users.empty()) return;
-        int n = (int)m_users.size();
-        m_selected = (m_selected + n - 1) % n;
-        if (m_navSfxCb) m_navSfxCb();
-        announceCurrentSelection();
-    };
-
-    auto selectNext = [this]() {
-        if (!m_active || m_animatingOut || m_users.empty()) return;
-        int n = (int)m_users.size();
-        m_selected = (m_selected + 1) % n;
-        if (m_navSfxCb) m_navSfxCb();
-        announceCurrentSelection();
-    };
-
-    addDirectionAction(nxui::FocusDirection::LEFT, selectPrevious);
-    addDirectionAction(nxui::FocusDirection::UP, selectPrevious);
-    addDirectionAction(nxui::FocusDirection::RIGHT, selectNext);
-    addDirectionAction(nxui::FocusDirection::DOWN, selectNext);
-
     addAction(static_cast<uint64_t>(nxui::Button::A), [this]() {
         if (!m_active || m_animatingOut) return;
         activateSelectedUser();
@@ -527,6 +519,43 @@ void OverlayDialog::handleTouch(nxui::Input& input) {
     if (!m_active || m_animatingOut) return;
 
     if (m_mode == DialogMode::UserSelect) {
+        const bool dpadLeft = input.isDown(nxui::Button::DLeft) ||
+                              input.isDown(nxui::Button::DUp);
+        const bool dpadRight = input.isDown(nxui::Button::DRight) ||
+                               input.isDown(nxui::Button::DDown);
+        const bool stickLeft = input.isDown(nxui::Button::LStickL) ||
+                               input.isDown(nxui::Button::RStickL) ||
+                               input.isDown(nxui::Button::LStickU) ||
+                               input.isDown(nxui::Button::RStickU);
+        const bool stickRight = input.isDown(nxui::Button::LStickR) ||
+                                input.isDown(nxui::Button::RStickR) ||
+                                input.isDown(nxui::Button::LStickD) ||
+                                input.isDown(nxui::Button::RStickD);
+        int direction = 0;
+        if (dpadRight && !dpadLeft) {
+            direction = 1;
+        } else if (dpadLeft && !dpadRight) {
+            direction = -1;
+        } else if (dpadRight && dpadLeft) {
+            direction = input.leftStickX() > 0.1f || input.rightStickX() > 0.1f
+                ? 1 : -1;
+        } else if (stickRight && !stickLeft) {
+            direction = 1;
+        } else if (stickLeft && !stickRight) {
+            direction = -1;
+        } else if (stickRight && stickLeft) {
+            const float axis = std::abs(input.leftStickX()) >= std::abs(input.rightStickX())
+                ? input.leftStickX() : input.rightStickX();
+            direction = axis >= 0.f ? 1 : -1;
+        }
+        if (direction != 0 && !m_users.empty()) {
+            const int n = static_cast<int>(m_users.size());
+            m_selected = (m_selected + direction + n) % n;
+            syncUserCursor();
+            if (m_navSfxCb) m_navSfxCb();
+            announceCurrentSelection();
+        }
+
         if (input.touchDown()) {
             if (m_ignoreInitialTouchRelease)
                 m_ignoreInitialTouchRelease = false;
@@ -827,20 +856,45 @@ void OverlayDialog::renderGlassPanel(nxui::Renderer& ren,
     if (alpha <= 0.01f)
         return;
 
-    nxui::Color glassTint = theme
-        ? theme->panelBase.withAlpha(theme->mode == nxui::ThemeMode::Dark ? 0.95f : 0.96f)
-        : base.withAlpha(0.95f);
     const auto& tuning = settings::debug::settingsGlassTuning();
+    nxui::Color glassTint = theme
+        ? theme->panelBase.withAlpha(theme->mode == nxui::ThemeMode::Dark
+                                         ? tuning.tintAlphaDark
+                                         : tuning.tintAlphaLight)
+        : base.withAlpha(tuning.tintAlphaDark);
     nxui::Rect glassRect = panel.shrunk(std::max(0.0f, tuning.inset));
     float glassRadius = std::max(12.0f, radius - std::max(0.0f, tuning.inset) * 0.5f);
 
-    ren.drawFrostedInset(
-        glassRect,
-        glassTint,
-        border.withAlpha(std::clamp(border.a * 0.90f, 0.14f, 0.34f)),
-        highlight.withAlpha(std::clamp(highlight.a * 0.90f, 0.04f, 0.10f)),
-        glassRadius,
-        alpha);
+    ren.drawRoundedRect({glassRect.x, glassRect.y + 7.f,
+                         glassRect.width, glassRect.height},
+                        nxui::Color(0.f, 0.f, 0.f, 0.22f * alpha), glassRadius);
+    if (ren.gpu().offscreenReady()) {
+        ren.captureToOffscreen(false);
+        const auto saved = ren.liquidGlassSettings();
+        auto& glass = ren.liquidGlassSettings();
+        glass.refractionIntensity = tuning.refractionIntensity * 1.10f;
+        glass.blurIntensity = std::min(2.5f, tuning.shaderBlurIntensity + 0.2f);
+        glass.glowIntensity = tuning.glowIntensity;
+        glass.saturation = tuning.saturation;
+        glass.roughness = tuning.roughness;
+        ren.drawLiquidGlass(0, glassRect, glassRadius, glassTint,
+                            alpha * 0.98f, tuning.shade);
+        ren.liquidGlassSettings() = saved;
+        ren.drawRoundedRectOutline(glassRect.shrunk(2.f),
+                                   nxui::Color::white().withAlpha(0.20f * alpha),
+                                   std::max(0.f, glassRadius - 2.f), 1.4f);
+        ren.drawRoundedRectOutline(glassRect,
+                                   border.withAlpha(std::clamp(border.a, 0.20f, 0.48f) * alpha),
+                                   glassRadius, 1.5f);
+    } else {
+        ren.drawFrostedInset(
+            glassRect,
+            glassTint,
+            border.withAlpha(std::clamp(border.a * 0.90f, 0.14f, 0.34f)),
+            highlight.withAlpha(std::clamp(highlight.a * 0.90f, 0.04f, 0.10f)),
+            glassRadius,
+            alpha);
+    }
 }
 
 void OverlayDialog::render(nxui::Renderer& ren) {

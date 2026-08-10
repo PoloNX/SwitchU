@@ -964,8 +964,11 @@ static Result runControllerApplet(const char* name,
     switchu::FileLog::log(
         "[applet] %s output res=0x%X players=%d selected=%u runner=0x%X",
         name, output.res, output.info.player_count, output.info.selected_id, rc);
-    if (R_SUCCEEDED(rc) && output.res != 0)
-        rc = MAKERESULT(Module_Libnx, LibnxError_LibAppletBadExit);
+    if (R_SUCCEEDED(rc) && output.res == 1) {
+        switchu::FileLog::log("[applet] %s completed outcome=cancelled", name);
+    } else if (R_SUCCEEDED(rc) && output.res != 0) {
+         rc = MAKERESULT(Module_Libnx, LibnxError_LibAppletBadExit);
+    }
     return rc;
 }
 
@@ -1161,6 +1164,18 @@ static void handleMenuCommand() {
         break;
     }
 
+    case smi::SystemMessage::LaunchUserCreator:
+        {
+            daemon::SystemAction action{};
+            action.type = daemon::SystemActionType::OpenUserCreator;
+            action.requestId = requestId;
+            result = g_actionQueue.enqueue(action);
+            recordOperationResult(requestId, msg, result);
+        }
+        switchu::FileLog::log("[smi] queued user creator launch (actions=%zu)",
+                              g_actionQueue.size());
+        break;
+
     case smi::SystemMessage::LaunchControllers:
         {
             daemon::SystemAction action{};
@@ -1338,6 +1353,21 @@ static bool handleAction(daemon::SystemAction& action) {
             if (R_FAILED(rc))
                 switchu::FileLog::log("[action] User Page FAIL: 0x%X", rc);
             relaunchMenuAfterApplet("UserPage");
+            return true;
+        }
+
+        case daemon::SystemActionType::OpenUserCreator: {
+            switchu::FileLog::log("[applet] launching system user creator");
+            appletRequestToGetForeground();
+            g_foregroundAppletActive = true;
+            g_pendingForegroundAppletHome = false;
+            Result rc = pselShowUserCreator();
+            g_foregroundAppletActive = false;
+            recordOperationResult(action.requestId,
+                                  smi::SystemMessage::LaunchUserCreator, rc);
+            if (R_FAILED(rc))
+                switchu::FileLog::log("[action] user creator FAIL: 0x%X", rc);
+            relaunchMenuAfterApplet("UserCreator");
             return true;
         }
     }

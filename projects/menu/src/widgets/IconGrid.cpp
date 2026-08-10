@@ -192,6 +192,9 @@ void IconGrid::render(nxui::Renderer& ren) {
         return;
     }
 
+    if (!m_children.empty() && ren.gpu().offscreenReady())
+        ren.captureToOffscreen(true);
+
     for (auto& c : m_children) c->render(ren);
 
     if (m_waveActive && m_wavePhase == WavePhase::Animating) {

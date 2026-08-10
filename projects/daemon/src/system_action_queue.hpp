@@ -17,6 +17,7 @@ enum class SystemActionType : std::uint32_t {
     OpenControllerRemapping,
     OpenNetConnect,
     OpenUserPage,
+    OpenUserCreator,
 };
 
 struct SystemAction {

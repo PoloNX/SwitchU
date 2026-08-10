@@ -166,7 +166,7 @@ void registerEntries(std::vector<PendingApp>& apps,
     streamer.setIconDataLoader(AppListLoader::loadIconData);
     for (int i = 0; i < (int)apps.size(); ++i) {
         auto& p = apps[i];
-        streamer.setTitleId(i, p.titleId);
+        streamer.setTitleId(i, p.kind == GridEntryKind::Application ? p.titleId : 0);
         if (!p.iconData.empty())
             streamer.setIconData(i, std::move(p.iconData));
         AppEntry entry;
@@ -179,6 +179,10 @@ void registerEntries(std::vector<PendingApp>& apps,
         entry.startupUserKnown = p.startupUserKnown;
         entry.startupUserAccount = p.startupUserAccount;
         entry.startupUserAccountOption = p.startupUserAccountOption;
+        entry.kind = p.kind;
+        entry.folderId = p.folderId;
+        entry.folderPreviewCount = p.folderPreviewCount;
+        entry.folderColorIndex = p.folderColorIndex;
         model.addEntry(std::move(entry));
     }
 }

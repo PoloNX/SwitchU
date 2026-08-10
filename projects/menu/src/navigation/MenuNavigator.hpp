@@ -9,6 +9,7 @@ enum class Route : std::uint8_t {
     Settings,
     ThemeShop,
     GameOptions,
+    FolderOptions,
     ControllerTest,
 };
 
