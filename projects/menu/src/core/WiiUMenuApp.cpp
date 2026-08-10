@@ -1629,7 +1629,7 @@ void WiiUMenuApp::buildGrid() {
             i18n.tr("power.title", "Power"),
             i18n.tr("power.choose_action", "Choose a power action."),
             {
-                {i18n.tr("button.cancel", "Cancel"), [this]() {  }, true},
+                // {i18n.tr("button.cancel", "Cancel"), [this]() {  }, true},
                 {i18n.tr("power.sleep", "Sleep"), [this]() {
 #ifdef SWITCHU_MENU
                     m_audio.playSfx(Sfx::ConfirmPositive);
