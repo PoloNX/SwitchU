@@ -38,6 +38,13 @@ public:
     float volume() const { return m_volume; }
     bool  isPlaying() const { return m_playing; }
 
+    // Transient attenuation applied on top of the configured volume, e.g. to fade
+    // the music out during the launch animation. Kept separate from m_volume so
+    // volume() keeps reporting the user's setting: it seeds the Theme Shop slider,
+    // which writes back into the persisted config.
+    void setMusicFade(float fade);
+    float musicFade() const { return m_musicFade; }
+
     void loadSfx(Sfx id, const std::string& path);
     void clearSfx();
     void playSfx(Sfx id);
@@ -50,10 +57,13 @@ private:
     static std::atomic<AudioManager*> s_instance;
     static void onTrackFinished();
 
+    void applyMusicVolume();
+
     std::mutex m_trackMutex;
     std::vector<Mix_Music*> m_tracks;
     int   m_current = 0;
     float m_volume  = 0.5f;
+    float m_musicFade = 1.f;
     std::atomic<bool> m_playing{false};
     bool  m_initialized = false;
 

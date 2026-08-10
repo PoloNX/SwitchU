@@ -1673,6 +1673,21 @@ void WiiUMenuApp::onUpdate(float dt) {
         m_tutorialStartupFadeDeadlineTick = 0;
     }
 
+    // Launching or resuming an app tears the applet down as soon as the animation
+    // ends, which used to cut the music dead. Ride the volume down so the teardown
+    // lands on silence. gain = (1-t)^2 tracks perceived loudness; a linear ramp
+    // still sounds like an abrupt cut at the end.
+    if (m_launchAnim && m_launchAnim->isPlaying()) {
+        const float t = m_launchAnim->musicFadeProgress();
+        m_audio.setMusicFade(1.f - nxui::Easing::outQuad(t));
+        m_musicFadeActive = true;
+    } else if (m_musicFadeActive) {
+        // The animation can end without the applet closing: a failed launch
+        // command, or refreshAppList() cancelling it.
+        m_musicFadeActive = false;
+        m_audio.setMusicFade(1.f);
+    }
+
     syncThemePackageTransfer();
     retryPendingBackgroundImage();
 
