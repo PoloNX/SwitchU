@@ -2335,9 +2335,10 @@ void WiiUMenuApp::onUpdate(float dt) {
                 // defensive check even if a stale loader entry carries the
                 // wrong kind so Plus can never route an empty slot as a game.
                 if (m_model.at(index).titleId == 0 ||
-                    m_model.at(index).kind == GridEntryKind::Empty)
-                    createFolder(index);
-                else if (m_model.at(index).isFolder())
+                    m_model.at(index).kind == GridEntryKind::Empty) {
+                    if (m_openFolderId == 0) // folders do not nest
+                        createFolder(index);
+                } else if (m_model.at(index).isFolder())
                     showFolderContextMenu(m_model.at(index).folderId);
                 else if (m_model.at(index).isApplication())
                     showGameContextMenu(icon);
