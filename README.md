@@ -85,10 +85,17 @@ Build outputs are generated under `build/cross/aarch64/<mode>/`.
 - Current icons are very ugly, feel free to replace them with better ones
 - You may experience some crash when using a lot of sysmodules. I tried to reduce the ram usage but I still get some instability when launching a game.
 
-## TODO
-- Add a pannel when pressing + on a game to show more information about it
-- Add video in background for the home menu
-- Add a steamgriddb integration to get game banners and backgrounds
+## Unsorted roadmap
+- [x] Add a pannel when pressing + on a game to show more information about it    
+- [x] Add controller/screen test window
+- [x] Add Wii U-style folders
+- [ ] Improve theme shop UI and metadata
+- [ ] Add eshop and news applet  
+- [ ] Add a setting to switch the theme based on the time of day  
+- [ ] Add a steamgriddb integration to get game banners and backgrounds  
+- [ ] Replace temporary icons with polished assets
+- [ ] Add more animations inspired by Wii U
+- [ ] Improve localization coverage
 
 ## Help me
 
