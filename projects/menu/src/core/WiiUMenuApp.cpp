@@ -2611,7 +2611,7 @@ std::vector<WiiUMenuApp::ActionHint> WiiUMenuApp::buildActionHints() {
                 if (m_openFolderId == 0)
                     add(buttonGlyph(nxui::Button::Y), i18n.tr("hint.move", "Move"));
                 else
-                    add(buttonGlyph(nxui::Button::Y), i18n.tr("folder.move_out", "Move out"));
+                    add(buttonGlyph(nxui::Button::Y), i18n.tr("folder.move", "Move"));
             }
         } else if (m_openFolderId == 0) {
 #ifdef SWITCHU_MENU
