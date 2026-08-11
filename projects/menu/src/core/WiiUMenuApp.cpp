@@ -1034,8 +1034,8 @@ GridModel WiiUMenuApp::buildOpenFolderModel(std::uint32_t folderId) const {
     }
     const auto [folderCols, folderRows] = folderGridDimensions(folderId);
     const int perPage = std::max(1, folderCols * folderRows);
-    // Always keep one spare page: a new one appears as soon as the last fills up.
-    const int count = (model.count() / perPage + 1) * perPage;
+    // A folder always offers a second page, and a spare one once the last fills up.
+    const int count = std::max(2 * perPage, (model.count() / perPage + 1) * perPage);
     while (model.count() < count)
         model.addEntry({});
     return model;
@@ -1070,9 +1070,15 @@ void WiiUMenuApp::applyDisplayModel(GridModel model, std::uint64_t focusId, bool
         metrics.padX *= 0.92f;
         metrics.padY *= 0.92f;
     }
+    // Inside a folder there is no sidebar to the left or right of the grid, so
+    // the edge columns are free to flip the page instead.
+    const bool inFolder = (m_openFolderId != 0);
+    m_grid->setEdgePaging(inFolder);
+    m_grid->setSlideTransition(inFolder);
     m_grid->setup(std::move(icons), columns, rows, metrics.cellW, metrics.cellH,
                   metrics.padX, metrics.padY);
     wireFocusCallback();
+    m_grid->onEdgePage([this](int dir) { flipPageFromEdge(dir); });
     m_grid->onPageSwitched([this]() {
         m_iconStreamer.onPageChanged(m_grid->currentPage(), m_grid->iconsPerPage(),
                                      app().gpu(), app().renderer(), m_grid->allIcons());
@@ -1176,6 +1182,29 @@ void WiiUMenuApp::requestOpenFolder(std::uint32_t folderId) {
     m_folderCaptureRequested = true;
     m_folderCaptureReady = false;
     if (m_cursor) m_cursor->setVisible(false);
+}
+
+void WiiUMenuApp::flipPageFromEdge(int dir) {
+    if (!m_grid || m_grid->isTransitioning())
+        return;
+    const int target = m_grid->currentPage() + dir;
+    if (target < 0 || target >= m_grid->totalPages())
+        return;
+
+    const int cols = std::max(1, m_grid->columns());
+    const int perPage = std::max(1, m_grid->iconsPerPage());
+    const int global = m_grid->focusedGlobalIndex();
+    const int row = global >= 0 ? (global % perPage) / cols : 0;
+
+    m_grid->startPageTransition(target);
+
+    // Carry on along the same row, entering from the opposite edge.
+    const int col = (dir > 0) ? 0 : cols - 1;
+    if (m_grid->focusGlobalIndex(target * perPage + row * cols + col)) {
+        if (auto* focused = m_grid->focusManager().current())
+            focusManager().setFocus(focused);
+    }
+    m_audio.playSfx(Sfx::PageChange);
 }
 
 void WiiUMenuApp::syncPageIndicator() {
@@ -2090,6 +2119,18 @@ void WiiUMenuApp::finalizeRefresh() {
 void WiiUMenuApp::onUpdate(float dt) {
     if (m_folderCaptureReady)
         openCapturedFolder();
+
+    const bool sliding = m_grid && m_grid->isTransitioning();
+    if (sliding != m_gridSliding) {
+        m_gridSliding = sliding;
+        if (sliding) {
+            if (m_cursor) m_cursor->setVisible(false);
+        } else {
+            if (m_cursor && focusManager().current())
+                m_cursor->moveTo(focusManager().current()->focusRect().expanded(4.f), 0.01f);
+            updateCursor();
+        }
+    }
 #ifdef SWITCHU_DEBUG_UI
     if (m_debugOverlay) {
         m_debugOverlay->setDeltaTime(dt);

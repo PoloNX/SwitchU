@@ -1,6 +1,8 @@
 #include "IconGrid.hpp"
 #include "GlossyIcon.hpp"
 #include <nxui/core/Renderer.hpp>
+#include <nxui/core/Animation.hpp>
+#include <nxui/core/Input.hpp>
 #include <algorithm>
 #include <cmath>
 
@@ -62,6 +64,8 @@ void IconGrid::layoutPage() {
             fItems.push_back(icon.get());
     }
 
+    bindEdgeActions(start, end);
+
     m_focus.setGrid(fItems, m_cols);
     if (prevFocused) {
         for (auto* item : fItems) {
@@ -71,6 +75,44 @@ void IconGrid::layoutPage() {
             }
         }
     }
+}
+
+
+void IconGrid::bindEdgeActions(int start, int end) {
+    if (!m_edgePaging || m_cols <= 0)
+        return;
+    for (int i = start; i < end; ++i) {
+        nxui::Widget* w = m_allIcons[i].get();
+        const int col = (i - start) % m_cols;
+        if (col == m_cols - 1) {
+            auto next = [this]() { if (m_onEdgePage) m_onEdgePage(+1); };
+            w->addAction(static_cast<uint64_t>(nxui::Button::DRight), next);
+            w->addAction(static_cast<uint64_t>(nxui::Button::LStickR), next);
+            w->addAction(static_cast<uint64_t>(nxui::Button::RStickR), next);
+        }
+        if (col == 0) {
+            auto prev = [this]() { if (m_onEdgePage) m_onEdgePage(-1); };
+            w->addAction(static_cast<uint64_t>(nxui::Button::DLeft), prev);
+            w->addAction(static_cast<uint64_t>(nxui::Button::LStickL), prev);
+            w->addAction(static_cast<uint64_t>(nxui::Button::RStickL), prev);
+        }
+    }
+}
+
+void IconGrid::positionPage(int page, float dx) {
+    const int start = page * iconsPerPage();
+    const int end   = std::min(start + iconsPerPage(), (int)m_allIcons.size());
+    for (int i = start; i < end; ++i) {
+        const int local = i - start;
+        m_allIcons[i]->setRect({m_originX + (local % m_cols) * (m_cellW + m_padX) + dx,
+                                m_originY + (local / m_cols) * (m_cellH + m_padY),
+                                m_cellW, m_cellH});
+    }
+}
+
+float IconGrid::pageStride() const {
+    const float gridW = m_cols * m_cellW + (m_cols - 1) * m_padX;
+    return std::max(m_rect.width, (m_originX - m_rect.x) + gridW + m_padX);
 }
 
 int IconGrid::focusedGlobalIndex() const {
@@ -146,66 +188,88 @@ void IconGrid::startAppearAnimation() {
     }
 }
 
-void IconGrid::startWaveTransition(int targetPage) {
+void IconGrid::startPageTransition(int targetPage) {
     targetPage = std::clamp(targetPage, 0, m_totalPages - 1);
     if (targetPage == m_page) return;
 
-    m_waveActive = false;
-    m_wavePhase = WavePhase::Idle;
-    m_waveTargetPage = targetPage;
-    m_waveTime = 0.f;
-
+    const int fromPage = m_page;
     setPage(targetPage);
-    startAppearAnimation();
 
-    if (m_onPageSwitched)
-        m_onPageSwitched();
+    if (!m_slideTransition) {
+        m_sliding = false;
+        startAppearAnimation();
+        if (m_onPageSwitched) m_onPageSwitched();
+        return;
+    }
+
+    m_slidePrevPage = fromPage;
+    m_slideDir = (targetPage > fromPage) ? 1 : -1;
+    m_slideT = 0.f;
+    m_sliding = true;
+
+    const int start = m_page * iconsPerPage();
+    const int end   = std::min(start + iconsPerPage(), (int)m_allIcons.size());
+    for (int i = start; i < end; ++i)
+        m_allIcons[i]->forceVisible();
+
+    const float stride = pageStride();
+    m_slideInDx  = stride * (float)m_slideDir;
+    m_slideOutDx = 0.f;
+    positionPage(m_page, m_slideInDx);
+
+    if (m_onPageSwitched) m_onPageSwitched();
 }
 
 void IconGrid::onUpdate(float dt) {
-    if (m_waveActive && m_wavePhase == WavePhase::Animating) {
-        m_waveTime += dt;
-        if (m_waveTime >= m_waveDuration) {
-            m_waveActive = false;
-            m_wavePhase  = WavePhase::Idle;
-        }
+    if (!m_sliding)
+        return;
+
+    m_slideT += dt;
+    const float t = std::clamp(m_slideT / kSlideDuration, 0.f, 1.f);
+    const float eased = nxui::Easing::outCubic(t);
+    const float stride = pageStride();
+
+    m_slideInDx  = (1.f - eased) * stride * (float)m_slideDir;
+    m_slideOutDx = m_slideInDx - stride * (float)m_slideDir;
+    positionPage(m_page, m_slideInDx);
+
+    if (t >= 1.f) {
+        m_sliding = false;
+        m_slideInDx = m_slideOutDx = 0.f;
+        positionPage(m_page, 0.f);
+    }
+}
+
+void IconGrid::renderPageAt(nxui::Renderer& ren, int page, float dx) {
+    const int start = page * iconsPerPage();
+    const int end   = std::min(start + iconsPerPage(), (int)m_allIcons.size());
+    for (int i = start; i < end; ++i) {
+        auto& icon = m_allIcons[i];
+        const nxui::Rect saved = icon->rect();
+        const int local = i - start;
+        icon->setRect({m_originX + (local % m_cols) * (m_cellW + m_padX) + dx,
+                       m_originY + (local / m_cols) * (m_cellH + m_padY),
+                       m_cellW, m_cellH});
+        icon->render(ren);
+        icon->setRect(saved);
     }
 }
 
 void IconGrid::render(nxui::Renderer& ren) {
     if (!m_visible || m_opacity <= 0.f) return;
 
-    if (m_wavePhase == WavePhase::Capture) {
-        for (auto& c : m_children) c->render(ren);
-
-        ren.captureToOffscreen();
-
-        setPage(m_waveTargetPage);
-        startAppearAnimation();
-
-        m_wavePhase = WavePhase::Animating;
-        m_waveTime  = 0.f;
-
-        ren.applyWave(0.f, 0.015f, 12.f);
-
-        if (m_onPageSwitched) m_onPageSwitched();
-        return;
-    }
-
     if (!m_children.empty() && ren.gpu().offscreenReady())
         ren.captureToOffscreen(true);
 
-    for (auto& c : m_children) c->render(ren);
-
-    if (m_waveActive && m_wavePhase == WavePhase::Animating) {
-        float t = m_waveTime / m_waveDuration;
-        float fade = 1.f - t;
-        float amplitude = 0.012f * fade;
-        if (amplitude > 0.001f) {
-            ren.captureToOffscreen();
-            ren.applyWave(m_waveTime * 8.f, amplitude, 12.f);
-        }
+    if (m_sliding) {
+        ren.pushClipRect(m_rect);
+        renderPageAt(ren, m_slidePrevPage, m_slideOutDx);
+        for (auto& c : m_children) c->render(ren);
+        ren.popClipRect();
+        return;
     }
+
+    for (auto& c : m_children) c->render(ren);
 }
 
 void IconGrid::onRender(nxui::Renderer&) {

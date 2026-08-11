@@ -103,6 +103,7 @@ private:
     GridModel buildOpenFolderModel(std::uint32_t folderId) const;
     void applyDisplayModel(GridModel model, std::uint64_t focusId, bool animate);
     void syncPageIndicator();
+    void flipPageFromEdge(int dir);
     void requestOpenFolder(std::uint32_t folderId);
     void openCapturedFolder();
     void closeFolder(bool preserveEditMode = false);
@@ -286,6 +287,7 @@ private:
     std::uint32_t m_requestedFolderId = 0;
     bool m_folderCaptureRequested = false;
     bool m_folderCaptureReady = false;
+    bool m_gridSliding = false;
 
     int  m_touchHitIndex     = -1;
     bool m_touchOnFocused    = false;

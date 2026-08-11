@@ -771,7 +771,7 @@ void WiiUMenuApp::wireGlobalActions() {
             return;
         int p = m_grid->currentPage() - 1;
         if (p >= 0 && !m_grid->isTransitioning()) {
-            m_grid->startWaveTransition(p);
+            m_grid->startPageTransition(p);
             m_audio.playSfx(Sfx::PageChange);
         }
     });
@@ -780,7 +780,7 @@ void WiiUMenuApp::wireGlobalActions() {
             return;
         int p = m_grid->currentPage() + 1;
         if (p < m_grid->totalPages() && !m_grid->isTransitioning()) {
-            m_grid->startWaveTransition(p);
+            m_grid->startPageTransition(p);
             m_audio.playSfx(Sfx::PageChange);
         }
     });
@@ -968,7 +968,7 @@ void WiiUMenuApp::showFolderContextMenu(std::uint32_t folderId) {
         auto& local = nxui::I18n::instance();
         m_dialogReturnFocus = m_folderOptions.get();
         m_dialog->show(local.tr("folder.delete", "Delete folder"),
-                       local.tr("folder.delete_desc", "Games inside will return to the HOME menu.") + "\n" + name,
+                       local.tr("folder.delete_desc", "Games inside will return to the HOME menu."),
                        {
                            {local.tr("button.cancel", "Cancel"), {}, true},
                            {local.tr("button.delete", "Delete"), [this, folderId]() {
@@ -1113,7 +1113,7 @@ void WiiUMenuApp::handleTouch() {
         if (std::abs(dx) > kSwipeThreshold && std::abs(dx) > std::abs(dy) * 1.5f) {
             int p = m_grid->currentPage() + (dx < 0 ? 1 : -1);
             if (p >= 0 && p < m_grid->totalPages() && !m_grid->isTransitioning()) {
-                m_grid->startWaveTransition(p);
+                m_grid->startPageTransition(p);
                 m_audio.playSfx(Sfx::PageChange);
             }
         }
@@ -1140,6 +1140,10 @@ void WiiUMenuApp::handleSystemAction(SysAction a) {
 #endif
 
 void WiiUMenuApp::updateCursor() {
+    if (m_grid && m_grid->isTransitioning()) {
+        if (m_cursor) m_cursor->setVisible(false); // it would sit at the landing spot
+        return;
+    }
     if (m_navigator.route() != switchu::navigation::Route::Home ||
         (m_dialog && m_dialog->isActive()) ||
         (m_progressDialog && m_progressDialog->isActive()) ||
