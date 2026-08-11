@@ -424,14 +424,14 @@
       "open": "A om te openen.",
       "open_user_page": "A om de gebruikerspagina te openen.",
       "grid_empty": "Gebruik de richtingsknoppen om naar een ander vak te gaan.",
-      "game_launchable": "A om te starten. X voor opties. Y om te verplaatsen. ZL of ZR voor andere pagina.",
+      "game_launchable": "A om te starten. Plus voor opties. Y om te verplaatsen. ZL of ZR voor andere pagina.",
       "game_blocked": "A toont waarom dit is geblokkeerd."
     },
     "actions": {
       "edit_mode": "Richtingsknoppen kiezen de nieuwe positie. Y om te plaatsen. B annuleert.",
       "empty_slot": "Richtingsknoppen om te navigeren. ZL of ZR voor andere pagina.",
       "game_blocked": "A toont de reden. Y om te verplaatsen. ZL of ZR voor andere pagina.",
-      "game_launchable": "A om te starten. X voor opties. Y om te verplaatsen. ZL of ZR voor andere pagina.",
+      "game_launchable": "A om te starten. Plus voor opties. Y om te verplaatsen. ZL of ZR voor andere pagina.",
       "settings": "Omhoog en omlaag kiezen een categorie. A of rechts opent. B sluit.",
       "themes": "Omhoog en omlaag om te navigeren. A kiest. B sluit.",
       "dialog": "Links en rechts wijzigen de keuze. A bevestigt. B annuleert."

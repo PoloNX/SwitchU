@@ -1274,7 +1274,7 @@ std::shared_ptr<GlossyIcon> WiiUMenuApp::makeIcon(const AppEntry& entry) {
         ? i18n.tr("accessibility.roles.game_card", "game card")
         : i18n.tr("accessibility.roles.game", "game"));
     icon->setAccessibilityHint(entry.isLaunchable()
-        ? i18n.tr("accessibility.hints.game_launchable", "A to launch. X for options. Y to move. ZL or ZR to change page.")
+        ? i18n.tr("accessibility.hints.game_launchable", "A to launch. Plus for options. Y to move. ZL or ZR to change page.")
         : i18n.tr("accessibility.hints.game_blocked", "A to show why this item is blocked."));
     // Texture is set by IconStreamer::onPageChanged() — not here.
     icon->setCornerRadius(m_theme.iconCornerRadius);
