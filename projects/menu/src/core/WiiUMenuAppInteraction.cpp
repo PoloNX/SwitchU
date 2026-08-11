@@ -1,5 +1,6 @@
 #include "WiiUMenuApp.hpp"
 #include "widgets/GlossyIcon.hpp"
+#include "widgets/FolderPalette.hpp"
 #include "DebugLog.hpp"
 #ifdef SWITCHU_MENU
 #include <switchu/control_cache.hpp>
@@ -764,9 +765,9 @@ void WiiUMenuApp::wireGlobalActions() {
         m_accessibility.repeatLastAnnouncement();
     });
 
+    // The grid holds the open folder's model, so paging works inside a folder too.
     root.addAction(static_cast<uint64_t>(nxui::Button::ZL), [this]() {
-        if (m_navigator.route() != switchu::navigation::Route::Home || focusRoot() != &rootBox() ||
-            m_openFolderId != 0)
+        if (m_navigator.route() != switchu::navigation::Route::Home || focusRoot() != &rootBox())
             return;
         int p = m_grid->currentPage() - 1;
         if (p >= 0 && !m_grid->isTransitioning()) {
@@ -775,8 +776,7 @@ void WiiUMenuApp::wireGlobalActions() {
         }
     });
     root.addAction(static_cast<uint64_t>(nxui::Button::ZR), [this]() {
-        if (m_navigator.route() != switchu::navigation::Route::Home || focusRoot() != &rootBox() ||
-            m_openFolderId != 0)
+        if (m_navigator.route() != switchu::navigation::Route::Home || focusRoot() != &rootBox())
             return;
         int p = m_grid->currentPage() + 1;
         if (p < m_grid->totalPages() && !m_grid->isTransitioning()) {
@@ -956,6 +956,8 @@ void WiiUMenuApp::showFolderContextMenu(std::uint32_t folderId) {
             if (index < static_cast<int>(icons.size()) && icons[static_cast<std::size_t>(index)])
                 icons[static_cast<std::size_t>(index)]->setFolderColorIndex(colorIndex);
         }
+        if (m_openFolderId == folderId && m_pageIndicator)
+            m_pageIndicator->setActiveColor(switchu::folders::colorForIndex(colorIndex));
     });
     m_folderOptions->onSizeChange([this, folderId](int sizeIndex) {
         if (!m_folderStore.setSizeIndex(folderId, sizeIndex))

@@ -102,6 +102,7 @@ private:
     GridModel buildRootFolderModel();
     GridModel buildOpenFolderModel(std::uint32_t folderId) const;
     void applyDisplayModel(GridModel model, std::uint64_t focusId, bool animate);
+    void syncPageIndicator();
     void requestOpenFolder(std::uint32_t folderId);
     void openCapturedFolder();
     void closeFolder(bool preserveEditMode = false);
