@@ -769,20 +769,12 @@ void WiiUMenuApp::wireGlobalActions() {
     root.addAction(static_cast<uint64_t>(nxui::Button::ZL), [this]() {
         if (m_navigator.route() != switchu::navigation::Route::Home || focusRoot() != &rootBox())
             return;
-        int p = m_grid->currentPage() - 1;
-        if (p >= 0 && !m_grid->isTransitioning()) {
-            m_grid->startPageTransition(p);
-            m_audio.playSfx(Sfx::PageChange);
-        }
+        flipPage(-1);
     });
     root.addAction(static_cast<uint64_t>(nxui::Button::ZR), [this]() {
         if (m_navigator.route() != switchu::navigation::Route::Home || focusRoot() != &rootBox())
             return;
-        int p = m_grid->currentPage() + 1;
-        if (p < m_grid->totalPages() && !m_grid->isTransitioning()) {
-            m_grid->startPageTransition(p);
-            m_audio.playSfx(Sfx::PageChange);
-        }
+        flipPage(+1);
     });
     root.addAction(static_cast<uint64_t>(nxui::Button::Y), [this]() {
         if ((m_dialog && m_dialog->isActive()) ||
@@ -1037,6 +1029,19 @@ void WiiUMenuApp::handleTouch() {
     if (input.touchDown()) {
         float tx = input.touchX();
         float ty = input.touchY();
+
+        m_touchArrowLeft = m_touchArrowRight = false;
+        if (m_arrowAnimLeft.show > 0.5f && pageArrowRect(true).expanded(12.f).contains(tx, ty)) {
+            m_touchArrowLeft = true;
+            m_touchHitIndex = -1;
+            return;
+        }
+        if (m_arrowAnimRight.show > 0.5f && pageArrowRect(false).expanded(12.f).contains(tx, ty)) {
+            m_touchArrowRight = true;
+            m_touchHitIndex = -1;
+            return;
+        }
+
         m_touchAvatarTarget = hitAvatar(tx, ty);
         m_touchAvatarWasFocused = m_touchAvatarTarget && (focusManager().current() == m_touchAvatarTarget);
         if (m_touchAvatarTarget) {
@@ -1084,6 +1089,14 @@ void WiiUMenuApp::handleTouch() {
     }
 
     if (input.touchUp()) {
+        if (m_touchArrowLeft || m_touchArrowRight) {
+            const bool left = m_touchArrowLeft;
+            m_touchArrowLeft = m_touchArrowRight = false;
+            if (pageArrowRect(left).expanded(12.f).contains(input.touchX(), input.touchY()))
+                flipPage(left ? -1 : +1);
+            return;
+        }
+
         if (m_touchAvatarTarget) {
             float dx = input.touchDeltaX();
             float dy = input.touchDeltaY();
@@ -1110,13 +1123,8 @@ void WiiUMenuApp::handleTouch() {
 
         float dx = input.touchDeltaX();
         float dy = input.touchDeltaY();
-        if (std::abs(dx) > kSwipeThreshold && std::abs(dx) > std::abs(dy) * 1.5f) {
-            int p = m_grid->currentPage() + (dx < 0 ? 1 : -1);
-            if (p >= 0 && p < m_grid->totalPages() && !m_grid->isTransitioning()) {
-                m_grid->startPageTransition(p);
-                m_audio.playSfx(Sfx::PageChange);
-            }
-        }
+        if (std::abs(dx) > kSwipeThreshold && std::abs(dx) > std::abs(dy) * 1.5f)
+            flipPage(dx < 0 ? 1 : -1);
         m_touchHitIndex = -1;
         m_touchEditDragActive = false;
     }
