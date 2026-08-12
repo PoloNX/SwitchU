@@ -12,6 +12,7 @@ void AppletLauncher::init(Callbacks cbs) {
 
 #ifdef SWITCHU_MENU
 bool AppletLauncher::isAppRunning() const  { return m_appRunning; }
+bool AppletLauncher::appHasForeground() const { return m_appHasForeground; }
 bool AppletLauncher::isAppSuspended(uint64_t titleId) const {
     return m_suspendedTitleId != 0 && m_suspendedTitleId == titleId;
 }
@@ -144,9 +145,11 @@ void AppletLauncher::resumeApplication() {
         DebugLog::log("[launcher] no app suspended!");
         return;
     }
-    DebugLog::log("[launcher] resume, closing menu");
-    switchu::menu::smi_cmd::resumeApplication();
+    switchu::FileLog::logCommit("[launcher] resume: sending command");
+    const Result rc = switchu::menu::smi_cmd::resumeApplication();
+    switchu::FileLog::logCommit("[launcher] resume: command returned 0x%X", rc);
     if (m_cb.requestExit) m_cb.requestExit();
+    switchu::FileLog::logCommit("[launcher] resume: exit requested");
 }
 
 void AppletLauncher::terminateApplication() {
@@ -166,6 +169,7 @@ void AppletLauncher::checkRunningApplication() {
 #else
 
 bool AppletLauncher::isAppRunning() const            { return false; }
+bool AppletLauncher::appHasForeground() const        { return false; }
 bool AppletLauncher::isAppSuspended(uint64_t) const  { return false; }
 uint64_t AppletLauncher::suspendedTitleId() const    { return 0; }
 void AppletLauncher::setAppRunning(bool)             {}

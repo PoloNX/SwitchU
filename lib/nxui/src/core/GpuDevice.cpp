@@ -2,11 +2,29 @@
 #include <cstdio>
 #include <cstring>
 #include <array>
+#include <cstdarg>
 
 namespace nxui {
 
+void GpuDevice::logGpu(const char* fmt, ...) {
+    char buf[256];
+    va_list args;
+    va_start(args, fmt);
+    std::vsnprintf(buf, sizeof(buf), fmt, args);
+    va_end(args);
+    if (s_logSink) s_logSink(buf);
+    else std::fprintf(stderr, "%s\n", buf);
+}
+
+static void dkDebugCallback(void* userData, const char* context, DkResult result,
+                            const char* message) {
+    (void)userData;
+    GpuDevice::logGpu("[GpuDevice] deko3d ctx=%s result=%d msg=%s",
+                      context ? context : "?", (int)result, message ? message : "");
+}
+
 bool GpuDevice::initialize() {
-    m_dev   = dk::DeviceMaker{}.create();
+    m_dev   = dk::DeviceMaker{}.setCbDebug(dkDebugCallback).create();
     m_queue = dk::QueueMaker{m_dev}.setFlags(DkQueueFlags_Graphics).create();
 
     for (int i = 0; i < NUM_FB; ++i) {
@@ -157,7 +175,7 @@ void GpuDevice::waitIdle() {
 dk::UniqueMemBlock GpuDevice::allocImageMemory(uint32_t size) {
     size = (size + kGpuAlign - 1) & ~(kGpuAlign - 1);
     if (m_imageMemUsed + size > kDefaultImageBudget) {
-        std::fprintf(stderr, "[GpuDevice] image budget exceeded (%llu + %u > %llu), skipping\n",
+        GpuDevice::logGpu( "[GpuDevice] image budget exceeded (%llu + %u > %llu), skipping\n",
                      (unsigned long long)m_imageMemUsed, size,
                      (unsigned long long)kDefaultImageBudget);
         return {};  // return empty MemBlock — caller should check validity
@@ -182,7 +200,7 @@ GpuDevice::ImageAlloc GpuDevice::allocImageFromPool(uint32_t size, uint32_t alig
     if (alignment < kGpuAlign) alignment = kGpuAlign;
     size = (size + kGpuAlign - 1) & ~(kGpuAlign - 1);
     if (m_imageMemUsed + size > kDefaultImageBudget) {
-        std::fprintf(stderr, "[GpuDevice] pool budget exceeded (%llu + %u > %llu)\n",
+        GpuDevice::logGpu( "[GpuDevice] pool budget exceeded (%llu + %u > %llu)\n",
                      (unsigned long long)m_imageMemUsed, size,
                      (unsigned long long)kDefaultImageBudget);
         return {};
@@ -225,7 +243,7 @@ bool GpuDevice::uploadTexture(dk::Image& dst, const void* pixels, uint32_t size,
     if (m_uploadBatchActive) {
         const uint32_t stagingOffset = m_stagingPool.alloc(size, 256);
         if (stagingOffset == UINT32_MAX) {
-            std::fprintf(stderr, "[GpuDevice] upload batch staging budget exceeded (%u bytes)\n", size);
+            GpuDevice::logGpu( "[GpuDevice] upload batch staging budget exceeded (%u bytes)\n", size);
             return false;
         }
 
@@ -258,7 +276,7 @@ bool GpuDevice::uploadTexture(dk::Image& dst, const void* pixels, uint32_t size,
         srcGpu = tempStaging.getGpuAddr();
 
         if (!srcCpu || !srcGpu) {
-            std::fprintf(stderr, "[GpuDevice] Failed temp staging allocation for texture (%u bytes)\n", size);
+            GpuDevice::logGpu( "[GpuDevice] Failed temp staging allocation for texture (%u bytes)\n", size);
             return false;
         }
     }

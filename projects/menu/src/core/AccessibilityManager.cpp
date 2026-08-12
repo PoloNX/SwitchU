@@ -75,6 +75,12 @@ bool AccessibilityManager::initializeConfigured(const std::string& dataRoot,
     if (m_initialized.load(std::memory_order_acquire))
         return true;
 
+
+    if (!m_enabled) {
+        DebugLog::log("[accessibility] disabled by configuration; espeak init skipped");
+        return false;
+    }
+
     std::string configuredVoice = voiceForLanguageTag(voice);
     const int configuredRate = clampSpeechRate(speechRate);
 

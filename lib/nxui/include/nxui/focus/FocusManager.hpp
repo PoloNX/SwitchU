@@ -28,6 +28,12 @@ class FocusManager {
 public:
     using FocusChangedCb = std::function<void(Widget*, Widget*)>;
 
+    FocusManager();
+    ~FocusManager();
+
+    FocusManager(const FocusManager&) = delete;
+    FocusManager& operator=(const FocusManager&) = delete;
+
     // Legacy grid mode
     void setGrid(std::vector<Widget*> items, int cols);
     void moveLeft();
@@ -68,6 +74,10 @@ public:
     /// Notify the focus manager that a widget is being destroyed or removed.
     /// Clears any internal references to it (m_items, m_touchTarget, etc.).
     void invalidateWidget(Widget* w);
+
+    /// Same, on every live manager. Called by ~Widget(): the managers cache raw
+    /// pointers and have no other way of learning that a widget went away.
+    static void forgetWidget(Widget* w);
 
 private:
     void changeFocus(int newIdx);

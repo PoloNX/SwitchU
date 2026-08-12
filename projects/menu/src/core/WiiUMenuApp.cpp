@@ -306,18 +306,10 @@ bool WiiUMenuApp::onCreate() {
             SD_ASSETS, accessibilityVoice, accessibilityRate);
     }
 
-    m_audioFuture = m_threadPool.submit([this]() {
-        m_audio.initialize();
-        m_availablePresets = scanAvailablePresets();
-        if (!isPackageSoundPreset(m_config.soundPreset) && m_config.soundPreset != kBuiltInSoundPreset) {
-            DebugLog::log("[audio] preset '%s' is no longer shipped, falling back to '%s'",
-                          m_config.soundPreset.c_str(),
-                          kBuiltInSoundPreset);
-            m_config.soundPreset = kBuiltInSoundPreset;
-        }
-        loadSoundPreset(resolveSoundPresetId(m_config.soundPreset));
-    });
-    DebugLog::log("[init] Audio loading started on background thread");
+    // Opening the audio session here froze the console when a game was still
+    // suspended. Hold it back until the menu has rendered and settled.
+    m_audioInitPending = true;
+    DebugLog::log("[init] Audio initialisation deferred past the first frames");
 
     DebugLog::log("[init] Bluetooth audio manager deferred until its Settings tab is opened");
     DebugLog::log("[init] Theme Shop HTTP runtime deferred until first request");
@@ -2260,6 +2252,32 @@ void WiiUMenuApp::onUpdate(float dt) {
                                    resolveThemeAssetPath(m_effectivePreset,
                                                          m_effectivePreset.icons.basePath));
             DebugLog::log("[init] deferred initial icon/sidebar uploads done");
+        }
+    }
+
+    if (m_audioInitPending) {
+        // Do not open audio while an application has the foreground. A suspended
+        // app can remain resident after returning HOME, and audout SDL2 can
+        // coexist with that state.
+        if (m_launcher.appHasForeground()) {
+            if (!m_audioHeldLogged) {
+                m_audioHeldLogged = true;
+                DebugLog::log("[audio] held back: an application still has foreground");
+            }
+        } else {
+            m_audioInitPending = false;
+            DebugLog::log("[audio] no foreground application; starting audio subsystem");
+            m_audioFuture = m_threadPool.submit([this]() {
+                m_audio.initialize();
+                m_availablePresets = scanAvailablePresets();
+                if (!isPackageSoundPreset(m_config.soundPreset) &&
+                    m_config.soundPreset != kBuiltInSoundPreset) {
+                    DebugLog::log("[audio] preset '%s' is no longer shipped, falling back to '%s'",
+                                  m_config.soundPreset.c_str(), kBuiltInSoundPreset);
+                    m_config.soundPreset = kBuiltInSoundPreset;
+                }
+                loadSoundPreset(resolveSoundPresetId(m_config.soundPreset));
+            });
         }
     }
 

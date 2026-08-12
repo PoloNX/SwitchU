@@ -19,7 +19,7 @@ public:
     using Ptr = std::shared_ptr<Widget>;
 
     Widget() = default;
-    virtual ~Widget() = default;
+    virtual ~Widget(); // unregisters from every FocusManager caching this pointer
 
     // Tree
     void addChild(Ptr child);
