@@ -422,7 +422,6 @@
     "error_title": "Folder error",
     "save_error": "The folder change could not be saved.",
     "keyboard_error": "The keyboard could not be opened.",
-    "move_out": "Move out",
     "place_on_home": "Choose an empty slot, then press A",
     "place_hint": "A to place the software here. B to cancel.",
     "added_confirmation": "Software added to folder: ",

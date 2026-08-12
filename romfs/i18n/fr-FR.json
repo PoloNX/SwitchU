@@ -422,7 +422,6 @@
     "error_title": "Erreur de dossier",
     "save_error": "La modification du dossier n’a pas pu être enregistrée.",
     "keyboard_error": "Le clavier n’a pas pu être ouvert.",
-    "move_out": "Sortir du dossier",
     "place_on_home": "Choisissez une case vide, puis appuyez sur A",
     "place_hint": "A pour placer le logiciel ici. B pour annuler.",
     "added_confirmation": "Logiciel ajouté au dossier : ",
