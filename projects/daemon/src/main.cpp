@@ -1363,7 +1363,14 @@ static bool handleAction(daemon::SystemAction& action) {
             appletRequestToGetForeground();
             g_foregroundAppletActive = true;
             g_pendingForegroundAppletHome = false;
-            Result rc = pselShowUserCreator();
+            // pselShowUserCreator() first calls accountIsUserRegistrationRequestPermitted(),
+            // which acc denies us and turns into 0x6159; drive the applet directly instead.
+            PselUiSettings ui{};
+            Result rc = pselUiCreate(&ui, PselUiMode_UserCreator);
+            if (R_SUCCEEDED(rc))
+                rc = pselUiShow(&ui, nullptr);
+            if (rc == MAKERESULT(124, 1)) // nn::account::ResultCancelledByUser
+                rc = 0;
             g_foregroundAppletActive = false;
             recordOperationResult(action.requestId,
                                   smi::SystemMessage::LaunchUserCreator, rc);

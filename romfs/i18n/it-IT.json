@@ -424,14 +424,14 @@
       "open": "A per aprire.",
       "open_user_page": "A per aprire la pagina utente.",
       "grid_empty": "Usa la croce direzionale per passare a un’altra casella.",
-      "game_launchable": "A per avviare. X per opzioni. Y per spostare. ZL o ZR per cambiare pagina.",
+      "game_launchable": "A per avviare. Plus per opzioni. Y per spostare. ZL o ZR per cambiare pagina.",
       "game_blocked": "A per mostrare il motivo del blocco."
     },
     "actions": {
       "edit_mode": "Croce direzionale per scegliere la nuova posizione. Y per piazzare. B per annullare.",
       "empty_slot": "Croce direzionale per navigare. ZL o ZR per cambiare pagina.",
       "game_blocked": "A per mostrare il motivo. Y per spostare. ZL o ZR per cambiare pagina.",
-      "game_launchable": "A per avviare. X per opzioni. Y per spostare. ZL o ZR per cambiare pagina.",
+      "game_launchable": "A per avviare. Plus per opzioni. Y per spostare. ZL o ZR per cambiare pagina.",
       "settings": "Su e giù per scegliere categoria. A o destra per entrare. B per chiudere.",
       "themes": "Su e giù per navigare. A per scegliere. B per chiudere.",
       "dialog": "Sinistra e destra per cambiare scelta. A conferma. B annulla."

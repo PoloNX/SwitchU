@@ -1,16 +1,10 @@
 #include "FolderOptionsScreen.hpp"
+#include "widgets/FolderPalette.hpp"
 #include <nxui/core/I18n.hpp>
 #include <nxui/core/Renderer.hpp>
 #include <algorithm>
 
 namespace {
-
-const nxui::Color kFolderColors[] = {
-    {0.22f, 0.68f, 0.86f, 1.f}, {0.28f, 0.82f, 0.31f, 1.f},
-    {0.98f, 0.77f, 0.12f, 1.f}, {1.00f, 0.49f, 0.13f, 1.f},
-    {0.93f, 0.28f, 0.30f, 1.f}, {0.94f, 0.30f, 0.64f, 1.f},
-    {0.57f, 0.29f, 0.88f, 1.f}, {0.38f, 0.40f, 0.43f, 1.f},
-};
 
 std::string ellipsize(nxui::Font* font, std::string text, float maxWidth) {
     if (!font || font->measure(text).x <= maxWidth)
@@ -129,7 +123,7 @@ void FolderOptionsScreen::drawOverlayHeader(nxui::Renderer& ren,
                                nxui::Color::white().withAlpha(0.90f * opacity),
                                17.f, 2.f);
 
-    const nxui::Color accent = kFolderColors[std::clamp(m_folder.colorIndex, 0, 7)];
+    const nxui::Color accent = switchu::folders::colorForIndex(m_folder.colorIndex);
     constexpr float cell = 19.f;
     constexpr float gap = 4.f;
     const float gridSize = cell * 3.f + gap * 2.f;

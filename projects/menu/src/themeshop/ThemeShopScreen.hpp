@@ -45,6 +45,7 @@ public:
     void onSfxVolumeChange(FloatCb cb)   { m_sfxVolumeCb = std::move(cb); }
     void onGridColumnsChange(IntCb cb)   { m_gridColumnsCb = std::move(cb); }
     void onGridRowsChange(IntCb cb)      { m_gridRowsCb = std::move(cb); }
+    void onActionHintStyleChange(IntCb cb) { m_actionHintStyleCb = std::move(cb); }
     void onNextTrack(VoidCb cb)          { m_nextTrackCb = std::move(cb); }
     void onThemeShopApply(StringCb cb)   { m_themeShopApplyCb = std::move(cb); }
     void onThemeShopDelete(StringCb cb)  { m_themeShopDeleteCb = std::move(cb); }
@@ -60,6 +61,9 @@ public:
     void setGridLayoutState(int columns, int rows) {
         m_gridColumns = std::clamp(columns, 3, 8);
         m_gridRows = std::clamp(rows, 2, 5);
+    }
+    void setActionHintStyleState(const std::string& style) {
+        m_actionHintStyle = style == "panel" ? 0 : 1;
     }
 
     void setThreadPool(nxui::ThreadPool* pool);
@@ -195,6 +199,7 @@ private:
     FloatCb m_sfxVolumeCb;
     IntCb m_gridColumnsCb;
     IntCb m_gridRowsCb;
+    IntCb m_actionHintStyleCb;
     VoidCb m_nextTrackCb;
     StringCb m_themeShopApplyCb;
     StringCb m_themeShopDeleteCb;
@@ -207,6 +212,7 @@ private:
     float m_sfxVolume = 0.7f;
     int m_gridColumns = 5;
     int m_gridRows = 3;
+    int m_actionHintStyle = 1;
     std::string m_searchQuery;
     std::vector<ThemeShopEntry> m_allThemeShopEntries;
     std::vector<ThemeShopEntry> m_themeShopEntries;

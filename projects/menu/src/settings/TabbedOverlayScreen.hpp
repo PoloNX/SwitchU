@@ -48,6 +48,7 @@ public:
     bool isFullyVisible() const { return m_active && !m_animating; }
 
     void rebuildCurrentTab();
+    void refreshCurrentTabWidgets(); // place: keeps the other tabs loaded and the in-flight loaders untouched.
     void handleTouch(nxui::Input& input);
     void warmup();
 
@@ -207,6 +208,11 @@ protected:
     static constexpr float kPanelRadius   = 26.f;
     static constexpr float kInnerPad      = 30.f;
 
+    // Staggered reveal of the content rows after a tab switch.
+    static constexpr float kRowStaggerDelay = 0.035f;   // between two rows
+    static constexpr float kRowRevealDur    = 0.24f;    // per row
+    static constexpr float kContentStaggerDone = 99.f;
+
     nxui::Rect panelRect() const;
     nxui::Rect panelRect(float scale) const;
     nxui::Rect tabsRect() const;
@@ -242,6 +248,9 @@ protected:
     int   m_tabSwitchDir    = 0;
     nxui::AnimatedFloat m_contentSlideAnim;
     nxui::AnimatedFloat m_tabAccentW;
+    // Seconds since the last tab switch, driving the staggered row reveal.
+    // Starts finished so rows are never hidden outside a switch.
+    float m_contentStaggerT = kContentStaggerDone;
 
     bool m_dropdownOpen = false;
     bool m_dropdownClosing = false;

@@ -424,14 +424,14 @@
       "open": "A zum Öffnen.",
       "open_user_page": "A zum Öffnen der Benutzerseite.",
       "grid_empty": "Mit dem Steuerkreuz zu einem anderen Feld wechseln.",
-      "game_launchable": "A zum Starten. X für Optionen. Y zum Verschieben. ZL oder ZR zum Seitenwechsel.",
+      "game_launchable": "A zum Starten. Plus für Optionen. Y zum Verschieben. ZL oder ZR zum Seitenwechsel.",
       "game_blocked": "A zeigt den Grund der Sperre."
     },
     "actions": {
       "edit_mode": "Steuerkreuz wählt die neue Position. Y zum Platzieren. B zum Abbrechen.",
       "empty_slot": "Steuerkreuz zum Navigieren. ZL oder ZR zum Seitenwechsel.",
       "game_blocked": "A zeigt den Grund. Y zum Verschieben. ZL oder ZR zum Seitenwechsel.",
-      "game_launchable": "A zum Starten. X für Optionen. Y zum Verschieben. ZL oder ZR zum Seitenwechsel.",
+      "game_launchable": "A zum Starten. Plus für Optionen. Y zum Verschieben. ZL oder ZR zum Seitenwechsel.",
       "settings": "Hoch und runter wählen eine Kategorie. A oder rechts zum Öffnen. B zum Schließen.",
       "themes": "Hoch und runter zum Navigieren. A zum Auswählen. B zum Schließen.",
       "dialog": "Links und rechts ändern die Auswahl. A bestätigt. B bricht ab."

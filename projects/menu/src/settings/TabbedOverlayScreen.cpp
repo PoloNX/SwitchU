@@ -11,6 +11,8 @@
 #include <cstring>
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <unordered_map>
 static constexpr float kSettingsBlurRadius = 6.0f;
 static constexpr int kSettingsBlurIter = 1;
 
@@ -20,6 +22,16 @@ static constexpr float kTabRailInset = 14.f;
 static constexpr float kTabCardGap = 10.f;
 static constexpr float kContentCardInsetX = 18.f;
 static constexpr float kContentCardInsetY = 8.f;
+
+constexpr size_t kWrapHeightCacheLimit = 256;
+std::unordered_map<std::string, float> g_wrapHeightCache;
+
+std::string wrapHeightCacheKey(nxui::Font* font, const std::string& label, float labelWidth) {
+    return std::to_string((std::uintptr_t)font)
+         + "\n" + std::to_string(font ? font->revision() : 0)
+         + "\n" + std::to_string((int)std::lround(labelWidth * 4.f))
+         + "\n" + label;
+}
 
 class SettingsTabWidget final : public nxui::GlassBox {
 public:
@@ -226,13 +238,24 @@ float TabbedOverlayScreen::itemHeight(const SettingItem& item, float contentWidt
     if (item.type == ItemType::Section) return kSectionHeight;
     if (!item.wrapLabel) return kRowHeight;
 
+    // Content card inset (36), card content inset (28), row inset (40).
+    const float labelWidth = std::max(1.f, contentWidth - 104.f);
+
+    std::string key = wrapHeightCacheKey(m_font, item.label, labelWidth);
+    auto cached = g_wrapHeightCache.find(key);
+    if (cached != g_wrapHeightCache.end())
+        return cached->second;
+
     nxui::Label probe(item.label);
     if (m_font) probe.setFont(m_font);
     probe.setScale(0.94f);
     probe.setMultiline(true);
-    // Content card inset (36), card content inset (28), row inset (40).
-    const float labelWidth = std::max(1.f, contentWidth - 104.f);
-    return std::max(kRowHeight, probe.measureWrappedText(labelWidth).y + 34.f);
+    const float height = std::max(kRowHeight, probe.measureWrappedText(labelWidth).y + 34.f);
+
+    if (g_wrapHeightCache.size() >= kWrapHeightCacheLimit)
+        g_wrapHeightCache.clear();
+    g_wrapHeightCache.emplace(std::move(key), height);
+    return height;
 }
 
 void TabbedOverlayScreen::setTheme(const nxui::Theme* t) {
@@ -282,6 +305,9 @@ void TabbedOverlayScreen::show() {
     m_trackToastHold = 0.f;
     m_trackToastFading = false;
     m_contentSlideAnim.setImmediate(1.f);
+    // Opening the panel already fades the content in via m_tabReveal; the
+    // cascade is reserved for tab switches.
+    m_contentStaggerT = kContentStaggerDone;
     m_tabAccentW.setImmediate(3.f);
     if (m_tabBar) rebuildTabBar();
     if (m_tabContent) rebuildContentItems();
@@ -377,8 +403,8 @@ void TabbedOverlayScreen::rebuildContentItems() {
     ensureTabLoaded(m_tabIndex);
     auto& items = m_tabs[m_tabIndex].items;
     auto& cache = m_cachedTabContentWidgets[(size_t)m_tabIndex];
-    DebugLog::log("[settings] rebuildContent tab=%d items=%d cache=%s",
-                  m_tabIndex, (int)items.size(), cache.empty() ? "miss" : "hit");
+    // DebugLog::log("[settings] rebuildContent tab=%d items=%d cache=%s",
+    //               m_tabIndex, (int)items.size(), cache.empty() ? "miss" : "hit");
 
     if (cache.empty()) {
         cache.reserve(items.size());
@@ -633,12 +659,11 @@ void TabbedOverlayScreen::drawContent(nxui::Renderer& ren, const nxui::Rect& pan
     int focusedRawIdx = (m_focusArea == FocusArea::Content && focusableCount() > 0)
         ? rawIndexFromFocusable(m_contentIdx) : -1;
 
-    float slideT = std::clamp(m_contentSlideAnim.value(), 0.f, 1.f);
-    float slideOffset = (1.f - slideT) * 18.f * (float)m_tabSwitchDir;
-    float slideOpacity = opacity * slideT * std::clamp(m_tabReveal.value(), 0.f, 1.f);
+    const float reveal = opacity * std::clamp(m_tabReveal.value(), 0.f, 1.f);
 
-    float y = cr.y + 16.f - m_scrollY + slideOffset;
+    float y = cr.y + 16.f - m_scrollY;
     float x = cr.x;
+    int visibleRank = 0;
     int n = std::min((int)itemChildren.size(), (int)items.size());
     for (int i = 0; i < n; ++i) {
         float h = itemHeight(items[i], cr.width);
@@ -658,12 +683,24 @@ void TabbedOverlayScreen::drawContent(nxui::Renderer& ren, const nxui::Rect& pan
             continue;
         }
 
+        // Rows cascade in one after another, top to bottom. Ranking by visible
+        // position rather than item index keeps the first row on screen leading
+        // the cascade even when the tab was left scrolled down.
+        const float rowT = std::clamp(
+            (m_contentStaggerT - (float)visibleRank * kRowStaggerDelay) / kRowRevealDur,
+            0.f, 1.f);
+        const float rowEase = nxui::Easing::outCubic(rowT);
+        ++visibleRank;
+
+        itemRect.y += (1.f - rowEase) * 18.f * (float)m_tabSwitchDir;
+        const float rowOpacity = reveal * rowEase;
+
         itemChildren[i]->setRect(itemRect);
-        itemChildren[i]->setOpacity(slideOpacity);
+        itemChildren[i]->setOpacity(rowOpacity);
 
         auto* card = static_cast<SettingsItemCard*>(itemChildren[i].get());
         bool selected = (i == focusedRawIdx);
-        card->sync(m_theme, selected, slideOpacity);
+        card->sync(m_theme, selected, rowOpacity);
 
         if (selected) {
             m_focusCursor.moveTo(itemChildren[i]->rect().expanded(1.f),

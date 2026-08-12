@@ -67,6 +67,20 @@ void TabbedOverlayScreen::rebuildCurrentTab() {
     rebuildContentItems();
 }
 
+void TabbedOverlayScreen::refreshCurrentTabWidgets() {
+    if (usesCustomContentLayout()) {
+        rebuildContentItems();
+        return;
+    }
+
+    if (m_tabIndex >= 0 && m_tabIndex < (int)m_cachedTabContentWidgets.size())
+        m_cachedTabContentWidgets[(size_t)m_tabIndex].clear();
+
+    clampContentIdx();
+    m_contentIdx = std::clamp(m_contentIdx, 0, std::max(0, focusableCount() - 1));
+    rebuildContentItems();
+}
+
 void TabbedOverlayScreen::requestDialog(const std::string& title, const std::string& msg,
                                    std::vector<DialogButtonDef> buttons) {
     if (m_dialogRequestCb) m_dialogRequestCb(title, msg, std::move(buttons));

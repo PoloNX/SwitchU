@@ -7,6 +7,7 @@ struct AppConfig {
     float sfxVolume    = 0.7f;
     int   gridColumns  = 5;
     int   gridRows     = 3;
+    std::string actionHintStyle = "capsules";
     std::string uiLanguageOverride = "auto";
     std::string soundPreset = "wiiu";
     bool  defaultProfileEnabled = false;

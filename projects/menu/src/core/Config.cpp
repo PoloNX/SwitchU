@@ -36,6 +36,7 @@ bool AppConfig::load() {
     readJsonOpt(j, "sfxVolume", sfxVolume);
     readJsonOpt(j, "gridColumns", gridColumns);
     readJsonOpt(j, "gridRows", gridRows);
+    readJsonOpt(j, "actionHintStyle", actionHintStyle);
     readJsonOpt(j, "uiLanguageOverride", uiLanguageOverride);
     readJsonOpt(j, "soundPreset", soundPreset);
     readJsonOpt(j, "defaultProfileEnabled", defaultProfileEnabled);
@@ -55,6 +56,8 @@ bool AppConfig::load() {
     if (sfxVolume   > 1.f) sfxVolume   = 1.f;
     gridColumns = std::clamp(gridColumns, 3, 8);
     gridRows = std::clamp(gridRows, 2, 5);
+    if (actionHintStyle != "panel" && actionHintStyle != "capsules")
+        actionHintStyle = "capsules";
     if (uiLanguageOverride.empty()) uiLanguageOverride = "auto";
     if (soundPreset.empty()) soundPreset = "wiiu";
     if (!defaultProfileEnabled) defaultProfileUid.clear();
@@ -76,6 +79,7 @@ bool AppConfig::save() const {
     j["sfxVolume"] = sfxVolume;
     j["gridColumns"] = std::clamp(gridColumns, 3, 8);
     j["gridRows"] = std::clamp(gridRows, 2, 5);
+    j["actionHintStyle"] = actionHintStyle == "panel" ? "panel" : "capsules";
     j["uiLanguageOverride"] = uiLanguageOverride;
     j["soundPreset"] = soundPreset;
     j["defaultProfileEnabled"] = defaultProfileEnabled;
