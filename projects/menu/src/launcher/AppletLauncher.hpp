@@ -31,6 +31,7 @@ public:
     void checkRunningApplication();
 
     bool     isAppRunning()  const;
+    bool     appHasForeground() const;
     bool     isAppSuspended(uint64_t titleId) const;
     uint64_t suspendedTitleId() const;
 

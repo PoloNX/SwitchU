@@ -45,11 +45,15 @@ jobs:
         run: |
           if command -v sudo >/dev/null 2>&1; then
             sudo apt-get update
-            sudo apt-get -y install gcc g++ zip
+            sudo apt-get -y install curl gcc g++ zip
           else
             apt-get update
-            apt-get -y install gcc g++ zip
+            apt-get -y install curl gcc g++ zip
           fi
+
+      - name: Install SDL2 audout backend
+        shell: bash
+        run: tools/install-switch-sdl2-audout.sh
 
       - name: Set xmake env
         run: echo "XMAKE_GLOBALDIR=${{ runner.workspace }}/xmake-global" >> "$GITHUB_ENV"

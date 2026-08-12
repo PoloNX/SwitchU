@@ -2144,16 +2144,17 @@ void WiiUMenuApp::onUpdate(float dt) {
     }
 
     if (m_audioInitPending) {
-        // Opening an audio session while an application is suspended freezes the
-        // console: it keeps its own. Wait until it is gone, however long that is.
-        if (m_launcher.isAppRunning()) {
+        // Do not open audio while an application has the foreground. A suspended
+        // app can remain resident after returning HOME, and audout SDL2 can
+        // coexist with that state.
+        if (m_launcher.appHasForeground()) {
             if (!m_audioHeldLogged) {
                 m_audioHeldLogged = true;
-                DebugLog::log("[audio] held back: an application is still suspended");
+                DebugLog::log("[audio] held back: an application still has foreground");
             }
         } else {
             m_audioInitPending = false;
-            DebugLog::log("[audio] no application resident; starting audio subsystem");
+            DebugLog::log("[audio] no foreground application; starting audio subsystem");
             m_audioFuture = m_threadPool.submit([this]() {
                 m_audio.initialize();
                 m_availablePresets = scanAvailablePresets();
