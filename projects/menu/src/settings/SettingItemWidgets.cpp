@@ -7,27 +7,65 @@
 #include <nxui/widgets/GlassWidget.hpp>
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <unordered_map>
 
 namespace settings::widgets {
 
 namespace {
 
-std::string fitTextToWidth(nxui::Font* font, const std::string& text, float scale, float maxWidth) {
-    if (!font || text.empty() || maxWidth <= 4.f)
-        return {};
+constexpr size_t kFitCacheLimit = 512;
 
+std::unordered_map<std::string, std::string> g_fitCache;
+
+std::string fitCacheKey(nxui::Font* font, const std::string& text, float scale, float maxWidth) {
+    return std::to_string((std::uintptr_t)font)
+         + "\n" + std::to_string(font ? font->revision() : 0)
+         + "\n" + std::to_string((int)std::lround(maxWidth * 4.f))
+         + "\n" + std::to_string((int)std::lround(scale * 1000.f))
+         + "\n" + text;
+}
+
+void popCodepoint(std::string& s) {
+    while (!s.empty()) {
+        const unsigned char c = (unsigned char)s.back();
+        s.pop_back();
+        if ((c & 0xC0) != 0x80)
+            break;
+    }
+}
+
+std::string fitTextToWidthUncached(nxui::Font* font, const std::string& text,
+                                   float scale, float maxWidth) {
     if (font->measure(text).x * scale <= maxWidth)
         return text;
 
     constexpr const char* kEllipsis = "...";
     std::string out = text;
     while (!out.empty()) {
-        out.pop_back();
+        popCodepoint(out); // remove one codepoint at a time
         std::string candidate = out + kEllipsis;
         if (font->measure(candidate).x * scale <= maxWidth)
             return candidate;
     }
     return kEllipsis;
+}
+
+// Returns a fitted string, using a cache to avoid repeated measurements of the same text.
+std::string fitTextToWidth(nxui::Font* font, const std::string& text, float scale, float maxWidth) {
+    if (!font || text.empty() || maxWidth <= 4.f)
+        return {};
+
+    std::string key = fitCacheKey(font, text, scale, maxWidth);
+    auto cached = g_fitCache.find(key);
+    if (cached != g_fitCache.end())
+        return cached->second;
+
+    std::string result = fitTextToWidthUncached(font, text, scale, maxWidth);
+    if (g_fitCache.size() >= kFitCacheLimit)
+        g_fitCache.clear();
+    g_fitCache.emplace(std::move(key), result);
+    return result;
 }
 
 class LoadingSpinnerWidget final : public nxui::Box {

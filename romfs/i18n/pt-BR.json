@@ -424,14 +424,14 @@
       "open": "A para abrir.",
       "open_user_page": "A para abrir a página do usuário.",
       "grid_empty": "Use o direcional para ir para outro espaço.",
-      "game_launchable": "A para iniciar. X para opções. Y para mover. ZL ou ZR para mudar de página.",
+      "game_launchable": "A para iniciar. Plus para opções. Y para mover. ZL ou ZR para mudar de página.",
       "game_blocked": "A para mostrar o motivo do bloqueio."
     },
     "actions": {
       "edit_mode": "Direcional para escolher a nova posição. Y para colocar. B para cancelar.",
       "empty_slot": "Direcional para navegar. ZL ou ZR para mudar de página.",
       "game_blocked": "A para mostrar o motivo. Y para mover. ZL ou ZR para mudar de página.",
-      "game_launchable": "A para iniciar. X para opções. Y para mover. ZL ou ZR para mudar de página.",
+      "game_launchable": "A para iniciar. Plus para opções. Y para mover. ZL ou ZR para mudar de página.",
       "settings": "Cima e baixo para escolher categoria. A ou direita para entrar. B para fechar.",
       "themes": "Cima e baixo para navegar. A para escolher. B para fechar.",
       "dialog": "Esquerda e direita mudam a escolha. A confirma. B cancela."

@@ -92,7 +92,7 @@ void SettingsScreen::startAsyncTabLoad(int tabIndex) {
     if (idx >= m_tabs.size())
         return;
 
-    DebugLog::log("[settings] starting async tab load %d", tabIndex);
+    // DebugLog::log("[settings] starting async tab load %d", tabIndex);
     m_loadingTabs[idx] = true;
     m_tabTasks[idx] = std::async(std::launch::async, [this, tabIndex]() {
         return buildTabNow(tabIndex);

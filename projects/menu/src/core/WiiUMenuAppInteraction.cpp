@@ -1,5 +1,6 @@
 #include "WiiUMenuApp.hpp"
 #include "widgets/GlossyIcon.hpp"
+#include "widgets/FolderPalette.hpp"
 #include "DebugLog.hpp"
 #ifdef SWITCHU_MENU
 #include <switchu/control_cache.hpp>
@@ -764,23 +765,22 @@ void WiiUMenuApp::wireGlobalActions() {
         m_accessibility.repeatLastAnnouncement();
     });
 
+    // The grid holds the open folder's model, so paging works inside a folder too.
     root.addAction(static_cast<uint64_t>(nxui::Button::ZL), [this]() {
-        if (m_navigator.route() != switchu::navigation::Route::Home || focusRoot() != &rootBox() ||
-            m_openFolderId != 0)
+        if (m_navigator.route() != switchu::navigation::Route::Home || focusRoot() != &rootBox())
             return;
         int p = m_grid->currentPage() - 1;
         if (p >= 0 && !m_grid->isTransitioning()) {
-            m_grid->startWaveTransition(p);
+            m_grid->startPageTransition(p);
             m_audio.playSfx(Sfx::PageChange);
         }
     });
     root.addAction(static_cast<uint64_t>(nxui::Button::ZR), [this]() {
-        if (m_navigator.route() != switchu::navigation::Route::Home || focusRoot() != &rootBox() ||
-            m_openFolderId != 0)
+        if (m_navigator.route() != switchu::navigation::Route::Home || focusRoot() != &rootBox())
             return;
         int p = m_grid->currentPage() + 1;
         if (p < m_grid->totalPages() && !m_grid->isTransitioning()) {
-            m_grid->startWaveTransition(p);
+            m_grid->startPageTransition(p);
             m_audio.playSfx(Sfx::PageChange);
         }
     });
@@ -956,6 +956,8 @@ void WiiUMenuApp::showFolderContextMenu(std::uint32_t folderId) {
             if (index < static_cast<int>(icons.size()) && icons[static_cast<std::size_t>(index)])
                 icons[static_cast<std::size_t>(index)]->setFolderColorIndex(colorIndex);
         }
+        if (m_openFolderId == folderId && m_pageIndicator)
+            m_pageIndicator->setActiveColor(switchu::folders::colorForIndex(colorIndex));
     });
     m_folderOptions->onSizeChange([this, folderId](int sizeIndex) {
         if (!m_folderStore.setSizeIndex(folderId, sizeIndex))
@@ -966,7 +968,7 @@ void WiiUMenuApp::showFolderContextMenu(std::uint32_t folderId) {
         auto& local = nxui::I18n::instance();
         m_dialogReturnFocus = m_folderOptions.get();
         m_dialog->show(local.tr("folder.delete", "Delete folder"),
-                       local.tr("folder.delete_desc", "Games inside will return to the HOME menu.") + "\n" + name,
+                       local.tr("folder.delete_desc", "Games inside will return to the HOME menu."),
                        {
                            {local.tr("button.cancel", "Cancel"), {}, true},
                            {local.tr("button.delete", "Delete"), [this, folderId]() {
@@ -1111,7 +1113,7 @@ void WiiUMenuApp::handleTouch() {
         if (std::abs(dx) > kSwipeThreshold && std::abs(dx) > std::abs(dy) * 1.5f) {
             int p = m_grid->currentPage() + (dx < 0 ? 1 : -1);
             if (p >= 0 && p < m_grid->totalPages() && !m_grid->isTransitioning()) {
-                m_grid->startWaveTransition(p);
+                m_grid->startPageTransition(p);
                 m_audio.playSfx(Sfx::PageChange);
             }
         }
@@ -1138,6 +1140,10 @@ void WiiUMenuApp::handleSystemAction(SysAction a) {
 #endif
 
 void WiiUMenuApp::updateCursor() {
+    if (m_grid && m_grid->isTransitioning()) {
+        if (m_cursor) m_cursor->setVisible(false); // it would sit at the landing spot
+        return;
+    }
     if (m_navigator.route() != switchu::navigation::Route::Home ||
         (m_dialog && m_dialog->isActive()) ||
         (m_progressDialog && m_progressDialog->isActive()) ||

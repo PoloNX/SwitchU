@@ -386,9 +386,9 @@ void IconStreamer::onPageChanged(int currentPage, int iconsPerPage,
             m_appToSlot[(size_t)appIndex] = poolIdx;
             if (appIndex < (int)allIcons.size())
                 allIcons[(size_t)appIndex]->setTexture(&slot.texture);
-            DebugLog::log("[streamer] uploaded title=0x%016lX app=%d pending=%d",
-                          static_cast<unsigned long>(titleId), appIndex,
-                          static_cast<int>(m_pendingDecodes.size()));
+            // DebugLog::log("[streamer] uploaded title=0x%016lX app=%d pending=%d",
+            //               static_cast<unsigned long>(titleId), appIndex,
+            //               static_cast<int>(m_pendingDecodes.size()));
         } else {
             slot.appIndex = -1;
             m_freeSlots.push_back(poolIdx);

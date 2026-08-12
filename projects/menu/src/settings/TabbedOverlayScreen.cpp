@@ -11,6 +11,8 @@
 #include <cstring>
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <unordered_map>
 static constexpr float kSettingsBlurRadius = 6.0f;
 static constexpr int kSettingsBlurIter = 1;
 
@@ -20,6 +22,16 @@ static constexpr float kTabRailInset = 14.f;
 static constexpr float kTabCardGap = 10.f;
 static constexpr float kContentCardInsetX = 18.f;
 static constexpr float kContentCardInsetY = 8.f;
+
+constexpr size_t kWrapHeightCacheLimit = 256;
+std::unordered_map<std::string, float> g_wrapHeightCache;
+
+std::string wrapHeightCacheKey(nxui::Font* font, const std::string& label, float labelWidth) {
+    return std::to_string((std::uintptr_t)font)
+         + "\n" + std::to_string(font ? font->revision() : 0)
+         + "\n" + std::to_string((int)std::lround(labelWidth * 4.f))
+         + "\n" + label;
+}
 
 class SettingsTabWidget final : public nxui::GlassBox {
 public:
@@ -226,13 +238,24 @@ float TabbedOverlayScreen::itemHeight(const SettingItem& item, float contentWidt
     if (item.type == ItemType::Section) return kSectionHeight;
     if (!item.wrapLabel) return kRowHeight;
 
+    // Content card inset (36), card content inset (28), row inset (40).
+    const float labelWidth = std::max(1.f, contentWidth - 104.f);
+
+    std::string key = wrapHeightCacheKey(m_font, item.label, labelWidth);
+    auto cached = g_wrapHeightCache.find(key);
+    if (cached != g_wrapHeightCache.end())
+        return cached->second;
+
     nxui::Label probe(item.label);
     if (m_font) probe.setFont(m_font);
     probe.setScale(0.94f);
     probe.setMultiline(true);
-    // Content card inset (36), card content inset (28), row inset (40).
-    const float labelWidth = std::max(1.f, contentWidth - 104.f);
-    return std::max(kRowHeight, probe.measureWrappedText(labelWidth).y + 34.f);
+    const float height = std::max(kRowHeight, probe.measureWrappedText(labelWidth).y + 34.f);
+
+    if (g_wrapHeightCache.size() >= kWrapHeightCacheLimit)
+        g_wrapHeightCache.clear();
+    g_wrapHeightCache.emplace(std::move(key), height);
+    return height;
 }
 
 void TabbedOverlayScreen::setTheme(const nxui::Theme* t) {
@@ -377,8 +400,8 @@ void TabbedOverlayScreen::rebuildContentItems() {
     ensureTabLoaded(m_tabIndex);
     auto& items = m_tabs[m_tabIndex].items;
     auto& cache = m_cachedTabContentWidgets[(size_t)m_tabIndex];
-    DebugLog::log("[settings] rebuildContent tab=%d items=%d cache=%s",
-                  m_tabIndex, (int)items.size(), cache.empty() ? "miss" : "hit");
+    // DebugLog::log("[settings] rebuildContent tab=%d items=%d cache=%s",
+    //               m_tabIndex, (int)items.size(), cache.empty() ? "miss" : "hit");
 
     if (cache.empty()) {
         cache.reserve(items.size());

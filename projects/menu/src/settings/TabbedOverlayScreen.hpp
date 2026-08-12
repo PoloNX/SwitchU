@@ -48,6 +48,7 @@ public:
     bool isFullyVisible() const { return m_active && !m_animating; }
 
     void rebuildCurrentTab();
+    void refreshCurrentTabWidgets(); // place: keeps the other tabs loaded and the in-flight loaders untouched.
     void handleTouch(nxui::Input& input);
     void warmup();
 

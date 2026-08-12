@@ -1,4 +1,5 @@
 #include "GlossyIcon.hpp"
+#include "FolderPalette.hpp"
 #include <nxui/core/Renderer.hpp>
 #include <nxui/core/Font.hpp>
 #include <cmath>
@@ -179,19 +180,7 @@ void GlossyIcon::onContentRender(nxui::Renderer& ren) {
     }
 
     if (m_entryKind == GridEntryKind::Folder) {
-        static const nxui::Color kFolderColors[] = {
-            {0.22f, 0.68f, 0.86f, 1.f}, // light blue
-            {0.28f, 0.82f, 0.31f, 1.f}, // green
-            {0.98f, 0.77f, 0.12f, 1.f}, // yellow
-            {1.00f, 0.49f, 0.13f, 1.f}, // orange
-            {0.93f, 0.28f, 0.30f, 1.f}, // red
-            {0.94f, 0.30f, 0.64f, 1.f}, // pink
-            {0.57f, 0.29f, 0.88f, 1.f}, // purple
-            {0.38f, 0.40f, 0.43f, 1.f}, // grey
-        };
-        const int colorCount = static_cast<int>(sizeof(kFolderColors) / sizeof(kFolderColors[0]));
-        const int colorIndex = std::clamp(m_folderColorIndex, 0, colorCount - 1);
-        nxui::Color accent = kFolderColors[colorIndex];
+        nxui::Color accent = switchu::folders::colorForIndex(m_folderColorIndex);
 
         const float inset = 10.f * s;
         const nxui::Rect shell = r.shrunk(inset);

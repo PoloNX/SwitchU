@@ -180,7 +180,7 @@ SettingsScreen::Tab settings::tabs::BluetoothTab::build(SettingsScreen& screen) 
         }
         if (changed) {
             rebuildDynamicItems(self, scr);
-            scr.rebuildCurrentTab();
+            scr.refreshCurrentTabWidgets();
         }
     };
 

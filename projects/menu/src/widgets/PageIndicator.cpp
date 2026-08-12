@@ -46,7 +46,9 @@ void PageIndicator::onContentRender(nxui::Renderer& ren) {
     float op = m_opacity;
 
     nxui::Color inactive = m_theme ? m_theme->pageIndicator : nxui::Color(1.f, 1.f, 1.f, 0.35f);
-    nxui::Color active   = m_theme ? m_theme->pageIndicatorActive : nxui::Color(1.f, 1.f, 1.f, 0.95f);
+    nxui::Color active   = m_hasActiveColor
+        ? m_activeColor
+        : (m_theme ? m_theme->pageIndicatorActive : nxui::Color(1.f, 1.f, 1.f, 0.95f));
     
     for (int i = 0; i < m_total; ++i) {
         float cx = startX + i * (dotR * 2.f + gap) + dotR;

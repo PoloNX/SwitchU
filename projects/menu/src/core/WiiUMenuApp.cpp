@@ -1,6 +1,7 @@
 #include "WiiUMenuApp.hpp"
 #include <switchu/sd_commit.hpp>
 #include "widgets/GlossyIcon.hpp"
+#include "widgets/FolderPalette.hpp"
 #include "themeshop/ThemeHttp.hpp"
 #include <nxui/core/Animation.hpp>
 #include <nxui/core/I18n.hpp>
@@ -1033,7 +1034,8 @@ GridModel WiiUMenuApp::buildOpenFolderModel(std::uint32_t folderId) const {
     }
     const auto [folderCols, folderRows] = folderGridDimensions(folderId);
     const int perPage = std::max(1, folderCols * folderRows);
-    const int count = std::max(perPage, ((model.count() + perPage - 1) / perPage) * perPage);
+    // A folder always offers a second page, and a spare one once the last fills up.
+    const int count = std::max(2 * perPage, (model.count() / perPage + 1) * perPage);
     while (model.count() < count)
         model.addEntry({});
     return model;
@@ -1068,9 +1070,15 @@ void WiiUMenuApp::applyDisplayModel(GridModel model, std::uint64_t focusId, bool
         metrics.padX *= 0.92f;
         metrics.padY *= 0.92f;
     }
+    // Inside a folder there is no sidebar to the left or right of the grid, so
+    // the edge columns are free to flip the page instead.
+    const bool inFolder = (m_openFolderId != 0);
+    m_grid->setEdgePaging(inFolder);
+    m_grid->setSlideTransition(inFolder);
     m_grid->setup(std::move(icons), columns, rows, metrics.cellW, metrics.cellH,
                   metrics.padX, metrics.padY);
     wireFocusCallback();
+    m_grid->onEdgePage([this](int dir) { flipPageFromEdge(dir); });
     m_grid->onPageSwitched([this]() {
         m_iconStreamer.onPageChanged(m_grid->currentPage(), m_grid->iconsPerPage(),
                                      app().gpu(), app().renderer(), m_grid->allIcons());
@@ -1176,6 +1184,38 @@ void WiiUMenuApp::requestOpenFolder(std::uint32_t folderId) {
     if (m_cursor) m_cursor->setVisible(false);
 }
 
+void WiiUMenuApp::flipPageFromEdge(int dir) {
+    if (!m_grid || m_grid->isTransitioning())
+        return;
+    const int target = m_grid->currentPage() + dir;
+    if (target < 0 || target >= m_grid->totalPages())
+        return;
+
+    const int cols = std::max(1, m_grid->columns());
+    const int perPage = std::max(1, m_grid->iconsPerPage());
+    const int global = m_grid->focusedGlobalIndex();
+    const int row = global >= 0 ? (global % perPage) / cols : 0;
+
+    m_grid->startPageTransition(target);
+
+    // Carry on along the same row, entering from the opposite edge.
+    const int col = (dir > 0) ? 0 : cols - 1;
+    if (m_grid->focusGlobalIndex(target * perPage + row * cols + col)) {
+        if (auto* focused = m_grid->focusManager().current())
+            focusManager().setFocus(focused);
+    }
+    m_audio.playSfx(Sfx::PageChange);
+}
+
+void WiiUMenuApp::syncPageIndicator() {
+    if (!m_pageIndicator || !m_grid)
+        return;
+    const int total = m_grid->totalPages();
+    m_pageIndicator->setVisible(total > 1); // a lone page would draw an empty pill
+    m_pageIndicator->setPageCount(total);
+    m_pageIndicator->setCurrentPage(m_grid->currentPage());
+}
+
 void WiiUMenuApp::openCapturedFolder() {
     const auto* folder = m_folderStore.find(m_requestedFolderId);
     if (!folder) return;
@@ -1187,13 +1227,15 @@ void WiiUMenuApp::openCapturedFolder() {
     if (m_topHud) m_topHud->setVisible(false);
     if (m_leftSidebar) m_leftSidebar->setVisible(false);
     if (m_rightSidebar) m_rightSidebar->setVisible(false);
-    if (m_pageIndicator) m_pageIndicator->setVisible(false);
+    if (m_pageIndicator)
+        m_pageIndicator->setActiveColor(switchu::folders::colorForIndex(folder->colorIndex));
     if (m_folderHeaderLabel) {
         m_folderHeaderLabel->setText(folder->name);
         m_folderHeaderLabel->setTextColor(m_theme.textPrimary);
     }
     m_grid->setRect({kGridRectX, 148.f, kGridRectW, 470.f});
     applyDisplayModel(buildOpenFolderModel(m_openFolderId), 0, false);
+    syncPageIndicator();
     if (m_editMode)
         reattachEditSourceIcon();
     m_audio.playSfx(Sfx::ModalShow);
@@ -1212,9 +1254,11 @@ void WiiUMenuApp::closeFolder(bool preserveEditMode) {
     if (m_topHud) m_topHud->setVisible(true);
     if (m_leftSidebar) m_leftSidebar->setVisible(true);
     if (m_rightSidebar) m_rightSidebar->setVisible(true);
-    if (m_pageIndicator) m_pageIndicator->setVisible(true);
+    if (m_pageIndicator)
+        m_pageIndicator->clearActiveColor();
     m_grid->setRect({kGridRectX, kGridRectY, kGridRectW, kGridRectH});
     applyDisplayModel(buildRootFolderModel(), folderTitleId(oldId), false);
+    syncPageIndicator();
     if (preserveEditMode) {
         reattachEditSourceIcon();
         m_titlePill->setText(nxui::I18n::instance().tr("game.move_prefix", "Move: ") + m_editHeldTitle);
@@ -1274,7 +1318,7 @@ std::shared_ptr<GlossyIcon> WiiUMenuApp::makeIcon(const AppEntry& entry) {
         ? i18n.tr("accessibility.roles.game_card", "game card")
         : i18n.tr("accessibility.roles.game", "game"));
     icon->setAccessibilityHint(entry.isLaunchable()
-        ? i18n.tr("accessibility.hints.game_launchable", "A to launch. X for options. Y to move. ZL or ZR to change page.")
+        ? i18n.tr("accessibility.hints.game_launchable", "A to launch. Plus for options. Y to move. ZL or ZR to change page.")
         : i18n.tr("accessibility.hints.game_blocked", "A to show why this item is blocked."));
     // Texture is set by IconStreamer::onPageChanged() — not here.
     icon->setCornerRadius(m_theme.iconCornerRadius);
@@ -1629,7 +1673,7 @@ void WiiUMenuApp::buildGrid() {
             i18n.tr("power.title", "Power"),
             i18n.tr("power.choose_action", "Choose a power action."),
             {
-                {i18n.tr("button.cancel", "Cancel"), [this]() {  }, true},
+                // {i18n.tr("button.cancel", "Cancel"), [this]() {  }, true},
                 {i18n.tr("power.sleep", "Sleep"), [this]() {
 #ifdef SWITCHU_MENU
                     m_audio.playSfx(Sfx::ConfirmPositive);
@@ -2075,6 +2119,18 @@ void WiiUMenuApp::finalizeRefresh() {
 void WiiUMenuApp::onUpdate(float dt) {
     if (m_folderCaptureReady)
         openCapturedFolder();
+
+    const bool sliding = m_grid && m_grid->isTransitioning();
+    if (sliding != m_gridSliding) {
+        m_gridSliding = sliding;
+        if (sliding) {
+            if (m_cursor) m_cursor->setVisible(false);
+        } else {
+            if (m_cursor && focusManager().current())
+                m_cursor->moveTo(focusManager().current()->focusRect().expanded(4.f), 0.01f);
+            updateCursor();
+        }
+    }
 #ifdef SWITCHU_DEBUG_UI
     if (m_debugOverlay) {
         m_debugOverlay->setDeltaTime(dt);
@@ -2555,10 +2611,12 @@ std::vector<WiiUMenuApp::ActionHint> WiiUMenuApp::buildActionHints() {
                 if (m_openFolderId == 0)
                     add(buttonGlyph(nxui::Button::Y), i18n.tr("hint.move", "Move"));
                 else
-                    add(buttonGlyph(nxui::Button::Y), i18n.tr("folder.move_out", "Move out"));
+                    add(buttonGlyph(nxui::Button::Y), i18n.tr("folder.move", "Move"));
             }
         } else if (m_openFolderId == 0) {
+#ifdef SWITCHU_MENU
             add(buttonGlyph(nxui::Button::Plus), i18n.tr("folder.create", "Create folder"));
+#endif // in homebrew builds Plus quits the app, so no hint here
         }
     } else if (cur) {
         for (const auto& btn : m_sidebar.leftButtons()) {
@@ -2581,7 +2639,7 @@ std::vector<WiiUMenuApp::ActionHint> WiiUMenuApp::buildActionHints() {
         }
     }
 
-    if (m_grid && m_grid->totalPages() > 1 && m_openFolderId == 0) {
+    if (m_grid && m_grid->totalPages() > 1) {
         add(buttonGlyph(nxui::Button::ZL), i18n.tr("hint.prev_page", "Prev page"));
         add(buttonGlyph(nxui::Button::ZR), i18n.tr("hint.next_page", "Next page"));
     }
@@ -2603,7 +2661,7 @@ void WiiUMenuApp::renderActionHintBar(nxui::Renderer& ren) {
     constexpr float kPadY = 8.f;
     constexpr float kIconTextGap = 6.f;
     constexpr float kScreenMargin = 18.f;
-    constexpr int kMaxItems = 6;
+    constexpr int kMaxItems = 8; 
 
     int count = std::min((int)hints.size(), kMaxItems);
     if (count <= 0)
@@ -2732,8 +2790,7 @@ void WiiUMenuApp::onRender(nxui::Renderer& ren) {
         }
     }
 
-    m_pageIndicator->setPageCount(m_grid->totalPages());
-    m_pageIndicator->setCurrentPage(m_grid->currentPage());
+    syncPageIndicator();
 
     if (m_themeRenderDebugFrames > 0) {
         nxui::Widget* focus = focusManager().current();
