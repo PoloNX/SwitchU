@@ -131,7 +131,34 @@ private:
         std::string label;
     };
     std::vector<ActionHint> buildActionHints();
+
+    struct HintCapsule {
+        std::string icon;
+        std::string label;
+        std::string outgoing;              // label fading out during a swap
+        float width = 0.f;
+        float widthFrom = 0.f, widthTo = 0.f;
+        float widthT = 1.f;                // 0..1
+        float swapT  = 1.f;                // 0..1
+    };
+    std::vector<HintCapsule> m_hintCapsules;
+    void  syncHintCapsules(float dt);
+    float hintCapsuleWidth(const std::string& icon, const std::string& label);
     void renderActionHintBar(nxui::Renderer& ren);
+    void renderActionHintPanel(nxui::Renderer& ren);
+    void renderPageArrows(nxui::Renderer& ren);
+    bool pagingAvailable();
+
+    struct PageArrowAnim {
+        float show  = 0.f;   // 0..1
+        float press = 0.f;   // 1 -> 0
+    };
+    PageArrowAnim m_arrowAnimLeft, m_arrowAnimRight;
+    bool m_touchArrowLeft = false, m_touchArrowRight = false;
+
+    nxui::Rect pageArrowRect(bool left);
+    void kickPageArrow(int dir);
+    bool flipPage(int dir);
     int findTitleIndex(uint64_t titleId) const;
     bool focusTitle(uint64_t titleId);
     void markSuspendedIcon(uint64_t titleId);
@@ -220,6 +247,10 @@ private:
     std::shared_ptr<ControllerTestScreen> m_controllerTest;
 
     nxui::Texture m_gameCardTex;
+    nxui::Texture m_arrowTexLeft;
+    nxui::Texture m_arrowTexRight;
+    nxui::AnimatedFloat m_arrowCenterY;
+    bool m_arrowCenterInit = false;
 
     std::shared_ptr<nxui::Box> m_bgLayer;
     std::shared_ptr<nxui::Box> m_contentLayer;
@@ -343,6 +374,7 @@ private:
     std::uint64_t m_tutorialStartupFadeDeadlineTick = 0;
     bool  m_tutorialStartupFade = false;
     bool m_hintPanelInitialized = false;
+    bool m_hintCapsulesInitialized = false;
     bool m_accessibilityToggleComboHeld = false;
     bool m_plusExitPending = false;
     float m_plusExitPendingTimer = 0.f;

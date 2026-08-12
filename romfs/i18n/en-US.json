@@ -520,6 +520,12 @@
       "community": "Community",
       "options": "Options"
     },
+    "options": {
+      "action_hints": "Action Hints",
+      "action_hints_desc": "Choose how contextual controls appear in the bottom-right corner.",
+      "hint_panel": "Panel",
+      "hint_capsules": "Capsules"
+    },
     "accessibility": {
       "fullscreen_preview": "Fullscreen preview",
       "fullscreen_actions": "B to close the preview.",

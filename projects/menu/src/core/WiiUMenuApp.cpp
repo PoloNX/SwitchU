@@ -98,6 +98,30 @@ std::string resolveThemeSoundBase(const std::string& installPath) {
 
 // Keep enough side/top clearance so large grids do not overlap HUD/side buttons.
 static constexpr float kGridSafeSideMargin = 220.f;
+
+// Contextual action capsules, bottom-right.
+static constexpr float kHintIconScale = 0.72f;
+static constexpr float kHintTextScale = 0.62f;
+static constexpr float kHintCapH      = 28.f;
+static constexpr float kHintCapPadX   = 12.f;
+static constexpr float kHintIconGap   = 6.f;
+static constexpr float kHintCapGap    = 8.f;
+static constexpr float kHintRowGap    = 7.f;
+static constexpr float kHintEdgeX     = 18.f;
+static constexpr float kHintEdgeY     = 16.f;
+// Stop short of the page dots, centred and reaching x = 721 at eight pages.
+static constexpr float kHintRowMaxW   = 522.f;
+static constexpr int   kHintMaxItems  = 8;
+static constexpr float kHintWidthDur  = 0.22f;
+static constexpr float kHintSwapDur   = 0.18f;
+
+// Page arrows flanking the grid.
+static constexpr float kPageArrowInset = 152.f;
+static constexpr float kPageArrowW     = 54.f;
+static constexpr float kPageArrowH     = 72.f;
+static constexpr float kPageArrowFade  = 0.20f;
+static constexpr float kPageArrowKick  = 0.32f;
+
 static constexpr float kGridSafeTopBottomMargin = 20.f;
 
 std::string titleIdToHex(uint64_t v) {
@@ -457,6 +481,11 @@ void WiiUMenuApp::loadResources() {
     std::string gameCardPath = std::string(SD_ASSETS) + "/icons/gamecard.png";
     if (m_gameCardTex.loadFromFile(app().gpu(), app().renderer(), gameCardPath))
         m_loadedGameCardPath = gameCardPath;
+
+    m_arrowTexLeft.loadFromFile(app().gpu(), app().renderer(),
+                                std::string(SD_ASSETS) + "/icons/page_arrow_left.png");
+    m_arrowTexRight.loadFromFile(app().gpu(), app().renderer(),
+                                 std::string(SD_ASSETS) + "/icons/page_arrow_right.png");
 
     m_appLoader.load(m_model, m_iconStreamer);
 }
@@ -1197,6 +1226,7 @@ void WiiUMenuApp::flipPageFromEdge(int dir) {
     const int row = global >= 0 ? (global % perPage) / cols : 0;
 
     m_grid->startPageTransition(target);
+    kickPageArrow(dir);
 
     // Carry on along the same row, entering from the opposite edge.
     const int col = (dir > 0) ? 0 : cols - 1;
@@ -2120,6 +2150,33 @@ void WiiUMenuApp::onUpdate(float dt) {
     if (m_folderCaptureReady)
         openCapturedFolder();
 
+    if (m_config.actionHintStyle != "panel")
+        syncHintCapsules(dt);
+
+    if (m_grid) { // smooth animation of the page arrow center position
+        const nxui::Rect gr = m_grid->rect();
+        const float target = gr.y + gr.height * 0.5f;
+        if (!m_arrowCenterInit) {
+            m_arrowCenterInit = true;
+            m_arrowCenterY.setImmediate(target);
+        } else if (std::abs(m_arrowCenterY.target() - target) > 0.5f) {
+            m_arrowCenterY.set(target, 0.28f, nxui::Easing::outCubic);
+        }
+    }
+
+    {
+        const bool paging = pagingAvailable();
+        const int page = m_grid ? m_grid->currentPage() : 0;
+        const int total = m_grid ? m_grid->totalPages() : 1;
+        auto step = [dt](PageArrowAnim& a, bool visible) {
+            const float d = dt / kPageArrowFade;
+            a.show = std::clamp(a.show + (visible ? d : -d), 0.f, 1.f);
+            a.press = std::max(0.f, a.press - dt / kPageArrowKick);
+        };
+        step(m_arrowAnimLeft, paging && page > 0);
+        step(m_arrowAnimRight, paging && page < total - 1);
+    }
+
     const bool sliding = m_grid && m_grid->isTransitioning();
     if (sliding != m_gridSliding) {
         m_gridSliding = sliding;
@@ -2639,16 +2696,154 @@ std::vector<WiiUMenuApp::ActionHint> WiiUMenuApp::buildActionHints() {
         }
     }
 
-    if (m_grid && m_grid->totalPages() > 1) {
-        add(buttonGlyph(nxui::Button::ZL), i18n.tr("hint.prev_page", "Prev page"));
-        add(buttonGlyph(nxui::Button::ZR), i18n.tr("hint.next_page", "Next page"));
-    }
+    // Paging lives on the arrows flanking the grid, not in the capsules.
     addVoiceControls();
 
     return hints;
 }
 
+float WiiUMenuApp::hintCapsuleWidth(const std::string& icon, const std::string& label) {
+    return kHintCapPadX * 2.f
+         + m_fontIcons.measure(icon).x * kHintIconScale
+         + kHintIconGap
+         + m_fontSmall.measure(label).x * kHintTextScale;
+}
+
+void WiiUMenuApp::syncHintCapsules(float dt) {
+    std::vector<ActionHint> hints = buildActionHints();
+    if ((int)hints.size() > kHintMaxItems)
+        hints.resize((size_t)kHintMaxItems);
+
+    bool sameBindings = hints.size() == m_hintCapsules.size();
+    for (size_t i = 0; sameBindings && i < hints.size(); ++i)
+        sameBindings = (hints[i].icon == m_hintCapsules[i].icon);
+
+    if (!sameBindings) {
+        m_hintCapsules.clear();
+        m_hintCapsules.reserve(hints.size());
+        for (const auto& h : hints) {
+            HintCapsule c;
+            c.icon = h.icon;
+            c.label = h.label;
+            c.width = c.widthFrom = c.widthTo = hintCapsuleWidth(h.icon, h.label);
+            m_hintCapsules.push_back(std::move(c));
+        }
+        if (!hints.empty()) {
+            if (!m_hintCapsulesInitialized) {
+                m_hintCapsulesInitialized = true;
+                m_hintContentReveal.setImmediate(1.f);
+            } else {
+                m_hintContentReveal.setImmediate(0.45f);
+                m_hintContentReveal.set(1.f, 0.18f, nxui::Easing::outCubic);
+            }
+        }
+    } else { // if the button key is the same, just change string
+        for (size_t i = 0; i < hints.size(); ++i) {
+            HintCapsule& c = m_hintCapsules[i];
+            if (c.label == hints[i].label)
+                continue;
+            c.outgoing  = c.label;
+            c.label     = hints[i].label;
+            c.swapT     = 0.f;
+            c.widthFrom = c.width;
+            c.widthTo   = hintCapsuleWidth(c.icon, c.label);
+            c.widthT    = 0.f;
+        }
+    }
+
+    for (HintCapsule& c : m_hintCapsules) {
+        if (c.widthT < 1.f) {
+            c.widthT = std::min(1.f, c.widthT + dt / kHintWidthDur);
+            c.width  = c.widthFrom + (c.widthTo - c.widthFrom) * nxui::Easing::outCubic(c.widthT);
+        }
+        if (c.swapT < 1.f) {
+            c.swapT = std::min(1.f, c.swapT + dt / kHintSwapDur);
+            if (c.swapT >= 1.f)
+                c.outgoing.clear();
+        }
+    }
+}
+
 void WiiUMenuApp::renderActionHintBar(nxui::Renderer& ren) {
+    const int count = (int)m_hintCapsules.size();
+    if (count <= 0)
+        return;
+
+    std::vector<std::pair<int, int>> rows;
+    for (int i = 0; i < count;) {
+        float w = 0.f;
+        int j = i;
+        while (j < count) {
+            const float add = m_hintCapsules[(size_t)j].width + (j > i ? kHintCapGap : 0.f);
+            if (j > i && w + add > kHintRowMaxW) break;
+            w += add;
+            ++j;
+        }
+        rows.emplace_back(i, j);
+        i = j;
+    }
+
+    const float reveal = std::clamp(m_hintContentReveal.value(), 0.f, 1.f);
+    const float blockH = rows.size() * kHintCapH + (rows.size() - 1) * kHintRowGap;
+    float y = 720.f - kHintEdgeY - blockH + (1.f - reveal) * 4.f;
+
+    const nxui::Color tint = m_theme.panelBase.withAlpha(
+        m_theme.mode == nxui::ThemeMode::Dark ? 0.30f : 0.24f);
+
+    for (const auto& [first, last] : rows) {
+        float rowW = 0.f;
+        for (int i = first; i < last; ++i)
+            rowW += m_hintCapsules[(size_t)i].width + (i > first ? kHintCapGap : 0.f);
+
+        float x = 1280.f - kHintEdgeX - rowW;
+        for (int i = first; i < last; ++i) {
+            const HintCapsule& c = m_hintCapsules[(size_t)i];
+            const nxui::Rect cap = {x, y, c.width, kHintCapH};
+            const float radius = kHintCapH * 0.5f;
+
+            ren.drawRoundedRect({cap.x, cap.y + 3.f, cap.width, cap.height},
+                                nxui::Color(0.f, 0.f, 0.f, 0.14f * reveal), radius);
+            ren.drawFrostedInset(cap, tint.withAlpha(tint.a * reveal),
+                                 m_theme.panelBorder.withAlpha(0.24f * reveal),
+                                 m_theme.panelHighlight.withAlpha(0.08f * reveal),
+                                 radius, 0.86f);
+
+            const nxui::Vec2 iconSize = m_fontIcons.measure(c.icon);
+            const float iconW = iconSize.x * kHintIconScale;
+            ren.drawText(c.icon,
+                         {cap.x + kHintCapPadX,
+                          cap.y + (kHintCapH - iconSize.y * kHintIconScale) * 0.5f},
+                         &m_fontIcons, m_theme.textPrimary.withAlpha(0.94f * reveal), kHintIconScale);
+
+            const float textX = cap.x + kHintCapPadX + iconW + kHintIconGap;
+            const float swap  = nxui::Easing::outCubic(std::clamp(c.swapT, 0.f, 1.f));
+
+            ren.pushClipRect(cap);
+            if (!c.outgoing.empty()) {
+                const nxui::Vec2 os = m_fontSmall.measure(c.outgoing);
+                ren.drawText(c.outgoing,
+                             {textX - 7.f * swap,
+                              cap.y + (kHintCapH - os.y * kHintTextScale) * 0.5f},
+                             &m_fontSmall,
+                             m_theme.textSecondary.withAlpha(0.90f * reveal * (1.f - swap)),
+                             kHintTextScale);
+            }
+            const nxui::Vec2 ls = m_fontSmall.measure(c.label);
+            ren.drawText(c.label,
+                         {textX + 7.f * (1.f - swap),
+                          cap.y + (kHintCapH - ls.y * kHintTextScale) * 0.5f},
+                         &m_fontSmall,
+                         m_theme.textSecondary.withAlpha(0.90f * reveal * swap),
+                         kHintTextScale);
+            ren.popClipRect();
+
+            x += c.width + kHintCapGap;
+        }
+        y += kHintCapH + kHintRowGap;
+    }
+}
+
+void WiiUMenuApp::renderActionHintPanel(nxui::Renderer& ren) {
     std::vector<ActionHint> hints = buildActionHints();
     if (hints.empty())
         return;
@@ -2661,30 +2856,24 @@ void WiiUMenuApp::renderActionHintBar(nxui::Renderer& ren) {
     constexpr float kPadY = 8.f;
     constexpr float kIconTextGap = 6.f;
     constexpr float kScreenMargin = 18.f;
-    constexpr int kMaxItems = 8; 
 
-    int count = std::min((int)hints.size(), kMaxItems);
-    if (count <= 0)
-        return;
-
+    const int count = std::min((int)hints.size(), kHintMaxItems);
     float contentW = 0.f;
+    std::string signature;
     for (int i = 0; i < count; ++i) {
-        nxui::Vec2 iconSize = m_fontIcons.measure(hints[(size_t)i].icon);
-        nxui::Vec2 labelSize = m_fontSmall.measure(hints[(size_t)i].label);
+        const ActionHint& hint = hints[(size_t)i];
+        const nxui::Vec2 iconSize = m_fontIcons.measure(hint.icon);
+        const nxui::Vec2 labelSize = m_fontSmall.measure(hint.label);
         contentW = std::max(contentW,
                             iconSize.x * kIconScale + kIconTextGap + labelSize.x * kTextScale);
+        signature += hint.icon;
+        signature += '\n';
+        signature += hint.label;
+        signature += '\n';
     }
 
     float panelW = std::clamp(contentW + kPadX * 2.f, 104.f, 210.f);
     float panelH = kPadY * 2.f + count * kRowH + (count - 1) * kRowGap;
-    std::string signature;
-    for (int i = 0; i < count; ++i) {
-        signature += hints[(size_t)i].icon;
-        signature += '\n';
-        signature += hints[(size_t)i].label;
-        signature += '\n';
-    }
-
     if (!m_hintPanelInitialized) {
         m_hintPanelInitialized = true;
         m_hintPanelW.setImmediate(panelW);
@@ -2705,37 +2894,34 @@ void WiiUMenuApp::renderActionHintBar(nxui::Renderer& ren) {
 
     panelW = std::max(1.f, m_hintPanelW.value());
     panelH = std::max(1.f, m_hintPanelH.value());
-
-    nxui::Rect panel = {
+    const nxui::Rect panel = {
         1280.f - kScreenMargin - panelW,
         720.f - kScreenMargin - panelH,
         panelW,
         panelH
     };
-    float radius = 16.f;
+    constexpr float kRadius = 16.f;
+    const float reveal = std::clamp(m_hintContentReveal.value(), 0.f, 1.f);
 
-    ren.drawRoundedRect({panel.x + 0.f, panel.y + 4.f, panel.width, panel.height},
-                        nxui::Color(0.f, 0.f, 0.f, 0.12f),
-                        radius);
-
-    nxui::Color tint = m_theme.panelBase.withAlpha(m_theme.mode == nxui::ThemeMode::Dark ? 0.22f : 0.18f);
+    ren.drawRoundedRect({panel.x, panel.y + 4.f, panel.width, panel.height},
+                        nxui::Color(0.f, 0.f, 0.f, 0.12f), kRadius);
+    const nxui::Color tint = m_theme.panelBase.withAlpha(
+        m_theme.mode == nxui::ThemeMode::Dark ? 0.22f : 0.18f);
     ren.drawFrostedInset(panel, tint,
-                         m_theme.panelBorder.withAlpha(0.26f),
-                         m_theme.panelHighlight.withAlpha(0.09f),
-                         radius, 0.86f);
+                        m_theme.panelBorder.withAlpha(0.26f),
+                        m_theme.panelHighlight.withAlpha(0.09f),
+                        kRadius, 0.86f);
 
     ren.pushClipRect(panel.shrunk(3.f));
-
-    float reveal = std::clamp(m_hintContentReveal.value(), 0.f, 1.f);
     float y = panel.y + kPadY + (1.f - reveal) * 4.f;
     for (int i = 0; i < count; ++i) {
-        const auto& hint = hints[(size_t)i];
-        nxui::Vec2 iconSize = m_fontIcons.measure(hint.icon);
-        nxui::Vec2 labelSize = m_fontSmall.measure(hint.label);
-        float iconX = panel.x + kPadX;
-        float iconY = y + (kRowH - iconSize.y * kIconScale) * 0.5f;
-        float labelX = iconX + iconSize.x * kIconScale + 7.f;
-        float labelY = y + (kRowH - labelSize.y * kTextScale) * 0.5f;
+        const ActionHint& hint = hints[(size_t)i];
+        const nxui::Vec2 iconSize = m_fontIcons.measure(hint.icon);
+        const nxui::Vec2 labelSize = m_fontSmall.measure(hint.label);
+        const float iconX = panel.x + kPadX;
+        const float iconY = y + (kRowH - iconSize.y * kIconScale) * 0.5f;
+        const float labelX = iconX + iconSize.x * kIconScale + kIconTextGap;
+        const float labelY = y + (kRowH - labelSize.y * kTextScale) * 0.5f;
 
         ren.drawText(hint.icon, {iconX, iconY}, &m_fontIcons,
                      m_theme.textPrimary.withAlpha(0.88f * reveal), kIconScale);
@@ -2743,8 +2929,65 @@ void WiiUMenuApp::renderActionHintBar(nxui::Renderer& ren) {
                      m_theme.textSecondary.withAlpha(0.82f * reveal), kTextScale);
         y += kRowH + kRowGap;
     }
-
     ren.popClipRect();
+}
+
+bool WiiUMenuApp::pagingAvailable() {
+    return m_navigator.route() == switchu::navigation::Route::Home
+        && focusRoot() == &rootBox()
+        && m_grid && m_grid->totalPages() > 1;
+}
+
+nxui::Rect WiiUMenuApp::pageArrowRect(bool left) {
+    const float cx = left ? kPageArrowInset : 1280.f - kPageArrowInset;
+    const float cy = m_arrowCenterY.value();
+    return {cx - kPageArrowW * 0.5f, cy - kPageArrowH * 0.5f, kPageArrowW, kPageArrowH};
+}
+
+void WiiUMenuApp::kickPageArrow(int dir) {
+    (dir < 0 ? m_arrowAnimLeft : m_arrowAnimRight).press = 1.f;
+}
+
+bool WiiUMenuApp::flipPage(int dir) {
+    if (!m_grid || m_grid->isTransitioning())
+        return false;
+    const int p = m_grid->currentPage() + dir;
+    if (p < 0 || p >= m_grid->totalPages())
+        return false;
+    m_grid->startPageTransition(p);
+    m_audio.playSfx(Sfx::PageChange);
+    kickPageArrow(dir);
+    return true;
+}
+
+void WiiUMenuApp::renderPageArrows(nxui::Renderer& ren) {
+    constexpr float kGlyphScale = 0.70f;
+
+    auto drawArrow = [&](bool left, const nxui::Texture& tex,
+                         const PageArrowAnim& anim, const std::string& glyph) {
+        if (anim.show <= 0.002f || !tex.valid())
+            return;
+
+        const float e = anim.show * anim.show * (3.f - 2.f * anim.show);
+        const float bump = anim.press * anim.press;
+        const nxui::Rect base = pageArrowRect(left);
+        const float outward = (left ? -1.f : 1.f) * ((1.f - e) * 16.f + bump * 9.f);
+        const float scale = (0.86f + 0.14f * e) * (1.f + 0.18f * bump);
+
+        const float cx = base.x + base.width * 0.5f + outward;
+        const float cy = base.y + base.height * 0.5f;
+        const float w = base.width * scale;
+        const float h = base.height * scale;
+
+        ren.drawTexture(&tex, {cx - w * 0.5f, cy - h * 0.5f, w, h},
+                        nxui::Color(1.f, 1.f, 1.f, e));
+        const nxui::Vec2 gs = m_fontIcons.measure(glyph);
+        ren.drawText(glyph, {cx - gs.x * kGlyphScale * 0.5f, cy + h * 0.5f + 6.f},
+                     &m_fontIcons, m_theme.textPrimary.withAlpha(0.9f * e), kGlyphScale);
+    };
+
+    drawArrow(true, m_arrowTexLeft, m_arrowAnimLeft, buttonGlyph(nxui::Button::ZL));
+    drawArrow(false, m_arrowTexRight, m_arrowAnimRight, buttonGlyph(nxui::Button::ZR));
 }
 
 void WiiUMenuApp::onRender(nxui::Renderer& ren) {
@@ -2826,7 +3069,11 @@ void WiiUMenuApp::onRender(nxui::Renderer& ren) {
     if (m_editMode && m_editGhostIcon)
         m_editGhostIcon->render(ren);
 
-    renderActionHintBar(ren);
+    renderPageArrows(ren);
+    if (m_config.actionHintStyle == "panel")
+        renderActionHintPanel(ren);
+    else
+        renderActionHintBar(ren);
 
 #ifdef SWITCHU_DEBUG_UI
     if (m_debugOverlay) {
