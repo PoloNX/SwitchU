@@ -145,6 +145,7 @@ private:
     void  syncHintCapsules(float dt);
     float hintCapsuleWidth(const std::string& icon, const std::string& label);
     void renderActionHintBar(nxui::Renderer& ren);
+    void renderActionHintPanel(nxui::Renderer& ren);
     void renderPageArrows(nxui::Renderer& ren);
     bool pagingAvailable();
 
@@ -373,6 +374,7 @@ private:
     std::uint64_t m_tutorialStartupFadeDeadlineTick = 0;
     bool  m_tutorialStartupFade = false;
     bool m_hintPanelInitialized = false;
+    bool m_hintCapsulesInitialized = false;
     bool m_accessibilityToggleComboHeld = false;
     bool m_plusExitPending = false;
     float m_plusExitPendingTimer = 0.f;

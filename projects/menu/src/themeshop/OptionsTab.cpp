@@ -94,5 +94,24 @@ ThemeShopScreen::Tab themeshop::tabs::OptionsTab::build(ThemeShopScreen& screen)
         t.items.push_back(std::move(it));
     }
 
+    {
+        SettingItem it;
+        it.label = i18n.tr("themeshop.options.action_hints", "Action Hints");
+        it.description = i18n.tr("themeshop.options.action_hints_desc",
+                                 "Choose how contextual controls appear in the bottom-right corner.");
+        it.type = ItemType::Selector;
+        it.options = {
+            i18n.tr("themeshop.options.hint_panel", "Panel"),
+            i18n.tr("themeshop.options.hint_capsules", "Capsules")
+        };
+        it.intVal = std::clamp(screen.m_actionHintStyle, 0, 1);
+        it.onChange = [&screen](SettingItem& self) {
+            screen.m_actionHintStyle = std::clamp(self.intVal, 0, 1);
+            if (screen.m_actionHintStyleCb)
+                screen.m_actionHintStyleCb(screen.m_actionHintStyle);
+        };
+        t.items.push_back(std::move(it));
+    }
+
     return t;
 }

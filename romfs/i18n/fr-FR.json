@@ -521,6 +521,12 @@
       "community": "Communauté",
       "options": "Options"
     },
+    "options": {
+      "action_hints": "Indications d’action",
+      "action_hints_desc": "Choisissez l’apparence des commandes contextuelles en bas à droite.",
+      "hint_panel": "Panneau",
+      "hint_capsules": "Capsules"
+    },
     "accessibility": {
       "fullscreen_preview": "Aperçu plein écran",
       "fullscreen_actions": "B pour fermer l'aperçu.",

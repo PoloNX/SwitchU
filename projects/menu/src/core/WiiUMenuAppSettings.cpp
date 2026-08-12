@@ -638,6 +638,7 @@ void WiiUMenuApp::createThemeShop() {
     m_themeShop->setRenderContext(&app().gpu(), &app().renderer());
     m_themeShop->setMusicState(m_audio.isPlaying(), m_audio.volume(), m_audio.sfxVolume());
     m_themeShop->setGridLayoutState(m_config.gridColumns, m_config.gridRows);
+    m_themeShop->setActionHintStyleState(m_config.actionHintStyle);
     m_themeShop->setAccessibilityVoiceEnabled(m_config.accessibilityEnabled);
     m_themeShop->setAccessibilitySpeechPreferences(m_config.accessibilitySpeakHints,
                                                    m_config.accessibilitySpeakPosition);
@@ -667,6 +668,9 @@ void WiiUMenuApp::createThemeShop() {
             return;
         m_config.gridRows = rows;
         reflowHomeGrid();
+    });
+    m_themeShop->onActionHintStyleChange([this](int style) {
+        m_config.actionHintStyle = style == 0 ? "panel" : "capsules";
     });
     m_themeShop->onNextTrack([this]() {
         m_audio.nextTrack();
