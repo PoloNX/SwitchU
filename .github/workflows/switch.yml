@@ -45,10 +45,10 @@ jobs:
         run: |
           if command -v sudo >/dev/null 2>&1; then
             sudo apt-get update
-            sudo apt-get -y install curl gcc g++ zip
+            sudo apt-get -y install curl gcc g++ zip zstd
           else
             apt-get update
-            apt-get -y install curl gcc g++ zip
+            apt-get -y install curl gcc g++ zip zstd
           fi
 
       - name: Set xmake env
