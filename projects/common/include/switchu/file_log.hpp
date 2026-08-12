@@ -4,6 +4,7 @@
 #include <fstream>
 #include <mutex>
 #include <switchu/log_utils.hpp>
+#include <switch.h>
 
 namespace switchu {
 
@@ -32,6 +33,17 @@ public:
             self.m_file << '[' << timestamp << "] === " << tag << " log start ===\n";
             self.m_file.flush();
         }
+    }
+
+    
+    static void logCommit(const char* fmt, ...) {
+        char buf[512];
+        va_list args;
+        va_start(args, fmt);
+        std::vsnprintf(buf, sizeof(buf), fmt, args);
+        va_end(args);
+        log("%s", buf);
+        fsdevCommitDevice("sdmc");
     }
 
     static void close() {

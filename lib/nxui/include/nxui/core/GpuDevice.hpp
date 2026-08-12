@@ -122,6 +122,11 @@ public:
     static constexpr uint64_t kDefaultImageBudget = 32u * 1024u * 1024u;
     uint64_t imageMemoryUsed() const { return m_imageMemUsed; }
 
+
+    using LogSink = void (*)(const char* message);
+    static void setLogSink(LogSink sink) { s_logSink = sink; }
+    static void logGpu(const char* fmt, ...);
+
     bool uploadTexture(dk::Image& dst, const void* pixels, uint32_t size, uint32_t width, uint32_t height);
     void beginTextureUploadBatch();
     void endTextureUploadBatch();
@@ -193,6 +198,7 @@ private:
 
     uint64_t m_imageMemUsed = 0;
     uint64_t m_poolMemUsed  = 0;
+    static inline LogSink s_logSink = nullptr;
 
     static constexpr uint32_t kImageChunkSize = 2u * 1024u * 1024u;
     struct ImagePoolChunk {

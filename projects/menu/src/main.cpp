@@ -4,6 +4,7 @@
 #include "core/Config.hpp"
 #include "tutorial/TutorialActivity.hpp"
 #include <nxui/Application.hpp>
+#include <nxui/core/GpuDevice.hpp>
 #include <fmt/format.h>
 #ifdef SWITCHU_MENU
 #include <nxui/core/Renderer.hpp>
@@ -206,6 +207,8 @@ int main(int argc, char* argv[]) {
         DebugLog::log("[menu] shader path: %s", sdPath.c_str());
     }
 #endif
+
+    nxui::GpuDevice::setLogSink([](const char* msg) { DebugLog::log("%s", msg); });
 
     DebugLog::log("[main] SDL_Init");
     if (SDL_Init(SDL_INIT_AUDIO) < 0)

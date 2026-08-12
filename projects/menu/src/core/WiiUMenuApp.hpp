@@ -321,6 +321,9 @@ private:
     std::future<void> m_accessibilityFuture;
     bool m_accessibilityReady = false;
     std::uint64_t m_fastReturnStartupTick = 0;
+
+    bool  m_audioInitPending = false;
+    bool  m_audioHeldLogged  = false;
     bool m_fastReturnRequested = false;
     std::future<void> m_themePackageTransferFuture;
     std::future<void> m_softwareDeleteFuture;

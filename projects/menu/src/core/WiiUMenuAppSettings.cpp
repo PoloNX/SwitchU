@@ -319,6 +319,12 @@ void WiiUMenuApp::createSettings() {
             m_folderOptions->setAccessibilityVoiceEnabled(enabled);
         if (enabled) {
             m_accessibility.setEnabled(true);
+            // Startup skips espeak init when voice guidance is off, so bring it
+            // up on first enable.
+            if (!m_accessibilityReady)
+                m_accessibilityReady = m_accessibility.initializeConfigured(
+                    SD_ASSETS, nxui::I18n::instance().activeLanguageTag(),
+                    m_config.accessibilitySpeechRate);
             m_accessibility.announce(nxui::I18n::instance().tr(
                 "accessibility.speech.enabled",
                 "Voice guidance enabled."));

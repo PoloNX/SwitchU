@@ -8,6 +8,11 @@ namespace nxui {
 
 namespace {
 
+std::vector<FocusManager*>& registry() {
+    static auto* r = new std::vector<FocusManager*>();
+    return *r;
+}
+
 static bool isTouchInteractive(Widget* node) {
     return node && node->isVisible()
         && (node->isFocusable() || !node->actions().empty());
@@ -116,6 +121,20 @@ void FocusManager::changeFocusTo(Widget* target) {
 void FocusManager::setFocus(int index) { changeFocus(index); }
 
 void FocusManager::setFocus(Widget* target) { changeFocusTo(target); }
+
+FocusManager::FocusManager() {
+    registry().push_back(this);
+}
+
+FocusManager::~FocusManager() {
+    auto& r = registry();
+    r.erase(std::remove(r.begin(), r.end(), this), r.end());
+}
+
+void FocusManager::forgetWidget(Widget* w) {
+    for (FocusManager* fm : registry())
+        fm->invalidateWidget(w);
+}
 
 void FocusManager::invalidateWidget(Widget* w) {
     if (!w) return;

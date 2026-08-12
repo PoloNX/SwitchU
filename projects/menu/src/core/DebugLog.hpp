@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <fstream>
 #include <switchu/log_utils.hpp>
+#include <switch.h>
 #ifdef SWITCHU_MENU
 #include <switchu/file_log.hpp>
 #endif
@@ -82,6 +83,17 @@ public:
 
         std::fprintf(stderr, "%s\n", line.c_str());
 #endif
+    }
+
+
+    static void logMemory(const char* tag) {
+        u64 total = 0, used = 0;
+        svcGetInfo(&total, InfoType_TotalMemorySize, CUR_PROCESS_HANDLE, 0);
+        svcGetInfo(&used,  InfoType_UsedMemorySize,  CUR_PROCESS_HANDLE, 0);
+        log("[mem] %-22s total=%luK used=%luK free=%ldK", tag,
+            (unsigned long)(total >> 10), (unsigned long)(used >> 10),
+            (long)(((s64)total - (s64)used) >> 10));
+        fsdevCommitDevice("sdmc");
     }
 
     static std::vector<std::string> lines() {

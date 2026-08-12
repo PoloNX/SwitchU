@@ -1,9 +1,14 @@
 #include <nxui/widgets/Widget.hpp>
 #include <nxui/core/Renderer.hpp>
 #include <nxui/core/Input.hpp>
+#include <nxui/focus/FocusManager.hpp>
 #include <algorithm>
 
 namespace nxui {
+
+Widget::~Widget() {
+    FocusManager::forgetWidget(this);
+}
 
 // Tree
 
