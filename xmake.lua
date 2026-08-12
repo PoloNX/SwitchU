@@ -1,5 +1,6 @@
 set_project("SwitchU")
 
+add_repositories("switchu-repo .")
 add_repositories("switch-repo https://github.com/PoloNX/switch-repo.git")
 
 includes("toolchain/*.lua")
@@ -68,6 +69,7 @@ target("nxui")
     add_cxxflags("-frtti", "-fexceptions", {force = true})
     if get_config("backend") == "deko3d" then
         add_packages("deko3d")
+        add_syslinks(is_mode("debug") and "deko3dd" or "deko3d")
     end
 
     if is_mode("release") then
@@ -165,6 +167,10 @@ target("SwitchU")
     add_includedirs("projects/menu/src", {public = false})
     add_files("projects/menu/src/**.cpp")
     add_packages("nlohmann_json", "fmt", "libsdl", "libsdl_mixer", "libsdl_ttf", "zlib", "libwebp", "libcurl", "curlpp")
+    add_linkorders("SDL2_mixer", "FLAC++", "FLAC")
+    add_linkorders("SDL2_mixer", "vorbisidec", "ogg")
+    add_linkorders("SDL2_mixer", "modplug")
+    add_linkorders("SDL2_mixer", "opusurl", "opusfile", "opus", "ogg")
 
     if is_mode("debug") and get_config("backend") ~= "sdl2" then
         add_packages("imgui")

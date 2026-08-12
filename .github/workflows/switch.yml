@@ -51,10 +51,6 @@ jobs:
             apt-get -y install curl gcc g++ zip
           fi
 
-      - name: Install SDL2 audout backend
-        shell: bash
-        run: tools/install-switch-sdl2-audout.sh
-
       - name: Set xmake env
         run: echo "XMAKE_GLOBALDIR=${{ runner.workspace }}/xmake-global" >> "$GITHUB_ENV"
 
