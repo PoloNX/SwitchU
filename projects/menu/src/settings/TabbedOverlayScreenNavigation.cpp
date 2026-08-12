@@ -311,6 +311,7 @@ void TabbedOverlayScreen::onNavUp() {
             m_scrollTarget = 0;
             m_contentSlideAnim.setImmediate(0.f);
             m_contentSlideAnim.set(1.f, 0.28f, nxui::Easing::outCubic);
+            m_contentStaggerT = 0.f;
             m_tabAccentW.setImmediate(1.f);
             m_tabAccentW.set(3.f, 0.32f, nxui::Easing::outExpo);
             closeDropdown(false);
@@ -364,6 +365,7 @@ void TabbedOverlayScreen::onNavDown() {
             m_scrollTarget = 0;
             m_contentSlideAnim.setImmediate(0.f);
             m_contentSlideAnim.set(1.f, 0.28f, nxui::Easing::outCubic);
+            m_contentStaggerT = 0.f;
             m_tabAccentW.setImmediate(1.f);
             m_tabAccentW.set(3.f, 0.32f, nxui::Easing::outExpo);
             closeDropdown(false);
@@ -912,6 +914,7 @@ void TabbedOverlayScreen::handleTouch(nxui::Input& input) {
                             m_tabReveal.set(1.f, 0.24f, nxui::Easing::outCubic);
                             m_contentSlideAnim.setImmediate(0.f);
                             m_contentSlideAnim.set(1.f, 0.28f, nxui::Easing::outCubic);
+                            m_contentStaggerT = 0.f;
                             m_tabAccentW.setImmediate(1.f);
                             m_tabAccentW.set(3.f, 0.32f, nxui::Easing::outExpo);
                             closeDropdown(false);
@@ -1053,6 +1056,8 @@ void TabbedOverlayScreen::onContentUpdate(float dt) {
     }
     m_trackToastAnim.update(dt);
     m_contentSlideAnim.update(std::min(dt, 0.03f));
+    if (m_contentStaggerT < kContentStaggerDone)
+        m_contentStaggerT += std::min(dt, 0.03f);
     m_tabAccentW.update(std::min(dt, 0.03f));
 
     if (m_trackToastHold > 0.f) {
