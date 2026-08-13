@@ -619,8 +619,15 @@ bool WiiUMenuApp::focusTitle(uint64_t titleId) {
         return false;
 
     int idx = findTitleIndex(titleId);
-    if (idx < 0)
-        return false;
+    if (idx < 0 && titleId != 0) {
+        const std::uint32_t folderId = m_folderStore.folderForTitle(titleId);
+        if (folderId == 0 || folderId == m_openFolderId)
+            return false;
+        requestOpenFolder(folderId, titleId);
+        idx = findTitleIndex(folderTitleId(folderId));
+        if (idx < 0)
+            return true;
+    }
 
     int oldPage = m_grid->currentPage();
     if (!m_grid->focusGlobalIndex(idx))

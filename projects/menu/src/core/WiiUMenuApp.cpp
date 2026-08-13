@@ -1197,9 +1197,10 @@ void WiiUMenuApp::renameFolder(std::uint32_t folderId) {
         applyDisplayModel(buildRootFolderModel(), folderTitleId(folderId), false);
 }
 
-void WiiUMenuApp::requestOpenFolder(std::uint32_t folderId) {
+void WiiUMenuApp::requestOpenFolder(std::uint32_t folderId, std::uint64_t focusTitleId) {
     if (!m_folderStore.find(folderId) || m_folderCaptureRequested) return;
     m_requestedFolderId = folderId;
+    m_folderOpenFocusTitleId = focusTitleId;
     m_folderCaptureRequested = true;
     m_folderCaptureReady = false;
     if (m_cursor) m_cursor->setVisible(false);
@@ -1244,7 +1245,8 @@ void WiiUMenuApp::openCapturedFolder() {
     m_openFolderId = m_requestedFolderId;
     m_requestedFolderId = 0;
     m_folderCaptureReady = false;
-    if (m_folderBackdrop) m_folderBackdrop->show();
+    const bool refocus = (m_folderOpenFocusTitleId != 0);
+    if (m_folderBackdrop) m_folderBackdrop->show(refocus);
     if (m_folderHeader) m_folderHeader->setVisible(true);
     if (m_topHud) m_topHud->setVisible(false);
     if (m_leftSidebar) m_leftSidebar->setVisible(false);
@@ -1256,11 +1258,13 @@ void WiiUMenuApp::openCapturedFolder() {
         m_folderHeaderLabel->setTextColor(m_theme.textPrimary);
     }
     m_grid->setRect({kGridRectX, 148.f, kGridRectW, 470.f});
-    applyDisplayModel(buildOpenFolderModel(m_openFolderId), 0, false);
+    applyDisplayModel(buildOpenFolderModel(m_openFolderId), m_folderOpenFocusTitleId, false);
+    m_folderOpenFocusTitleId = 0;
     syncPageIndicator();
     if (m_editMode)
         reattachEditSourceIcon();
-    m_audio.playSfx(Sfx::ModalShow);
+    if (!refocus)
+        m_audio.playSfx(Sfx::ModalShow);
 }
 
 void WiiUMenuApp::closeFolder(bool preserveEditMode) {

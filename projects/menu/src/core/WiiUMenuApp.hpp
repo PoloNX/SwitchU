@@ -104,7 +104,7 @@ private:
     void applyDisplayModel(GridModel model, std::uint64_t focusId, bool animate);
     void syncPageIndicator();
     void flipPageFromEdge(int dir);
-    void requestOpenFolder(std::uint32_t folderId);
+    void requestOpenFolder(std::uint32_t folderId, std::uint64_t focusTitleId = 0);
     void openCapturedFolder();
     void closeFolder(bool preserveEditMode = false);
     void createFolder(int targetSlot = -1);
@@ -316,6 +316,7 @@ private:
     std::vector<AppEntry> m_allApps;
     std::uint32_t m_openFolderId = 0;
     std::uint32_t m_requestedFolderId = 0;
+    std::uint64_t m_folderOpenFocusTitleId = 0;  
     bool m_folderCaptureRequested = false;
     bool m_folderCaptureReady = false;
     bool m_gridSliding = false;
