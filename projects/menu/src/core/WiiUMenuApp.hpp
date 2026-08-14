@@ -159,6 +159,11 @@ private:
     nxui::Rect pageArrowRect(bool left);
     void kickPageArrow(int dir);
     bool flipPage(int dir);
+    bool addPageAvailable();
+    void createFolderPage();
+    float m_addPageHold = 0.f;
+    bool  m_addPageMode = false;
+    bool  m_addPageTouchHold = false;
     int findTitleIndex(uint64_t titleId) const;
     bool focusTitle(uint64_t titleId);
     void markSuspendedIcon(uint64_t titleId);

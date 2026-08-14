@@ -106,9 +106,11 @@ bool FolderStore::load() {
             folder.colorIndex = std::clamp(
                 item.value("color", static_cast<int>(folder.id % 8u)), 0, 7);
             folder.sizeIndex = std::clamp(item.value("size", 1), 0, 2);
+            folder.pageCount = std::clamp(item.value("pages", 1), 1, kMaxFolderPages);
         } catch (...) {
             folder.colorIndex = static_cast<int>(folder.id % 8u);
             folder.sizeIndex = 1;
+            folder.pageCount = 1;
         }
         usedIds.insert(folder.id);
         m_nextId = std::max(m_nextId, folder.id + 1);
@@ -117,7 +119,9 @@ bool FolderStore::load() {
         if (titles != item.end() && titles->is_array()) {
             for (const auto& value : *titles) {
                 std::uint64_t titleId = 0;
-                if (parseTitleId(value, titleId) && !assignedTitles.count(titleId)) {
+                if (!parseTitleId(value, titleId)) {
+                    folder.titleIds.push_back(0);  
+                } else if (!assignedTitles.count(titleId)) {
                     assignedTitles.insert(titleId);
                     folder.titleIds.push_back(titleId);
                 }
@@ -142,6 +146,7 @@ bool FolderStore::save() const {
         item["name"] = folder.name;
         item["color"] = folder.colorIndex;
         item["size"] = folder.sizeIndex;
+        item["pages"] = folder.pageCount;
         item["titles"] = nlohmann::json::array();
         for (std::uint64_t titleId : folder.titleIds)
             item["titles"].push_back(titleIdString(titleId));
@@ -253,6 +258,19 @@ bool FolderStore::remove(std::uint32_t id) {
     return true;
 }
 
+std::size_t Folder::titleCount() const {
+    return static_cast<std::size_t>(
+        std::count_if(titleIds.begin(), titleIds.end(),
+                      [](std::uint64_t id) { return id != 0; }));
+}
+
+namespace {
+void trimTrailingHoles(std::vector<std::uint64_t>& slots) {
+    while (!slots.empty() && slots.back() == 0)
+        slots.pop_back();
+}
+}
+
 bool FolderStore::addTitle(std::uint32_t folderId, std::uint64_t titleId) {
     if (titleId == 0)
         return false;
@@ -264,7 +282,11 @@ bool FolderStore::addTitle(std::uint32_t folderId, std::uint64_t titleId) {
         return true;
     if (previous != 0)
         removeTitle(previous, titleId);
-    folder->titleIds.push_back(titleId);
+    auto hole = std::find(folder->titleIds.begin(), folder->titleIds.end(), 0ULL);
+    if (hole != folder->titleIds.end())
+        *hole = titleId;
+    else
+        folder->titleIds.push_back(titleId);
     return true;
 }
 
@@ -281,28 +303,38 @@ bool FolderStore::placeTitle(std::uint32_t folderId, std::uint64_t titleId,
         Folder* source = find(previous);
         if (source) {
             auto it = std::find(source->titleIds.begin(), source->titleIds.end(), titleId);
-            if (it != source->titleIds.end())
-                source->titleIds.erase(it);
+            if (it != source->titleIds.end()) {
+                *it = 0;  
+                trimTrailingHoles(source->titleIds);
+            }
         }
     }
 
     target = find(folderId);
     if (!target)
         return false;
-    index = std::min(index, target->titleIds.size());
-    target->titleIds.insert(target->titleIds.begin() + static_cast<std::ptrdiff_t>(index),
-                            titleId);
+
+    if (index >= target->titleIds.size())
+        target->titleIds.resize(index + 1, 0);
+    if (target->titleIds[index] == 0)
+        target->titleIds[index] = titleId;
+    else
+        target->titleIds.insert(target->titleIds.begin() + static_cast<std::ptrdiff_t>(index),
+                                titleId);
     return true;
 }
 
 bool FolderStore::removeTitle(std::uint32_t folderId, std::uint64_t titleId) {
+    if (titleId == 0)
+        return false;
     Folder* folder = find(folderId);
     if (!folder)
         return false;
     auto it = std::find(folder->titleIds.begin(), folder->titleIds.end(), titleId);
     if (it == folder->titleIds.end())
         return false;
-    folder->titleIds.erase(it);
+    *it = 0;
+    trimTrailingHoles(folder->titleIds);
     return true;
 }
 
@@ -322,7 +354,20 @@ bool FolderStore::setSizeIndex(std::uint32_t folderId, int sizeIndex) {
     return true;
 }
 
+bool FolderStore::setPageCount(std::uint32_t folderId, int pages) {
+    Folder* folder = find(folderId);
+    if (!folder)
+        return false;
+    const int clamped = std::clamp(pages, 1, kMaxFolderPages);
+    if (clamped == folder->pageCount)
+        return false;
+    folder->pageCount = clamped;
+    return true;
+}
+
 std::uint32_t FolderStore::folderForTitle(std::uint64_t titleId) const {
+    if (titleId == 0)  
+        return 0;
     for (const auto& folder : m_folders) {
         if (std::find(folder.titleIds.begin(), folder.titleIds.end(), titleId)
                 != folder.titleIds.end())

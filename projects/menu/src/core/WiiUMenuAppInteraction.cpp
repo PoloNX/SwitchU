@@ -929,7 +929,7 @@ void WiiUMenuApp::showFolderContextMenu(std::uint32_t folderId) {
     FolderOptionsScreen::FolderInfo info;
     info.id = folder->id;
     info.name = folder->name;
-    info.itemCount = static_cast<int>(folder->titleIds.size());
+    info.itemCount = static_cast<int>(folder->titleCount());
     info.colorIndex = folder->colorIndex;
     info.sizeIndex = folder->sizeIndex;
     m_folderOptions->setFolder(info);
@@ -1045,6 +1045,7 @@ void WiiUMenuApp::handleTouch() {
         }
         if (m_arrowAnimRight.show > 0.5f && pageArrowRect(false).expanded(12.f).contains(tx, ty)) {
             m_touchArrowRight = true;
+            m_addPageTouchHold = m_addPageMode;
             m_touchHitIndex = -1;
             return;
         }
@@ -1067,6 +1068,11 @@ void WiiUMenuApp::handleTouch() {
             if (hit < (int)icons.size())
                 m_touchOnFocused = (icons[hit] == focusManager().current());
         }
+    }
+
+    if (input.isTouching() && m_addPageTouchHold &&
+        !pageArrowRect(false).expanded(20.f).contains(input.touchX(), input.touchY())) {
+        m_addPageTouchHold = false;
     }
 
     if (input.isTouching() && m_touchHitIndex >= 0) {
@@ -1098,8 +1104,11 @@ void WiiUMenuApp::handleTouch() {
     if (input.touchUp()) {
         if (m_touchArrowLeft || m_touchArrowRight) {
             const bool left = m_touchArrowLeft;
+            const bool wasAddHold = m_addPageTouchHold;
             m_touchArrowLeft = m_touchArrowRight = false;
-            if (pageArrowRect(left).expanded(12.f).contains(input.touchX(), input.touchY()))
+            m_addPageTouchHold = false;
+            if (!wasAddHold &&
+                pageArrowRect(left).expanded(12.f).contains(input.touchX(), input.touchY()))
                 flipPage(left ? -1 : +1);
             return;
         }
