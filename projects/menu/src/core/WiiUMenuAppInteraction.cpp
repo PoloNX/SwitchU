@@ -151,6 +151,26 @@ void WiiUMenuApp::announceFocusedWidget(nxui::Widget* w) {
         w->setAccessibilityHint(originalHint);
 }
 
+nxui::Texture* WiiUMenuApp::adoptEditGhostTexture(GlossyIcon* sourceIcon) {
+    m_editGhostTexture.reset();
+    if (!sourceIcon)
+        return nullptr;
+
+    const std::uint64_t titleId = sourceIcon->titleId();
+    if (titleId != 0 && titleId < kFolderTitleIdPrefix) {
+        std::vector<uint8_t> data = AppListLoader::loadIconData(titleId);
+        if (!data.empty()) {
+            auto owned = std::make_unique<nxui::Texture>();
+            if (owned->loadFromMemory(app().gpu(), app().renderer(),
+                                      data.data(), data.size(), 160)) {
+                m_editGhostTexture = std::move(owned);
+                return m_editGhostTexture.get();
+            }
+        }
+    }
+    return sourceIcon->texture();
+}
+
 void WiiUMenuApp::startEditGhost(GlossyIcon* sourceIcon) {
     stopEditGhost();
     if (!sourceIcon)
@@ -167,7 +187,7 @@ void WiiUMenuApp::startEditGhost(GlossyIcon* sourceIcon) {
     ghost->setFocusable(false);
     ghost->setTitle(sourceIcon->title());
     ghost->setTitleId(sourceIcon->titleId());
-    ghost->setTexture(sourceIcon->texture());
+    ghost->setTexture(adoptEditGhostTexture(sourceIcon));
     ghost->setIsGameCard(sourceIcon->isGameCard());
     ghost->setGameCardTexture(sourceIcon->gameCardTexture());
     ghost->setNotLaunchable(sourceIcon->isNotLaunchable());
@@ -189,6 +209,7 @@ void WiiUMenuApp::stopEditGhost() {
     detachEditSourceIcon();
 
     m_editGhostIcon.reset();
+    m_editGhostTexture.reset();
     m_editGhostPulse = 0.f;
 }
 
@@ -197,6 +218,8 @@ void WiiUMenuApp::detachEditSourceIcon() {
     if (m_editSourceIcon)
         m_editSourceIcon->setOpacity(1.f);
     m_editSourceIcon = nullptr;
+    if (m_editGhostIcon && !m_editGhostTexture)
+        m_editGhostIcon->setTexture(nullptr);
 }
 
 void WiiUMenuApp::reattachEditSourceIcon() {
@@ -214,6 +237,8 @@ void WiiUMenuApp::reattachEditSourceIcon() {
     m_editSourceIcon = icon.get();
     m_editSourceIcon->setOpacity(0.10f);
     m_iconStreamer.setPinnedIndex(index);
+    if (m_editGhostIcon && !m_editGhostTexture)
+        m_editGhostIcon->setTexture(m_editSourceIcon->texture());
 }
 
 void WiiUMenuApp::updateEditGhost(float dt) {

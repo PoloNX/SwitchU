@@ -196,6 +196,7 @@ private:
     bool quiesceWritersForPowerAction();
     void applyMenuLayoutToPending(std::vector<PendingApp>& apps);
     void startEditGhost(GlossyIcon* sourceIcon);
+    nxui::Texture* adoptEditGhostTexture(GlossyIcon* sourceIcon);
     void detachEditSourceIcon();
     void reattachEditSourceIcon();
     void stopEditGhost();
@@ -313,6 +314,7 @@ private:
     GlossyIcon* m_editBoundIcon = nullptr;
     GlossyIcon* m_editSourceIcon = nullptr;
     std::shared_ptr<GlossyIcon> m_editGhostIcon;
+    std::unique_ptr<nxui::Texture> m_editGhostTexture;
     nxui::Rect m_editGhostTargetRect {0.f, 0.f, 0.f, 0.f};
     float m_editGhostPulse = 0.f;
     std::vector<uint64_t> m_layoutSlots;
