@@ -29,10 +29,7 @@ Texture::Texture(Texture&& o) noexcept
 
 Texture& Texture::operator=(Texture&& o) noexcept {
     if (this == &o) return *this;
-    if (m_renderer && m_slot >= 0)
-        m_renderer->releaseTextureSlot(m_slot);
-    if (m_gpu && m_mem && m_allocSize > 0)
-        m_gpu->freeImageMemory(m_allocSize);
+    retireGpuResources();
     m_mem = nullptr;
     m_image = o.m_image;
     m_mem = static_cast<dk::MemBlock&&>(o.m_mem);
@@ -52,11 +49,38 @@ Texture& Texture::operator=(Texture&& o) noexcept {
     return *this;
 }
 
-Texture::~Texture() {
+// Giving a descriptor slot and an image back is not free at any moment: the
+// frame already handed to the GPU still samples that image through that slot.
+// releaseSlot puts the index straight back on the renderer's free list, so the
+// next texture loaded claims it and rewrites the descriptor, and destroying the
+// UniqueMemBlock returns the pixels themselves. Do that mid-frame and the GPU
+// reads a descriptor pointing at memory that is no longer there: the frame
+// comes out as noise and deko3d ends the process with svcBreak.
+//
+// That is the theme-switch crash. Changing theme re-primes the installed
+// previews, each one move-assigned over the texture the current frame is
+// drawing. The user's file was never corrupt -- both default covers are the
+// same 1280x720 JPEG, and his copy is byte-for-byte the right size.
+//
+// The wait only happens when there is something live to retire, which is a
+// theme change or a cache eviction, not every frame.
+void Texture::retireGpuResources() {
+    const bool holdsMemory = m_gpu && m_mem && m_allocSize > 0;
+    if (m_slot < 0 && !holdsMemory)
+        return;
+    if (m_gpu)
+        m_gpu->waitIdle();
     if (m_renderer && m_slot >= 0)
         m_renderer->releaseTextureSlot(m_slot);
-    if (m_gpu && m_mem && m_allocSize > 0)
+    m_slot = -1;
+    if (holdsMemory)
         m_gpu->freeImageMemory(m_allocSize);
+    m_allocSize = 0;
+    m_valid = false;
+}
+
+Texture::~Texture() {
+    retireGpuResources();
 }
 
 bool Texture::loadFromPixels(GpuDevice& gpu, Renderer& ren,
@@ -67,9 +91,30 @@ bool Texture::loadFromPixels(GpuDevice& gpu, Renderer& ren,
     int oldSlot = m_slot;
     uint32_t oldAllocSize = m_allocSize;
 
+    // Reloading in place is the same hazard as destruction: below, the old
+    // MemBlock is dropped when a bigger one is needed, and the descriptor at
+    // oldSlot is rewritten to point at the new image. Both belong to the frame
+    // in flight until the GPU says otherwise.
+    if (m_valid && (oldSlot >= 0 || m_mem))
+        gpu.waitIdle();
+
     m_valid = false;
     m_slot  = -1;
     m_allocSize = 0;
+
+    // deko3d does not return an error for dimensions it cannot lay out: it
+    // calls svcBreak, which kills the process mid-frame. A corrupt or truncated
+    // image reaching this point must therefore be refused here, while refusing
+    // is still possible. This is a guard, not the fix for the theme-switch
+    // crash -- that one arrived with perfectly valid dimensions; see
+    // retireGpuResources above.
+    constexpr int kMaxSide = 16384;
+    if (w <= 0 || h <= 0 || w > kMaxSide || h > kMaxSide) {
+        std::printf("[Texture] refusing %dx%d image\n", w, h);
+        m_width = m_height = 0;
+        return false;
+    }
+
     m_width  = w;
     m_height = h;
 
@@ -200,6 +245,14 @@ bool Texture::loadFromFile(GpuDevice& gpu, Renderer& ren, const std::string& pat
     if (!data) {
         std::printf("[Texture] stbi_load FAILED: %s\n", path.c_str());
         // Half a texture is worse than none: it can still be bound and drawn.
+        m_valid = false;
+        return false;
+    }
+    // A file can decode without failing outright and still describe nothing
+    // usable. Caught here so the path that scales and uploads never sees it.
+    if (w <= 0 || h <= 0) {
+        std::printf("[Texture] decoded %dx%d, refusing: %s\n", w, h, path.c_str());
+        stbi_image_free(data);
         m_valid = false;
         return false;
     }
