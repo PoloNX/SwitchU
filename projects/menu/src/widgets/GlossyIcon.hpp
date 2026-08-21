@@ -5,6 +5,8 @@
 #include "core/GridModel.hpp"
 #include <string>
 
+namespace nxui { class Font; }
+
 
 
 class GlossyIcon : public nxui::GlassWidget {
@@ -37,6 +39,7 @@ public:
     void setFolderPreviewCount(int count) { m_folderPreviewCount = count; }
     void setFolderVisualSeed(std::uint32_t seed) { m_folderVisualSeed = seed; }
     void setFolderColorIndex(int index) { m_folderColorIndex = index; }
+    void setFont(nxui::Font* font) { m_font = font; }  // folder tiles carry their name
 
     void startAppear(float delay);
     void forceVisible();
@@ -75,4 +78,5 @@ private:
     int           m_folderPreviewCount = 0;
     std::uint32_t m_folderVisualSeed = 0;
     int           m_folderColorIndex = 0;
+    nxui::Font*   m_font = nullptr;
 };

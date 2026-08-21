@@ -121,6 +121,7 @@ static constexpr float kPageArrowW     = 54.f;
 static constexpr float kPageArrowH     = 72.f;
 static constexpr float kPageArrowFade  = 0.20f;
 static constexpr float kPageArrowKick  = 0.32f;
+static constexpr float kAddPageHoldDur = 1.0f;
 
 static constexpr float kGridSafeTopBottomMargin = 20.f;
 
@@ -917,7 +918,7 @@ void WiiUMenuApp::composeRootPending(std::vector<PendingApp>& apps) {
         item.titleId = folderTitleId(folder.id);
         item.kind = GridEntryKind::Folder;
         item.folderId = folder.id;
-        item.folderPreviewCount = static_cast<int>(folder.titleIds.size());
+        item.folderPreviewCount = static_cast<int>(folder.titleCount());
         item.folderColorIndex = folder.colorIndex;
         itemOrder.push_back(item.titleId);
         byId.emplace(item.titleId, std::move(item));
@@ -1000,7 +1001,7 @@ GridModel WiiUMenuApp::buildRootFolderModel() {
         entry.titleId = folderTitleId(folder.id);
         entry.kind = GridEntryKind::Folder;
         entry.folderId = folder.id;
-        entry.folderPreviewCount = static_cast<int>(folder.titleIds.size());
+        entry.folderPreviewCount = static_cast<int>(folder.titleCount());
         entry.folderColorIndex = folder.colorIndex;
         entries.emplace(entry.titleId, std::move(entry));
     }
@@ -1045,6 +1046,10 @@ GridModel WiiUMenuApp::buildOpenFolderModel(std::uint32_t folderId) const {
     if (!folder)
         return model;
     for (std::uint64_t titleId : folder->titleIds) {
+        if (titleId == 0) {
+            model.addEntry({});  // an open slot: it holds the ones after it in place
+            continue;
+        }
         auto found = std::find_if(m_allApps.begin(), m_allApps.end(),
             [titleId](const AppEntry& app) { return app.titleId == titleId; });
         if (found != m_allApps.end())
@@ -1055,9 +1060,10 @@ GridModel WiiUMenuApp::buildOpenFolderModel(std::uint32_t folderId) const {
     }
     const auto [folderCols, folderRows] = folderGridDimensions(folderId);
     const int perPage = std::max(1, folderCols * folderRows);
-    // A folder always offers a second page, and a spare one once the last fills up.
-    const int count = std::max(2 * perPage, (model.count() / perPage + 1) * perPage);
-    while (model.count() < count)
+    const int occupied = (model.count() + perPage - 1) / perPage;
+    const int pages = std::clamp(std::max(folder->pageCount, occupied),
+                                 1, switchu::folders::kMaxFolderPages);
+    while (model.count() < pages * perPage)
         model.addEntry({});
     return model;
 }
@@ -1197,9 +1203,10 @@ void WiiUMenuApp::renameFolder(std::uint32_t folderId) {
         applyDisplayModel(buildRootFolderModel(), folderTitleId(folderId), false);
 }
 
-void WiiUMenuApp::requestOpenFolder(std::uint32_t folderId) {
+void WiiUMenuApp::requestOpenFolder(std::uint32_t folderId, std::uint64_t focusTitleId) {
     if (!m_folderStore.find(folderId) || m_folderCaptureRequested) return;
     m_requestedFolderId = folderId;
+    m_folderOpenFocusTitleId = focusTitleId;
     m_folderCaptureRequested = true;
     m_folderCaptureReady = false;
     if (m_cursor) m_cursor->setVisible(false);
@@ -1244,7 +1251,8 @@ void WiiUMenuApp::openCapturedFolder() {
     m_openFolderId = m_requestedFolderId;
     m_requestedFolderId = 0;
     m_folderCaptureReady = false;
-    if (m_folderBackdrop) m_folderBackdrop->show();
+    const bool refocus = (m_folderOpenFocusTitleId != 0);
+    if (m_folderBackdrop) m_folderBackdrop->show(refocus);
     if (m_folderHeader) m_folderHeader->setVisible(true);
     if (m_topHud) m_topHud->setVisible(false);
     if (m_leftSidebar) m_leftSidebar->setVisible(false);
@@ -1256,11 +1264,13 @@ void WiiUMenuApp::openCapturedFolder() {
         m_folderHeaderLabel->setTextColor(m_theme.textPrimary);
     }
     m_grid->setRect({kGridRectX, 148.f, kGridRectW, 470.f});
-    applyDisplayModel(buildOpenFolderModel(m_openFolderId), 0, false);
+    applyDisplayModel(buildOpenFolderModel(m_openFolderId), m_folderOpenFocusTitleId, false);
+    m_folderOpenFocusTitleId = 0;
     syncPageIndicator();
     if (m_editMode)
         reattachEditSourceIcon();
-    m_audio.playSfx(Sfx::ModalShow);
+    if (!refocus)
+        m_audio.playSfx(Sfx::ModalShow);
 }
 
 void WiiUMenuApp::closeFolder(bool preserveEditMode) {
@@ -1314,6 +1324,7 @@ std::shared_ptr<GlossyIcon> WiiUMenuApp::makeIcon(const AppEntry& entry) {
 
     if (entry.isFolder()) {
         icon->setTag("glossy_icon");
+        icon->setFont(&m_fontSmall);
         icon->setTitle(entry.title);
         icon->setTitleId(entry.titleId);
         icon->setFocusable(true);
@@ -2165,8 +2176,27 @@ void WiiUMenuApp::onUpdate(float dt) {
             a.show = std::clamp(a.show + (visible ? d : -d), 0.f, 1.f);
             a.press = std::max(0.f, a.press - dt / kPageArrowKick);
         };
+        m_addPageMode = addPageAvailable();
         step(m_arrowAnimLeft, paging && page > 0);
-        step(m_arrowAnimRight, paging && page < total - 1);
+        step(m_arrowAnimRight, (paging && page < total - 1) || m_addPageMode);
+
+        if (m_addPageMode) {
+            const bool holding = m_addPageTouchHold
+                              || app().input().isHeld(nxui::Button::ZR);
+            if (holding) {
+                m_addPageHold = std::min(1.f, m_addPageHold + dt / kAddPageHoldDur);
+                if (m_addPageHold >= 1.f) {
+                    m_addPageHold = 0.f;
+                    m_addPageTouchHold = false;
+                    createFolderPage();
+                }
+            } else {
+                m_addPageHold = std::max(0.f, m_addPageHold - dt / (kAddPageHoldDur * 0.4f));
+            }
+        } else {
+            m_addPageHold = 0.f;
+            m_addPageTouchHold = false;
+        }
     }
 
     const bool sliding = m_grid && m_grid->isTransitioning();
@@ -2966,6 +2996,51 @@ void WiiUMenuApp::kickPageArrow(int dir) {
     (dir < 0 ? m_arrowAnimLeft : m_arrowAnimRight).press = 1.f;
 }
 
+bool WiiUMenuApp::addPageAvailable() {
+    if (m_openFolderId == 0 || !m_grid || m_editMode)
+        return false;
+    if (m_navigator.route() != switchu::navigation::Route::Home || focusRoot() != &rootBox())
+        return false;
+    const auto* folder = m_folderStore.find(m_openFolderId);
+    if (!folder || folder->pageCount >= switchu::folders::kMaxFolderPages)
+        return false;
+    return m_grid->currentPage() >= m_grid->totalPages() - 1;
+}
+
+void WiiUMenuApp::createFolderPage() {
+    if (m_openFolderId == 0 || !m_grid)
+        return;
+    const auto* folder = m_folderStore.find(m_openFolderId);
+    if (!folder)
+        return;
+
+    const auto [cols, rows] = folderGridDimensions(m_openFolderId);
+    const int perPage = std::max(1, cols * rows);
+    const int pages = std::max(folder->pageCount, m_grid->totalPages());
+    if (pages >= switchu::folders::kMaxFolderPages)
+        return;
+    if (!m_folderStore.setPageCount(m_openFolderId, pages + 1))
+        return;
+    if (!saveFoldersOrReport("add_folder_page"))
+        return;
+
+    applyDisplayModel(buildOpenFolderModel(m_openFolderId), 0, false);
+    syncPageIndicator();
+
+    const int target = pages;
+    m_grid->setPage(target - 1);
+    m_grid->startPageTransition(target);
+    if (m_grid->focusGlobalIndex(target * perPage)) {
+        if (auto* cur = m_grid->focusManager().current())
+            focusManager().setFocus(cur);
+    }
+    kickPageArrow(+1);
+    m_audio.playSfx(Sfx::ConfirmPositive);
+    m_accessibility.announce(nxui::I18n::instance().tr(
+        "folder.page_added", "Page added"), true, true);
+    updateCursor();
+}
+
 bool WiiUMenuApp::flipPage(int dir) {
     if (!m_grid || m_grid->isTransitioning())
         return false;
@@ -2982,30 +3057,66 @@ void WiiUMenuApp::renderPageArrows(nxui::Renderer& ren) {
     constexpr float kGlyphScale = 0.70f;
 
     auto drawArrow = [&](bool left, const nxui::Texture& tex,
-                         const PageArrowAnim& anim, const std::string& glyph) {
-        if (anim.show <= 0.002f || !tex.valid())
+                         const PageArrowAnim& anim, const std::string& glyph,
+                         bool plus) {
+        if (anim.show <= 0.002f || (!plus && !tex.valid()))
             return;
 
         const float e = anim.show * anim.show * (3.f - 2.f * anim.show);
         const float bump = anim.press * anim.press;
         const nxui::Rect base = pageArrowRect(left);
         const float outward = (left ? -1.f : 1.f) * ((1.f - e) * 16.f + bump * 9.f);
-        const float scale = (0.86f + 0.14f * e) * (1.f + 0.18f * bump);
+        const float grow = plus ? 0.10f * m_addPageHold : 0.f;
+        const float scale = (0.86f + 0.14f * e) * (1.f + 0.18f * bump + grow);
 
         const float cx = base.x + base.width * 0.5f + outward;
         const float cy = base.y + base.height * 0.5f;
         const float w = base.width * scale;
         const float h = base.height * scale;
 
-        ren.drawTexture(&tex, {cx - w * 0.5f, cy - h * 0.5f, w, h},
-                        nxui::Color(1.f, 1.f, 1.f, e));
+        if (plus) {
+            const float ring = std::min(w, h) * 0.40f;
+            ren.drawCircle({cx, cy + 2.f}, ring,
+                           nxui::Color(0.02f, 0.04f, 0.06f, 0.32f * e), 28);
+            ren.drawCircle({cx, cy}, ring,
+                           m_theme.panelBase.withAlpha(0.88f * e), 28);
+            ren.drawCircle({cx, cy}, ring - 1.6f,
+                           m_theme.panelHighlight.withAlpha(0.10f * e), 28);
+
+            const float bar = ring * 0.92f;
+            const float thick = std::max(2.f, ring * 0.17f);
+            const nxui::Color ink = m_theme.textPrimary.withAlpha(0.92f * e);
+            ren.drawRoundedRect({cx - bar * 0.5f, cy - thick * 0.5f, bar, thick},
+                                ink, thick * 0.5f);
+            ren.drawRoundedRect({cx - thick * 0.5f, cy - bar * 0.5f, thick, bar},
+                                ink, thick * 0.5f);
+
+            if (m_addPageHold > 0.002f) {
+                constexpr int kSegments = 44;
+                const float rr = ring + 3.5f;
+                const int lit = std::max(1, (int)std::ceil(kSegments * m_addPageHold));
+                const nxui::Color arc = m_theme.cursorNormal.withAlpha(0.95f * e);
+                for (int i = 0; i < lit; ++i) {
+                    const float a0 = -1.5707963f + 6.2831853f * (float)i / kSegments;
+                    const float a1 = -1.5707963f + 6.2831853f * (float)(i + 1) / kSegments;
+                    ren.drawLine({cx + std::cos(a0) * rr, cy + std::sin(a0) * rr},
+                                 {cx + std::cos(a1) * rr, cy + std::sin(a1) * rr},
+                                 arc, 3.f);
+                }
+            }
+        } else {
+            ren.drawTexture(&tex, {cx - w * 0.5f, cy - h * 0.5f, w, h},
+                            nxui::Color(1.f, 1.f, 1.f, e));
+        }
+
         const nxui::Vec2 gs = m_fontIcons.measure(glyph);
         ren.drawText(glyph, {cx - gs.x * kGlyphScale * 0.5f, cy + h * 0.5f + 6.f},
                      &m_fontIcons, m_theme.textPrimary.withAlpha(0.9f * e), kGlyphScale);
     };
 
-    drawArrow(true, m_arrowTexLeft, m_arrowAnimLeft, buttonGlyph(nxui::Button::ZL));
-    drawArrow(false, m_arrowTexRight, m_arrowAnimRight, buttonGlyph(nxui::Button::ZR));
+    drawArrow(true, m_arrowTexLeft, m_arrowAnimLeft, buttonGlyph(nxui::Button::ZL), false);
+    drawArrow(false, m_arrowTexRight, m_arrowAnimRight, buttonGlyph(nxui::Button::ZR),
+              m_addPageMode);
 }
 
 void WiiUMenuApp::onRender(nxui::Renderer& ren) {

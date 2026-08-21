@@ -104,7 +104,7 @@ private:
     void applyDisplayModel(GridModel model, std::uint64_t focusId, bool animate);
     void syncPageIndicator();
     void flipPageFromEdge(int dir);
-    void requestOpenFolder(std::uint32_t folderId);
+    void requestOpenFolder(std::uint32_t folderId, std::uint64_t focusTitleId = 0);
     void openCapturedFolder();
     void closeFolder(bool preserveEditMode = false);
     void createFolder(int targetSlot = -1);
@@ -159,6 +159,11 @@ private:
     nxui::Rect pageArrowRect(bool left);
     void kickPageArrow(int dir);
     bool flipPage(int dir);
+    bool addPageAvailable();
+    void createFolderPage();
+    float m_addPageHold = 0.f;
+    bool  m_addPageMode = false;
+    bool  m_addPageTouchHold = false;
     int findTitleIndex(uint64_t titleId) const;
     bool focusTitle(uint64_t titleId);
     void markSuspendedIcon(uint64_t titleId);
@@ -191,6 +196,7 @@ private:
     bool quiesceWritersForPowerAction();
     void applyMenuLayoutToPending(std::vector<PendingApp>& apps);
     void startEditGhost(GlossyIcon* sourceIcon);
+    nxui::Texture* adoptEditGhostTexture(GlossyIcon* sourceIcon);
     void detachEditSourceIcon();
     void reattachEditSourceIcon();
     void stopEditGhost();
@@ -308,6 +314,7 @@ private:
     GlossyIcon* m_editBoundIcon = nullptr;
     GlossyIcon* m_editSourceIcon = nullptr;
     std::shared_ptr<GlossyIcon> m_editGhostIcon;
+    std::unique_ptr<nxui::Texture> m_editGhostTexture;
     nxui::Rect m_editGhostTargetRect {0.f, 0.f, 0.f, 0.f};
     float m_editGhostPulse = 0.f;
     std::vector<uint64_t> m_layoutSlots;
@@ -316,6 +323,7 @@ private:
     std::vector<AppEntry> m_allApps;
     std::uint32_t m_openFolderId = 0;
     std::uint32_t m_requestedFolderId = 0;
+    std::uint64_t m_folderOpenFocusTitleId = 0;  
     bool m_folderCaptureRequested = false;
     bool m_folderCaptureReady = false;
     bool m_gridSliding = false;

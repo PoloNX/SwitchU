@@ -198,6 +198,8 @@ void GlossyIcon::onContentRender(nxui::Renderer& ren) {
                                    nxui::Color::white().withAlpha(0.92f * m_opacity),
                                    std::max(8.f, shellRadius - 1.f * s), 2.f * s);
 
+        const bool named = m_font && !m_title.empty();
+
         const float cell = std::min(shell.width, shell.height) * 0.185f;
         const float gap = cell * 0.18f;
         const float gridSize = cell * 3.f + gap * 2.f;
@@ -226,6 +228,39 @@ void GlossyIcon::onContentRender(nxui::Renderer& ren) {
                                  std::max(1.f, cellRect.height * 0.13f)},
                                 nxui::Color::white().withAlpha(0.18f * m_opacity),
                                 cell * 0.08f);
+        }
+
+        if (named) {
+            const nxui::Vec2 measured = m_font->measure(m_title);
+            const float room = std::max(8.f, shell.width - 6.f * s);
+            float textScale = 1.05f * s;
+            if (measured.x > 0.f)
+                textScale = std::min(textScale, room / measured.x);
+            textScale = std::max(0.38f * s, textScale);
+
+            const float textW = measured.x * textScale;
+            const float textH = measured.y * textScale;
+            const nxui::Vec2 textPos{shell.x + (shell.width - textW) * 0.5f,
+                                     shell.y + (shell.height - textH) * 0.5f};
+
+            const float halo = std::max(1.f, 1.5f * s);
+            const nxui::Color shadow(0.05f, 0.16f, 0.26f, 0.34f * m_opacity);
+            const nxui::Vec2 offsets[8] = {
+                {-halo, 0.f}, {halo, 0.f}, {0.f, -halo}, {0.f, halo},
+                {-halo, -halo}, {halo, -halo}, {-halo, halo}, {halo, halo}};
+            for (const nxui::Vec2& off : offsets)
+                ren.drawText(m_title, {textPos.x + off.x, textPos.y + off.y},
+                             m_font, shadow, textScale);
+
+            ren.drawText(m_title,
+                         {textPos.x, textPos.y + halo * 0.7f},
+                         m_font,
+                         nxui::Color(0.04f, 0.14f, 0.24f, 0.30f * m_opacity),
+                         textScale);
+
+            ren.drawText(m_title, textPos, m_font,
+                         nxui::Color::white().withAlpha(0.98f * m_opacity),
+                         textScale);
         }
 
         if (m_focused) {

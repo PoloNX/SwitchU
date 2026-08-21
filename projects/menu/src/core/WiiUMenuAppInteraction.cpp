@@ -151,6 +151,26 @@ void WiiUMenuApp::announceFocusedWidget(nxui::Widget* w) {
         w->setAccessibilityHint(originalHint);
 }
 
+nxui::Texture* WiiUMenuApp::adoptEditGhostTexture(GlossyIcon* sourceIcon) {
+    m_editGhostTexture.reset();
+    if (!sourceIcon)
+        return nullptr;
+
+    const std::uint64_t titleId = sourceIcon->titleId();
+    if (titleId != 0 && titleId < kFolderTitleIdPrefix) {
+        std::vector<uint8_t> data = AppListLoader::loadIconData(titleId);
+        if (!data.empty()) {
+            auto owned = std::make_unique<nxui::Texture>();
+            if (owned->loadFromMemory(app().gpu(), app().renderer(),
+                                      data.data(), data.size(), 160)) {
+                m_editGhostTexture = std::move(owned);
+                return m_editGhostTexture.get();
+            }
+        }
+    }
+    return sourceIcon->texture();
+}
+
 void WiiUMenuApp::startEditGhost(GlossyIcon* sourceIcon) {
     stopEditGhost();
     if (!sourceIcon)
@@ -167,7 +187,7 @@ void WiiUMenuApp::startEditGhost(GlossyIcon* sourceIcon) {
     ghost->setFocusable(false);
     ghost->setTitle(sourceIcon->title());
     ghost->setTitleId(sourceIcon->titleId());
-    ghost->setTexture(sourceIcon->texture());
+    ghost->setTexture(adoptEditGhostTexture(sourceIcon));
     ghost->setIsGameCard(sourceIcon->isGameCard());
     ghost->setGameCardTexture(sourceIcon->gameCardTexture());
     ghost->setNotLaunchable(sourceIcon->isNotLaunchable());
@@ -189,6 +209,7 @@ void WiiUMenuApp::stopEditGhost() {
     detachEditSourceIcon();
 
     m_editGhostIcon.reset();
+    m_editGhostTexture.reset();
     m_editGhostPulse = 0.f;
 }
 
@@ -197,6 +218,8 @@ void WiiUMenuApp::detachEditSourceIcon() {
     if (m_editSourceIcon)
         m_editSourceIcon->setOpacity(1.f);
     m_editSourceIcon = nullptr;
+    if (m_editGhostIcon && !m_editGhostTexture)
+        m_editGhostIcon->setTexture(nullptr);
 }
 
 void WiiUMenuApp::reattachEditSourceIcon() {
@@ -214,6 +237,8 @@ void WiiUMenuApp::reattachEditSourceIcon() {
     m_editSourceIcon = icon.get();
     m_editSourceIcon->setOpacity(0.10f);
     m_iconStreamer.setPinnedIndex(index);
+    if (m_editGhostIcon && !m_editGhostTexture)
+        m_editGhostIcon->setTexture(m_editSourceIcon->texture());
 }
 
 void WiiUMenuApp::updateEditGhost(float dt) {
@@ -619,8 +644,15 @@ bool WiiUMenuApp::focusTitle(uint64_t titleId) {
         return false;
 
     int idx = findTitleIndex(titleId);
-    if (idx < 0)
-        return false;
+    if (idx < 0 && titleId != 0) {
+        const std::uint32_t folderId = m_folderStore.folderForTitle(titleId);
+        if (folderId == 0 || folderId == m_openFolderId)
+            return false;
+        requestOpenFolder(folderId, titleId);
+        idx = findTitleIndex(folderTitleId(folderId));
+        if (idx < 0)
+            return true;
+    }
 
     int oldPage = m_grid->currentPage();
     if (!m_grid->focusGlobalIndex(idx))
@@ -922,7 +954,7 @@ void WiiUMenuApp::showFolderContextMenu(std::uint32_t folderId) {
     FolderOptionsScreen::FolderInfo info;
     info.id = folder->id;
     info.name = folder->name;
-    info.itemCount = static_cast<int>(folder->titleIds.size());
+    info.itemCount = static_cast<int>(folder->titleCount());
     info.colorIndex = folder->colorIndex;
     info.sizeIndex = folder->sizeIndex;
     m_folderOptions->setFolder(info);
@@ -1038,6 +1070,7 @@ void WiiUMenuApp::handleTouch() {
         }
         if (m_arrowAnimRight.show > 0.5f && pageArrowRect(false).expanded(12.f).contains(tx, ty)) {
             m_touchArrowRight = true;
+            m_addPageTouchHold = m_addPageMode;
             m_touchHitIndex = -1;
             return;
         }
@@ -1060,6 +1093,11 @@ void WiiUMenuApp::handleTouch() {
             if (hit < (int)icons.size())
                 m_touchOnFocused = (icons[hit] == focusManager().current());
         }
+    }
+
+    if (input.isTouching() && m_addPageTouchHold &&
+        !pageArrowRect(false).expanded(20.f).contains(input.touchX(), input.touchY())) {
+        m_addPageTouchHold = false;
     }
 
     if (input.isTouching() && m_touchHitIndex >= 0) {
@@ -1091,8 +1129,11 @@ void WiiUMenuApp::handleTouch() {
     if (input.touchUp()) {
         if (m_touchArrowLeft || m_touchArrowRight) {
             const bool left = m_touchArrowLeft;
+            const bool wasAddHold = m_addPageTouchHold;
             m_touchArrowLeft = m_touchArrowRight = false;
-            if (pageArrowRect(left).expanded(12.f).contains(input.touchX(), input.touchY()))
+            m_addPageTouchHold = false;
+            if (!wasAddHold &&
+                pageArrowRect(left).expanded(12.f).contains(input.touchX(), input.touchY()))
                 flipPage(left ? -1 : +1);
             return;
         }

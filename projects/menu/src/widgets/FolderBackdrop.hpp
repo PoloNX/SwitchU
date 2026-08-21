@@ -5,7 +5,7 @@
 
 class FolderBackdrop final : public nxui::Widget {
 public:
-    void show();
+    void show(bool instant = false);
     void hide();
     bool active() const { return isVisible() || m_opacity.value() > 0.01f; }
 

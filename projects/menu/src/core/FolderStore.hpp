@@ -13,7 +13,12 @@ struct Folder {
     std::vector<std::uint64_t> titleIds;
     int colorIndex = 0;
     int sizeIndex = 1;
+    int pageCount = 1;
+
+    std::size_t titleCount() const;
 };
+
+inline constexpr int kMaxFolderPages = 8;
 
 class FolderStore final {
 public:
@@ -35,6 +40,7 @@ public:
     bool removeTitle(std::uint32_t folderId, std::uint64_t titleId);
     bool setColorIndex(std::uint32_t folderId, int colorIndex);
     bool setSizeIndex(std::uint32_t folderId, int sizeIndex);
+    bool setPageCount(std::uint32_t folderId, int pages);
     std::uint32_t folderForTitle(std::uint64_t titleId) const;
 
 private:
