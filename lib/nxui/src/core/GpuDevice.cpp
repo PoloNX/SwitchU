@@ -188,7 +188,14 @@ dk::UniqueMemBlock GpuDevice::allocImageMemory(uint32_t size) {
 }
 
 void GpuDevice::freeImageMemory(uint32_t size) {
+    // A Texture owns a standalone dk::MemBlock which is released immediately
+    // after this bookkeeping hook returns. Waiting only for the upload queue
+    // is insufficient: an already submitted graphics frame may still sample
+    // that image, producing a GPU read page fault when edit-mode destroys its
+    // temporary ghost texture. Drain both upload work and graphics work before
+    // allowing the MemBlock destructor to run.
     waitForTextureUploads();
+    waitIdle();
     size = (size + kGpuAlign - 1) & ~(kGpuAlign - 1);
     if (size <= m_imageMemUsed)
         m_imageMemUsed -= size;

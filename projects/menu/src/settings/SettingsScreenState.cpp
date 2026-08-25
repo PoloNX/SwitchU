@@ -14,6 +14,7 @@ void SettingsScreen::buildTabs() {
         {.name = i18n.tr("settings.tabs.audio", "Audio")},
         {.name = i18n.tr("settings.tabs.display", "Display")},
         {.name = i18n.tr("settings.tabs.internet", "Internet")},
+        {.name = i18n.tr("settings.tabs.steamgriddb", "SteamGridDB")},
         {.name = i18n.tr("settings.tabs.controllers", "Controllers")},
         {.name = i18n.tr("settings.tabs.bluetooth", "Bluetooth")},
         {.name = i18n.tr("settings.tabs.sleep", "Sleep")},
@@ -45,7 +46,7 @@ void SettingsScreen::ensureTabLoaded(int tabIndex) {
     if (m_loadingTabs[static_cast<std::size_t>(tabIndex)])
         return;
 
-    if (tabIndex == 7 && !bluetooth::IsAvailable()) {
+    if (tabIndex == 8 && !bluetooth::IsAvailable()) {
         bluetooth::Initialize();
         DebugLog::log("[settings] Bluetooth audio manager initialized on demand");
     }
@@ -62,10 +63,11 @@ SettingsScreen::Tab SettingsScreen::buildTabNow(int tabIndex) {
         case 3: return settings::tabs::AudioTab::build(*this);
         case 4: return settings::tabs::DisplayTab::build(*this);
         case 5: return settings::tabs::InternetTab::build(*this);
-        case 6: return settings::tabs::ControllersTab::build(*this);
-        case 7: return settings::tabs::BluetoothTab::build(*this);
-        case 8: return settings::tabs::SleepTab::build(*this);
-        case 9: return settings::tabs::AboutTab::build(*this);
+        case 6: return settings::tabs::SteamGridDbTab::build(*this);
+        case 7: return settings::tabs::ControllersTab::build(*this);
+        case 8: return settings::tabs::BluetoothTab::build(*this);
+        case 9: return settings::tabs::SleepTab::build(*this);
+        case 10: return settings::tabs::AboutTab::build(*this);
         default: break;
     }
 
@@ -145,7 +147,7 @@ void SettingsScreen::prefetchOneTab() {
 
         // Keep the optional btmsys client out of the normal menu/application
         // handoff. Initialize it only when the user explicitly visits the tab.
-        if (idx == 7 && idx != static_cast<std::size_t>(m_tabIndex))
+        if (idx == 8 && idx != static_cast<std::size_t>(m_tabIndex))
             continue;
 
         if (idx != static_cast<std::size_t>(m_tabIndex))

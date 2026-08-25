@@ -1,12 +1,21 @@
 #include "SidebarManager.hpp"
 #include "core/DebugLog.hpp"
 #include <nxui/core/I18n.hpp>
+#include <nxui/core/Input.hpp>
 #include <filesystem>
 #include <system_error>
 
 namespace {
 
 constexpr int kSidebarIconCount = 6;
+constexpr float kSidebarButtonSize = 70.f;
+constexpr float kSidebarColumnGap = 16.f;
+constexpr float kSidebarMarginX = 14.f;
+constexpr float kDynamicStripButtonSize = 56.f;
+constexpr float kDynamicStripGap = 10.f;
+constexpr float kDynamicStripY = 17.f;
+constexpr float kDynamicLeftGroupX = 190.f;
+constexpr float kDynamicRightGroupX = 902.f;
 
 bool pathExists(const std::string& path) {
     std::error_code ec;
@@ -27,13 +36,11 @@ std::string joinPath(const std::string& base, const std::string& name) {
 void SidebarManager::build(nxui::GpuDevice& gpu, nxui::Renderer& ren,
                            const std::string& assetsBase,
                            const Actions& actions) {
-    constexpr float btnSize = 70.f;
-    constexpr float gap     = 16.f;
-    constexpr float marginX = 14.f;
-
-    float leftX  = marginX;
-    float rightX = 1280.f - marginX - btnSize;
-    float totalH = 3 * btnSize + 2.f * gap;
+    const float btnSize = kSidebarButtonSize;
+    const float gap = kSidebarColumnGap;
+    const float leftX = kSidebarMarginX;
+    const float rightX = 1280.f - kSidebarMarginX - btnSize;
+    const float totalH = 3 * btnSize + 2.f * gap;
     float startY = 360.f - totalH * 0.5f;
 
     m_leftButtons.clear();
@@ -102,6 +109,81 @@ void SidebarManager::build(nxui::GpuDevice& gpu, nxui::Renderer& ren,
     (void)gpu;
     (void)ren;
     (void)assetsBase;
+}
+
+void SidebarManager::setDynamicLineLayout(bool enabled) {
+    std::vector<AppletButton*> ordered;
+    ordered.reserve(m_leftButtons.size() + m_rightButtons.size());
+    for (auto& button : m_leftButtons) ordered.push_back(button.get());
+    for (auto& button : m_rightButtons) ordered.push_back(button.get());
+    if (ordered.empty()) return;
+
+    for (auto* button : ordered) {
+        button->setCustomNavigation(nxui::FocusDirection::LEFT, nullptr);
+        button->setCustomNavigation(nxui::FocusDirection::RIGHT, nullptr);
+        button->setCustomNavigation(nxui::FocusDirection::UP, nullptr);
+        button->setCustomNavigation(nxui::FocusDirection::DOWN, nullptr);
+    }
+
+    if (enabled) {
+        for (std::size_t i = 0; i < ordered.size(); ++i) {
+            auto* button = ordered[i];
+            const bool rightGroup = i >= m_leftButtons.size();
+            const std::size_t groupIndex = rightGroup ? i - m_leftButtons.size() : i;
+            const float groupX = rightGroup ? kDynamicRightGroupX : kDynamicLeftGroupX;
+            button->setRect({groupX + static_cast<float>(groupIndex) *
+                                      (kDynamicStripButtonSize + kDynamicStripGap),
+                             kDynamicStripY,
+                             kDynamicStripButtonSize,
+                             kDynamicStripButtonSize});
+            button->setCustomNavigation(nxui::FocusDirection::LEFT,
+                                        i > 0 ? ordered[i - 1] : button);
+            button->setCustomNavigation(nxui::FocusDirection::RIGHT,
+                                        i + 1 < ordered.size() ? ordered[i + 1] : button);
+        }
+        return;
+    }
+
+    const float totalH = 3.f * kSidebarButtonSize + 2.f * kSidebarColumnGap;
+    const float startY = 360.f - totalH * 0.5f;
+    const float rightX = 1280.f - kSidebarMarginX - kSidebarButtonSize;
+    for (std::size_t i = 0; i < m_leftButtons.size(); ++i) {
+        m_leftButtons[i]->setRect({kSidebarMarginX,
+                                   startY + static_cast<float>(i) *
+                                       (kSidebarButtonSize + kSidebarColumnGap),
+                                   kSidebarButtonSize, kSidebarButtonSize});
+    }
+    for (std::size_t i = 0; i < m_rightButtons.size(); ++i) {
+        m_rightButtons[i]->setRect({rightX,
+                                    startY + static_cast<float>(i) *
+                                        (kSidebarButtonSize + kSidebarColumnGap),
+                                    kSidebarButtonSize, kSidebarButtonSize});
+    }
+    if (!m_leftButtons.empty()) {
+        m_leftButtons.front()->setCustomNavigation(nxui::FocusDirection::UP,
+                                                   m_leftButtons.front().get());
+        m_leftButtons.back()->setCustomNavigation(nxui::FocusDirection::DOWN,
+                                                  m_leftButtons.back().get());
+    }
+    if (!m_rightButtons.empty()) {
+        m_rightButtons.front()->setCustomNavigation(nxui::FocusDirection::UP,
+                                                    m_rightButtons.front().get());
+        m_rightButtons.back()->setCustomNavigation(nxui::FocusDirection::DOWN,
+                                                   m_rightButtons.back().get());
+    }
+}
+
+void SidebarManager::setDynamicLineDownAction(std::function<void()> action) {
+    auto configure = [&action](std::shared_ptr<AppletButton>& button) {
+        button->setCustomNavigation(nxui::FocusDirection::DOWN, nullptr);
+        button->removeAction(static_cast<uint64_t>(nxui::Button::DDown));
+        button->removeAction(static_cast<uint64_t>(nxui::Button::LStickD));
+        button->removeAction(static_cast<uint64_t>(nxui::Button::RStickD));
+        if (action)
+            button->addDirectionAction(nxui::FocusDirection::DOWN, action);
+    };
+    for (auto& button : m_leftButtons) configure(button);
+    for (auto& button : m_rightButtons) configure(button);
 }
 
 void SidebarManager::reloadAssets(nxui::GpuDevice& gpu, nxui::Renderer& ren,

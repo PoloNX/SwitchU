@@ -32,6 +32,11 @@ public:
 
     void update(float dt, nxui::Widget* focusedWidget);
 
+    // The dynamic-line HOME layout turns the two side columns into one
+    // horizontal control strip between the profile bar and the applications.
+    void setDynamicLineLayout(bool enabled);
+    void setDynamicLineDownAction(std::function<void()> action);
+
     void applyTheme(const nxui::Theme& theme);
 
     std::vector<std::shared_ptr<AppletButton>>& leftButtons()  { return m_leftButtons; }

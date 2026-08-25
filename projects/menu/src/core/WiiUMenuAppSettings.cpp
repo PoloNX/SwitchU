@@ -244,6 +244,8 @@ void WiiUMenuApp::createSettings() {
                                             m_config.accessibilitySpeechRate);
     m_settings->setAccessibilitySpeechPreferences(m_config.accessibilitySpeakHints,
                                                   m_config.accessibilitySpeakPosition);
+    m_settings->setSteamGridDbState(m_config.steamGridDbEnabled,
+                                    !m_config.steamGridDbApiKey.empty());
 
     m_settings->onNavigateSfx([this]() { m_audio.playSfx(Sfx::Navigate); });
     m_settings->onActivateSfx([this]() { m_audio.playSfx(Sfx::Activate); });
@@ -389,6 +391,19 @@ void WiiUMenuApp::createSettings() {
         m_pendingNetConnect = true;
         m_settings->hide();
     });
+    m_settings->onSteamGridDbEnabledChange([this](bool enabled) {
+        m_config.steamGridDbEnabled = enabled;
+        if (m_steamGridDbBackdrop) {
+            m_steamGridDbBackdrop->setEnabled(enabled);
+            if (enabled) showFocusedSteamGridDbArtwork(true);
+        }
+    });
+    m_settings->onSteamGridDbApiKeyRequest([this]() {
+        editSteamGridDbApiKey();
+    });
+    m_settings->onSteamGridDbScrapeRequest([this]() {
+        startSteamGridDbScrape();
+    });
     m_settings->onControllerPairing([this]() {
         if (m_settings) m_settings->hide();
         m_launcher.launchControllerPairing();
@@ -463,6 +478,111 @@ void WiiUMenuApp::createSettings() {
         }
     });
 
+}
+
+void WiiUMenuApp::editSteamGridDbApiKey() {
+#ifdef SWITCHU_MENU
+    SwkbdConfig keyboard{};
+    char text[193]{};
+    Result rc = swkbdCreate(&keyboard, 0);
+    if (R_FAILED(rc)) {
+        DebugLog::log("[steamgriddb] keyboard create failed rc=0x%X", rc);
+        if (m_settings)
+            m_settings->requestToast(nxui::I18n::instance().tr(
+                "settings.steamgriddb.keyboard_error", "The keyboard could not be opened."));
+        return;
+    }
+
+    swkbdConfigMakePresetPassword(&keyboard);
+    swkbdConfigSetGuideText(&keyboard, "SteamGridDB API key");
+    swkbdConfigSetStringLenMax(&keyboard, 192);
+    swkbdConfigSetInitialText(&keyboard, m_config.steamGridDbApiKey.c_str());
+    rc = swkbdShow(&keyboard, text, sizeof(text));
+    swkbdClose(&keyboard);
+    if (R_FAILED(rc)) {
+        DebugLog::log("[steamgriddb] keyboard cancelled rc=0x%X", rc);
+        if (m_settings) focusManager().setFocus(m_settings.get());
+        return;
+    }
+
+    m_config.steamGridDbApiKey = text;
+    m_config.save();
+    if (m_settings) {
+        m_settings->setSteamGridDbState(m_config.steamGridDbEnabled,
+                                        !m_config.steamGridDbApiKey.empty());
+        m_settings->refreshCurrentTabWidgets();
+        m_settings->requestToast(m_config.steamGridDbApiKey.empty()
+            ? nxui::I18n::instance().tr("settings.steamgriddb.key_cleared", "API key cleared.")
+            : nxui::I18n::instance().tr("settings.steamgriddb.key_saved", "API key saved."));
+        focusManager().setFocus(m_settings.get());
+    }
+#else
+    if (m_settings)
+        m_settings->requestToast("API-key input is available in the console build.");
+#endif
+}
+
+void WiiUMenuApp::startSteamGridDbScrape() {
+    if (m_config.steamGridDbApiKey.empty()) {
+        if (m_settings)
+            m_settings->requestToast(nxui::I18n::instance().tr(
+                "settings.steamgriddb.need_key", "Configure an API key first."));
+        return;
+    }
+    if (!m_steamGridDb.start(m_config.steamGridDbApiKey, m_allApps)) {
+        if (m_settings)
+            m_settings->requestToast(nxui::I18n::instance().tr(
+                "settings.steamgriddb.start_failed", "The artwork scan could not be started."));
+        return;
+    }
+    m_steamGridDbWasRunning = true;
+    if (m_settings)
+        m_settings->requestToast(nxui::I18n::instance().tr(
+            "settings.steamgriddb.started", "SteamGridDB scan started."));
+}
+
+void WiiUMenuApp::syncSteamGridDb() {
+    const auto state = m_steamGridDb.status();
+    if (state.revision != m_steamGridDbUiRevision) {
+        m_steamGridDbUiRevision = state.revision;
+        if (m_settings) {
+            m_settings->setSteamGridDbProgress(
+                state.running, state.finished, state.completed, state.total,
+                state.matched, state.failed, state.currentTitle, state.message);
+        }
+        if (state.lastCompletedTitleId != 0
+            && state.lastCompletedTitleId != m_steamGridDbLastCompletedTitleId) {
+            m_steamGridDbLastCompletedTitleId = state.lastCompletedTitleId;
+            if (m_grid && m_grid->focusManager().current()) {
+                auto* focused = m_grid->focusManager().current();
+                if (focused->tag() == "glossy_icon"
+                    && static_cast<GlossyIcon*>(focused)->titleId() == state.lastCompletedTitleId) {
+                    showFocusedSteamGridDbArtwork(true);
+                }
+            }
+        }
+    }
+
+    if (m_steamGridDbWasRunning && !state.running && state.finished) {
+        m_steamGridDbWasRunning = false;
+        showFocusedSteamGridDbArtwork(true);
+        if (m_settings && m_settings->isActive()) {
+            m_settings->requestToast(
+                std::to_string(state.matched) + " artwork sets found, "
+                + std::to_string(state.failed) + " missing.", 3.2f);
+        }
+    }
+}
+
+void WiiUMenuApp::showFocusedSteamGridDbArtwork(bool forceReload) {
+    if (!m_steamGridDbBackdrop || !m_config.steamGridDbEnabled) return;
+    std::uint64_t titleId = 0;
+    if (m_grid) {
+        auto* current = m_grid->focusManager().current();
+        if (current && current->tag() == "glossy_icon")
+            titleId = static_cast<GlossyIcon*>(current)->titleId();
+    }
+    m_steamGridDbBackdrop->showTitle(titleId, forceReload);
 }
 
 void WiiUMenuApp::createGameOptions() {

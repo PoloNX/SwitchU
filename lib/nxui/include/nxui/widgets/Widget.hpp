@@ -92,6 +92,7 @@ public:
     /// Register a callback for a specific button press while this widget has focus.
     /// e.g. btn->addAction(Button::A, [](){ ... });
     void addAction(uint64_t button, std::function<void()> cb);
+    void removeAction(uint64_t button);
     void clearActions();
     /// Fire matching actions for buttons pressed this frame.
     /// Returns a bitmask of consumed buttons (buttons that had actions).

@@ -755,7 +755,8 @@ void TabbedOverlayScreen::handleTouch(nxui::Input& input) {
 
         if (tr.contains(tx, ty)) {
             m_touchTarget = TouchTarget::Tab;
-            int idx = (int)((ty - tr.y) / kTabRowHeight);
+            m_touchStartScroll = m_tabScrollY;
+            int idx = (int)((ty - tr.y + m_tabScrollY - 14.f) / kTabRowHeight);
             idx = std::clamp(idx, 0, (int)m_tabs.size() - 1);
             m_touchHitIndex = idx;
             m_touchOnSelected = (idx == m_tabIndex && m_focusArea == FocusArea::Tabs);
@@ -811,7 +812,21 @@ void TabbedOverlayScreen::handleTouch(nxui::Input& input) {
             m_touchScrolling = true;
         }
 
-        if (m_touchTarget == TouchTarget::Content) {
+        if (m_touchTarget == TouchTarget::Tab) {
+            if (!m_touchScrolling && dy > kPanThreshold && dy > dx) {
+                m_touchScrolling = true;
+                m_touchStartY = ty;
+                m_touchStartScroll = m_tabScrollY;
+            }
+            if (m_touchScrolling) {
+                const float totalHeight = 28.f + kTabRowHeight * m_tabs.size();
+                const float maxScroll = std::max(0.f, totalHeight - tr.height);
+                const float next = std::clamp(
+                    m_touchStartScroll - (ty - m_touchStartY), 0.f, maxScroll);
+                m_tabScrollTarget = next;
+                m_tabScrollY = next;
+            }
+        } else if (m_touchTarget == TouchTarget::Content) {
             if (m_touchDraggingSlider && m_touchHitIndex >= 0) {
                 applySliderDrag(m_touchHitIndex, tx);
             } else {
@@ -1021,6 +1036,21 @@ void TabbedOverlayScreen::onContentUpdate(float dt) {
     syncPanelState(visibilityProgress());
 
     m_scrollY += (m_scrollTarget - m_scrollY) * std::min(1.f, dt * 14.f);
+    if (!m_tabs.empty()) {
+        const nxui::Rect tr = tabsRect();
+        const float totalHeight = 28.f + kTabRowHeight * m_tabs.size();
+        const float maxTabScroll = std::max(0.f, totalHeight - tr.height);
+        const float rowTop = 14.f + kTabRowHeight * m_tabIndex;
+        const float rowBottom = rowTop + (kTabRowHeight - 10.f);
+        const float viewTop = m_tabScrollTarget + 10.f;
+        const float viewBottom = m_tabScrollTarget + tr.height - 10.f;
+        if (rowTop < viewTop)
+            m_tabScrollTarget = rowTop - 10.f;
+        else if (rowBottom > viewBottom)
+            m_tabScrollTarget = rowBottom - tr.height + 10.f;
+        m_tabScrollTarget = std::clamp(m_tabScrollTarget, 0.f, maxTabScroll);
+        m_tabScrollY += (m_tabScrollTarget - m_tabScrollY) * std::min(1.f, dt * 16.f);
+    }
     m_uiTime += dt;
 
     if (m_active && !m_animating && m_tabIndex >= 0 && m_tabIndex < (int)m_tabs.size()) {

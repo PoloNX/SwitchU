@@ -292,6 +292,8 @@ void TabbedOverlayScreen::show() {
     m_contentIdx = 0;
     m_scrollY    = 0.f;
     m_scrollTarget = 0.f;
+    m_tabScrollY = 0.f;
+    m_tabScrollTarget = 0.f;
     m_tabReveal.setImmediate(0.f);
     m_tabReveal.set(1.f, 0.24f, nxui::Easing::outCubic);
     m_dropdownOpen = false;
@@ -378,7 +380,7 @@ void TabbedOverlayScreen::rebuildTabBar() {
     m_tabBar->setRect(tr);
 
     float tabX = tr.x + kTabRailInset;
-    float tabY = tr.y + kTabRailInset;
+    float tabY = tr.y + kTabRailInset - m_tabScrollY;
     float tabW = std::max(0.f, tr.width - kTabRailInset * 2.f);
     float tabH = kTabRowHeight - kTabCardGap;
 
@@ -545,7 +547,7 @@ void TabbedOverlayScreen::syncDebugWireframeRects(const nxui::Rect& panel) {
 
     m_tabBar->setRect(tr);
     auto& tabChildren = m_tabBar->children();
-    float tabY = tr.y + kTabRailInset;
+    float tabY = tr.y + kTabRailInset - m_tabScrollY;
     float tabW = std::max(0.f, tr.width - kTabRailInset * 2.f);
     float tabH = kTabRowHeight - kTabCardGap;
     for (int i = 0; i < (int)tabChildren.size(); ++i) {
@@ -603,7 +605,7 @@ void TabbedOverlayScreen::drawTabs(nxui::Renderer& ren, const nxui::Rect& panel,
 
     auto& tabChildren = m_tabBar->children();
     float reveal = std::clamp(m_tabReveal.value(), 0.f, 1.f);
-    float tabY = tr.y + kTabRailInset;
+    float tabY = tr.y + kTabRailInset - m_tabScrollY;
     float tabW = std::max(0.f, tr.width - kTabRailInset * 2.f);
     float tabH = kTabRowHeight - kTabCardGap;
     float rowOpacity = opacity * reveal;
@@ -627,7 +629,19 @@ void TabbedOverlayScreen::drawTabs(nxui::Renderer& ren, const nxui::Rect& panel,
         m_focusCursor.moveTo(tabChildren[m_tabIndex]->rect().expanded(1.f), 16.f, 0.08f);
     }
 
+    ren.pushClipRect(tr);
     m_tabBar->render(ren);
+    ren.popClipRect();
+
+    const float totalHeight = kTabRailInset * 2.f + kTabRowHeight * m_tabs.size();
+    const float maxScroll = std::max(0.f, totalHeight - tr.height);
+    if (maxScroll > 0.f) {
+        const float trackH = std::max(34.f, tr.height * tr.height / totalHeight);
+        const float travel = std::max(0.f, tr.height - trackH - 16.f);
+        const float thumbY = tr.y + 8.f + travel * std::clamp(m_tabScrollY / maxScroll, 0.f, 1.f);
+        ren.drawRoundedRect({tr.right() - 7.f, thumbY, 3.f, trackH},
+                            m_theme->cursorNormal.withAlpha(0.42f * opacity), 1.5f);
+    }
 }
 
 void TabbedOverlayScreen::drawContent(nxui::Renderer& ren, const nxui::Rect& panel, float opacity) {

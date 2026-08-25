@@ -16,11 +16,16 @@
       "settings": "Paramètres",
       "themes": "Thèmes",
       "main_menu": "Menu principal",
+      "dynamic_line": "Ligne centrale",
       "page": "page",
       "of": "sur",
       "left_sidebar": "Barre latérale gauche",
       "right_sidebar": "Barre latérale droite",
       "user_profiles": "Profils utilisateur"
+    },
+    "layout": {
+      "grid": "Mode grille",
+      "dynamic_line": "Mode ligne dynamique"
     },
     "roles": {
       "button": "bouton",
@@ -68,7 +73,8 @@
     },
     "position": {
       "row": "ligne",
-      "column": "colonne"
+      "column": "colonne",
+      "item": "élément"
     },
     "move_mode": {
       "enter": "Déplacement du jeu: ",
@@ -143,7 +149,8 @@
   "hint": {
     "repeat": "Répéter",
     "voice": "Voix",
-    "options": "Options"
+    "options": "Options",
+    "switch_layout": "Changer de vue"
   },
   "settings": {
     "tabs": {
@@ -152,6 +159,7 @@
       "audio": "Audio",
       "display": "Affichage",
       "internet": "Internet",
+      "steamgriddb": "SteamGridDB",
       "controllers": "Manettes",
       "bluetooth": "Bluetooth",
       "sleep": "Veille",
@@ -250,6 +258,27 @@
       "mac_address": "Adresse MAC",
       "dns": "DNS",
       "dns_auto": "Auto (DHCP)"
+    },
+    "steamgriddb": {
+      "section": "Illustrations des jeux",
+      "enabled": "Afficher les visuels SteamGridDB",
+      "enabled_desc": "Affiche les heroes, jaquettes et logos derrière le menu des applications.",
+      "api_key": "Clé API",
+      "api_key_set": "Configurée (masquée)",
+      "api_key_missing": "Non configurée",
+      "scan": "Rechercher les visuels de toutes les applications",
+      "scan_desc": "Télécharge une jaquette, un hero et un logo pour chaque application installée.",
+      "already_running": "Une recherche est déjà en cours.",
+      "need_key": "Configure d'abord une clé API.",
+      "progress": "Recherche des visuels",
+      "idle": "Prêt à rechercher les applications installées.",
+      "results": "Résultats",
+      "no_results": "Aucune recherche terminée",
+      "keyboard_error": "Le clavier n'a pas pu être ouvert.",
+      "key_cleared": "Clé API effacée.",
+      "key_saved": "Clé API enregistrée.",
+      "start_failed": "La recherche des visuels n'a pas pu démarrer.",
+      "started": "Recherche SteamGridDB démarrée."
     },
     "controllers": {
       "test": "Tester les périphériques",

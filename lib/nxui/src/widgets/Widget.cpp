@@ -106,6 +106,10 @@ void Widget::addAction(uint64_t button, std::function<void()> cb) {
     m_actions[button] = std::move(cb);
 }
 
+void Widget::removeAction(uint64_t button) {
+    m_actions.erase(button);
+}
+
 void Widget::clearActions() {
     m_actions.clear();
 }

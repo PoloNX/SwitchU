@@ -2,6 +2,8 @@
 #include <nxui/widgets/Widget.hpp>
 #include <nxui/focus/FocusManager.hpp>
 #include <nxui/core/Types.hpp>
+#include <nxui/core/Animation.hpp>
+#include "core/AppLayoutMode.hpp"
 #include <vector>
 #include <memory>
 #include <functional>
@@ -21,6 +23,12 @@ public:
                            float cellW, float cellH,
                            float padX, float padY);
 
+    void setLayoutMode(AppLayoutMode mode);
+    AppLayoutMode layoutMode() const { return m_layoutMode; }
+    bool isDynamicLine() const { return m_layoutMode == AppLayoutMode::DynamicLine; }
+    bool isDynamicLineScrolling() const;
+    void setDynamicLineUpTarget(nxui::Widget* target);
+
     void setPage(int page);
     int  currentPage()  const { return m_page; }
     int  totalPages()   const { return m_totalPages; }
@@ -34,6 +42,7 @@ public:
     std::vector<GlossyIcon*> pageIcons() const;
 
     int hitTest(float screenX, float screenY) const;
+    nxui::Rect focusedDisplayRect() const;
 
     int focusedGlobalIndex() const;
     bool focusGlobalIndex(int idx);
@@ -58,19 +67,30 @@ protected:
 
 private:
     void layoutPage();
+    void layoutLine();
     void positionPage(int page, float dx);
     void renderPageAt(nxui::Renderer& ren, int page, float dx);
+    void renderDynamicLine(nxui::Renderer& ren);
     void bindEdgeActions(int start, int end);
+    nxui::Rect dynamicIconRect(int index, float* outScale = nullptr,
+                               float* outOpacity = nullptr,
+                               float* outDistance = nullptr) const;
     float pageStride() const;
 
     std::vector<std::shared_ptr<GlossyIcon>> m_allIcons;
     nxui::FocusManager m_focus;
+
+    AppLayoutMode m_layoutMode = AppLayoutMode::Grid;
+    nxui::AnimatedFloat m_lineScrollOffset{0.f};
+    nxui::AnimatedFloat m_layoutReveal{1.f};
+    nxui::Widget* m_lineUpTarget = nullptr;
 
     int m_cols = 5, m_rows = 3;
     int m_page = 0, m_totalPages = 1;
     float m_cellW = 200, m_cellH = 200;
     float m_padX  = 20,  m_padY  = 20;
     float m_originX = 0, m_originY = 0;
+    static constexpr float kLineScrollDuration = 0.34f;
 
     bool  m_slideTransition = false;
     bool  m_edgePaging      = false;

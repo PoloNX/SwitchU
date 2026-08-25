@@ -1,4 +1,5 @@
 #pragma once
+#include "core/AppLayoutMode.hpp"
 #include <string>
 
 struct AppConfig {
@@ -7,6 +8,7 @@ struct AppConfig {
     float sfxVolume    = 0.7f;
     int   gridColumns  = 5;
     int   gridRows     = 3;
+    AppLayoutMode appLayoutMode = AppLayoutMode::Grid;
     std::string actionHintStyle = "capsules";
     std::string uiLanguageOverride = "auto";
     std::string soundPreset = "wiiu";
@@ -19,6 +21,8 @@ struct AppConfig {
     bool  accessibilitySpeakContextEveryFocus = false;
     bool  accessibilitySpeakPosition = true;
     int   accessibilitySpeechRate = 190;
+    bool  steamGridDbEnabled = true;
+    std::string steamGridDbApiKey;
 
     std::string themePreset = "Default Light";
 
@@ -27,5 +31,5 @@ struct AppConfig {
     bool save() const;
 
     static constexpr const char* kConfigDir  = "sdmc:/config/SwitchU";
-    static constexpr const char* kConfigPath = "sdmc:/config/SwitchU/config.json";
+    static constexpr const char* kConfigPath = "sdmc:/config/SwitchU/settings.json";
 };

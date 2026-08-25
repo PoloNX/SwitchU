@@ -186,6 +186,8 @@ protected:
     int       m_contentIdx  = 0;
     float     m_scrollY     = 0.f;
     float     m_scrollTarget = 0.f;
+    float     m_tabScrollY = 0.f;
+    float     m_tabScrollTarget = 0.f;
     bool      m_backdropCacheValid = false;
     float     m_cachedPreBlurRadius = -1.f;
     int       m_cachedBlurIterations = -1;

@@ -123,11 +123,15 @@ std::vector<std::uint8_t> performRequestBytes(const std::string& url,
     request.perform();
 
     long statusCode = curlpp::infos::ResponseCode::get(request);
+    std::string body = response.str();
     if (statusCode < 200 || statusCode >= 300) {
-        throw std::runtime_error("HTTP error " + std::to_string(statusCode));
+        std::string detail = body.substr(0, 240);
+        std::replace(detail.begin(), detail.end(), '\n', ' ');
+        std::replace(detail.begin(), detail.end(), '\r', ' ');
+        throw std::runtime_error("HTTP error " + std::to_string(statusCode)
+                                 + (detail.empty() ? std::string() : ": " + detail));
     }
 
-    std::string body = response.str();
     return std::vector<std::uint8_t>(body.begin(), body.end());
 }
 

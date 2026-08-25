@@ -21,6 +21,8 @@
 #include "widgets/PageIndicator.hpp"
 #include "widgets/UserAvatarButton.hpp"
 #include "widgets/FolderBackdrop.hpp"
+#include "widgets/SteamGridDbBackdrop.hpp"
+#include "steamgriddb/SteamGridDbManager.hpp"
 #include "settings/SettingsScreen.hpp"
 #include "settings/GameOptionsScreen.hpp"
 #include "settings/FolderOptionsScreen.hpp"
@@ -113,6 +115,10 @@ private:
     bool saveFoldersOrReport(const char* operation);
     std::string promptFolderName(const std::string& initial,
                                  const std::string& guide);
+    void editSteamGridDbApiKey();
+    void startSteamGridDbScrape();
+    void syncSteamGridDb();
+    void showFocusedSteamGridDbArtwork(bool forceReload = false);
     void applyTheme();
     void applyThemeResources(const ThemePreset& preset);
     void retryPendingBackgroundImage();
@@ -213,6 +219,11 @@ private:
     std::string accessibilityContextFor(nxui::Widget* w) const;
     std::string accessibilityActionsFor(nxui::Widget* w) const;
 
+    void toggleAppLayoutMode();
+    void setAppLayoutMode(AppLayoutMode mode);
+    void configureDynamicLineNavigation();
+    AppLayoutMode appLayoutMode() const { return m_appLayoutMode; }
+
 #ifdef SWITCHU_MENU
     void refreshAppList();
     void finalizeRefresh();
@@ -266,6 +277,7 @@ private:
     std::shared_ptr<nxui::Box> m_rightSidebar;
     std::shared_ptr<nxui::Box> m_userAvatarBar;
     std::shared_ptr<FolderBackdrop> m_folderBackdrop;
+    std::shared_ptr<SteamGridDbBackdrop> m_steamGridDbBackdrop;
     std::shared_ptr<nxui::GlassPanel> m_folderHeader;
     std::shared_ptr<nxui::Label> m_folderHeaderLabel;
     std::vector<std::shared_ptr<UserAvatarButton>> m_userAvatarButtons;
@@ -340,6 +352,11 @@ private:
     int  m_refreshPrevPage       = 0;
 
     AppConfig m_config;
+    SteamGridDbManager m_steamGridDb;
+    std::uint64_t m_steamGridDbUiRevision = 0;
+    std::uint64_t m_steamGridDbLastCompletedTitleId = 0;
+    bool m_steamGridDbWasRunning = false;
+    AppLayoutMode m_appLayoutMode = AppLayoutMode::Grid;
     bool m_settingsNeedRefresh        = false;
     std::string m_loadedRegularFontPath;
     std::string m_loadedSmallFontPath;

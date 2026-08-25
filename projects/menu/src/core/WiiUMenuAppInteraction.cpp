@@ -35,12 +35,16 @@ std::string WiiUMenuApp::accessibilityContextFor(nxui::Widget* w) const {
         return i18n.tr("accessibility.context.settings", "Settings");
     if (m_themeShop && m_themeShop->isActive() && w == m_themeShop.get())
         return i18n.tr("accessibility.context.themes", "Themes");
-    if (w->tag() == "glossy_icon" && m_grid)
+    if (w->tag() == "glossy_icon" && m_grid) {
+        if (m_appLayoutMode == AppLayoutMode::DynamicLine)
+            return i18n.tr("accessibility.context.main_menu", "Main menu")
+                 + ", " + i18n.tr("accessibility.context.dynamic_line", "Center line");
         return i18n.tr("accessibility.context.main_menu", "Main menu")
              + ", " + i18n.tr("accessibility.context.page", "page") + " "
              + std::to_string(m_grid->currentPage() + 1)
              + " " + i18n.tr("accessibility.context.of", "of") + " "
              + std::to_string(m_grid->totalPages());
+    }
     for (const auto& btn : m_sidebar.leftButtons())
         if (btn.get() == w) return i18n.tr("accessibility.context.left_sidebar", "Left sidebar");
     for (const auto& btn : m_sidebar.rightButtons())
@@ -61,13 +65,13 @@ std::string WiiUMenuApp::accessibilityActionsFor(nxui::Widget* w) const {
     if (w->tag() == "glossy_icon") {
         auto* icon = static_cast<GlossyIcon*>(w);
         if (icon->titleId() == 0)
-            return i18n.tr("accessibility.actions.empty_slot", "Directional pad to navigate. Plus to create a folder. ZL or ZR to change page.");
+            return i18n.tr("accessibility.actions.empty_slot", "Directional pad to navigate. Plus for options. Minus to change view.");
         const int index = findTitleIndex(icon->titleId());
         if (index >= 0 && m_model.at(index).isFolder())
-            return i18n.tr("folder.open_hint", "A to open. Plus for folder options. Y to move.");
+            return i18n.tr("folder.open_hint", "A to open. Plus for folder options. Y to move. Minus to change view.");
         return icon->isNotLaunchable()
-            ? i18n.tr("accessibility.actions.game_blocked", "A to show the reason. Plus for options. Y to move. ZL or ZR to change page.")
-            : i18n.tr("accessibility.actions.game_launchable", "A to launch. Plus for options. Y to move. ZL or ZR to change page.");
+            ? i18n.tr("accessibility.actions.game_blocked", "A to show the reason. Plus for options. Y to move. Minus to change view.")
+            : i18n.tr("accessibility.actions.game_launchable", "A to launch. Plus for options. Y to move. Minus to change view.");
     }
     if (m_settings && w == m_settings.get())
         return i18n.tr("accessibility.actions.settings", "Up and down to choose a category. A or right to enter. B to close.");
@@ -86,6 +90,12 @@ std::string WiiUMenuApp::accessibilityPositionFor(nxui::Widget* w) const {
     if (w->tag() == "glossy_icon" && m_grid) {
         const int global = m_grid->focusedGlobalIndex();
         if (global >= 0) {
+            if (m_appLayoutMode == AppLayoutMode::DynamicLine) {
+                const int total = (int)m_grid->allIcons().size();
+                return i18n.tr("accessibility.context.dynamic_line", "Center line") + ", "
+                     + i18n.tr("accessibility.position.item", "item") + " " + std::to_string(global + 1)
+                     + " " + i18n.tr("accessibility.context.of", "of") + " " + std::to_string(total);
+            }
             const int cols = std::max(1, m_grid->columns());
             const int rows = std::max(1, m_grid->rowsPerPage());
             const int local = global % std::max(1, m_grid->iconsPerPage());
@@ -203,9 +213,17 @@ void WiiUMenuApp::startEditGhost(GlossyIcon* sourceIcon) {
     m_editGhostPulse = 0.f;
 
     m_editGhostIcon = ghost;
+    DebugLog::log("[edit] ghost started index=%d title=0x%016lX ownedTexture=%d",
+                  m_editSourceIndex,
+                  static_cast<unsigned long>(sourceIcon->titleId()),
+                  m_editGhostTexture ? 1 : 0);
 }
 
 void WiiUMenuApp::stopEditGhost() {
+    if (m_editGhostIcon || m_editGhostTexture) {
+        DebugLog::log("[edit] ghost stopping index=%d ownedTexture=%d",
+                      m_editSourceIndex, m_editGhostTexture ? 1 : 0);
+    }
     detachEditSourceIcon();
 
     m_editGhostIcon.reset();
@@ -352,13 +370,29 @@ bool WiiUMenuApp::commitEditModePlacement() {
 
     int oldPage = m_grid->currentPage();
     bool changed = (from != target);
+    DebugLog::log("[edit] commit from=%d target=%d changed=%d", from, target,
+                  changed ? 1 : 0);
     if (changed) {
+        // Keep the three index-based stores atomic. A catalogue refresh can
+        // resize the streamer between entering move mode and committing it;
+        // partially swapping the model used to leave texture/index pointers
+        // inconsistent for the next render.
+        if (!m_iconStreamer.swapIndices(from, target)) {
+            DebugLog::log("[edit] rejected stale streamer swap from=%d target=%d", from, target);
+            return false;
+        }
+        if (!m_model.swapEntries(from, target)) {
+            m_iconStreamer.swapIndices(from, target);
+            return false;
+        }
+        if (!m_grid->swapSlots(from, target)) {
+            m_model.swapEntries(from, target);
+            m_iconStreamer.swapIndices(from, target);
+            return false;
+        }
         if (!m_layoutSlots.empty() && from < (int)m_layoutSlots.size() && target < (int)m_layoutSlots.size())
             std::swap(m_layoutSlots[from], m_layoutSlots[target]);
 
-        m_model.swapEntries(from, target);
-        m_iconStreamer.swapIndices(from, target);
-        m_grid->swapSlots(from, target);
         m_editSourceIndex = target;
         m_iconStreamer.setPinnedIndex(m_editSourceIndex);
         m_layoutDirty = true;
@@ -505,12 +539,22 @@ bool WiiUMenuApp::moveFocusedIcon(nxui::FocusDirection dir) {
     if (target == from)
         return true;
 
+    if (!m_iconStreamer.swapIndices(from, target)) {
+        DebugLog::log("[edit] rejected stale directional swap from=%d target=%d", from, target);
+        return false;
+    }
+    if (!m_model.swapEntries(from, target)) {
+        m_iconStreamer.swapIndices(from, target);
+        return false;
+    }
+    if (!m_grid->swapSlots(from, target)) {
+        m_model.swapEntries(from, target);
+        m_iconStreamer.swapIndices(from, target);
+        return false;
+    }
     if (!m_layoutSlots.empty() && from < (int)m_layoutSlots.size() && target < (int)m_layoutSlots.size())
         std::swap(m_layoutSlots[from], m_layoutSlots[target]);
 
-    m_model.swapEntries(from, target);
-    m_iconStreamer.swapIndices(from, target);
-    m_grid->swapSlots(from, target);
     m_editSourceIndex = target;
     m_iconStreamer.setPinnedIndex(m_editSourceIndex);
     m_grid->focusGlobalIndex(target);
@@ -558,6 +602,8 @@ void WiiUMenuApp::wireFocusCallback() {
         if (cur && cur->tag() == "glossy_icon") {
             m_grid->focusManager().setFocus(cur);
             auto* icon = static_cast<GlossyIcon*>(cur);
+            if (m_steamGridDbBackdrop)
+                m_steamGridDbBackdrop->showTitle(icon->titleId());
             auto& i18n = nxui::I18n::instance();
             if (m_editMode) {
                 bindEditActions(icon);
@@ -583,6 +629,8 @@ void WiiUMenuApp::wireFocusCallback() {
             m_titlePill->setText(icon->title());
             m_titlePill->setVisible(true);
         } else if (cur) {
+            if (m_steamGridDbBackdrop)
+                m_steamGridDbBackdrop->showTitle(0);
             if (m_editMode)
                 exitEditMode();
             for (auto& btn : m_sidebar.leftButtons()) {
@@ -600,6 +648,8 @@ void WiiUMenuApp::wireFocusCallback() {
             }
             m_titlePill->hideAnimated();
         } else {
+            if (m_steamGridDbBackdrop)
+                m_steamGridDbBackdrop->showTitle(0);
             m_titlePill->hideAnimated();
         }
     });
@@ -1201,8 +1251,15 @@ void WiiUMenuApp::updateCursor() {
 
     auto* cur = focusManager().current();
     if (cur) {
-        nxui::Rect fr = cur->focusRect();
-        m_cursor->moveTo(fr.expanded(4.f));
+        const bool movingLineFocus = m_grid && m_grid->isDynamicLine()
+                                  && cur->tag() == "glossy_icon";
+        nxui::Rect fr = movingLineFocus
+            ? m_grid->focusedDisplayRect()
+            : cur->focusRect();
+        // The app carousel already owns the motion curve; attaching the ring
+        // directly avoids a second easing curve that would visibly lag behind.
+        const bool carouselScrolling = movingLineFocus && m_grid->isDynamicLineScrolling();
+        m_cursor->moveTo(fr.expanded(4.f), carouselScrolling ? 0.f : 0.2f);
         m_cursor->setVisible(true);
     } else {
         m_cursor->setVisible(false);
