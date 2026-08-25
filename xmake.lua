@@ -68,8 +68,7 @@ target("nxui")
 
     add_cxxflags("-frtti", "-fexceptions", {force = true})
     if get_config("backend") == "deko3d" then
-        add_packages("deko3d")
-        add_syslinks(is_mode("debug") and "deko3dd" or "deko3d")
+        add_packages("deko3d", {links = is_mode("debug") and "deko3dd" or "deko3d"})
     end
 
     if is_mode("release") then
@@ -167,10 +166,8 @@ target("SwitchU")
     add_includedirs("projects/menu/src", {public = false})
     add_files("projects/menu/src/**.cpp")
     add_packages("nlohmann_json", "fmt", "libsdl", "libsdl_mixer", "libsdl_ttf", "zlib", "libwebp", "libcurl", "curlpp")
-    add_linkorders("SDL2_mixer", "FLAC++", "FLAC")
-    add_linkorders("SDL2_mixer", "vorbisidec", "ogg")
-    add_linkorders("SDL2_mixer", "modplug")
-    add_linkorders("SDL2_mixer", "opusurl", "opusfile", "opus", "ogg")
+    add_linkgroups("SDL2_ttf", "harfbuzz-subset", "harfbuzz", "freetype", "png16", "bz2", "z", {group = true})
+    add_linkgroups("SDL2_mixer", "FLAC++", "FLAC", "vorbisidec", "ogg", "modplug", "opusurl", "opusfile", "opus", {group = true})
 
     if is_mode("debug") and get_config("backend") ~= "sdl2" then
         add_packages("imgui")
@@ -179,7 +176,8 @@ target("SwitchU")
 
     add_cxxflags("-frtti", "-fexceptions", {force = true})
     if get_config("backend") == "deko3d" then
-        add_packages("deko3d")
+        add_packages("deko3d", {links = is_mode("debug") and "deko3dd" or "deko3d"})
+        add_linkorders(is_mode("debug") and "deko3dd" or "deko3d", "nx")
     end
     add_syslinks("nx")
 
@@ -263,11 +261,13 @@ target("SwitchU-Manager")
     add_files("projects/menu/src/widgets/ActionButton.cpp")
     add_files("projects/menu/src/widgets/OverlayDialog.cpp")
     add_files("projects/menu/src/widgets/SelectionCursor.cpp")
-    add_packages("libsdl", "libsdl_ttf", "libwebp")
+    add_packages("libsdl", "libsdl_ttf", "zlib", "libwebp")
+    add_linkgroups("SDL2_ttf", "harfbuzz-subset", "harfbuzz", "freetype", "png16", "bz2", "z", {group = true})
 
     add_cxxflags("-frtti", "-fexceptions", {force = true})
     if get_config("backend") == "deko3d" then
-        add_packages("deko3d")
+        add_packages("deko3d", {links = is_mode("debug") and "deko3dd" or "deko3d"})
+        add_linkorders(is_mode("debug") and "deko3dd" or "deko3d", "nx")
     end
     add_syslinks("nx")
 

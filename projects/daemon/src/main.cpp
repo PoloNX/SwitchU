@@ -840,6 +840,10 @@ static void handleAppletMessages() {
         case 29:
         case 32:
         switchu::FileLog::log("[ae] -> Sleep (msg=%u)", msg);
+        // The application keeps its IApplicationAccessor across system sleep,
+        // but must reacquire the foreground after wake. Keep our session state
+        // in sync so the Wakeup path is allowed to call app::resume().
+        daemon::app::onHomeSuspend();
         appletStartSleepSequence(true);
         break;
 
@@ -851,6 +855,8 @@ static void handleAppletMessages() {
             if (R_FAILED(rc)) {
                 switchu::FileLog::log("[ae] wake resume FAIL: 0x%X", rc);
                 appletRequestToGetForeground();
+            } else {
+                switchu::FileLog::log("[ae] wake resume OK");
             }
         } else {
             appletRequestToGetForeground();
