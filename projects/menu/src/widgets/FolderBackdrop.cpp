@@ -2,8 +2,12 @@
 
 #include <nxui/core/Renderer.hpp>
 
-void FolderBackdrop::show() {
+void FolderBackdrop::show(bool instant) {
     setVisible(true);
+    if (instant) {
+        m_opacity.setImmediate(1.f);
+        return;
+    }
     m_opacity.setImmediate(0.f);
     m_opacity.set(1.f, 0.28f, nxui::Easing::outCubic);
 }
