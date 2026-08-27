@@ -38,6 +38,21 @@
     "error_commit": "The SD card could not be synchronized. The change was rolled back.",
     "error_rollback": "Rollback failed. Check the SwitchU override files before restarting.",
     "error_reboot": "The console could not be restarted. The configuration change is still saved.",
-    "error_unknown": "An unexpected error occurred."
+    "error_unknown": "An unexpected error occurred.",
+    "check_updates": "Check for updates",
+    "update_checking_button": "Checking for updates...",
+    "update_checking": "Checking the latest GitHub release...",
+    "update_available": "A new SwitchU version is available: ",
+    "update_to": "Update to ",
+    "up_to_date": "Up to date",
+    "updating": "Updating...",
+    "update_retry": "Retry update check",
+    "update_check_failed": "Update check failed. You can retry.",
+    "update_installing": "Downloading and installing the SwitchU update...",
+    "update_confirm_title": "Install SwitchU update?",
+    "update_confirm_message": "Download and install SwitchU ",
+    "update_confirm_suffix": " from GitHub? Your configuration and themes will be preserved.",
+    "update_install": "Install update",
+    "update_error_title": "Update failed"
   }
 }

@@ -1,18 +1,16 @@
 #include "SteamGridDbBackdrop.hpp"
 
+#include "steamgriddb/ArtworkCache.hpp"
 #include "steamgriddb/SteamGridDbManager.hpp"
 #include "core/DebugLog.hpp"
 
 #include <nxui/core/Renderer.hpp>
-#include <nxui/third_party/stb/stb_image.h>
 
 #include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstring>
-#include <filesystem>
 #include <string>
-#include <system_error>
 
 SteamGridDbBackdrop::SteamGridDbBackdrop(nxui::GpuDevice& gpu,
                                          nxui::Renderer& renderer,
@@ -54,7 +52,23 @@ void SteamGridDbBackdrop::showTitle(std::uint64_t titleId, bool forceReload) {
     if (!m_enabled) return;
     if (!forceReload && m_requestedTitleId == titleId) return;
 
+    if (titleId == 0) {
+        if (m_pendingDecode && m_pendingDecode->state)
+            m_pendingDecode->state->cancelled.store(true);
+        m_readyArtwork.reset();
+        m_uploadStage = 0;
+        m_requestedTitleId = 0;
+        ++m_requestGeneration;
+        m_appliedGeneration = m_requestGeneration;
+        m_artworkOpacity.set(0.f, 0.22f, nxui::Easing::outCubic);
+        DebugLog::log("[steamgriddb-ui] artwork cleared: selection has no title");
+        return;
+    }
+
     if (forceReload) {
+        // Evict only transient UI state. The disk cache fingerprints its source,
+        // so a replaced asset invalidates itself while a freshly prepared cache
+        // remains available for this reload.
         m_decodedCache.erase(
             std::remove_if(m_decodedCache.begin(), m_decodedCache.end(),
                            [titleId](const auto& artwork) { return artwork.titleId == titleId; }),
@@ -64,14 +78,57 @@ void SteamGridDbBackdrop::showTitle(std::uint64_t titleId, bool forceReload) {
             m_missingArtworkTitleIds.end());
     }
 
-    if (!forceReload
-        && std::find(m_missingArtworkTitleIds.begin(), m_missingArtworkTitleIds.end(), titleId)
-            != m_missingArtworkTitleIds.end()) {
+    auto missingArtwork = std::find(m_missingArtworkTitleIds.begin(),
+                                    m_missingArtworkTitleIds.end(), titleId);
+    if (!forceReload && missingArtwork != m_missingArtworkTitleIds.end()
+        && SteamGridDbManager::hasArtwork(titleId)) {
+        // A SteamGridDB download may have completed since this title was
+        // classified as missing. Revalidate the negative cache during the same
+        // menu session instead of requiring a restart.
+        m_missingArtworkTitleIds.erase(missingArtwork);
+        missingArtwork = m_missingArtworkTitleIds.end();
+        DebugLog::log("[steamgriddb-ui] artwork became available: title=%016llX",
+                      static_cast<unsigned long long>(titleId));
+    }
+
+    if (!forceReload && missingArtwork != m_missingArtworkTitleIds.end()) {
+        if (m_pendingDecode && m_pendingDecode->state)
+            m_pendingDecode->state->cancelled.store(true);
+        m_readyArtwork.reset();
+        m_uploadStage = 0;
         m_requestedTitleId = titleId;
         ++m_requestGeneration;
         m_appliedGeneration = m_requestGeneration;
+        m_artworkOpacity.set(0.f, 0.22f, nxui::Easing::outCubic);
+        DebugLog::log("[steamgriddb-ui] artwork cleared: title=%016llX has no assets",
+                      static_cast<unsigned long long>(titleId));
         return;
     }
+
+    // A directory lookup is much cheaper than decoding an image and lets a
+    // missing-artwork selection start fading immediately instead of retaining
+    // the previous game's hero until the worker completes.
+    if (!forceReload && !SteamGridDbManager::hasArtwork(titleId)) {
+        if (m_pendingDecode && m_pendingDecode->state)
+            m_pendingDecode->state->cancelled.store(true);
+        m_readyArtwork.reset();
+        m_uploadStage = 0;
+        m_requestedTitleId = titleId;
+        ++m_requestGeneration;
+        m_appliedGeneration = m_requestGeneration;
+        if (std::find(m_missingArtworkTitleIds.begin(), m_missingArtworkTitleIds.end(), titleId)
+            == m_missingArtworkTitleIds.end()) {
+            m_missingArtworkTitleIds.push_back(titleId);
+            if (m_missingArtworkTitleIds.size() > kMissingCacheLimit)
+                m_missingArtworkTitleIds.erase(m_missingArtworkTitleIds.begin());
+        }
+        m_artworkOpacity.set(0.f, 0.22f, nxui::Easing::outCubic);
+        DebugLog::log("[steamgriddb-ui] artwork fading out: title=%016llX has no files",
+                      static_cast<unsigned long long>(titleId));
+        return;
+    }
+
+    m_artworkOpacity.set(1.f, 0.16f, nxui::Easing::outCubic);
 
     if (!forceReload && titleId != 0) {
         for (int i = 0; i < static_cast<int>(m_sets.size()); ++i) {
@@ -126,76 +183,11 @@ void SteamGridDbBackdrop::showTitle(std::uint64_t titleId, bool forceReload) {
 
 SteamGridDbBackdrop::DecodedImage SteamGridDbBackdrop::decodeImage(
     const std::string& path, int outputWidth, int outputHeight, bool fill) {
+    auto decoded = steamgriddb::artwork::decode(path, outputWidth, outputHeight, fill);
     DecodedImage out;
-    const auto loadStarted = std::chrono::steady_clock::now();
-    int width = 0, height = 0, channels = 0;
-    stbi_uc* raw = stbi_load(path.c_str(), &width, &height, &channels, 4);
-    if (!raw || width <= 0 || height <= 0) {
-        if (raw) stbi_image_free(raw);
-        return out;
-    }
-    const auto loadedAt = std::chrono::steady_clock::now();
-
-    out.width = std::max(1, outputWidth);
-    out.height = std::max(1, outputHeight);
-    if (width == out.width && height == out.height) {
-        out.rgba.assign(raw, raw + static_cast<std::size_t>(width) * height * 4);
-        stbi_image_free(raw);
-        DebugLog::log("[steamgriddb-ui] image path=%s source=%dx%d load=%ldms scale=0ms",
-                      path.c_str(), width, height,
-                      std::chrono::duration_cast<std::chrono::milliseconds>(
-                          loadedAt - loadStarted).count());
-        return out;
-    }
-
-    out.rgba.assign(static_cast<std::size_t>(out.width) * out.height * 4, 0);
-    const float scaleX = static_cast<float>(out.width) / width;
-    const float scaleY = static_cast<float>(out.height) / height;
-    const float scale = fill ? std::max(scaleX, scaleY) : std::min(scaleX, scaleY);
-    const float drawnWidth = width * scale;
-    const float drawnHeight = height * scale;
-    const float offsetX = (out.width - drawnWidth) * 0.5f;
-    const float offsetY = (out.height - drawnHeight) * 0.5f;
-
-    // Precompute the mappings once. The previous implementation repeated two
-    // floating-point divisions and clamps for every output pixel (~921k for a
-    // hero), which dominates decode time on the Switch CPU.
-    std::vector<int> sourceXs(static_cast<std::size_t>(out.width), -1);
-    std::vector<int> sourceYs(static_cast<std::size_t>(out.height), -1);
-    const float inverseScale = 1.f / scale;
-    for (int x = 0; x < out.width; ++x) {
-        const float source = (x - offsetX) * inverseScale;
-        if (fill || (source >= 0.f && source < width))
-            sourceXs[static_cast<std::size_t>(x)] =
-                std::clamp(static_cast<int>(source), 0, width - 1);
-    }
-    for (int y = 0; y < out.height; ++y) {
-        const float source = (y - offsetY) * inverseScale;
-        if (fill || (source >= 0.f && source < height))
-            sourceYs[static_cast<std::size_t>(y)] =
-                std::clamp(static_cast<int>(source), 0, height - 1);
-    }
-    const auto* sourcePixels = reinterpret_cast<const std::uint32_t*>(raw);
-    auto* destinationPixels = reinterpret_cast<std::uint32_t*>(out.rgba.data());
-    for (int y = 0; y < out.height; ++y) {
-        const int sourceY = sourceYs[static_cast<std::size_t>(y)];
-        if (sourceY < 0) continue;
-        auto* destinationRow = destinationPixels + static_cast<std::size_t>(y) * out.width;
-        const auto* sourceRow = sourcePixels + static_cast<std::size_t>(sourceY) * width;
-        for (int x = 0; x < out.width; ++x) {
-            const int sourceX = sourceXs[static_cast<std::size_t>(x)];
-            if (sourceX >= 0)
-                destinationRow[x] = sourceRow[sourceX];
-        }
-    }
-    stbi_image_free(raw);
-    const auto scaledAt = std::chrono::steady_clock::now();
-    DebugLog::log("[steamgriddb-ui] image path=%s source=%dx%d load=%ldms scale=%ldms",
-                  path.c_str(), width, height,
-                  std::chrono::duration_cast<std::chrono::milliseconds>(
-                      loadedAt - loadStarted).count(),
-                  std::chrono::duration_cast<std::chrono::milliseconds>(
-                      scaledAt - loadedAt).count());
+    out.rgba = std::move(decoded.rgba);
+    out.width = decoded.width;
+    out.height = decoded.height;
     return out;
 }
 
@@ -234,6 +226,7 @@ void SteamGridDbBackdrop::beginCrossfade(int nextSet, std::uint64_t titleId) {
     m_current = nextSet;
     m_fade.setImmediate(0.f);
     m_fade.set(1.f, 0.52f, nxui::Easing::outCubic);
+    m_artworkOpacity.set(1.f, 0.18f, nxui::Easing::outCubic);
 }
 
 nxui::Rect SteamGridDbBackdrop::fillRect(const nxui::Texture& texture,
@@ -277,7 +270,9 @@ void SteamGridDbBackdrop::drawSet(nxui::Renderer& renderer,
     if (m_layoutMode != AppLayoutMode::DynamicLine) return;
 
     if (set.hasLogo && set.logo.valid()) {
-        const nxui::Rect logoArea{370.f, 174.f, 540.f, 150.f};
+        // Visually center the logo in the open space between the profile strip
+        // and the single-row carousel.
+        const nxui::Rect logoArea{370.f, 149.f, 540.f, 150.f};
         renderer.drawTexture(&set.logo, containRect(set.logo, logoArea),
                              nxui::Color::white().withAlpha(0.96f * alpha));
     }
@@ -285,6 +280,7 @@ void SteamGridDbBackdrop::drawSet(nxui::Renderer& renderer,
 
 void SteamGridDbBackdrop::onUpdate(float dt) {
     m_fade.update(std::min(dt, 0.04f));
+    m_artworkOpacity.update(std::min(dt, 0.04f));
 
     if (m_pendingDecode
         && m_pendingDecode->future.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
@@ -312,6 +308,7 @@ void SteamGridDbBackdrop::onUpdate(float dt) {
                 if (m_missingArtworkTitleIds.size() > kMissingCacheLimit)
                     m_missingArtworkTitleIds.erase(m_missingArtworkTitleIds.begin());
                 m_appliedGeneration = m_requestGeneration;
+                m_artworkOpacity.set(0.f, 0.22f, nxui::Easing::outCubic);
             }
         } else if (state && !state->cancelled.load()
                    && std::find(m_preloadTitleIds.begin(), m_preloadTitleIds.end(),
@@ -399,6 +396,8 @@ void SteamGridDbBackdrop::onUpdate(float dt) {
 void SteamGridDbBackdrop::onRender(nxui::Renderer& renderer) {
     if (!m_enabled || opacity() <= 0.002f) return;
     const float t = std::clamp(m_fade.value(), 0.f, 1.f);
-    drawSet(renderer, m_sets[1 - m_current], (1.f - t) * opacity());
-    drawSet(renderer, m_sets[m_current], t * opacity());
+    const float artworkOpacity = std::clamp(m_artworkOpacity.value(), 0.f, 1.f)
+                               * opacity();
+    drawSet(renderer, m_sets[1 - m_current], (1.f - t) * artworkOpacity);
+    drawSet(renderer, m_sets[m_current], t * artworkOpacity);
 }

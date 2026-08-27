@@ -30,6 +30,9 @@ std::string ellipsize(nxui::Font* font, const std::string& text, float maxWidth,
 }
 
 ProgressDialog::ProgressDialog() {
+    // The visual scrim and the touch target cover the whole screen. This makes
+    // the dialog genuinely modal for both controller and touch input.
+    setRect({0.f, 0.f, 1280.f, 720.f});
     setVisible(false);
     setFocusable(true);
     setCornerRadius(kPanelRadius);

@@ -529,6 +529,12 @@ void WiiUMenuApp::startSteamGridDbScrape() {
                 "settings.steamgriddb.need_key", "Configure an API key first."));
         return;
     }
+    if (m_steamGridDbBrowseFuture.valid() || m_steamGridDbApplyFuture.valid()) {
+        if (m_settings)
+            m_settings->requestToast(nxui::I18n::instance().tr(
+                "settings.steamgriddb.already_running", "A SteamGridDB operation is already running."));
+        return;
+    }
     if (!m_steamGridDb.start(m_config.steamGridDbApiKey, m_allApps)) {
         if (m_settings)
             m_settings->requestToast(nxui::I18n::instance().tr(
@@ -536,6 +542,14 @@ void WiiUMenuApp::startSteamGridDbScrape() {
         return;
     }
     m_steamGridDbWasRunning = true;
+    if (m_progressDialog) {
+        m_progressDialog->setTheme(&m_theme);
+        m_progressDialog->show(nxui::I18n::instance().tr(
+            "settings.steamgriddb.download_title", "Downloading artwork"),
+            nxui::I18n::instance().tr(
+                "settings.steamgriddb.download_start", "Searching SteamGridDB..."), 0.f);
+        focusManager().setFocus(m_progressDialog.get());
+    }
     if (m_settings)
         m_settings->requestToast(nxui::I18n::instance().tr(
             "settings.steamgriddb.started", "SteamGridDB scan started."));
@@ -565,7 +579,7 @@ void WiiUMenuApp::openSteamGridDbPicker(GameOptionsScreen::ArtworkKind kind,
         }
     }
     if (title.empty() || m_steamGridDbBrowseFuture.valid()
-        || m_steamGridDbApplyFuture.valid()) {
+        || m_steamGridDbApplyFuture.valid() || m_steamGridDb.running()) {
         m_gameOptions->requestToast(nxui::I18n::instance().tr(
             "settings.steamgriddb.already_running", "A SteamGridDB operation is already running."));
         return;
@@ -606,9 +620,27 @@ void WiiUMenuApp::editSteamGridDbPickerQuery() {
 void WiiUMenuApp::applySteamGridDbCandidate(
     const SteamGridDbManager::BrowseResult& browse,
     const SteamGridDbManager::Candidate& candidate) {
-    if (m_steamGridDbApplyFuture.valid()) return;
-    m_steamGridDbApplyFuture = std::async(std::launch::async, [browse, candidate]() {
-        return SteamGridDbManager::applyCandidate(browse, candidate);
+    if (m_steamGridDbApplyFuture.valid() || m_steamGridDb.running()) return;
+    auto progress = std::make_shared<SteamGridDbApplyProgressShared>();
+    progress->message = nxui::I18n::instance().tr(
+        "settings.steamgriddb.download_start", "Starting download...");
+    m_steamGridDbApplyProgress = progress;
+    m_steamGridDbApplyProgressUiRevision = 0;
+    if (m_progressDialog) {
+        m_progressDialog->setTheme(&m_theme);
+        m_progressDialog->show(nxui::I18n::instance().tr(
+            "settings.steamgriddb.download_title", "Downloading artwork"),
+            progress->message, 0.f);
+        focusManager().setFocus(m_progressDialog.get());
+    }
+    m_steamGridDbApplyFuture = std::async(std::launch::async, [browse, candidate, progress]() {
+        return SteamGridDbManager::applyCandidate(browse, candidate,
+            [progress](const std::string& message, float value) {
+                std::lock_guard<std::mutex> lock(progress->mutex);
+                progress->message = message;
+                progress->progress01 = value;
+                ++progress->revision;
+            });
     });
 }
 
@@ -622,6 +654,24 @@ void WiiUMenuApp::syncSteamGridDb() {
             m_steamGridDbPicker->setResult(std::move(result));
             focusManager().setFocus(m_steamGridDbPicker.get());
         }
+    }
+    if (m_steamGridDbApplyProgress) {
+        std::string message;
+        float progress01 = 0.f;
+        std::uint64_t revision = 0;
+        {
+            std::lock_guard<std::mutex> lock(m_steamGridDbApplyProgress->mutex);
+            message = m_steamGridDbApplyProgress->message;
+            progress01 = m_steamGridDbApplyProgress->progress01;
+            revision = m_steamGridDbApplyProgress->revision;
+        }
+        if (revision != m_steamGridDbApplyProgressUiRevision && m_progressDialog) {
+            m_steamGridDbApplyProgressUiRevision = revision;
+            m_progressDialog->updateState(message, progress01);
+        }
+        if (m_progressDialog && m_progressDialog->isActive()
+            && focusManager().current() != m_progressDialog.get())
+            focusManager().setFocus(m_progressDialog.get());
     }
     if (m_steamGridDbApplyFuture.valid()
         && m_steamGridDbApplyFuture.wait_for(std::chrono::seconds(0))
@@ -638,6 +688,11 @@ void WiiUMenuApp::syncSteamGridDb() {
         }
         if (m_steamGridDbPicker && m_steamGridDbPicker->isActive())
             m_steamGridDbPicker->setMessage(result.message, false);
+        if (m_progressDialog) m_progressDialog->hide();
+        m_steamGridDbApplyProgress.reset();
+        m_steamGridDbApplyProgressUiRevision = 0;
+        if (m_steamGridDbPicker && m_steamGridDbPicker->isActive())
+            focusManager().setFocus(m_steamGridDbPicker.get());
     }
 
     const auto state = m_steamGridDb.status();
@@ -647,6 +702,13 @@ void WiiUMenuApp::syncSteamGridDb() {
             m_settings->setSteamGridDbProgress(
                 state.running, state.finished, state.completed, state.total,
                 state.matched, state.failed, state.currentTitle, state.message);
+        }
+        if (state.running && m_steamGridDbWasRunning && m_progressDialog) {
+            m_progressDialog->updateState(
+                state.message.empty() ? state.currentTitle : state.message,
+                state.progress01);
+            if (focusManager().current() != m_progressDialog.get())
+                focusManager().setFocus(m_progressDialog.get());
         }
         if (state.lastCompletedTitleId != 0
             && state.lastCompletedTitleId != m_steamGridDbLastCompletedTitleId) {
@@ -663,6 +725,7 @@ void WiiUMenuApp::syncSteamGridDb() {
 
     if (m_steamGridDbWasRunning && !state.running && state.finished) {
         m_steamGridDbWasRunning = false;
+        if (m_progressDialog) m_progressDialog->hide();
         showFocusedSteamGridDbArtwork(true);
         if (state.selectedKind == SteamGridDbManager::ArtworkKind::Icon && state.matched > 0
             && m_grid) {
@@ -709,8 +772,9 @@ void WiiUMenuApp::showFocusedSteamGridDbArtwork(bool forceReload) {
             }
         }
     }
-    if (titleId != 0)
-        m_steamGridDbBackdrop->showTitle(titleId, forceReload);
+    // Zero is meaningful: it clears artwork when focus moves to a folder,
+    // an empty slot or any non-application widget.
+    m_steamGridDbBackdrop->showTitle(titleId, forceReload);
     m_steamGridDbBackdrop->setPreloadTitles(std::move(nearbyTitleIds));
 }
 

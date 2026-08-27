@@ -12,6 +12,7 @@
 
 class SteamGridDbManager {
 public:
+    using ProgressCallback = std::function<void(const std::string&, float)>;
     enum class ArtworkKind { None, Hero, Logo, Icon };
 
     struct Candidate {
@@ -55,6 +56,7 @@ public:
         ArtworkKind selectedKind = ArtworkKind::None;
         int selectedIndex = -1;
         int selectionCount = 0;
+        float progress01 = 0.f;
         std::uint64_t revision = 0;
     };
 
@@ -73,7 +75,8 @@ public:
                                const std::string& title, const std::string& query,
                                ArtworkKind kind);
     static ApplyResult applyCandidate(const BrowseResult& browse,
-                                      const Candidate& candidate);
+                                      const Candidate& candidate,
+                                      const ProgressCallback& onProgress = {});
 
     static constexpr const char* kCacheRoot = "sdmc:/config/SwitchU/steamgriddb";
     static std::string heroPath(std::uint64_t titleId);

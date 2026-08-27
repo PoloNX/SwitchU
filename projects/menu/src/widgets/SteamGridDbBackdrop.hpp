@@ -89,6 +89,7 @@ private:
     int m_uploadStage = 0;
     AppLayoutMode m_layoutMode = AppLayoutMode::Grid;
     nxui::AnimatedFloat m_fade{1.f};
+    nxui::AnimatedFloat m_artworkOpacity{1.f};
     static constexpr std::size_t kDecodedCacheLimit = 2;
     static constexpr std::size_t kMissingCacheLimit = 64;
 };

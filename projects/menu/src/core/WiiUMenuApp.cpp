@@ -479,6 +479,19 @@ void WiiUMenuApp::loadResources() {
     DebugLog::log("[init] loadResources: icon font");
     m_fontIcons.load(app().gpu(), app().renderer(), std::string(SD_ASSETS) + "/fonts/switch_icons.ttf", 24);
 
+    if (m_fastReturnRequested) {
+        m_deferredStaticTextures = true;
+        DebugLog::log("[init] loadResources: static textures deferred past first frame");
+    } else {
+        loadStaticTextures();
+    }
+
+    DebugLog::log("[init] loadResources: application catalog");
+    m_appLoader.load(m_model, m_iconStreamer);
+    DebugLog::log("[init] loadResources: done");
+}
+
+void WiiUMenuApp::loadStaticTextures() {
     DebugLog::log("[init] loadResources: static textures");
     std::string gameCardPath = std::string(SD_ASSETS) + "/icons/gamecard.png";
     if (m_gameCardTex.loadFromFile(app().gpu(), app().renderer(), gameCardPath))
@@ -488,10 +501,6 @@ void WiiUMenuApp::loadResources() {
                                 std::string(SD_ASSETS) + "/icons/page_arrow_left.png");
     m_arrowTexRight.loadFromFile(app().gpu(), app().renderer(),
                                  std::string(SD_ASSETS) + "/icons/page_arrow_right.png");
-
-    DebugLog::log("[init] loadResources: application catalog");
-    m_appLoader.load(m_model, m_iconStreamer);
-    DebugLog::log("[init] loadResources: done");
 }
 
 void WiiUMenuApp::buildUserAvatarBar(bool loadImmediately) {
@@ -2429,6 +2438,10 @@ void WiiUMenuApp::onUpdate(float dt) {
         --m_deferredInitialAssetFrames;
         if (m_deferredInitialAssetFrames == 0) {
             DebugLog::log("[init] deferred initial icon/sidebar uploads start");
+            if (m_deferredStaticTextures) {
+                m_deferredStaticTextures = false;
+                loadStaticTextures();
+            }
             if (m_grid) {
                 m_iconStreamer.onPageChanged(m_grid->currentPage(), m_grid->iconsPerPage(),
                                              app().gpu(), app().renderer(),
@@ -2442,9 +2455,6 @@ void WiiUMenuApp::onUpdate(float dt) {
     }
 
     if (m_audioInitPending) {
-        // Do not open audio while an application has the foreground. A suspended
-        // app can remain resident after returning HOME, and audout SDL2 can
-        // coexist with that state.
         if (m_launcher.appHasForeground()) {
             if (!m_audioHeldLogged) {
                 m_audioHeldLogged = true;

@@ -210,7 +210,7 @@
       "version": "Версия",
       "author": "Автор",
       "license": "Лицензия",
-      "license_value": "GPL-2.0",
+      "license_value": "GPL-3.0",
       "acknowledgements": "Благодарности",
       "acknowledgements_desc": "Спасибо xortroll за помощь с проектом uLaunch и за поддержку и советы во время разработки.",
       "source_code": "Исходный код",

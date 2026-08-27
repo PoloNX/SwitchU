@@ -92,6 +92,7 @@ private:
     };
 
     void loadResources();
+    void loadStaticTextures();
     GridLayoutMetrics computeGridLayoutMetrics() const;
     GridLayoutMetrics computeGridLayoutMetrics(int columns, int rows) const;
     std::pair<int, int> folderGridDimensions(std::uint32_t folderId) const;
@@ -310,6 +311,13 @@ private:
         std::uint64_t revision = 0;
     };
 
+    struct SteamGridDbApplyProgressShared {
+        std::mutex mutex;
+        std::string message;
+        float progress01 = 0.f;
+        std::uint64_t revision = 0;
+    };
+
     nxui::ThreadPool m_threadPool{2};
     SidebarManager  m_sidebar;
     AppletLauncher  m_launcher;
@@ -362,6 +370,8 @@ private:
     SteamGridDbManager m_steamGridDb;
     std::future<SteamGridDbManager::BrowseResult> m_steamGridDbBrowseFuture;
     std::future<SteamGridDbManager::ApplyResult> m_steamGridDbApplyFuture;
+    std::shared_ptr<SteamGridDbApplyProgressShared> m_steamGridDbApplyProgress;
+    std::uint64_t m_steamGridDbApplyProgressUiRevision = 0;
     std::uint64_t m_steamGridDbUiRevision = 0;
     std::uint64_t m_steamGridDbLastCompletedTitleId = 0;
     bool m_steamGridDbWasRunning = false;
@@ -383,6 +393,7 @@ private:
     bool m_suppressNextNavigateSfx    = false;
     bool m_pendingNetConnect          = false;
     int  m_deferredInitialAssetFrames = 0;
+    bool m_deferredStaticTextures = false;
     int  m_deferredProfileFrames = 0;
     std::vector<AccountUid> m_pendingProfileUids;
     std::size_t m_pendingProfileIndex = 0;

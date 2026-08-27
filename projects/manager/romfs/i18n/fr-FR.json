@@ -38,6 +38,21 @@
     "error_commit": "Impossible de synchroniser la carte SD. La modification a été annulée.",
     "error_rollback": "Échec de la restauration. Vérifiez les fichiers d'override SwitchU avant de redémarrer.",
     "error_reboot": "Impossible de redémarrer la console. La modification de configuration reste enregistrée.",
-    "error_unknown": "Une erreur inattendue est survenue."
+    "error_unknown": "Une erreur inattendue est survenue.",
+    "check_updates": "Rechercher des mises à jour",
+    "update_checking_button": "Recherche des mises à jour…",
+    "update_checking": "Recherche de la dernière release GitHub…",
+    "update_available": "Une nouvelle version de SwitchU est disponible : ",
+    "update_to": "Mettre à jour vers ",
+    "up_to_date": "À jour",
+    "updating": "Mise à jour…",
+    "update_retry": "Réessayer la recherche",
+    "update_check_failed": "La recherche de mise à jour a échoué. Vous pouvez réessayer.",
+    "update_installing": "Téléchargement et installation de la mise à jour SwitchU…",
+    "update_confirm_title": "Installer la mise à jour SwitchU ?",
+    "update_confirm_message": "Télécharger et installer SwitchU ",
+    "update_confirm_suffix": " depuis GitHub ? Votre configuration et vos thèmes seront conservés.",
+    "update_install": "Installer la mise à jour",
+    "update_error_title": "Échec de la mise à jour"
   }
 }

@@ -608,10 +608,12 @@ static bool takeForegroundFromRunningApp(const char* source) {
     if (!daemon::app::isRunning() || !daemon::app::hasForeground())
         return true;
 
-    Result unlockRc = appletUnlockForeground();
-    switchu::FileLog::log("[%s] UnlockForeground rc=0x%X", source, unlockRc);
+    const uint64_t startedAt = armGetSystemTick();
     Result fgRc = appletRequestToGetForeground();
-    switchu::FileLog::log("[%s] RequestToGetForeground rc=0x%X", source, fgRc);
+    switchu::FileLog::log("[%s] RequestToGetForeground rc=0x%X elapsed=%lums",
+                          source, fgRc,
+                          static_cast<unsigned long>(
+                              armTicksToNs(armGetSystemTick() - startedAt) / 1'000'000ULL));
     if (R_FAILED(fgRc))
         return false;
 
@@ -686,19 +688,31 @@ static void startPowerSequence(const char* source, smi::SystemMessage action) {
 }
 
 static void openMenuFromHome(const char* source) {
+    const uint64_t homeStartedAt = armGetSystemTick();
     logHomeState(source, "request");
     cancelViewPolling("home");
 
     if (daemon::app::isRunning() && daemon::app::hasForeground()) {
+        const uint64_t focusStartedAt = armGetSystemTick();
         if (!takeForegroundFromRunningApp(source)) {
             switchu::FileLog::log("[%s] HOME aborted: foreground request failed", source);
             return;
         }
+        const uint64_t focusDoneAt = armGetSystemTick();
         const auto status = buildSystemStatus();
         switchu::FileLog::log("[%s] HOME launching MainMenu status.running=%d suspended=0x%016lX",
                               source, status.app_running ? 1 : 0, status.suspended_app_id);
         Result menuRc = daemon::menu_la::launch(smi::MenuStartMode::MainMenu, status);
-        switchu::FileLog::log("[%s] HOME MainMenu launch rc=0x%X", source, menuRc);
+        const uint64_t launchDoneAt = armGetSystemTick();
+        switchu::FileLog::log(
+            "[%s] HOME MainMenu launch rc=0x%X focus=%lums launch=%lums total=%lums",
+            source, menuRc,
+            static_cast<unsigned long>(armTicksToNs(focusDoneAt - focusStartedAt)
+                                       / 1'000'000ULL),
+            static_cast<unsigned long>(armTicksToNs(launchDoneAt - focusDoneAt)
+                                       / 1'000'000ULL),
+            static_cast<unsigned long>(armTicksToNs(launchDoneAt - homeStartedAt)
+                                       / 1'000'000ULL));
         if (R_SUCCEEDED(menuRc))
             g_appCatalogRefreshDelay = 200;
         logHomeState(source, "after");

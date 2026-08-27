@@ -35,7 +35,7 @@ SettingsScreen::Tab settings::tabs::AboutTab::build(SettingsScreen& /* screen */
         SettingItem it;
         it.label = i18n.tr("settings.about.license", "License");
         it.type  = ItemType::Info;
-        it.infoText = i18n.tr("settings.about.license_value", "GPL-2.0");
+        it.infoText = i18n.tr("settings.about.license_value", "GPL-3.0");
         t.items.push_back(std::move(it));
     }
 

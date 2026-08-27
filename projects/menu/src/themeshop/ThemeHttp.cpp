@@ -101,7 +101,8 @@ void ensureInternetConnectionReady(const std::string& url) {
 void configureRequest(curlpp::Easy& request,
                       const std::string& url,
                       std::ostringstream& response,
-                      const std::list<std::string>& headers) {
+                      const std::list<std::string>& headers,
+                      const themeshop::http::ProgressCallback& onProgress = {}) {
     request.setOpt<curlpp::options::Url>(url);
     request.setOpt<curlpp::options::FollowLocation>(true);
     request.setOpt<curlpp::options::NoSignal>(true);
@@ -113,13 +114,23 @@ void configureRequest(curlpp::Easy& request,
         request.setOpt<curlpp::options::HttpHeader>(headers);
     }
     request.setOpt<curlpp::options::WriteStream>(&response);
+    if (onProgress) {
+        request.setOpt<curlpp::options::NoProgress>(false);
+        request.setOpt<curlpp::options::ProgressFunction>(
+            [onProgress](double downloadTotal, double downloaded, double, double) {
+                onProgress(downloaded > 0.0 ? static_cast<std::uint64_t>(downloaded) : 0,
+                           downloadTotal > 0.0 ? static_cast<std::uint64_t>(downloadTotal) : 0);
+                return 0;
+            });
+    }
 }
 
 std::vector<std::uint8_t> performRequestBytes(const std::string& url,
-                                              const std::list<std::string>& headers) {
+                                              const std::list<std::string>& headers,
+                                              const themeshop::http::ProgressCallback& onProgress) {
     std::ostringstream response;
     curlpp::Easy request;
-    configureRequest(request, url, response, headers);
+    configureRequest(request, url, response, headers, onProgress);
     request.perform();
 
     long statusCode = curlpp::infos::ResponseCode::get(request);
@@ -136,7 +147,8 @@ std::vector<std::uint8_t> performRequestBytes(const std::string& url,
 }
 
 std::vector<std::uint8_t> performBytes(const std::string& url,
-                                       const std::list<std::string>& headers) {
+                                       const std::list<std::string>& headers,
+                                       const themeshop::http::ProgressCallback& onProgress = {}) {
     std::lock_guard<std::mutex> lk(g_themeHttpMutex);
 
     std::string lastError = "Theme Shop HTTP request failed";
@@ -147,7 +159,7 @@ std::vector<std::uint8_t> performBytes(const std::string& url,
             }
 
             ensureInternetConnectionReady(url);
-            auto bytes = performRequestBytes(url, headers);
+            auto bytes = performRequestBytes(url, headers, onProgress);
             if (attempt > 1) {
                 DebugLog::log("[themeshop] request recovered on retry %d: %s", attempt, url.c_str());
             }
@@ -195,8 +207,9 @@ bool isInitialized() {
 }
 
 std::vector<std::uint8_t> getBytes(const std::string& url,
-                                   const std::list<std::string>& headers) {
-    return performBytes(url, headers);
+                                   const std::list<std::string>& headers,
+                                   const ProgressCallback& onProgress) {
+    return performBytes(url, headers, onProgress);
 }
 
 std::string getText(const std::string& url,

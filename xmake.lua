@@ -261,7 +261,8 @@ target("SwitchU-Manager")
     add_files("projects/menu/src/widgets/ActionButton.cpp")
     add_files("projects/menu/src/widgets/OverlayDialog.cpp")
     add_files("projects/menu/src/widgets/SelectionCursor.cpp")
-    add_packages("libsdl", "libsdl_ttf", "zlib", "libwebp")
+    add_packages("libsdl", "libsdl_ttf", "zlib", "libwebp", "libcurl", "nlohmann_json")
+    add_links("minizip")
     add_linkgroups("SDL2_ttf", "harfbuzz-subset", "harfbuzz", "freetype", "png16", "bz2", "z", {group = true})
 
     add_cxxflags("-frtti", "-fexceptions", {force = true})
@@ -270,6 +271,7 @@ target("SwitchU-Manager")
         add_linkorders(is_mode("debug") and "deko3dd" or "deko3d", "nx")
     end
     add_syslinks("nx")
+    add_defines(version_define)
 
     if is_mode("release") then
         add_cxflags("-O3", "-flto=auto", "-ffast-math", {force = true})

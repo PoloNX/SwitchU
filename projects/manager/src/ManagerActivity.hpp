@@ -1,6 +1,7 @@
 #pragma once
 
 #include "SwitchUInstallation.hpp"
+#include "ReleaseUpdater.hpp"
 #include "widgets/ActionButton.hpp"
 #include "widgets/OverlayDialog.hpp"
 #include "widgets/SelectionCursor.hpp"
@@ -11,7 +12,9 @@
 #include <nxui/widgets/GlassPanel.hpp>
 #include <nxui/widgets/Label.hpp>
 
+#include <atomic>
 #include <functional>
+#include <future>
 #include <memory>
 #include <string>
 
@@ -39,6 +42,10 @@ private:
     void performPendingToggle();
     void requestReboot();
     void rebootNow();
+    void requestUpdate();
+    void startUpdateCheck();
+    void startUpdateInstall();
+    void syncUpdater();
     void showError(ToggleError error, int detail);
     std::string errorText(ToggleError error, int detail) const;
     void setButtonVisible(ButtonView& view, bool visible, bool focusable);
@@ -62,6 +69,7 @@ private:
     std::shared_ptr<nxui::Label> m_noticeLabel;
     std::shared_ptr<nxui::Label> m_helpLabel;
     ButtonView m_toggleButton;
+    ButtonView m_updateButton;
     ButtonView m_rebootButton;
     ButtonView m_laterButton;
     std::shared_ptr<OverlayDialog> m_dialog;
@@ -74,6 +82,23 @@ private:
     int m_operationDelayFrames = 0;
     int m_rebootDelayFrames = 0;
     std::string m_errorMessage;
+
+    enum class UpdateUiState {
+        Idle,
+        Checking,
+        Available,
+        UpToDate,
+        Installing,
+        Error,
+    };
+    UpdateUiState m_updateState = UpdateUiState::Idle;
+    ReleaseInfo m_latestRelease;
+    std::future<ReleaseInfo> m_updateCheckFuture;
+    std::future<UpdateInstallResult> m_updateInstallFuture;
+    std::atomic<float> m_updateProgress{0.f};
+    std::atomic<int> m_updateWorkerStage{static_cast<int>(UpdateWorkerStage::Idle)};
+    int m_lastUpdatePercent = -1;
+    std::string m_updateError;
 };
 
 } // namespace switchu::manager

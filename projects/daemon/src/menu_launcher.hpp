@@ -36,6 +36,7 @@ inline Event* commandEvent() {
 }
 
 inline Result create() {
+    const uint64_t startedAt = armGetSystemTick();
     switchu::FileLog::log("[menu_la] create begin active=%d holderActive=%d",
                           g_active ? 1 : 0,
                           (g_active && appletHolderActive(&g_holder)) ? 1 : 0);
@@ -46,7 +47,10 @@ inline Result create() {
                               (u32)kMenuAppletId, rc);
         return rc;
     }
-    switchu::FileLog::log("[menu_la] create ok id=0x%X", (u32)kMenuAppletId);
+    switchu::FileLog::log("[menu_la] create ok id=0x%X elapsed=%lums",
+                          (u32)kMenuAppletId,
+                          static_cast<unsigned long>(
+                              armTicksToNs(armGetSystemTick() - startedAt) / 1'000'000ULL));
     g_holderCreated = true;
     return 0;
 }
@@ -71,14 +75,13 @@ inline Result cleanupHolder() {
 inline Result terminate();
 
 inline Result prepare() {
+    const uint64_t startedAt = armGetSystemTick();
     if (g_holderCreated) {
         switchu::FileLog::log("[menu_la] prepare requested while holder exists; terminating first");
         const Result terminateRc = terminate();
         if (R_FAILED(terminateRc))
             return terminateRc;
     } else if (g_externalRegistered) {
-        // A previous unregister failure must be resolved before registering a
-        // new takeover. Otherwise ldr can retain a stale external-code mapping.
         const Result unregisterRc = switchu::daemon::unregisterExternalContent(
             switchu::smi::kMenuTakeoverProgramId);
         if (R_FAILED(unregisterRc))
@@ -86,6 +89,7 @@ inline Result prepare() {
         g_externalRegistered = false;
     }
     if (kEnableExternalContentLaunch) {
+        const uint64_t registerStartedAt = armGetSystemTick();
         Result ecsRc = switchu::daemon::registerExternalContent(
             switchu::smi::kMenuTakeoverProgramId, "/switch/SwitchU/bin/menu");
         if (R_FAILED(ecsRc)) {
@@ -93,8 +97,17 @@ inline Result prepare() {
             return ecsRc;
         }
         g_externalRegistered = true;
+        switchu::FileLog::log("[menu_la] external content ready elapsed=%lums",
+                              static_cast<unsigned long>(
+                                  armTicksToNs(armGetSystemTick() - registerStartedAt)
+                                  / 1'000'000ULL));
     }
-    return create();
+    const Result rc = create();
+    switchu::FileLog::log("[menu_la] prepare done rc=0x%X elapsed=%lums",
+                          rc,
+                          static_cast<unsigned long>(
+                              armTicksToNs(armGetSystemTick() - startedAt) / 1'000'000ULL));
+    return rc;
 }
 
 inline Result startPrepared(smi::MenuStartMode mode, const smi::SystemStatus& status) {
@@ -111,7 +124,7 @@ inline Result startPrepared(smi::MenuStartMode mode, const smi::SystemStatus& st
                           status.suspended_app_id);
     LibAppletArgs la_args;
     libappletArgsCreate(&la_args, static_cast<u32>(mode));
-    libappletArgsSetPlayStartupSound(&la_args, true);
+    libappletArgsSetPlayStartupSound(&la_args, false);
     Result rc = libappletArgsPush(&la_args, &g_holder);
     if (R_FAILED(rc)) {
         switchu::FileLog::log("[menu_la] ArgsPush FAIL: 0x%X", rc);

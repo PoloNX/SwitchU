@@ -1,5 +1,6 @@
 #include "SteamGridDbManager.hpp"
 
+#include "ArtworkCache.hpp"
 #include "core/DebugLog.hpp"
 #include "themeshop/ThemeHttp.hpp"
 
@@ -153,9 +154,15 @@ bool cacheUsesCurrentMatcher(std::uint64_t titleId) {
 
 void removeCachedArtwork(std::uint64_t titleId) {
     std::error_code ec;
-    std::filesystem::remove(SteamGridDbManager::heroPath(titleId), ec);
+    const std::string hero = SteamGridDbManager::heroPath(titleId);
+    const std::string logo = SteamGridDbManager::logoPath(titleId);
+    std::filesystem::remove(hero, ec);
     ec.clear();
-    std::filesystem::remove(SteamGridDbManager::logoPath(titleId), ec);
+    std::filesystem::remove(logo, ec);
+    ec.clear();
+    std::filesystem::remove(hero + ".1280x720.rgba-cache", ec);
+    ec.clear();
+    std::filesystem::remove(logo + ".640x180.rgba-cache", ec);
     ec.clear();
     std::filesystem::remove(titleDirectory(titleId) + "/metadata.json", ec);
 }
@@ -248,12 +255,21 @@ bool saveBytes(const std::string& path, const std::vector<std::uint8_t>& bytes) 
 }
 
 bool fetchImage(const nlohmann::json& images, bool portrait,
-                const std::string& path) {
+                const std::string& path,
+                const themeshop::http::ProgressCallback& onProgress = {}) {
     const auto* image = chooseImage(images, portrait);
     if (!image) return false;
     const std::string url = image->value("url", std::string());
     if (url.empty()) return false;
-    return saveBytes(path, themeshop::http::getBytes(url));
+    return saveBytes(path, themeshop::http::getBytes(url, {}, onProgress));
+}
+
+bool prepareArtwork(SteamGridDbManager::ArtworkKind kind, const std::string& path) {
+    if (kind == SteamGridDbManager::ArtworkKind::Hero)
+        return steamgriddb::artwork::prepare(path, 1280, 720, true);
+    if (kind == SteamGridDbManager::ArtworkKind::Logo)
+        return steamgriddb::artwork::prepare(path, 640, 180, false);
+    return true;
 }
 
 } // namespace
@@ -321,7 +337,8 @@ SteamGridDbManager::BrowseResult SteamGridDbManager::browse(
 }
 
 SteamGridDbManager::ApplyResult SteamGridDbManager::applyCandidate(
-    const BrowseResult& browseResult, const Candidate& candidate) {
+    const BrowseResult& browseResult, const Candidate& candidate,
+    const ProgressCallback& onProgress) {
     ApplyResult result;
     result.titleId = browseResult.titleId;
     result.kind = browseResult.kind;
@@ -332,9 +349,29 @@ SteamGridDbManager::ApplyResult SteamGridDbManager::applyCandidate(
                                                : iconPath(result.titleId);
         std::error_code ec;
         std::filesystem::create_directories(titleDirectory(result.titleId), ec);
+        if (result.kind == ArtworkKind::Hero)
+            steamgriddb::artwork::remove(destination, 1280, 720);
+        else if (result.kind == ArtworkKind::Logo)
+            steamgriddb::artwork::remove(destination, 640, 180);
+        if (onProgress) onProgress("Downloading artwork...", 0.02f);
+        auto downloadProgress = [&](std::uint64_t downloaded, std::uint64_t total) {
+            if (!onProgress) return;
+            const float networkProgress = total > 0
+                ? std::clamp(static_cast<float>(downloaded) / static_cast<float>(total), 0.f, 1.f)
+                : 0.f;
+            onProgress("Downloading artwork...", 0.02f + networkProgress * 0.68f);
+        };
         if (candidate.url.empty()
-            || !saveBytes(destination, themeshop::http::getBytes(candidate.url)))
+            || !saveBytes(destination,
+                          themeshop::http::getBytes(candidate.url, {}, downloadProgress)))
             throw std::runtime_error("Artwork download failed");
+
+        if (result.kind != ArtworkKind::Icon) {
+            if (onProgress) onProgress("Preparing artwork cache...", 0.74f);
+            if (!prepareArtwork(result.kind, destination))
+                throw std::runtime_error("Artwork decode failed");
+        }
+        if (onProgress) onProgress("Saving artwork...", 0.96f);
 
         nlohmann::json metadata = readMetadata(result.titleId);
         metadata["titleId"] = result.titleId;
@@ -356,6 +393,7 @@ SteamGridDbManager::ApplyResult SteamGridDbManager::applyCandidate(
         result.message = std::string(result.kind == ArtworkKind::Hero ? "Hero"
                                    : result.kind == ArtworkKind::Logo ? "Logo" : "Icon")
                        + " applied";
+        if (onProgress) onProgress(result.message, 1.f);
     } catch (const std::exception& ex) {
         result.message = ex.what();
         DebugLog::log("[steamgriddb] apply candidate failed: %s", ex.what());
@@ -403,6 +441,7 @@ bool SteamGridDbManager::start(const std::string& apiKey,
         m_status.running = true;
         m_status.total = static_cast<int>(apps.size());
         m_status.message = "Starting SteamGridDB scan...";
+        m_status.progress01 = 0.f;
         m_status.revision = nextRevision;
     }
     m_task = std::async(std::launch::async,
@@ -427,6 +466,7 @@ bool SteamGridDbManager::startSelectNext(const std::string& apiKey,
         m_status.total = 1;
         m_status.currentTitle = title;
         m_status.message = "Loading SteamGridDB choices...";
+        m_status.progress01 = 0.f;
         m_status.selectedKind = kind;
         m_status.revision = nextRevision;
     }
@@ -493,8 +533,14 @@ void SteamGridDbManager::selectNext(std::string apiKey, std::uint64_t titleId,
         const std::string imageUrl = ranked[(size_t)selectedIndex]->value("url", std::string());
         std::error_code ec;
         std::filesystem::create_directories(titleDirectory(titleId), ec);
+        if (kind == ArtworkKind::Hero)
+            steamgriddb::artwork::remove(destination, 1280, 720);
+        else if (kind == ArtworkKind::Logo)
+            steamgriddb::artwork::remove(destination, 640, 180);
         saved = !imageUrl.empty() && saveBytes(destination, themeshop::http::getBytes(imageUrl));
         if (!saved) throw std::runtime_error("Artwork download failed");
+        if (!prepareArtwork(kind, destination))
+            throw std::runtime_error("Artwork decode failed");
 
         metadata["titleId"] = titleId;
         metadata["title"] = title;
@@ -528,6 +574,7 @@ void SteamGridDbManager::selectNext(std::string apiKey, std::uint64_t titleId,
         status.selectedKind = kind;
         status.selectedIndex = selectedIndex;
         status.selectionCount = selectionCount;
+        status.progress01 = 1.f;
     });
     m_running.store(false);
 }
@@ -556,13 +603,19 @@ void SteamGridDbManager::scrape(std::string apiKey, std::vector<AppEntry> apps) 
     for (const auto& app : apps) {
         if (m_cancelRequested.load()) break;
         if (!app.isApplication() || app.titleId == 0) {
-            updateStatus([](Status& s) { ++s.completed; });
+            updateStatus([](Status& s) {
+                ++s.completed;
+                s.progress01 = s.total > 0
+                    ? static_cast<float>(s.completed) / static_cast<float>(s.total) : 1.f;
+            });
             continue;
         }
 
         updateStatus([&](Status& s) {
             s.currentTitle = app.title;
             s.message = "Searching " + app.title;
+            s.progress01 = s.total > 0
+                ? static_cast<float>(s.completed) / static_cast<float>(s.total) : 0.f;
         });
 
         bool matched = false;
@@ -573,6 +626,8 @@ void SteamGridDbManager::scrape(std::string apiKey, std::vector<AppEntry> apps) 
             updateStatus([](Status& s) {
                 ++s.completed;
                 ++s.matched;
+                s.progress01 = s.total > 0
+                    ? static_cast<float>(s.completed) / static_cast<float>(s.total) : 1.f;
             });
             continue;
         }
@@ -609,7 +664,9 @@ void SteamGridDbManager::scrape(std::string apiKey, std::vector<AppEntry> apps) 
             auto fetchArtwork = [&](const char* endpoint,
                                     const char* mimeFilter,
                                     bool portrait,
-                                    const std::string& destination) {
+                                    ArtworkKind kind,
+                                    const std::string& destination,
+                                    float phaseStart, float phaseSpan) {
                 try {
                     // SteamGridDB expects complete MIME values. Logos only
                     // support PNG/WebP, whereas heroes also accept JPEG.
@@ -617,7 +674,32 @@ void SteamGridDbManager::scrape(std::string apiKey, std::vector<AppEntry> apps) 
                                           + "?nsfw=false&humor=false&types=static&mimes="
                                           + mimeFilter;
                     const auto images = apiData(url, headers);
-                    const bool saved = fetchImage(images, portrait, destination);
+                    auto networkProgress = [&](std::uint64_t downloaded, std::uint64_t total) {
+                        const float fraction = total > 0
+                            ? std::clamp(static_cast<float>(downloaded)
+                                         / static_cast<float>(total), 0.f, 1.f)
+                            : 0.f;
+                        updateStatus([&](Status& s) {
+                            s.message = "Downloading artwork for " + app.title;
+                            s.progress01 = s.total > 0
+                                ? (static_cast<float>(s.completed)
+                                   + phaseStart + phaseSpan * fraction)
+                                    / static_cast<float>(s.total)
+                                : 0.f;
+                        });
+                    };
+                    const bool saved = fetchImage(images, portrait, destination, networkProgress);
+                    if (saved && kind != ArtworkKind::Icon) {
+                        updateStatus([&](Status& s) {
+                            s.message = "Preparing artwork for " + app.title;
+                            s.progress01 = s.total > 0
+                                ? (static_cast<float>(s.completed) + phaseStart + phaseSpan)
+                                    / static_cast<float>(s.total)
+                                : 0.f;
+                        });
+                        if (!prepareArtwork(kind, destination))
+                            throw std::runtime_error("Artwork decode failed");
+                    }
                     DebugLog::log("[steamgriddb] '%s' %s candidates=%d saved=%d",
                                   app.title.c_str(), endpoint,
                                   images.is_array() ? static_cast<int>(images.size()) : 0,
@@ -633,9 +715,11 @@ void SteamGridDbManager::scrape(std::string apiKey, std::vector<AppEntry> apps) 
             };
 
             const bool heroOk = fetchArtwork("/heroes", "image/png,image/jpeg", false,
-                                             heroPath(app.titleId));
+                                             ArtworkKind::Hero, heroPath(app.titleId),
+                                             0.15f, 0.35f);
             const bool logoOk = fetchArtwork("/logos", "image/png", false,
-                                             logoPath(app.titleId));
+                                             ArtworkKind::Logo, logoPath(app.titleId),
+                                             0.55f, 0.35f);
             matched = heroOk || logoOk;
 
             nlohmann::json metadata;
@@ -666,6 +750,8 @@ void SteamGridDbManager::scrape(std::string apiKey, std::vector<AppEntry> apps) 
             if (matched) ++s.matched;
             else ++s.failed;
             s.lastCompletedTitleId = app.titleId;
+            s.progress01 = s.total > 0
+                ? static_cast<float>(s.completed) / static_cast<float>(s.total) : 1.f;
         });
         if (!fatalError.empty()) {
             updateStatus([&](Status& s) {
@@ -687,6 +773,7 @@ void SteamGridDbManager::scrape(std::string apiKey, std::vector<AppEntry> apps) 
             s.message = fatalError;
         else
             s.message = "SteamGridDB scan complete";
+        s.progress01 = 1.f;
     });
     m_running.store(false);
 }

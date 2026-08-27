@@ -44,7 +44,7 @@ SettingsScreen::Tab settings::tabs::SteamGridDbTab::build(SettingsScreen& screen
 
     SettingItem scan;
     scan.type = ItemType::Action;
-    scan.label = i18n.tr("settings.steamgriddb.scan", "Search artwork for missing applications");
+    scan.label = i18n.tr("settings.steamgriddb.scan", "Search artwork for missing assets");
     scan.description = i18n.tr("settings.steamgriddb.scan_desc",
         "Downloads a hero and logo only for applications that do not already have artwork.");
     scan.onChange = [&screen](SettingItem&) {
@@ -61,13 +61,6 @@ SettingsScreen::Tab settings::tabs::SteamGridDbTab::build(SettingsScreen& screen
         if (screen.m_steamGridDbScrapeCb) screen.m_steamGridDbScrapeCb();
     };
     tab.items.push_back(std::move(scan));
-
-    SettingItem progress;
-    progress.type = ItemType::Progress;
-    progress.label = i18n.tr("settings.steamgriddb.progress", "Artwork scan");
-    progress.description = i18n.tr("settings.steamgriddb.idle", "Ready to scan installed applications.");
-    progress.floatVal = 0.f;
-    tab.items.push_back(std::move(progress));
 
     SettingItem result;
     result.type = ItemType::Info;

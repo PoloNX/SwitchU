@@ -267,7 +267,7 @@
       "api_key": "Clé API",
       "api_key_set": "Configurée (masquée)",
       "api_key_missing": "Non configurée",
-      "scan": "Rechercher les visuels des applications manquantes",
+      "scan": "Rechercher des assets manquants",
       "scan_desc": "Télécharge un hero et un logo uniquement pour les applications qui n'ont pas encore de visuels.",
       "already_running": "Une recherche est déjà en cours.",
       "need_key": "Configure d'abord une clé API.",
@@ -279,7 +279,9 @@
       "key_cleared": "Clé API effacée.",
       "key_saved": "Clé API enregistrée.",
       "start_failed": "La recherche des visuels n'a pas pu démarrer.",
-      "started": "Recherche SteamGridDB démarrée."
+      "started": "Recherche SteamGridDB démarrée.",
+      "download_title": "Téléchargement des visuels",
+      "download_start": "Recherche sur SteamGridDB..."
     },
     "controllers": {
       "test": "Tester les périphériques",
@@ -392,7 +394,7 @@
       "version": "Version",
       "author": "Auteur",
       "license": "Licence",
-      "license_value": "GPL-2.0",
+      "license_value": "GPL-3.0",
       "acknowledgements": "Remerciements",
       "acknowledgements_desc": "Merci à xortroll pour l'aide vis à vis du développements.",
       "source_code": "Code source",

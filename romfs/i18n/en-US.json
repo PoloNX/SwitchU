@@ -279,7 +279,9 @@
       "key_cleared": "API key cleared.",
       "key_saved": "API key saved.",
       "start_failed": "The artwork scan could not be started.",
-      "started": "SteamGridDB scan started."
+      "started": "SteamGridDB scan started.",
+      "download_title": "Downloading artwork",
+      "download_start": "Searching SteamGridDB..."
     },
     "controllers": {
       "test": "Test Input Devices",
@@ -392,7 +394,7 @@
       "version": "Version",
       "author": "Author",
       "license": "License",
-      "license_value": "GPL-2.0",
+      "license_value": "GPL-3.0",
       "acknowledgements": "Acknowledgements",
       "acknowledgements_desc": "Thanks to xortroll for your help with your project uLaunch and for your support and advice during development.",
       "source_code": "Source Code",

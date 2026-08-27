@@ -11,6 +11,7 @@
 #include <switch.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 
 namespace switchu::manager {
@@ -98,7 +99,8 @@ bool ManagerActivity::onCreate() {
     rootBox().addChild(m_titleLabel);
 
     m_subtitleLabel = std::make_shared<nxui::Label>(
-        tr("manager.subtitle", "Manage the HOME menu used on the next boot."));
+        tr("manager.subtitle", "Manage the HOME menu used on the next boot.")
+        + std::string("  •  v") + ReleaseUpdater::kCurrentVersion);
     m_subtitleLabel->setFont(&m_smallFont);
     m_subtitleLabel->setScale(0.86f);
     m_subtitleLabel->setTextColor(m_theme.textSecondary);
@@ -143,12 +145,15 @@ bool ManagerActivity::onCreate() {
     m_noticeLabel->setRect({310.f, 392.f, 660.f, 52.f});
     rootBox().addChild(m_noticeLabel);
 
-    m_toggleButton = createButton({440.f, 470.f, 400.f, 64.f}, "", [this]() {
+    m_toggleButton = createButton({440.f, 454.f, 400.f, 58.f}, "", [this]() {
         requestToggle();
     });
-    m_rebootButton = createButton({310.f, 470.f, 318.f, 64.f},
+    m_updateButton = createButton({440.f, 526.f, 400.f, 58.f}, "", [this]() {
+        requestUpdate();
+    });
+    m_rebootButton = createButton({310.f, 486.f, 318.f, 64.f},
         tr("manager.reboot_now", "Restart now"), [this]() { requestReboot(); });
-    m_laterButton = createButton({652.f, 470.f, 318.f, 64.f},
+    m_laterButton = createButton({652.f, 486.f, 318.f, 64.f},
         tr("manager.later", "Later"), [this]() { app().requestExit(); });
 
     m_helpLabel = std::make_shared<nxui::Label>();
@@ -157,7 +162,7 @@ bool ManagerActivity::onCreate() {
     m_helpLabel->setTextColor(m_theme.textSecondary.withAlpha(0.82f));
     m_helpLabel->setHAlign(nxui::Label::HAlign::Center);
     m_helpLabel->setVAlign(nxui::Label::VAlign::Center);
-    m_helpLabel->setRect({300.f, 574.f, 680.f, 36.f});
+    m_helpLabel->setRect({300.f, 608.f, 680.f, 36.f});
     rootBox().addChild(m_helpLabel);
 
     m_cursor = std::make_shared<SelectionCursor>();
@@ -172,7 +177,9 @@ bool ManagerActivity::onCreate() {
     rootBox().addChild(m_dialog);
 
     rootBox().addAction(static_cast<uint64_t>(nxui::Button::B), [this]() {
-        if (!m_loading && !m_rebooting)
+        if (!m_loading && !m_rebooting
+            && m_updateState != UpdateUiState::Checking
+            && m_updateState != UpdateUiState::Installing)
             app().requestExit();
     });
 
@@ -188,6 +195,9 @@ bool ManagerActivity::onCreate() {
 }
 
 void ManagerActivity::onDestroy() {
+    if (m_updateCheckFuture.valid()) m_updateCheckFuture.wait();
+    if (m_updateInstallFuture.valid()) m_updateInstallFuture.wait();
+    ReleaseUpdater::shutdownNetwork();
     switchu::FileLog::log("[ui] manager closing restart_required=%d",
                           m_restartRequired ? 1 : 0);
 }
@@ -235,7 +245,17 @@ void ManagerActivity::refreshPresentation() {
     }
     m_statusBadge->setHighlightColor(m_theme.panelHighlight.withAlpha(0.10f));
 
-    if (m_loading) {
+    const bool updaterBusy = m_updateState == UpdateUiState::Checking
+        || m_updateState == UpdateUiState::Installing;
+    if (m_updateState == UpdateUiState::Checking) {
+        m_detailLabel->setText(tr("manager.update_checking",
+            "Checking the latest GitHub release..."));
+        m_noticeLabel->setText("");
+    } else if (m_updateState == UpdateUiState::Installing) {
+        m_detailLabel->setText(tr("manager.update_installing",
+            "Downloading and installing the SwitchU update..."));
+        m_noticeLabel->setText(tr("manager.do_not_close", "Do not close the application."));
+    } else if (m_loading) {
         m_detailLabel->setText(tr("manager.applying", "Applying the change safely..."));
         m_noticeLabel->setText(tr("manager.do_not_close", "Do not close the application."));
     } else if (!m_errorMessage.empty()) {
@@ -261,21 +281,65 @@ void ManagerActivity::refreshPresentation() {
         m_noticeLabel->setText("");
     }
 
+    if (!m_restartRequired && !m_loading && !updaterBusy) {
+        if (m_updateState == UpdateUiState::Available) {
+            m_noticeLabel->setText(
+                tr("manager.update_available", "A new SwitchU version is available: ")
+                + m_latestRelease.version);
+        } else if (m_updateState == UpdateUiState::Error && !m_updateError.empty()) {
+            m_noticeLabel->setText(tr("manager.update_check_failed",
+                "Update check failed. You can retry."));
+        }
+    }
+
     const std::string toggleText = configuredEnabled
         ? tr("manager.disable", "Disable SwitchU")
         : tr("manager.enable", "Enable SwitchU");
     m_toggleButton.label->setText(toggleText);
     m_toggleButton.button->setAccessibilityLabel(toggleText);
 
-    setButtonVisible(m_toggleButton, !m_restartRequired, validState && !m_loading);
-    setButtonVisible(m_rebootButton, m_restartRequired, !m_loading && !m_rebooting);
-    setButtonVisible(m_laterButton, m_restartRequired, !m_loading && !m_rebooting);
+    std::string updateText;
+    switch (m_updateState) {
+        case UpdateUiState::Checking:
+            updateText = tr("manager.update_checking_button", "Checking for updates...");
+            break;
+        case UpdateUiState::Available:
+            updateText = tr("manager.update_to", "Update to ") + m_latestRelease.version;
+            break;
+        case UpdateUiState::UpToDate:
+            updateText = tr("manager.up_to_date", "Up to date")
+                + std::string(" (v") + ReleaseUpdater::kCurrentVersion + ")";
+            break;
+        case UpdateUiState::Installing: {
+            const int percent = std::clamp(static_cast<int>(m_updateProgress.load() * 100.f), 0, 100);
+            updateText = tr("manager.updating", "Updating...") + std::string(" ")
+                + std::to_string(percent) + "%";
+            break;
+        }
+        case UpdateUiState::Error:
+            updateText = tr("manager.update_retry", "Retry update check");
+            break;
+        default:
+            updateText = tr("manager.check_updates", "Check for updates");
+            break;
+    }
+    m_updateButton.label->setText(updateText);
+    m_updateButton.button->setAccessibilityLabel(updateText);
+
+    setButtonVisible(m_toggleButton, !m_restartRequired,
+                     validState && !m_loading && !updaterBusy);
+    setButtonVisible(m_updateButton, !m_restartRequired,
+                     !m_loading && !updaterBusy);
+    setButtonVisible(m_rebootButton, m_restartRequired,
+                     !m_loading && !m_rebooting && !updaterBusy);
+    setButtonVisible(m_laterButton, m_restartRequired,
+                     !m_loading && !m_rebooting && !updaterBusy);
 
     m_helpLabel->setText(m_restartRequired
         ? tr("manager.help_restart", "A: confirm  •  B: later")
         : tr("manager.help", "D-pad / stick: navigate  •  A: confirm  •  B: quit"));
     if (m_cursor)
-        m_cursor->setVisible(!m_loading && !m_rebooting);
+        m_cursor->setVisible(!m_loading && !m_rebooting && !updaterBusy);
 }
 
 void ManagerActivity::focusFirstAvailable() {
@@ -283,6 +347,107 @@ void ManagerActivity::focusFirstAvailable() {
         focusManager().setFocus(m_rebootButton.button.get());
     else if (m_toggleButton.button->isFocusable())
         focusManager().setFocus(m_toggleButton.button.get());
+    else if (m_updateButton.button->isFocusable())
+        focusManager().setFocus(m_updateButton.button.get());
+}
+
+void ManagerActivity::startUpdateCheck() {
+    if (m_loading || m_rebooting || m_restartRequired
+        || m_updateState == UpdateUiState::Checking
+        || m_updateState == UpdateUiState::Installing)
+        return;
+    m_updateError.clear();
+    m_updateState = UpdateUiState::Checking;
+    m_updateCheckFuture = std::async(std::launch::async, []() {
+        return ReleaseUpdater::checkLatest();
+    });
+    refreshPresentation();
+}
+
+void ManagerActivity::requestUpdate() {
+    if (m_updateState != UpdateUiState::Available) {
+        startUpdateCheck();
+        return;
+    }
+    const std::string message =
+        tr("manager.update_confirm_message", "Download and install SwitchU ")
+        + m_latestRelease.version
+        + tr("manager.update_confirm_suffix",
+             " from GitHub? Your configuration and themes will be preserved.");
+    m_dialog->show(
+        tr("manager.update_confirm_title", "Install SwitchU update?"),
+        message,
+        {
+            {tr("manager.cancel", "Cancel"), {}, true},
+            {tr("manager.update_install", "Install update"),
+             [this]() { startUpdateInstall(); }, true},
+        }, 0);
+    focusManager().setFocus(m_dialog.get());
+}
+
+void ManagerActivity::startUpdateInstall() {
+    if (m_updateState != UpdateUiState::Available)
+        return;
+    const bool preserveDisabled = m_snapshot.state == InstallationState::Disabled;
+    const ReleaseInfo release = m_latestRelease;
+    m_updateProgress.store(0.f);
+    m_updateWorkerStage.store(static_cast<int>(UpdateWorkerStage::Idle));
+    m_lastUpdatePercent = -1;
+    m_updateState = UpdateUiState::Installing;
+    m_updateInstallFuture = std::async(std::launch::async,
+        [this, release, preserveDisabled]() {
+            return ReleaseUpdater::install(release, preserveDisabled,
+                                           m_updateProgress, m_updateWorkerStage);
+        });
+    refreshPresentation();
+}
+
+void ManagerActivity::syncUpdater() {
+    using namespace std::chrono_literals;
+    if (m_updateState == UpdateUiState::Checking && m_updateCheckFuture.valid()
+        && m_updateCheckFuture.wait_for(0s) == std::future_status::ready) {
+        try {
+            m_latestRelease = m_updateCheckFuture.get();
+            m_updateState = m_latestRelease.updateAvailable
+                ? UpdateUiState::Available : UpdateUiState::UpToDate;
+        } catch (const std::exception& ex) {
+            m_updateError = ex.what();
+            m_updateState = UpdateUiState::Error;
+            switchu::FileLog::log("[updater] check failed: %s", ex.what());
+        } catch (...) {
+            m_updateError = "Unknown update check error";
+            m_updateState = UpdateUiState::Error;
+        }
+        refreshPresentation();
+        focusFirstAvailable();
+    }
+
+    if (m_updateState == UpdateUiState::Installing && m_updateInstallFuture.valid()) {
+        const int percent = std::clamp(static_cast<int>(m_updateProgress.load() * 100.f), 0, 100);
+        if (percent != m_lastUpdatePercent) {
+            m_lastUpdatePercent = percent;
+            refreshPresentation();
+        }
+        if (m_updateInstallFuture.wait_for(0s) == std::future_status::ready) {
+            const UpdateInstallResult result = m_updateInstallFuture.get();
+            if (result.success) {
+                m_updateState = UpdateUiState::UpToDate;
+                m_restartRequired = true;
+                m_errorMessage.clear();
+                refreshState();
+            } else {
+                m_updateState = UpdateUiState::Error;
+                m_updateError = result.error;
+                m_dialog->show(
+                    tr("manager.update_error_title", "Update failed"),
+                    result.error,
+                    {{tr("manager.ok", "OK"), {}, true}});
+                focusManager().setFocus(m_dialog.get());
+            }
+            refreshPresentation();
+            focusFirstAvailable();
+        }
+    }
 }
 
 void ManagerActivity::requestToggle() {
@@ -422,6 +587,7 @@ void ManagerActivity::rebootNow() {
 
 void ManagerActivity::onUpdate(float dt) {
     nxui::AnimationManager::instance().update(dt);
+    syncUpdater();
     if (m_dialog && m_dialog->isActive())
         m_dialog->handleTouch(app().input());
 
@@ -447,6 +613,7 @@ void ManagerActivity::onUpdate(float dt) {
                                     emphasis);
     };
     syncButton(m_toggleButton);
+    syncButton(m_updateButton);
     syncButton(m_rebootButton);
     syncButton(m_laterButton);
 
@@ -458,7 +625,8 @@ void ManagerActivity::onRender(nxui::Renderer&) {
 }
 
 nxui::Widget* ManagerActivity::focusRoot() {
-    if (m_loading || m_rebooting)
+    if (m_loading || m_rebooting || m_updateState == UpdateUiState::Checking
+        || m_updateState == UpdateUiState::Installing)
         return nullptr;
     if (m_dialog && m_dialog->isActive())
         return m_dialog.get();
