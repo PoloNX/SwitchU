@@ -14,7 +14,7 @@ namespace switchu::control_cache {
 
 inline constexpr const char* kCacheDir = "sdmc:/config/SwitchU/control_cache";
 inline constexpr uint32_t kMetaMagic = 0x53554343;
-inline constexpr uint32_t kMetaVersion = 4;
+inline constexpr uint32_t kMetaVersion = 5;
 
 struct Meta {
     uint32_t magic = kMetaMagic;
@@ -34,6 +34,7 @@ struct Meta {
     uint64_t bcat_delivery_cache_storage_size = 0;
     char display_version[0x10] = {};
     char name[0x201] = {};
+    char english_name[0x201] = {};
     char publisher[0x101] = {};
 };
 
@@ -130,9 +131,13 @@ inline bool readMeta(uint64_t titleId, Meta& out) {
 
     meta.display_version[sizeof(meta.display_version) - 1] = '\0';
     meta.name[sizeof(meta.name) - 1] = '\0';
+    meta.english_name[sizeof(meta.english_name) - 1] = '\0';
     meta.publisher[sizeof(meta.publisher) - 1] = '\0';
     if (!isValidUtf8(meta.name, sizeof(meta.name)))
         return false;
+    if (meta.english_name[0] != '\0'
+        && !isValidUtf8(meta.english_name, sizeof(meta.english_name)))
+        meta.english_name[0] = '\0';
     if (meta.publisher[0] != '\0' && !isValidUtf8(meta.publisher, sizeof(meta.publisher)))
         meta.publisher[0] = '\0';
     if (meta.display_version[0] != '\0'
@@ -241,10 +246,29 @@ inline bool fillMetaFromControlData(uint64_t titleId, const NsApplicationControl
         }
     }
 
+    // NACP slots 0 and 1 are American and British English. Keep this stable
+    // search title independent from the console's display language.
+    const NacpLanguageEntry* englishEntry = nullptr;
+    for (int languageIndex : {0, 1}) {
+        const auto* candidate = &controlData.nacp.lang[languageIndex];
+        if (candidate->name[0] != '\0'
+            && isValidUtf8(candidate->name, sizeof(candidate->name))) {
+            englishEntry = candidate;
+            break;
+        }
+    }
+    if (englishEntry) {
+        copyString(meta.english_name, sizeof(meta.english_name),
+                   englishEntry->name, sizeof(englishEntry->name));
+    }
+
     if (meta.name[0] == '\0') {
         const std::string fallback = formatTitleId(titleId);
         copyString(meta.name, sizeof(meta.name), fallback.c_str(), fallback.size());
     }
+    if (meta.english_name[0] == '\0')
+        copyString(meta.english_name, sizeof(meta.english_name),
+                   meta.name, sizeof(meta.name));
 
     out = meta;
     return true;

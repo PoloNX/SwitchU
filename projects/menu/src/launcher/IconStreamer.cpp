@@ -190,8 +190,14 @@ bool IconStreamer::needsVisibleLoads(int currentPage, int iconsPerPage) const {
     const int totalApps = static_cast<int>(m_appToSlot.size());
     const int totalPages = (totalApps + iconsPerPage - 1) / iconsPerPage;
     currentPage = std::clamp(currentPage, 0, std::max(0, totalPages - 1));
-    const int begin = currentPage * iconsPerPage;
-    const int end = std::min(totalApps, begin + iconsPerPage);
+    int begin = currentPage * iconsPerPage;
+    int end = std::min(totalApps, begin + iconsPerPage);
+    // In single-row mode callers use one icon per logical page. Keep the two
+    // closest icons on either side hot; this is five 160px textures at most.
+    if (iconsPerPage == 1) {
+        begin = std::max(0, currentPage - kPageCacheRadius);
+        end = std::min(totalApps, currentPage + kPageCacheRadius + 1);
+    }
     for (int i = begin; i < end; ++i) {
         const uint64_t titleId = i < (int)m_titleIds.size() ? m_titleIds[(size_t)i] : 0;
         const bool failed = std::find(m_failedTitleIds.begin(), m_failedTitleIds.end(), titleId)
@@ -399,12 +405,25 @@ void IconStreamer::onPageChanged(int currentPage, int iconsPerPage,
         ++uploads;
     }
 
-    // 4. Fill the bounded decode queue for visible icons. Both the SD read and
+    // 4. Fill the bounded decode queue for visible icons. In single-row mode,
+    // include the nearest neighbours in cursor-distance order. Both the SD read and
     // image conversion happen on a worker; this call returns immediately.
-    for (int appIndex = visibleStartApp;
-         appIndex < visibleEndApp &&
-         (int)m_pendingDecodes.size() < kMaxPendingDecodes;
-         ++appIndex) {
+    std::vector<int> loadOrder;
+    if (iconsPerPage == 1) {
+        loadOrder.push_back(visibleStartApp);
+        for (int distance = 1; distance <= kPageCacheRadius; ++distance) {
+            if (visibleStartApp + distance < cacheEndApp)
+                loadOrder.push_back(visibleStartApp + distance);
+            if (visibleStartApp - distance >= cacheStartApp)
+                loadOrder.push_back(visibleStartApp - distance);
+        }
+    } else {
+        for (int appIndex = visibleStartApp; appIndex < visibleEndApp; ++appIndex)
+            loadOrder.push_back(appIndex);
+    }
+    for (int appIndex : loadOrder) {
+        if ((int)m_pendingDecodes.size() >= kMaxPendingDecodes)
+            break;
         if (m_appToSlot[(size_t)appIndex] >= 0 || !hasData(appIndex))
             continue;
 
@@ -464,6 +483,16 @@ void IconStreamer::forceReload(int currentPage, int iconsPerPage,
                                 nxui::GpuDevice& gpu, nxui::Renderer& ren,
                                 const std::vector<std::shared_ptr<GlossyIcon>>& allIcons)
 {
+    // Widgets keep non-owning pointers into m_pool. Detach every pointer before
+    // destroying the pool; otherwise the next frame can submit a descriptor
+    // backed by a freed MemBlock and put deko3d into a permanent page-fault
+    // state. This is especially visible when an overridden icon is applied
+    // while edit/move mode still owns a ghost of the focused application.
+    for (const auto& icon : allIcons) {
+        if (icon)
+            icon->setTexture(nullptr);
+    }
+
     // Throw away all loaded state so onPageChanged re-does everything.
     for (auto& slot : m_pool) slot->appIndex = -1;
     m_freeSlots.clear();
@@ -477,6 +506,40 @@ void IconStreamer::forceReload(int currentPage, int iconsPerPage,
     cancelPending();
     m_pendingDecodes.clear();
     m_failedTitleIds.clear();
+
+    m_lastPage = -1;
+    m_lastIconsPerPage = -1;
+    onPageChanged(currentPage, iconsPerPage, gpu, ren, allIcons);
+}
+
+void IconStreamer::reloadTitle(
+    uint64_t titleId, int currentPage, int iconsPerPage,
+    nxui::GpuDevice& gpu, nxui::Renderer& ren,
+    const std::vector<std::shared_ptr<GlossyIcon>>& allIcons) {
+    const auto found = std::find(m_titleIds.begin(), m_titleIds.end(), titleId);
+    if (found == m_titleIds.end()) return;
+    const int appIndex = static_cast<int>(found - m_titleIds.begin());
+
+    for (auto& pending : m_pendingDecodes) {
+        if (pending.titleId == titleId && pending.state)
+            pending.state->cancelled.store(true);
+    }
+    m_failedTitleIds.erase(
+        std::remove(m_failedTitleIds.begin(), m_failedTitleIds.end(), titleId),
+        m_failedTitleIds.end());
+    if (appIndex < static_cast<int>(m_compressed.size()))
+        m_compressed[(size_t)appIndex].clear();
+
+    const int slotIndex = appIndex < static_cast<int>(m_appToSlot.size())
+        ? m_appToSlot[(size_t)appIndex] : -1;
+    if (appIndex < static_cast<int>(allIcons.size()) && allIcons[(size_t)appIndex])
+        allIcons[(size_t)appIndex]->setTexture(nullptr);
+    if (slotIndex >= 0 && slotIndex < static_cast<int>(m_pool.size()) && m_pool[(size_t)slotIndex]) {
+        m_pool[(size_t)slotIndex]->appIndex = -1;
+        m_appToSlot[(size_t)appIndex] = -1;
+        if (std::find(m_freeSlots.begin(), m_freeSlots.end(), slotIndex) == m_freeSlots.end())
+            m_freeSlots.push_back(slotIndex);
+    }
 
     m_lastPage = -1;
     m_lastIconsPerPage = -1;

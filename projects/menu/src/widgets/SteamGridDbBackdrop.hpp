@@ -22,6 +22,7 @@ public:
 
     void setEnabled(bool enabled);
     void setLayoutMode(AppLayoutMode mode) { m_layoutMode = mode; }
+    void setPreloadTitles(std::vector<std::uint64_t> titleIds);
     void showTitle(std::uint64_t titleId, bool forceReload = false);
 
 protected:
@@ -32,11 +33,9 @@ private:
     struct ArtworkSet {
         nxui::Texture hero;
         nxui::Texture logo;
-        nxui::Texture grid;
         std::uint64_t titleId = 0;
         bool hasHero = false;
         bool hasLogo = false;
-        bool hasGrid = false;
     };
 
     struct DecodedImage {
@@ -48,7 +47,6 @@ private:
     struct DecodedArtwork {
         DecodedImage hero;
         DecodedImage logo;
-        DecodedImage grid;
         std::uint64_t titleId = 0;
         std::uint64_t generation = 0;
         long decodeMilliseconds = 0;
@@ -64,12 +62,14 @@ private:
         std::future<void> future;
     };
 
-    static DecodedImage decodeImage(const std::string& path, int maxSide);
-    static nxui::Rect coverRect(const nxui::Texture& texture, const nxui::Rect& area);
+    static DecodedImage decodeImage(const std::string& path, int outputWidth,
+                                    int outputHeight, bool fill);
+    static nxui::Rect fillRect(const nxui::Texture& texture, const nxui::Rect& area);
     static nxui::Rect containRect(const nxui::Texture& texture, const nxui::Rect& area);
     void drawSet(nxui::Renderer& renderer, const ArtworkSet& set, float alpha) const;
-    void startPendingDecode();
+    void startPendingDecode(std::uint64_t titleId);
     void beginCrossfade(int nextSet, std::uint64_t titleId);
+    bool hasGpuArtwork(std::uint64_t titleId) const;
 
     nxui::GpuDevice& m_gpu;
     nxui::Renderer& m_renderer;
@@ -83,7 +83,12 @@ private:
     float m_decodeDebounce = 0.f;
     std::optional<PendingDecode> m_pendingDecode;
     std::optional<DecodedArtwork> m_readyArtwork;
+    std::vector<std::uint64_t> m_preloadTitleIds;
+    std::vector<std::uint64_t> m_missingArtworkTitleIds;
+    std::vector<DecodedArtwork> m_decodedCache;
     int m_uploadStage = 0;
     AppLayoutMode m_layoutMode = AppLayoutMode::Grid;
     nxui::AnimatedFloat m_fade{1.f};
+    static constexpr std::size_t kDecodedCacheLimit = 2;
+    static constexpr std::size_t kMissingCacheLimit = 64;
 };

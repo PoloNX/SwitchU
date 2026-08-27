@@ -452,6 +452,9 @@ void WiiUMenuApp::onDestroy() {
     stopEditGhost();
 
     m_steamGridDb.cancelAndWait();
+    if (m_steamGridDbBrowseFuture.valid()) m_steamGridDbBrowseFuture.wait();
+    if (m_steamGridDbApplyFuture.valid()) m_steamGridDbApplyFuture.wait();
+    if (m_steamGridDbPicker) m_steamGridDbPicker->wait();
     themeshop::http::shutdown();
 
     bluetooth::Finalize();
@@ -466,13 +469,17 @@ void WiiUMenuApp::onDestroy() {
 }
 
 void WiiUMenuApp::loadResources() {
+    DebugLog::log("[init] loadResources: regular font");
     std::string fontPath = std::string(SD_ASSETS) + "/fonts/DejaVuSans.ttf";
     if (m_fontNormal.load(app().gpu(), app().renderer(), fontPath, 24))
         m_loadedRegularFontPath = fontPath;
+    DebugLog::log("[init] loadResources: small font");
     if (m_fontSmall.load(app().gpu(), app().renderer(), fontPath, 18))
         m_loadedSmallFontPath = fontPath;
+    DebugLog::log("[init] loadResources: icon font");
     m_fontIcons.load(app().gpu(), app().renderer(), std::string(SD_ASSETS) + "/fonts/switch_icons.ttf", 24);
 
+    DebugLog::log("[init] loadResources: static textures");
     std::string gameCardPath = std::string(SD_ASSETS) + "/icons/gamecard.png";
     if (m_gameCardTex.loadFromFile(app().gpu(), app().renderer(), gameCardPath))
         m_loadedGameCardPath = gameCardPath;
@@ -482,7 +489,9 @@ void WiiUMenuApp::loadResources() {
     m_arrowTexRight.loadFromFile(app().gpu(), app().renderer(),
                                  std::string(SD_ASSETS) + "/icons/page_arrow_right.png");
 
+    DebugLog::log("[init] loadResources: application catalog");
     m_appLoader.load(m_model, m_iconStreamer);
+    DebugLog::log("[init] loadResources: done");
 }
 
 void WiiUMenuApp::buildUserAvatarBar(bool loadImmediately) {
@@ -557,14 +566,45 @@ void WiiUMenuApp::appendAddUserButton() {
 }
 
 void WiiUMenuApp::wireUserAvatarNavigation() {
+    const bool dynamicLine = m_appLayoutMode == AppLayoutMode::DynamicLine;
+    auto returnToRow = [this]() {
+        if (!m_grid || m_appLayoutMode != AppLayoutMode::DynamicLine
+            || m_navigator.route() != switchu::navigation::Route::Home)
+            return;
+        if (auto* target = m_grid->focusManager().current())
+            focusManager().setFocus(target);
+    };
     for (std::size_t i = 0; i < m_userAvatarButtons.size(); ++i) {
         auto* current = m_userAvatarButtons[i].get();
-        auto* left = i > 0 ? m_userAvatarButtons[i - 1].get() : current;
-        auto* right = i + 1 < m_userAvatarButtons.size()
-            ? m_userAvatarButtons[i + 1].get()
-            : current;
+        nxui::Widget* left = current;
+        if (i > 0)
+            left = m_userAvatarButtons[i - 1].get();
+        else if (dynamicLine && !m_sidebar.leftButtons().empty())
+            left = m_sidebar.leftButtons().back().get();
+        nxui::Widget* right = current;
+        if (i + 1 < m_userAvatarButtons.size())
+            right = m_userAvatarButtons[i + 1].get();
+        else if (dynamicLine && !m_sidebar.rightButtons().empty())
+            right = m_sidebar.rightButtons().front().get();
         current->setCustomNavigation(nxui::FocusDirection::LEFT, left);
         current->setCustomNavigation(nxui::FocusDirection::RIGHT, right);
+        current->setCustomNavigation(nxui::FocusDirection::DOWN, nullptr);
+        current->removeAction(static_cast<uint64_t>(nxui::Button::DDown));
+        current->removeAction(static_cast<uint64_t>(nxui::Button::LStickD));
+        current->removeAction(static_cast<uint64_t>(nxui::Button::RStickD));
+        if (dynamicLine)
+            current->addDirectionAction(nxui::FocusDirection::DOWN, returnToRow);
+    }
+    if (dynamicLine && !m_userAvatarButtons.empty()) {
+        if (m_grid)
+            m_grid->setDynamicLineUpTarget(
+                m_userAvatarButtons[m_userAvatarButtons.size() / 2].get());
+        m_sidebar.setDynamicLineUpTarget(
+            m_userAvatarButtons[m_userAvatarButtons.size() / 2].get());
+        m_sidebar.setDynamicLineProfileTargets(m_userAvatarButtons.front().get(),
+                                               m_userAvatarButtons.back().get());
+    } else {
+        m_sidebar.setDynamicLineProfileTargets(nullptr, nullptr);
     }
 }
 
@@ -893,6 +933,7 @@ void WiiUMenuApp::composeRootPending(std::vector<PendingApp>& apps) {
         AppEntry entry;
         entry.id = pending.id;
         entry.title = pending.title;
+        entry.englishTitle = pending.englishTitle;
         entry.titleId = pending.titleId;
         entry.viewFlags = pending.viewFlags;
         entry.userRequired = pending.userRequired;
@@ -1260,13 +1301,20 @@ void WiiUMenuApp::configureDynamicLineNavigation() {
     const bool dynamicLine = m_appLayoutMode == AppLayoutMode::DynamicLine;
     m_sidebar.setDynamicLineLayout(dynamicLine);
 
-    if (m_grid)
-        m_grid->setDynamicLineUpTarget(dynamicLine ? m_sidebar.settingsButton() : nullptr);
+    if (m_grid) {
+        nxui::Widget* profileTarget = dynamicLine && !m_userAvatarButtons.empty()
+            ? m_userAvatarButtons[m_userAvatarButtons.size() / 2].get() : nullptr;
+        m_grid->setDynamicLineUpTarget(profileTarget);
+        m_grid->setDynamicLineDownTarget(nullptr);
+    }
 
     if (!dynamicLine) {
         m_sidebar.setDynamicLineDownAction({});
+        wireUserAvatarNavigation();
         return;
     }
+
+    wireUserAvatarNavigation();
 
     // Resolve the app when DOWN is pressed. A persistent raw pointer here can
     // outlive icons rebuilt by a move or catalogue refresh.
@@ -1835,7 +1883,6 @@ void WiiUMenuApp::buildGrid() {
         app().gpu(), app().renderer(), &m_threadPool);
     m_steamGridDbBackdrop->setEnabled(m_config.steamGridDbEnabled);
     m_steamGridDbBackdrop->setLayoutMode(m_appLayoutMode);
-    m_bgLayer->addChild(m_steamGridDbBackdrop);
 
     m_contentLayer = std::make_shared<nxui::Box>();
     m_contentLayer->setRect({0, 0, 1280, 720});
@@ -1890,6 +1937,9 @@ void WiiUMenuApp::buildGrid() {
         m_rightSidebar->addChild(btn);
 
     m_contentLayer->addChild(m_folderBackdrop);
+    // Keep live SteamGridDB artwork above the folder's frozen transition
+    // snapshot, while still placing it behind every interactive HOME widget.
+    m_contentLayer->addChild(m_steamGridDbBackdrop);
     m_contentLayer->addChild(m_grid);
     m_contentLayer->addChild(m_folderHeader);
     m_contentLayer->addChild(m_leftSidebar);
@@ -1908,6 +1958,22 @@ void WiiUMenuApp::buildGrid() {
     createSettings();
     createThemeShop();
     createGameOptions();
+    m_steamGridDbPicker = std::make_shared<SteamGridDbPickerScreen>(
+        app().gpu(), app().renderer(), m_threadPool);
+    m_steamGridDbPicker->setFont(&m_fontNormal);
+    m_steamGridDbPicker->setSmallFont(&m_fontSmall);
+    m_steamGridDbPicker->setTheme(&m_theme);
+    m_steamGridDbPicker->onClosed([this]() {
+        if (m_gameOptions && m_gameOptions->isActive())
+            focusManager().setFocus(m_gameOptions.get());
+    });
+    m_steamGridDbPicker->onSearch([this]() { editSteamGridDbPickerQuery(); });
+    m_steamGridDbPicker->onApply(
+        [this](const SteamGridDbManager::BrowseResult& browse,
+               const SteamGridDbManager::Candidate& candidate) {
+            applySteamGridDbCandidate(browse, candidate);
+        });
+    m_overlayLayer->addChild(m_steamGridDbPicker);
     createFolderOptions();
     createControllerTest();
 
@@ -2221,6 +2287,20 @@ void WiiUMenuApp::finalizeRefresh() {
 void WiiUMenuApp::onUpdate(float dt) {
     syncSteamGridDb();
 
+    // Dynamic-line navigation owns a small internal focus manager. Depending
+    // on the route transition, its selected icon can change without producing
+    // another global focus callback. Synchronise the artwork from that source
+    // of truth while HOME is active; showTitle() is a no-op when unchanged.
+    if (m_navigator.route() == switchu::navigation::Route::Home
+        && !(m_dialog && m_dialog->isActive())
+        && !(m_settings && m_settings->isActive())
+        && !(m_themeShop && m_themeShop->isActive())
+        && !(m_gameOptions && m_gameOptions->isActive())
+        && !(m_folderOptions && m_folderOptions->isActive())
+        && !(m_userSelect && m_userSelect->isActive())) {
+        showFocusedSteamGridDbArtwork();
+    }
+
     if (m_folderCaptureReady)
         openCapturedFolder();
 
@@ -2302,9 +2382,14 @@ void WiiUMenuApp::onUpdate(float dt) {
         }
     }
 
+    const int streamPage = m_grid && m_appLayoutMode == AppLayoutMode::DynamicLine
+        ? std::max(0, m_grid->focusedGlobalIndex())
+        : (m_grid ? m_grid->currentPage() : 0);
+    const int streamPageSize = m_grid && m_appLayoutMode == AppLayoutMode::DynamicLine
+        ? 1 : (m_grid ? m_grid->iconsPerPage() : 1);
     if (m_deferredInitialAssetFrames == 0 && m_grid && m_iconStreamer.needsVisibleLoads(
-            m_grid->currentPage(), m_grid->iconsPerPage())) {
-        m_iconStreamer.onPageChanged(m_grid->currentPage(), m_grid->iconsPerPage(),
+            streamPage, streamPageSize)) {
+        m_iconStreamer.onPageChanged(streamPage, streamPageSize,
                                      app().gpu(), app().renderer(),
                                      m_grid->allIcons());
     }
@@ -2313,7 +2398,7 @@ void WiiUMenuApp::onUpdate(float dt) {
         --m_deferredProfileFrames;
     } else if (m_pendingProfileIndex < m_pendingProfileUids.size()) {
         const bool visibleIconsBusy = m_grid && m_iconStreamer.needsVisibleLoads(
-            m_grid->currentPage(), m_grid->iconsPerPage());
+            streamPage, streamPageSize);
         if (!visibleIconsBusy)
             loadNextUserAvatar();
     }
@@ -2630,8 +2715,12 @@ void WiiUMenuApp::onUpdate(float dt) {
         m_settings->handleTouch(app().input());
     }
 
-    if (!debugTouchBlocked && m_gameOptions && m_gameOptions->isActive())
+    if (!debugTouchBlocked && m_gameOptions && m_gameOptions->isActive()
+        && !(m_steamGridDbPicker && m_steamGridDbPicker->isActive()))
         m_gameOptions->handleTouch(app().input());
+
+    if (!debugTouchBlocked && m_steamGridDbPicker && m_steamGridDbPicker->isActive())
+        m_steamGridDbPicker->handleTouch(app().input());
 
     if (!debugTouchBlocked && m_folderOptions && m_folderOptions->isActive())
         m_folderOptions->handleTouch(app().input());
@@ -2742,6 +2831,14 @@ std::vector<WiiUMenuApp::ActionHint> WiiUMenuApp::buildActionHints() {
         add(buttonGlyph(nxui::Button::A), i18n.tr("hint.select", "Select"));
         add(buttonGlyph(nxui::Button::B), i18n.tr("hint.back", "Back"));
         addVoiceControls();
+        return hints;
+    }
+
+    if (m_steamGridDbPicker && m_steamGridDbPicker->isActive()) {
+        add(dpadGlyph(), i18n.tr("hint.navigate", "Navigate"));
+        add(buttonGlyph(nxui::Button::A), i18n.tr("hint.select", "Select"));
+        add(buttonGlyph(nxui::Button::B), i18n.tr("hint.back", "Back"));
+        add(buttonGlyph(nxui::Button::X), i18n.tr("hint.search", "Search"));
         return hints;
     }
 

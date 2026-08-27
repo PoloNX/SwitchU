@@ -162,23 +162,12 @@ void WiiUMenuApp::announceFocusedWidget(nxui::Widget* w) {
 }
 
 nxui::Texture* WiiUMenuApp::adoptEditGhostTexture(GlossyIcon* sourceIcon) {
+    // The streamer pins the source index for the whole edit operation, so the
+    // source texture already has the lifetime needed by the ghost. Re-decoding
+    // and uploading a second copy here forced a synchronous GPU drain both
+    // when movement started and when it stopped.
     m_editGhostTexture.reset();
-    if (!sourceIcon)
-        return nullptr;
-
-    const std::uint64_t titleId = sourceIcon->titleId();
-    if (titleId != 0 && titleId < kFolderTitleIdPrefix) {
-        std::vector<uint8_t> data = AppListLoader::loadIconData(titleId);
-        if (!data.empty()) {
-            auto owned = std::make_unique<nxui::Texture>();
-            if (owned->loadFromMemory(app().gpu(), app().renderer(),
-                                      data.data(), data.size(), 160)) {
-                m_editGhostTexture = std::move(owned);
-                return m_editGhostTexture.get();
-            }
-        }
-    }
-    return sourceIcon->texture();
+    return sourceIcon ? sourceIcon->texture() : nullptr;
 }
 
 void WiiUMenuApp::startEditGhost(GlossyIcon* sourceIcon) {
@@ -591,6 +580,7 @@ void WiiUMenuApp::wireFocusCallback() {
         if ((m_dialog && m_dialog->isActive()) ||
             (m_themeShop && m_themeShop->isActive()) ||
             (m_settings && m_settings->isActive()) ||
+            (m_steamGridDbPicker && m_steamGridDbPicker->isActive()) ||
             (m_userSelect && m_userSelect->isActive()))
             return;
 
@@ -602,7 +592,16 @@ void WiiUMenuApp::wireFocusCallback() {
         if (cur && cur->tag() == "glossy_icon") {
             m_grid->focusManager().setFocus(cur);
             auto* icon = static_cast<GlossyIcon*>(cur);
-            if (m_steamGridDbBackdrop)
+            if (m_appLayoutMode == AppLayoutMode::DynamicLine) {
+                const int focusedIndex = m_grid->focusedGlobalIndex();
+                if (focusedIndex >= 0) {
+                    m_iconStreamer.onPageChanged(focusedIndex, 1,
+                                                 app().gpu(), app().renderer(),
+                                                 m_grid->allIcons());
+                }
+            }
+            if (m_steamGridDbBackdrop && icon->titleId() != 0
+                && icon->titleId() < kFolderTitleIdPrefix)
                 m_steamGridDbBackdrop->showTitle(icon->titleId());
             auto& i18n = nxui::I18n::instance();
             if (m_editMode) {
@@ -629,8 +628,6 @@ void WiiUMenuApp::wireFocusCallback() {
             m_titlePill->setText(icon->title());
             m_titlePill->setVisible(true);
         } else if (cur) {
-            if (m_steamGridDbBackdrop)
-                m_steamGridDbBackdrop->showTitle(0);
             if (m_editMode)
                 exitEditMode();
             for (auto& btn : m_sidebar.leftButtons()) {
@@ -648,8 +645,6 @@ void WiiUMenuApp::wireFocusCallback() {
             }
             m_titlePill->hideAnimated();
         } else {
-            if (m_steamGridDbBackdrop)
-                m_steamGridDbBackdrop->showTitle(0);
             m_titlePill->hideAnimated();
         }
     });
@@ -665,6 +660,7 @@ void WiiUMenuApp::wireFocusCallback() {
 
 bool WiiUMenuApp::isCurrentFocusableWidget(nxui::Widget* w) const {
     if (!w) return false;
+    if (m_steamGridDbPicker && m_steamGridDbPicker.get() == w) return w->isFocusable();
     if (m_themeShop && m_themeShop.get() == w) return w->isFocusable();
     if (m_settings && m_settings.get() == w) return w->isFocusable();
     for (const auto& btn : m_sidebar.leftButtons())
@@ -758,6 +754,8 @@ void WiiUMenuApp::closeActiveOverlays() {
         m_folderOptions->hide();
     if (m_controllerTest && m_controllerTest->isActive())
         m_controllerTest->hide();
+    if (m_steamGridDbPicker && m_steamGridDbPicker->isActive())
+        m_steamGridDbPicker->hide();
     if (m_openFolderId != 0)
         closeFolder();
 }
@@ -768,6 +766,8 @@ nxui::Widget* WiiUMenuApp::focusRoot() {
     if (m_progressDialog && m_progressDialog->isActive()) return m_progressDialog.get();
     if (m_dialog && m_dialog->isActive()) return m_dialog.get();
     if (m_userSelect && m_userSelect->isActive()) return m_userSelect.get();
+    if (m_steamGridDbPicker && m_steamGridDbPicker->isActive())
+        return m_steamGridDbPicker.get();
     switch (m_navigator.route()) {
         case switchu::navigation::Route::Settings:
             return m_settings ? m_settings.get() : &rootBox();
@@ -988,6 +988,9 @@ void WiiUMenuApp::showGameContextMenu(GlossyIcon* icon) {
                 }, true},
             }, 0, {});
         focusManager().setFocus(m_dialog.get());
+    });
+    m_gameOptions->onSelectArtwork([this](GameOptionsScreen::ArtworkKind kind) {
+        openSteamGridDbPicker(kind);
     });
     m_audio.playSfx(Sfx::ModalShow);
     m_gameOptionsTitleId = titleId;

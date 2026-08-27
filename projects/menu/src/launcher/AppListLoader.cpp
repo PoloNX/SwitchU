@@ -1,10 +1,13 @@
 #include "AppListLoader.hpp"
 #include "core/DebugLog.hpp"
+#include "steamgriddb/SteamGridDbManager.hpp"
 #include "smi_commands.hpp"
 #include <switch.h>
 #include <cstdio>
 #include <vector>
 #include <algorithm>
+#include <fstream>
+#include <iterator>
 #ifdef SWITCHU_MENU
 #include <switchu/control_cache.hpp>
 #include <switchu/ns_ext.hpp>
@@ -126,17 +129,21 @@ bool fetchDaemonCatalog(std::vector<PendingApp>& out, bool prefetchIcons) {
         switchu::control_cache::Meta meta{};
         const bool needsMetadata = prefetchIcons || isTitleIdFallback(a.title, ent.titleId)
             || !a.startupUserKnown;
-        if (needsMetadata && switchu::control_cache::readMeta(ent.titleId, meta)) {
-            if (meta.name[0] != '\0')
+        if (switchu::control_cache::readMeta(ent.titleId, meta)) {
+            a.englishTitle = meta.english_name;
+            if (needsMetadata && meta.name[0] != '\0')
                 a.title = meta.name;
-            a.startupUserKnown = true;
-            a.startupUserAccount = meta.startup_user_account;
-            a.startupUserAccountOption = meta.startup_user_account_option;
-            a.userRequired = requiresInteractiveUserSelection(a.startupUserAccount,
-                                                              a.startupUserAccountOption);
-            if (prefetchIcons)
-                a.iconData = switchu::control_cache::readIcon(ent.titleId);
+            if (needsMetadata) {
+                a.startupUserKnown = true;
+                a.startupUserAccount = meta.startup_user_account;
+                a.startupUserAccountOption = meta.startup_user_account_option;
+                a.userRequired = requiresInteractiveUserSelection(a.startupUserAccount,
+                                                                  a.startupUserAccountOption);
+                if (prefetchIcons)
+                    a.iconData = switchu::control_cache::readIcon(ent.titleId);
+            }
         }
+        if (a.englishTitle.empty()) a.englishTitle = a.title;
 
         if (!switchu::control_cache::isValidUtf8(a.title.c_str(), a.title.size() + 1)) {
             DebugLog::log("[loader] invalid UTF-8 title; using title id=%016lX",
@@ -172,6 +179,7 @@ void registerEntries(std::vector<PendingApp>& apps,
         AppEntry entry;
         entry.id           = std::move(p.id);
         entry.title        = std::move(p.title);
+        entry.englishTitle = std::move(p.englishTitle);
         entry.titleId      = p.titleId;
         entry.iconTexIndex = -1;  // unused — IconStreamer handles textures
         entry.viewFlags    = p.viewFlags;
@@ -268,6 +276,7 @@ void AppListLoader::fetchApps(std::vector<PendingApp>& output, bool prefetchIcon
             PendingApp a;
             a.id      = tidBuf;
             a.title   = meta.name;
+            a.englishTitle = meta.english_name;
             a.titleId = tid;
             a.viewFlags = vf;
             a.startupUserKnown = true;
@@ -303,6 +312,15 @@ std::vector<uint8_t> AppListLoader::loadIconData(uint64_t titleId) {
         return iconData;
 
 #ifdef SWITCHU_MENU
+    {
+        std::ifstream custom(SteamGridDbManager::iconPath(titleId), std::ios::binary);
+        if (custom.is_open()) {
+            iconData.assign(std::istreambuf_iterator<char>(custom),
+                            std::istreambuf_iterator<char>());
+            if (!iconData.empty())
+                return iconData;
+        }
+    }
     iconData = switchu::control_cache::readIcon(titleId);
 #endif
 

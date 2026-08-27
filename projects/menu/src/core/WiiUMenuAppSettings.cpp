@@ -541,7 +541,105 @@ void WiiUMenuApp::startSteamGridDbScrape() {
             "settings.steamgriddb.started", "SteamGridDB scan started."));
 }
 
+void WiiUMenuApp::openSteamGridDbPicker(GameOptionsScreen::ArtworkKind kind,
+                                        const std::string& requestedQuery) {
+    if (!m_gameOptions || m_gameOptionsTitleId == 0) return;
+    if (m_config.steamGridDbApiKey.empty()) {
+        m_gameOptions->requestToast(nxui::I18n::instance().tr(
+            "settings.steamgriddb.need_key", "Configure an API key first."));
+        return;
+    }
+    SteamGridDbManager::ArtworkKind managerKind = SteamGridDbManager::ArtworkKind::Hero;
+    if (kind == GameOptionsScreen::ArtworkKind::Logo)
+        managerKind = SteamGridDbManager::ArtworkKind::Logo;
+    else if (kind == GameOptionsScreen::ArtworkKind::Icon)
+        managerKind = SteamGridDbManager::ArtworkKind::Icon;
+
+    std::string title;
+    std::string defaultQuery;
+    for (const auto& appEntry : m_allApps) {
+        if (appEntry.titleId == m_gameOptionsTitleId) {
+            title = appEntry.title;
+            defaultQuery = appEntry.steamGridDbTitle();
+            break;
+        }
+    }
+    if (title.empty() || m_steamGridDbBrowseFuture.valid()
+        || m_steamGridDbApplyFuture.valid()) {
+        m_gameOptions->requestToast(nxui::I18n::instance().tr(
+            "settings.steamgriddb.already_running", "A SteamGridDB operation is already running."));
+        return;
+    }
+    const std::string query = requestedQuery.empty() ? defaultQuery : requestedQuery;
+    m_steamGridDbPicker->showLoading(m_gameOptionsTitleId, title, query, managerKind);
+    focusManager().setFocus(m_steamGridDbPicker.get());
+    m_steamGridDbBrowseFuture = std::async(std::launch::async,
+        [apiKey = m_config.steamGridDbApiKey, titleId = m_gameOptionsTitleId,
+         title, query, managerKind]() {
+            return SteamGridDbManager::browse(apiKey, titleId, title, query, managerKind);
+        });
+}
+
+void WiiUMenuApp::editSteamGridDbPickerQuery() {
+#ifdef SWITCHU_MENU
+    if (!m_steamGridDbPicker || !m_steamGridDbPicker->isActive()) return;
+    SwkbdConfig keyboard{};
+    char text[129]{};
+    if (R_FAILED(swkbdCreate(&keyboard, 0))) return;
+    swkbdConfigMakePresetDefault(&keyboard);
+    swkbdConfigSetGuideText(&keyboard, "SteamGridDB search name");
+    swkbdConfigSetStringLenMax(&keyboard, 128);
+    swkbdConfigSetInitialText(&keyboard, m_steamGridDbPicker->query().c_str());
+    const Result rc = swkbdShow(&keyboard, text, sizeof(text));
+    swkbdClose(&keyboard);
+    focusManager().setFocus(m_steamGridDbPicker.get());
+    if (R_FAILED(rc) || text[0] == '\0') return;
+    const auto kind = m_steamGridDbPicker->artworkKind();
+    const auto mappedKind = kind == SteamGridDbManager::ArtworkKind::Logo
+        ? GameOptionsScreen::ArtworkKind::Logo
+        : kind == SteamGridDbManager::ArtworkKind::Icon
+            ? GameOptionsScreen::ArtworkKind::Icon : GameOptionsScreen::ArtworkKind::Hero;
+    openSteamGridDbPicker(mappedKind, text);
+#endif
+}
+
+void WiiUMenuApp::applySteamGridDbCandidate(
+    const SteamGridDbManager::BrowseResult& browse,
+    const SteamGridDbManager::Candidate& candidate) {
+    if (m_steamGridDbApplyFuture.valid()) return;
+    m_steamGridDbApplyFuture = std::async(std::launch::async, [browse, candidate]() {
+        return SteamGridDbManager::applyCandidate(browse, candidate);
+    });
+}
+
 void WiiUMenuApp::syncSteamGridDb() {
+    if (m_steamGridDbBrowseFuture.valid()
+        && m_steamGridDbBrowseFuture.wait_for(std::chrono::seconds(0))
+            == std::future_status::ready) {
+        auto result = m_steamGridDbBrowseFuture.get();
+        if (m_steamGridDbPicker && m_steamGridDbPicker->isActive()
+            && m_steamGridDbPicker->titleId() == result.titleId) {
+            m_steamGridDbPicker->setResult(std::move(result));
+            focusManager().setFocus(m_steamGridDbPicker.get());
+        }
+    }
+    if (m_steamGridDbApplyFuture.valid()
+        && m_steamGridDbApplyFuture.wait_for(std::chrono::seconds(0))
+            == std::future_status::ready) {
+        const auto result = m_steamGridDbApplyFuture.get();
+        if (result.success) {
+            if (result.kind == SteamGridDbManager::ArtworkKind::Icon && m_grid) {
+                m_iconStreamer.reloadTitle(result.titleId, m_grid->currentPage(),
+                                           m_grid->iconsPerPage(), app().gpu(),
+                                           app().renderer(), m_grid->allIcons());
+            } else {
+                showFocusedSteamGridDbArtwork(true);
+            }
+        }
+        if (m_steamGridDbPicker && m_steamGridDbPicker->isActive())
+            m_steamGridDbPicker->setMessage(result.message, false);
+    }
+
     const auto state = m_steamGridDb.status();
     if (state.revision != m_steamGridDbUiRevision) {
         m_steamGridDbUiRevision = state.revision;
@@ -566,6 +664,18 @@ void WiiUMenuApp::syncSteamGridDb() {
     if (m_steamGridDbWasRunning && !state.running && state.finished) {
         m_steamGridDbWasRunning = false;
         showFocusedSteamGridDbArtwork(true);
+        if (state.selectedKind == SteamGridDbManager::ArtworkKind::Icon && state.matched > 0
+            && m_grid) {
+            // forceReload releases the pool texture used by the panel header;
+            // detach it first so the overlay never renders a stale pointer.
+            if (m_gameOptions) m_gameOptions->setGameIcon(nullptr);
+            m_iconStreamer.forceReload(m_grid->currentPage(), m_grid->iconsPerPage(),
+                                       app().gpu(), app().renderer(), m_grid->allIcons());
+        }
+        if (state.selectedKind != SteamGridDbManager::ArtworkKind::None
+            && m_gameOptions && m_gameOptions->isActive()) {
+            m_gameOptions->requestToast(state.message, 3.2f);
+        }
         if (m_settings && m_settings->isActive()) {
             m_settings->requestToast(
                 std::to_string(state.matched) + " artwork sets found, "
@@ -577,12 +687,31 @@ void WiiUMenuApp::syncSteamGridDb() {
 void WiiUMenuApp::showFocusedSteamGridDbArtwork(bool forceReload) {
     if (!m_steamGridDbBackdrop || !m_config.steamGridDbEnabled) return;
     std::uint64_t titleId = 0;
+    std::vector<std::uint64_t> nearbyTitleIds;
     if (m_grid) {
         auto* current = m_grid->focusManager().current();
-        if (current && current->tag() == "glossy_icon")
-            titleId = static_cast<GlossyIcon*>(current)->titleId();
+        if (current && current->tag() == "glossy_icon") {
+            const int focused = m_grid->focusedGlobalIndex();
+            if (focused >= 0 && focused < m_model.count()
+                && m_model.at(focused).isApplication())
+                titleId = static_cast<GlossyIcon*>(current)->titleId();
+        }
+        const int focused = m_grid->focusedGlobalIndex();
+        for (int distance = 1; focused >= 0 && nearbyTitleIds.size() < 8
+                               && distance < m_model.count(); ++distance) {
+            for (int direction : {1, -1}) {
+                const int index = focused + direction * distance;
+                if (index < 0 || index >= m_model.count()) continue;
+                const auto& entry = m_model.at(index);
+                if (!entry.isApplication() || entry.titleId == 0) continue;
+                nearbyTitleIds.push_back(entry.titleId);
+                if (nearbyTitleIds.size() >= 8) break;
+            }
+        }
     }
-    m_steamGridDbBackdrop->showTitle(titleId, forceReload);
+    if (titleId != 0)
+        m_steamGridDbBackdrop->showTitle(titleId, forceReload);
+    m_steamGridDbBackdrop->setPreloadTitles(std::move(nearbyTitleIds));
 }
 
 void WiiUMenuApp::createGameOptions() {
@@ -1538,6 +1667,8 @@ void WiiUMenuApp::applyTheme() {
         m_themeShop->setTheme(&m_theme);
     if (m_gameOptions)
         m_gameOptions->setTheme(&m_theme);
+    if (m_steamGridDbPicker)
+        m_steamGridDbPicker->setTheme(&m_theme);
     if (m_folderOptions)
         m_folderOptions->setTheme(&m_theme);
     if (m_controllerTest)

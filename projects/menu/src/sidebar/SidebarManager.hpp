@@ -36,6 +36,9 @@ public:
     // horizontal control strip between the profile bar and the applications.
     void setDynamicLineLayout(bool enabled);
     void setDynamicLineDownAction(std::function<void()> action);
+    void setDynamicLineUpTarget(nxui::Widget* target);
+    void setDynamicLineProfileTargets(nxui::Widget* firstProfile,
+                                      nxui::Widget* lastProfile);
 
     void applyTheme(const nxui::Theme& theme);
 

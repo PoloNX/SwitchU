@@ -59,6 +59,16 @@ void IconGrid::setDynamicLineUpTarget(nxui::Widget* target) {
     }
 }
 
+void IconGrid::setDynamicLineDownTarget(nxui::Widget* target) {
+    m_lineDownTarget = target;
+    if (m_layoutMode != AppLayoutMode::DynamicLine)
+        return;
+    for (auto& icon : m_allIcons) {
+        if (icon)
+            icon->setCustomNavigation(nxui::FocusDirection::DOWN, m_lineDownTarget);
+    }
+}
+
 void IconGrid::reconfigureLayout(int cols, int rows,
                                  float cellW, float cellH,
                                  float padX, float padY)
@@ -100,7 +110,7 @@ void IconGrid::layoutPage() {
         icon->setCustomNavigation(nxui::FocusDirection::LEFT, nullptr);
         icon->setCustomNavigation(nxui::FocusDirection::RIGHT, nullptr);
         icon->setCustomNavigation(nxui::FocusDirection::UP, nullptr);
-        icon->setCustomNavigation(nxui::FocusDirection::DOWN, nullptr);
+        icon->setCustomNavigation(nxui::FocusDirection::DOWN, m_lineDownTarget);
         int local  = i - start;
         int col    = local % m_cols;
         int row    = local / m_cols;

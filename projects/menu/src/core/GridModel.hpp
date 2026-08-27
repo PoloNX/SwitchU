@@ -20,6 +20,7 @@ inline constexpr std::uint64_t folderTitleId(std::uint32_t folderId) {
 struct AppEntry {
     std::string id;
     std::string title;
+    std::string englishTitle;
     uint64_t    titleId = 0;
     int         iconTexIndex = -1;
     nxui::Color       tint = nxui::Color::white();
@@ -35,6 +36,9 @@ struct AppEntry {
 
     bool isApplication() const { return kind == GridEntryKind::Application; }
     bool isFolder() const { return kind == GridEntryKind::Folder; }
+    const std::string& steamGridDbTitle() const {
+        return englishTitle.empty() ? title : englishTitle;
+    }
 
     bool isGameCard() const {
         return switchu::ns::viewHasFlag(viewFlags, switchu::ns::AppViewFlag_IsGameCard);

@@ -25,6 +25,7 @@
 #include "steamgriddb/SteamGridDbManager.hpp"
 #include "settings/SettingsScreen.hpp"
 #include "settings/GameOptionsScreen.hpp"
+#include "settings/SteamGridDbPickerScreen.hpp"
 #include "settings/FolderOptionsScreen.hpp"
 #include "settings/ControllerTestScreen.hpp"
 #include "themeshop/ThemeShopScreen.hpp"
@@ -117,6 +118,11 @@ private:
                                  const std::string& guide);
     void editSteamGridDbApiKey();
     void startSteamGridDbScrape();
+    void openSteamGridDbPicker(GameOptionsScreen::ArtworkKind kind,
+                               const std::string& query = std::string());
+    void editSteamGridDbPickerQuery();
+    void applySteamGridDbCandidate(const SteamGridDbManager::BrowseResult& browse,
+                                   const SteamGridDbManager::Candidate& candidate);
     void syncSteamGridDb();
     void showFocusedSteamGridDbArtwork(bool forceReload = false);
     void applyTheme();
@@ -260,6 +266,7 @@ private:
     std::shared_ptr<SettingsScreen>    m_settings;
     std::shared_ptr<ThemeShopScreen>   m_themeShop;
     std::shared_ptr<GameOptionsScreen> m_gameOptions;
+    std::shared_ptr<SteamGridDbPickerScreen> m_steamGridDbPicker;
     std::shared_ptr<FolderOptionsScreen> m_folderOptions;
     std::shared_ptr<ControllerTestScreen> m_controllerTest;
 
@@ -353,6 +360,8 @@ private:
 
     AppConfig m_config;
     SteamGridDbManager m_steamGridDb;
+    std::future<SteamGridDbManager::BrowseResult> m_steamGridDbBrowseFuture;
+    std::future<SteamGridDbManager::ApplyResult> m_steamGridDbApplyFuture;
     std::uint64_t m_steamGridDbUiRevision = 0;
     std::uint64_t m_steamGridDbLastCompletedTitleId = 0;
     bool m_steamGridDbWasRunning = false;

@@ -150,7 +150,8 @@
     "repeat": "Repeat",
     "voice": "Voice",
     "options": "Options",
-    "switch_layout": "Switch view"
+    "switch_layout": "Switch view",
+    "search": "Search"
   },
   "settings": {
     "tabs": {
@@ -262,12 +263,12 @@
     "steamgriddb": {
       "section": "Game artwork",
       "enabled": "Display SteamGridDB artwork",
-      "enabled_desc": "Show heroes, covers and logos behind the application menu.",
+      "enabled_desc": "Show heroes and logos behind the application menu.",
       "api_key": "API key",
       "api_key_set": "Configured (hidden)",
       "api_key_missing": "Not configured",
-      "scan": "Search artwork for all applications",
-      "scan_desc": "Downloads one cover, hero and logo for every installed application.",
+      "scan": "Search artwork for missing applications",
+      "scan_desc": "Downloads a hero and logo only for applications that do not already have artwork.",
       "already_running": "A scan is already running.",
       "need_key": "Configure an API key first.",
       "progress": "Artwork scan",
@@ -427,7 +428,15 @@
     "uninstall_progress": "Please wait. Do not turn off the console.",
     "close_title": "Close game",
     "close_prefix": "Close",
-    "close_suffix": "?\nUnsaved progress will be lost."
+    "close_suffix": "?\nUnsaved progress will be lost.",
+    "steamgriddb": {
+      "hero": "Hero",
+      "hero_desc": "Open the hero gallery and choose the image to use.",
+      "logo": "Logo",
+      "logo_desc": "Open the logo gallery and choose the image to use.",
+      "icon": "Replacement icon",
+      "icon_desc": "Open the icon gallery and choose an override for this game."
+    }
   },
   "folder": {
     "create": "Create folder",

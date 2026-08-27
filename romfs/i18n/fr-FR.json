@@ -150,7 +150,8 @@
     "repeat": "Répéter",
     "voice": "Voix",
     "options": "Options",
-    "switch_layout": "Changer de vue"
+    "switch_layout": "Changer de vue",
+    "search": "Rechercher"
   },
   "settings": {
     "tabs": {
@@ -262,12 +263,12 @@
     "steamgriddb": {
       "section": "Illustrations des jeux",
       "enabled": "Afficher les visuels SteamGridDB",
-      "enabled_desc": "Affiche les heroes, jaquettes et logos derrière le menu des applications.",
+      "enabled_desc": "Affiche les heroes et les logos derrière le menu des applications.",
       "api_key": "Clé API",
       "api_key_set": "Configurée (masquée)",
       "api_key_missing": "Non configurée",
-      "scan": "Rechercher les visuels de toutes les applications",
-      "scan_desc": "Télécharge une jaquette, un hero et un logo pour chaque application installée.",
+      "scan": "Rechercher les visuels des applications manquantes",
+      "scan_desc": "Télécharge un hero et un logo uniquement pour les applications qui n'ont pas encore de visuels.",
       "already_running": "Une recherche est déjà en cours.",
       "need_key": "Configure d'abord une clé API.",
       "progress": "Recherche des visuels",
@@ -427,7 +428,15 @@
     "uninstall_progress": "Veuillez patienter. N'éteignez pas la console.",
     "close_title": "Fermer le jeu",
     "close_prefix": "Fermer",
-    "close_suffix": " ?\nLa progression non sauvegardée sera perdue."
+    "close_suffix": " ?\nLa progression non sauvegardée sera perdue.",
+    "steamgriddb": {
+      "hero": "Hero",
+      "hero_desc": "Ouvre la galerie des heroes pour choisir l'image à utiliser.",
+      "logo": "Logo",
+      "logo_desc": "Ouvre la galerie des logos pour choisir l'image à utiliser.",
+      "icon": "Icône de remplacement",
+      "icon_desc": "Ouvre la galerie des icônes pour remplacer celle du jeu."
+    }
   },
   "folder": {
     "create": "Créer un dossier",

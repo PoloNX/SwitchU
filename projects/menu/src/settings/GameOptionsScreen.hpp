@@ -6,6 +6,7 @@
 
 class GameOptionsScreen final : public TabbedOverlayScreen {
 public:
+    enum class ArtworkKind { Hero, Logo, Icon };
     struct GameInfo {
         std::uint64_t titleId = 0;
         std::string name;
@@ -20,9 +21,13 @@ public:
     GameOptionsScreen();
 
     void setGame(const GameInfo& info);
+    void setGameIcon(nxui::Texture* icon) { m_game.icon = icon; }
     void onMove(VoidCb cb) { m_moveCb = std::move(cb); }
     void onCloseSoftware(VoidCb cb) { m_closeSoftwareCb = std::move(cb); }
     void onDeleteSoftware(VoidCb cb) { m_deleteSoftwareCb = std::move(cb); }
+    void onSelectArtwork(std::function<void(ArtworkKind)> cb) {
+        m_selectArtworkCb = std::move(cb);
+    }
 
 protected:
     void buildTabs() override;
@@ -35,4 +40,5 @@ private:
     VoidCb m_moveCb;
     VoidCb m_closeSoftwareCb;
     VoidCb m_deleteSoftwareCb;
+    std::function<void(ArtworkKind)> m_selectArtworkCb;
 };

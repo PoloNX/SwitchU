@@ -28,6 +28,7 @@ public:
     bool isDynamicLine() const { return m_layoutMode == AppLayoutMode::DynamicLine; }
     bool isDynamicLineScrolling() const;
     void setDynamicLineUpTarget(nxui::Widget* target);
+    void setDynamicLineDownTarget(nxui::Widget* target);
 
     void setPage(int page);
     int  currentPage()  const { return m_page; }
@@ -84,6 +85,7 @@ private:
     nxui::AnimatedFloat m_lineScrollOffset{0.f};
     nxui::AnimatedFloat m_layoutReveal{1.f};
     nxui::Widget* m_lineUpTarget = nullptr;
+    nxui::Widget* m_lineDownTarget = nullptr;
 
     int m_cols = 5, m_rows = 3;
     int m_page = 0, m_totalPages = 1;

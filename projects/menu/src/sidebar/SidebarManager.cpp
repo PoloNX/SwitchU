@@ -186,6 +186,23 @@ void SidebarManager::setDynamicLineDownAction(std::function<void()> action) {
     for (auto& button : m_rightButtons) configure(button);
 }
 
+void SidebarManager::setDynamicLineUpTarget(nxui::Widget* target) {
+    for (auto& button : m_leftButtons)
+        button->setCustomNavigation(nxui::FocusDirection::UP, target);
+    for (auto& button : m_rightButtons)
+        button->setCustomNavigation(nxui::FocusDirection::UP, target);
+}
+
+void SidebarManager::setDynamicLineProfileTargets(nxui::Widget* firstProfile,
+                                                   nxui::Widget* lastProfile) {
+    if (!m_leftButtons.empty())
+        m_leftButtons.back()->setCustomNavigation(nxui::FocusDirection::RIGHT,
+                                                  firstProfile);
+    if (!m_rightButtons.empty())
+        m_rightButtons.front()->setCustomNavigation(nxui::FocusDirection::LEFT,
+                                                    lastProfile);
+}
+
 void SidebarManager::reloadAssets(nxui::GpuDevice& gpu, nxui::Renderer& ren,
                                   const std::string& assetsBase,
                                   const std::string& customIconsBase) {

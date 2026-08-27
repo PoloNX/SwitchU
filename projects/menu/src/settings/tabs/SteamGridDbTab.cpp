@@ -21,7 +21,7 @@ SettingsScreen::Tab settings::tabs::SteamGridDbTab::build(SettingsScreen& screen
     enabled.type = ItemType::Toggle;
     enabled.label = i18n.tr("settings.steamgriddb.enabled", "Display SteamGridDB artwork");
     enabled.description = i18n.tr("settings.steamgriddb.enabled_desc",
-        "Show heroes, covers and logos behind the application menu.");
+        "Show heroes and logos behind the application menu.");
     enabled.boolVal = screen.m_steamGridDbEnabled;
     enabled.anim01 = enabled.boolVal ? 1.f : 0.f;
     enabled.onChange = [&screen](SettingItem& item) {
@@ -44,9 +44,9 @@ SettingsScreen::Tab settings::tabs::SteamGridDbTab::build(SettingsScreen& screen
 
     SettingItem scan;
     scan.type = ItemType::Action;
-    scan.label = i18n.tr("settings.steamgriddb.scan", "Search artwork for all applications");
+    scan.label = i18n.tr("settings.steamgriddb.scan", "Search artwork for missing applications");
     scan.description = i18n.tr("settings.steamgriddb.scan_desc",
-        "Downloads one cover, hero and logo for every installed application.");
+        "Downloads a hero and logo only for applications that do not already have artwork.");
     scan.onChange = [&screen](SettingItem&) {
         if (screen.m_steamGridDbRunning) {
             screen.requestToast(nxui::I18n::instance().tr(

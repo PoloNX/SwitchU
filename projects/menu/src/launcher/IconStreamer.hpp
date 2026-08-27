@@ -43,6 +43,12 @@ public:
                      nxui::GpuDevice& gpu, nxui::Renderer& ren,
                      const std::vector<std::shared_ptr<GlossyIcon>>& allIcons);
 
+    // Reload one title in place (for an icon override) without destroying the
+    // complete GPU pool or stalling on unrelated textures.
+    void reloadTitle(uint64_t titleId, int currentPage, int iconsPerPage,
+                     nxui::GpuDevice& gpu, nxui::Renderer& ren,
+                     const std::vector<std::shared_ptr<GlossyIcon>>& allIcons);
+
     // Release everything (textures + compressed data).
     void clear();
     void cancelPending();

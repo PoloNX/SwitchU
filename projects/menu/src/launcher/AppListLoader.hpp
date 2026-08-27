@@ -16,6 +16,7 @@
 struct PendingApp {
     std::string         id;
     std::string         title;
+    std::string         englishTitle;
     uint64_t            titleId = 0;
     uint32_t            viewFlags = 0;
     bool                userRequired = true;

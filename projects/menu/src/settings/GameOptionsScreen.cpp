@@ -85,6 +85,36 @@ void GameOptionsScreen::buildTabs() {
     info.items.push_back(std::move(titleId));
     m_tabs.push_back(std::move(info));
 
+    Tab artwork;
+    artwork.name = "SteamGridDB";
+    auto addArtworkAction = [this, &artwork, &i18n](const char* labelKey,
+                                                    const char* label,
+                                                    const char* descriptionKey,
+                                                    const char* description,
+                                                    ArtworkKind kind) {
+        SettingItem item;
+        item.label = i18n.tr(labelKey, label);
+        item.description = i18n.tr(descriptionKey, description);
+        item.type = ItemType::Action;
+        item.onChange = [this, kind](SettingItem&) {
+            if (m_selectArtworkCb) m_selectArtworkCb(kind);
+        };
+        artwork.items.push_back(std::move(item));
+    };
+    addArtworkAction("game.steamgriddb.hero", "Hero",
+                     "game.steamgriddb.hero_desc",
+                     "Open the hero gallery and choose an image.",
+                     ArtworkKind::Hero);
+    addArtworkAction("game.steamgriddb.logo", "Logo",
+                     "game.steamgriddb.logo_desc",
+                     "Open the logo gallery and choose an image.",
+                     ArtworkKind::Logo);
+    addArtworkAction("game.steamgriddb.icon", "Replacement icon",
+                     "game.steamgriddb.icon_desc",
+                     "Open the icon gallery and choose an override.",
+                     ArtworkKind::Icon);
+    m_tabs.push_back(std::move(artwork));
+
     m_cachedTabContentWidgets.clear();
     m_cachedTabContentWidgets.resize(m_tabs.size());
     rebuildTabBar();
