@@ -157,18 +157,39 @@ void Renderer::setupSampler() {
 }
 
 int Renderer::registerTexture(const dk::ImageView& view) {
-    if (m_nextDescSlot >= GpuDevice::MAX_TEXTURES) {
+    int slot = -1;
+    if (!m_freeDescSlots.empty()) {
+        slot = m_freeDescSlots.back();
+        m_freeDescSlots.pop_back();
+    } else if (m_nextDescSlot < GpuDevice::MAX_TEXTURES) {
+        slot = m_nextDescSlot++;
+    }
+    if (slot < 0) {
         std::fprintf(stderr, "[Renderer] texture descriptor overflow: slot=%d max=%d\n",
                      m_nextDescSlot, GpuDevice::MAX_TEXTURES);
         return -1;
     }
-    int slot = m_nextDescSlot++;
     dk::ImageDescriptor desc;
     desc.initialize(view);
     auto* base = static_cast<dk::ImageDescriptor*>(m_gpu.imgDescCpuAddr());
     base[slot] = desc;
     m_descDirty = true;   // GPU descriptor cache must be invalidated before next draw
     return slot;
+}
+
+void Renderer::releaseTextureSlot(int slot) {
+    int firstDynamic = 1 + (m_gpu.offscreenReady() ? GpuDevice::NUM_OFFSCREEN : 0);
+    if (slot < firstDynamic || slot >= GpuDevice::MAX_TEXTURES)
+        return;
+    // Descriptors may still be referenced by queued frames. Three swapchain
+    // turns plus one guard frame keep reuse away from in-flight command lists.
+    m_deferredDescSlots.push_back({slot, m_frameSerial + 4});
+}
+
+void Renderer::reclaimReleasedTextureSlotsAfterIdle() {
+    for (const auto& released : m_deferredDescSlots)
+        m_freeDescSlots.push_back(released.slot);
+    m_deferredDescSlots.clear();
 }
 
 void Renderer::updateTexture(int slot, const dk::ImageView& view) {
@@ -185,6 +206,8 @@ void Renderer::resetTextureSlots() {
         firstFree = 1 + GpuDevice::NUM_OFFSCREEN;
     m_nextDescSlot = firstFree;
     m_curTexSlot = -1;
+    m_freeDescSlots.clear();
+    m_deferredDescSlots.clear();
 
     if (m_gpu.offscreenReady()) {
         for (int i = 0; i < GpuDevice::NUM_OFFSCREEN; ++i) {
@@ -226,6 +249,16 @@ void Renderer::pushFsUniforms(const FsUniforms& fs) {
 }
 
 void Renderer::beginFrame() {
+    ++m_frameSerial;
+    for (std::size_t i = 0; i < m_deferredDescSlots.size();) {
+        if (m_deferredDescSlots[i].reusableFrame <= m_frameSerial) {
+            m_freeDescSlots.push_back(m_deferredDescSlots[i].slot);
+            m_deferredDescSlots[i] = m_deferredDescSlots.back();
+            m_deferredDescSlots.pop_back();
+        } else {
+            ++i;
+        }
+    }
     int slot = m_gpu.slot();
     m_vtxBase  = static_cast<Vertex2D*>(m_gpu.vtxCpuAddr(slot));
     m_vtxCount = 0;

@@ -1,8 +1,6 @@
 #include "ThemeShopScreen.hpp"
 
 #include "widgets/ActionButtonStyle.hpp"
-#include "settings/SettingsGlassTuning.hpp"
-
 #include "core/DebugLog.hpp"
 
 #include <nxui/core/I18n.hpp>
@@ -404,43 +402,16 @@ void drawFrostedInsetPanel(nxui::Renderer& ren,
     if (!theme || opacity <= 0.01f)
         return;
 
-    const auto& tuning = settings::debug::settingsGlassTuning();
-    nxui::Rect glassRect = rect.shrunk(std::max(0.0f, tuning.inset));
-    float glassRadius = std::max(12.0f, radius - std::max(0.0f, tuning.inset) * 0.5f);
-    nxui::Color glassTint = theme->panelBase.withAlpha(
-        theme->mode == nxui::ThemeMode::Dark
-            ? tuning.tintAlphaDark : tuning.tintAlphaLight);
-
-    if (ren.gpu().offscreenReady()) {
-        // TabbedOverlayScreen already cached the blurred backdrop in target 2.
-        // Re-capturing target 0 for every detail card caused several GPU
-        // barriers per frame and made Theme Shop navigation visibly stutter.
-        const auto saved = ren.liquidGlassSettings();
-        auto& glass = ren.liquidGlassSettings();
-        glass.refractionIntensity = tuning.refractionIntensity;
-        glass.blurIntensity = tuning.shaderBlurIntensity;
-        glass.glowIntensity = tuning.glowIntensity;
-        glass.saturation = tuning.saturation;
-        ren.drawLiquidGlass(2, glassRect, glassRadius, glassTint,
-                            opacity * 0.98f, tuning.shade);
-        ren.liquidGlassSettings() = saved;
-        ren.drawRoundedRectOutline(
-            glassRect.shrunk(2.f),
-            nxui::Color::white().withAlpha(0.18f * opacity),
-            std::max(0.f, glassRadius - 2.f), 1.4f);
-        ren.drawRoundedRectOutline(
-            glassRect,
-            theme->panelBorder.withAlpha(0.34f * borderBoost * opacity),
-            glassRadius, 1.4f);
-    } else {
-        ren.drawFrostedInset(
-            glassRect,
-            glassTint,
-            theme->panelBorder.withAlpha(0.24f * borderBoost),
-            theme->panelHighlight.withAlpha(0.08f),
-            glassRadius,
-            opacity);
-    }
+    ren.drawRoundedRect(rect,
+                        theme->panelBase.withAlpha(0.96f * opacity), radius);
+    ren.drawRoundedRectOutline(
+        rect.shrunk(1.f),
+        theme->panelHighlight.withAlpha(0.20f * opacity),
+        std::max(0.f, radius - 1.f), 1.f);
+    ren.drawRoundedRectOutline(
+        rect,
+        theme->panelBorder.withAlpha(0.56f * borderBoost * opacity),
+        radius, 1.4f);
 }
 
 void drawPreviewPlaceholder(nxui::Renderer& ren,

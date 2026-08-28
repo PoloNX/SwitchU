@@ -9,6 +9,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <ctime>
+#include <unordered_set>
 #include <nxui/core/I18n.hpp>
 
 bool WiiUMenuApp::isEditableIcon(nxui::Widget* w) const {
@@ -20,7 +22,8 @@ bool WiiUMenuApp::isEditableIcon(nxui::Widget* w) const {
         return false;
     return m_openFolderId != 0
         ? m_model.at(index).isApplication()
-        : (m_model.at(index).isApplication() || m_model.at(index).isFolder());
+        : (m_model.at(index).isApplication() || m_model.at(index).isFolder() ||
+           m_model.at(index).isWidget());
 }
 
 std::string WiiUMenuApp::accessibilityContextFor(nxui::Widget* w) const {
@@ -29,6 +32,8 @@ std::string WiiUMenuApp::accessibilityContextFor(nxui::Widget* w) const {
         return {};
     if (m_dialog && m_dialog->isActive() && w == m_dialog.get())
         return i18n.tr("accessibility.context.dialog", "Dialog");
+    if (m_contextMenu && m_contextMenu->isActive() && w == m_contextMenu.get())
+        return i18n.tr("accessibility.context.menu", "Context menu");
     if (m_userSelect && m_userSelect->isActive() && w == m_userSelect.get())
         return i18n.tr("accessibility.context.profile_selection", "Profile selection");
     if (m_settings && m_settings->isActive() && w == m_settings.get())
@@ -69,6 +74,14 @@ std::string WiiUMenuApp::accessibilityActionsFor(nxui::Widget* w) const {
         const int index = findTitleIndex(icon->titleId());
         if (index >= 0 && m_model.at(index).isFolder())
             return i18n.tr("folder.open_hint", "A to open. Plus for folder options. Y to move. Minus to change view.");
+        if (index >= 0 && m_model.at(index).isWidget() &&
+            m_model.at(index).widgetType == switchu::widgets::WidgetType::RecentlyPlayed &&
+            m_widgetStore.recentActivity().titleId != 0)
+            return i18n.tr("accessibility.hints.recently_played_widget",
+                           "A to launch the recently played game. Plus for widget options. Y to move.");
+        if (index >= 0 && m_model.at(index).isWidget())
+            return i18n.tr("accessibility.hints.widget",
+                           "Plus for widget options. Y to move. Minus to change view.");
         return icon->isNotLaunchable()
             ? i18n.tr("accessibility.actions.game_blocked", "A to show the reason. Plus for options. Y to move. Minus to change view.")
             : i18n.tr("accessibility.actions.game_launchable", "A to launch. Plus for options. Y to move. Minus to change view.");
@@ -79,6 +92,8 @@ std::string WiiUMenuApp::accessibilityActionsFor(nxui::Widget* w) const {
         return i18n.tr("accessibility.actions.themes", "Up and down to navigate. A to choose. B to close.");
     if ((m_dialog && w == m_dialog.get()) || (m_userSelect && w == m_userSelect.get()))
         return i18n.tr("accessibility.actions.dialog", "Left and right to change choice. A to confirm. B to cancel.");
+    if (m_contextMenu && w == m_contextMenu.get())
+        return i18n.tr("accessibility.actions.context_menu", "Up and down to choose. A to confirm. B to close.");
     return {};
 }
 
@@ -187,6 +202,7 @@ void WiiUMenuApp::startEditGhost(GlossyIcon* sourceIcon) {
     ghost->setTitle(sourceIcon->title());
     ghost->setTitleId(sourceIcon->titleId());
     ghost->setTexture(adoptEditGhostTexture(sourceIcon));
+    ghost->copyWidgetPresentationFrom(*sourceIcon);
     ghost->setIsGameCard(sourceIcon->isGameCard());
     ghost->setGameCardTexture(sourceIcon->gameCardTexture());
     ghost->setNotLaunchable(sourceIcon->isNotLaunchable());
@@ -197,7 +213,10 @@ void WiiUMenuApp::startEditGhost(GlossyIcon* sourceIcon) {
     ghost->setScale(1.06f);
     ghost->forceVisible();
 
-    m_editGhostTargetRect = sourceIcon->focusRect().expanded(4.f);
+    m_editGhostTargetRect = m_grid
+        ? m_grid->gridSpanRect(m_editSourceIndex,
+                               ghost->gridSpanColumns(), ghost->gridSpanRows())
+        : sourceIcon->focusRect();
     ghost->setRect(m_editGhostTargetRect);
     m_editGhostPulse = 0.f;
 
@@ -252,7 +271,12 @@ void WiiUMenuApp::updateEditGhost(float dt) {
     if (!m_editMode || !m_editGhostIcon)
         return;
 
-    if (m_cursor && m_cursor->isVisible()) {
+    if (m_grid && m_editTargetIndex >= 0) {
+        const int target = m_editTargetIndex;
+        m_editGhostTargetRect = m_grid->gridSpanRect(
+            target, m_editGhostIcon->gridSpanColumns(),
+            m_editGhostIcon->gridSpanRows());
+    } else if (m_cursor && m_cursor->isVisible()) {
         m_editGhostTargetRect = m_cursor->currentRect();
     } else if (auto* cur = focusManager().current()) {
         if (cur->tag() == "glossy_icon")
@@ -295,6 +319,18 @@ void WiiUMenuApp::bindEditActions(GlossyIcon* icon) {
             m_audio.playSfx(Sfx::ModalHide);
         }
     });
+    icon->addDirectionAction(nxui::FocusDirection::LEFT, [this]() {
+        moveFocusedIcon(nxui::FocusDirection::LEFT);
+    });
+    icon->addDirectionAction(nxui::FocusDirection::RIGHT, [this]() {
+        moveFocusedIcon(nxui::FocusDirection::RIGHT);
+    });
+    icon->addDirectionAction(nxui::FocusDirection::UP, [this]() {
+        moveFocusedIcon(nxui::FocusDirection::UP);
+    });
+    icon->addDirectionAction(nxui::FocusDirection::DOWN, [this]() {
+        moveFocusedIcon(nxui::FocusDirection::DOWN);
+    });
 }
 
 void WiiUMenuApp::enterEditMode() {
@@ -305,6 +341,7 @@ void WiiUMenuApp::enterEditMode() {
     auto* icon = static_cast<GlossyIcon*>(cur);
     m_editMode = true;
     m_editSourceIndex = m_grid ? m_grid->focusedGlobalIndex() : -1;
+    m_editTargetIndex = m_editSourceIndex;
     m_editHeldTitleId = icon->titleId();
     m_editOriginFolderId = m_openFolderId;
     m_editOriginFolderIndex = m_openFolderId != 0 ? m_editSourceIndex : -1;
@@ -326,6 +363,7 @@ void WiiUMenuApp::exitEditMode() {
     m_editMode = false;
     unbindEditActions();
     m_editSourceIndex = -1;
+    m_editTargetIndex = -1;
     m_editOriginRootSlot = -1;
     m_editOriginFolderIndex = -1;
     m_editOriginFolderId = 0;
@@ -351,7 +389,7 @@ bool WiiUMenuApp::commitEditModePlacement() {
         return false;
 
     int from = m_editSourceIndex;
-    int target = m_grid->focusedGlobalIndex();
+    int target = m_editTargetIndex;
     if (from < 0 || target < 0 || from >= m_model.count() || target >= m_model.count())
         return false;
     if (m_model.at(from).titleId == 0)
@@ -361,6 +399,163 @@ bool WiiUMenuApp::commitEditModePlacement() {
     bool changed = (from != target);
     DebugLog::log("[edit] commit from=%d target=%d changed=%d", from, target,
                   changed ? 1 : 0);
+    if (m_appLayoutMode == AppLayoutMode::DynamicLine) {
+        if (!changed)
+            return true;
+
+        std::vector<std::uint64_t> visibleOrder;
+        visibleOrder.reserve(static_cast<std::size_t>(m_model.count()));
+        for (const auto& entry : m_model.entries()) {
+            if (entry.titleId != 0 && entry.kind != GridEntryKind::WidgetContinuation)
+                visibleOrder.push_back(entry.titleId);
+        }
+        auto sourceIt = std::find(visibleOrder.begin(), visibleOrder.end(),
+                                  m_editHeldTitleId);
+        if (sourceIt == visibleOrder.end())
+            return false;
+        const std::size_t sourceOrder = static_cast<std::size_t>(
+            std::distance(visibleOrder.begin(), sourceIt));
+        const std::uint64_t targetTitleId = m_model.at(target).titleId;
+        std::size_t destinationOrder = visibleOrder.empty() ? 0 : visibleOrder.size() - 1;
+        if (targetTitleId != 0) {
+            const auto destinationIt = std::find(visibleOrder.begin(), visibleOrder.end(),
+                                                 targetTitleId);
+            if (destinationIt == visibleOrder.end())
+                return false;
+            destinationOrder = static_cast<std::size_t>(
+                std::distance(visibleOrder.begin(), destinationIt));
+            std::swap(visibleOrder[sourceOrder], visibleOrder[destinationOrder]);
+        } else {
+            const auto held = visibleOrder[sourceOrder];
+            visibleOrder.erase(visibleOrder.begin() +
+                               static_cast<std::ptrdiff_t>(sourceOrder));
+            visibleOrder.push_back(held);
+            destinationOrder = visibleOrder.size() - 1;
+        }
+
+        std::vector<std::size_t> visibleSlots;
+        if (m_openFolderId != 0) {
+            auto* folder = m_folderStore.find(m_openFolderId);
+            if (!folder)
+                return false;
+            folder->titleIds = visibleOrder;
+            if (!saveFoldersOrReport("move_single_row"))
+                return false;
+        } else {
+            const std::unordered_set<std::uint64_t> visibleIds(
+                visibleOrder.begin(), visibleOrder.end());
+            visibleSlots.reserve(visibleOrder.size());
+            for (std::size_t index = 0; index < m_layoutSlots.size(); ++index) {
+                if (visibleIds.count(m_layoutSlots[index]))
+                    visibleSlots.push_back(index);
+            }
+            if (visibleSlots.size() != visibleOrder.size())
+                return false;
+        }
+
+        detachEditSourceIcon();
+        unbindEditActions();
+        if (m_openFolderId != 0) {
+            m_editSourceIndex = static_cast<int>(destinationOrder);
+            m_editTargetIndex = m_editSourceIndex;
+            applyDisplayModel(buildOpenFolderModel(m_openFolderId),
+                              m_editHeldTitleId, false);
+        } else {
+            for (std::size_t index = 0; index < visibleOrder.size(); ++index)
+                m_layoutSlots[visibleSlots[index]] = visibleOrder[index];
+            m_editSourceIndex = static_cast<int>(destinationOrder);
+            m_editTargetIndex = m_editSourceIndex;
+            m_editOriginRootSlot = m_editSourceIndex;
+            m_layoutDirty = true;
+            applyDisplayModel(buildRootFolderModel(), m_editHeldTitleId, false);
+        }
+        reattachEditSourceIcon();
+        if (auto* focused = m_grid->focusManager().current()) {
+            focusManager().setFocus(focused);
+            if (focused->tag() == "glossy_icon")
+                bindEditActions(static_cast<GlossyIcon*>(focused));
+        }
+        return true;
+    }
+
+    if (m_openFolderId == 0) {
+        const auto sizeForTitle = [this](std::uint64_t titleId) {
+            const auto widgetId = switchu::widgets::widgetIdFromTitleId(titleId);
+            if (const auto* widget = widgetId ? m_widgetStore.find(widgetId) : nullptr)
+                return switchu::widgets::validatedSize(
+                    widget->type, widget->size, AppLayoutMode::Grid);
+            return gameGridSize(titleId, AppLayoutMode::Grid);
+        };
+        const std::uint64_t displacedTitleId = m_model.at(target).titleId;
+        const auto heldSize = sizeForTitle(m_editHeldTitleId);
+        const auto displacedSize = sizeForTitle(displacedTitleId);
+        const int columns = std::max(1, m_grid->columns());
+        const auto footprintsOverlap = [columns](
+                int firstAnchor, switchu::widgets::WidgetSize first,
+                int secondAnchor, switchu::widgets::WidgetSize second) {
+            for (int firstY = 0; firstY < first.rows; ++firstY) {
+                for (int firstX = 0; firstX < first.columns; ++firstX) {
+                    const int firstCell = firstAnchor + firstY * columns + firstX;
+                    for (int secondY = 0; secondY < second.rows; ++secondY)
+                        for (int secondX = 0; secondX < second.columns; ++secondX)
+                            if (firstCell == secondAnchor + secondY * columns + secondX)
+                                return true;
+                }
+            }
+            return false;
+        };
+        if (!canPlaceGridItem(target, heldSize, m_editHeldTitleId,
+                              displacedTitleId))
+            return false;
+
+        int displacedAnchor = from;
+        if (displacedTitleId != 0 &&
+            (!canPlaceGridItem(displacedAnchor, displacedSize,
+                               m_editHeldTitleId, displacedTitleId) ||
+             footprintsOverlap(target, heldSize,
+                               displacedAnchor, displacedSize))) {
+            displacedAnchor = -1;
+            int bestDistance = std::numeric_limits<int>::max();
+            for (int candidate = 0;
+                 candidate < static_cast<int>(m_layoutSlots.size()); ++candidate) {
+                if (!canPlaceGridItem(candidate, displacedSize,
+                                      m_editHeldTitleId, displacedTitleId) ||
+                    footprintsOverlap(target, heldSize, candidate, displacedSize))
+                    continue;
+                const int distance = std::abs(candidate - from);
+                if (distance < bestDistance) {
+                    displacedAnchor = candidate;
+                    bestDistance = distance;
+                }
+            }
+            if (displacedAnchor < 0)
+                return false;
+        }
+
+        if (changed) {
+            detachEditSourceIcon();
+            unbindEditActions();
+            std::replace(m_layoutSlots.begin(), m_layoutSlots.end(),
+                         m_editHeldTitleId, std::uint64_t{0});
+            if (displacedTitleId != 0)
+                std::replace(m_layoutSlots.begin(), m_layoutSlots.end(),
+                             displacedTitleId, std::uint64_t{0});
+            m_layoutSlots[static_cast<std::size_t>(target)] = m_editHeldTitleId;
+            if (displacedTitleId != 0)
+                m_layoutSlots[static_cast<std::size_t>(displacedAnchor)] = displacedTitleId;
+            m_editSourceIndex = target;
+            m_editOriginRootSlot = target;
+            m_layoutDirty = true;
+            applyDisplayModel(buildRootFolderModel(), m_editHeldTitleId, false);
+            reattachEditSourceIcon();
+            if (auto* focused = m_grid->focusManager().current()) {
+                focusManager().setFocus(focused);
+                if (focused->tag() == "glossy_icon")
+                    bindEditActions(static_cast<GlossyIcon*>(focused));
+            }
+        }
+        return true;
+    }
     if (changed) {
         // Keep the three index-based stores atomic. A catalogue refresh can
         // resize the streamer between entering move mode and committing it;
@@ -416,7 +611,7 @@ bool WiiUMenuApp::activateEditModeTarget() {
     if (!m_editMode || !m_grid)
         return false;
 
-    const int target = m_grid->focusedGlobalIndex();
+    const int target = m_editTargetIndex;
     if (target < 0 || target >= m_model.count() || m_editHeldTitleId == 0)
         return false;
 
@@ -465,7 +660,8 @@ bool WiiUMenuApp::activateEditModeTarget() {
 
     if (m_editSourceIndex < 0)
         return false;
-    commitEditModePlacement();
+    if (!commitEditModePlacement())
+        return false;
     exitEditMode();
     m_audio.playSfx(Sfx::ConfirmPositive);
     return true;
@@ -475,21 +671,42 @@ bool WiiUMenuApp::moveFocusedIcon(nxui::FocusDirection dir) {
     if (!m_editMode || !m_grid)
         return false;
 
-    int from = m_grid->focusedGlobalIndex();
+    const int from = m_editTargetIndex;
     if (from < 0 || from >= m_model.count())
         return false;
-    if (m_model.at(from).titleId == 0)
-        return false;
 
-    int cols = std::max(1, m_grid->columns());
-    int rows = std::max(1, m_grid->rowsPerPage());
-    int perPage = std::max(1, m_grid->iconsPerPage());
-    int totalPages = std::max(1, m_grid->totalPages());
+    if (m_grid->isDynamicLine()) {
+        int target = from;
+        if (dir == nxui::FocusDirection::LEFT)
+            --target;
+        else if (dir == nxui::FocusDirection::RIGHT)
+            ++target;
+        else
+            return false;
+        if (target < 0 || target >= m_model.count() ||
+            !m_grid->focusGlobalIndex(target))
+            return false;
+        m_editTargetIndex = target;
+        if (auto* focused = m_grid->focusManager().current())
+            focusManager().setFocus(focused);
+        m_editGhostTargetRect = m_grid->gridSpanRect(target, 1, 1);
+        updateCursor();
+        return true;
+    }
 
-    int page = from / perPage;
-    int local = from % perPage;
-    int col = local % cols;
-    int row = local / cols;
+    const int cols = std::max(1, m_grid->columns());
+    const int rows = std::max(1, m_grid->rowsPerPage());
+    const int perPage = std::max(1, m_grid->iconsPerPage());
+    const int totalPages = std::max(1, m_grid->totalPages());
+
+    const int page = from / perPage;
+    const int local = from % perPage;
+    const int col = local % cols;
+    const int row = local / cols;
+    const int spanColumns = m_editGhostIcon
+        ? std::max(1, m_editGhostIcon->gridSpanColumns()) : 1;
+    const int spanRows = m_editGhostIcon
+        ? std::max(1, m_editGhostIcon->gridSpanRows()) : 1;
 
     int target = from;
     switch (dir) {
@@ -502,7 +719,7 @@ bool WiiUMenuApp::moveFocusedIcon(nxui::FocusDirection dir) {
                 return false;
             break;
         case nxui::FocusDirection::RIGHT:
-            if (col < cols - 1)
+            if (col + spanColumns < cols)
                 target = from + 1;
             else if (page + 1 < totalPages)
                 target = (page + 1) * perPage + row * cols;
@@ -516,58 +733,32 @@ bool WiiUMenuApp::moveFocusedIcon(nxui::FocusDirection dir) {
                 return false;
             break;
         case nxui::FocusDirection::DOWN:
-            if (row + 1 < rows)
+            if (row + spanRows < rows)
                 target = from + cols;
             else
                 return false;
             break;
     }
 
-    if (target < 0 || target >= m_model.count())
+    if (target < 0 || target >= m_model.count() || target == from)
         return false;
-    if (target == from)
-        return true;
 
-    if (!m_iconStreamer.swapIndices(from, target)) {
-        DebugLog::log("[edit] rejected stale directional swap from=%d target=%d", from, target);
-        return false;
+    m_editTargetIndex = target;
+    const int targetPage = target / perPage;
+    if (targetPage != m_grid->currentPage()) {
+        m_grid->startPageTransition(targetPage);
+        m_iconStreamer.onPageChanged(targetPage, perPage,
+                                     app().gpu(), app().renderer(),
+                                     m_grid->allIcons());
     }
-    if (!m_model.swapEntries(from, target)) {
-        m_iconStreamer.swapIndices(from, target);
-        return false;
+    // Focus the underlying selectable item when possible, but the edit anchor
+    // remains valid even over an invisible continuation cell.
+    if (m_grid->focusGlobalIndex(target)) {
+        if (auto* focused = m_grid->focusManager().current())
+            focusManager().setFocus(focused);
     }
-    if (!m_grid->swapSlots(from, target)) {
-        m_model.swapEntries(from, target);
-        m_iconStreamer.swapIndices(from, target);
-        return false;
-    }
-    if (!m_layoutSlots.empty() && from < (int)m_layoutSlots.size() && target < (int)m_layoutSlots.size())
-        std::swap(m_layoutSlots[from], m_layoutSlots[target]);
-
-    m_editSourceIndex = target;
-    m_iconStreamer.setPinnedIndex(m_editSourceIndex);
-    m_grid->focusGlobalIndex(target);
-
-    int newPage = m_grid->currentPage();
-    m_iconStreamer.onPageChanged(newPage, m_grid->iconsPerPage(),
-                                 app().gpu(), app().renderer(),
-                                 m_grid->allIcons());
-    for (auto* icon : m_grid->pageIcons()) {
-        if (icon)
-            icon->forceVisible();
-    }
-
-    if (auto* cur = m_grid->focusManager().current())
-        focusManager().setFocus(cur);
-
-    auto* cur = focusManager().current();
-    if (isEditableIcon(cur)) {
-        auto* icon = static_cast<GlossyIcon*>(cur);
-        bindEditActions(icon);
-        m_titlePill->setText(nxui::I18n::instance().tr("game.move_prefix", "Move: ") + icon->title());
-    }
-
-    m_layoutDirty = true;
+    m_editGhostTargetRect = m_grid->gridSpanRect(
+        m_editTargetIndex, spanColumns, spanRows);
     updateCursor();
     return true;
 }
@@ -577,7 +768,8 @@ void WiiUMenuApp::wireFocusCallback() {
         updateCursor();
         announceFocusedWidget(cur);
 
-        if ((m_dialog && m_dialog->isActive()) ||
+        if ((m_contextMenu && m_contextMenu->isActive()) ||
+            (m_dialog && m_dialog->isActive()) ||
             (m_themeShop && m_themeShop->isActive()) ||
             (m_settings && m_settings->isActive()) ||
             (m_steamGridDbPicker && m_steamGridDbPicker->isActive()) ||
@@ -606,7 +798,13 @@ void WiiUMenuApp::wireFocusCallback() {
             auto& i18n = nxui::I18n::instance();
             if (m_editMode) {
                 bindEditActions(icon);
-                m_editGhostTargetRect = icon->focusRect();
+                if (m_editGhostIcon)
+                    m_editGhostTargetRect = m_grid->gridSpanRect(
+                        m_editTargetIndex,
+                        m_editGhostIcon->gridSpanColumns(),
+                        m_editGhostIcon->gridSpanRows());
+                else
+                    m_editGhostTargetRect = icon->focusRect();
                 if (!m_editHeldTitle.empty())
                     m_titlePill->setText(i18n.tr("game.move_prefix", "Move: ") + m_editHeldTitle);
                 else if (icon->titleId() != 0)
@@ -742,6 +940,8 @@ void WiiUMenuApp::closeActiveOverlays() {
         exitEditMode();
     if (m_userSelect && m_userSelect->isActive())
         m_userSelect->hide();
+    if (m_contextMenu && m_contextMenu->isActive())
+        m_contextMenu->hide();
     if (m_dialog && m_dialog->isActive())
         m_dialog->hide();
     if (m_settings && m_settings->isActive())
@@ -765,6 +965,7 @@ nxui::Widget* WiiUMenuApp::focusRoot() {
     if (m_folderCaptureRequested) return nullptr;
     if (m_progressDialog && m_progressDialog->isActive()) return m_progressDialog.get();
     if (m_dialog && m_dialog->isActive()) return m_dialog.get();
+    if (m_contextMenu && m_contextMenu->isActive()) return m_contextMenu.get();
     if (m_userSelect && m_userSelect->isActive()) return m_userSelect.get();
     if (m_steamGridDbPicker && m_steamGridDbPicker->isActive())
         return m_steamGridDbPicker.get();
@@ -829,7 +1030,8 @@ void WiiUMenuApp::wireGlobalActions() {
     auto& root = rootBox();
 
     root.addAction(static_cast<uint64_t>(nxui::Button::B), [this]() {
-        if ((m_dialog && m_dialog->isActive()) ||
+        if ((m_contextMenu && m_contextMenu->isActive()) ||
+            (m_dialog && m_dialog->isActive()) ||
             (m_settings && m_settings->isActive()) ||
             (m_themeShop && m_themeShop->isActive()) ||
             (m_gameOptions && m_gameOptions->isActive()) ||
@@ -859,7 +1061,8 @@ void WiiUMenuApp::wireGlobalActions() {
         flipPage(+1);
     });
     root.addAction(static_cast<uint64_t>(nxui::Button::Y), [this]() {
-        if ((m_dialog && m_dialog->isActive()) ||
+        if ((m_contextMenu && m_contextMenu->isActive()) ||
+            (m_dialog && m_dialog->isActive()) ||
             (m_themeShop && m_themeShop->isActive()) ||
             (m_settings && m_settings->isActive()) ||
             (m_gameOptions && m_gameOptions->isActive()) ||
@@ -963,6 +1166,10 @@ void WiiUMenuApp::showGameContextMenu(GlossyIcon* icon) {
     game.gameCard = icon->isGameCard();
     game.suspended = m_launcher.isAppSuspended(titleId);
     game.canMove = m_openFolderId == 0;
+    game.canResize = m_openFolderId == 0;
+    const auto currentSize = gameGridSize(titleId, AppLayoutMode::Grid);
+    game.sizeIndex = currentSize == switchu::widgets::WidgetSize{2, 2}
+        ? 2 : (currentSize == switchu::widgets::WidgetSize{2, 1} ? 1 : 0);
     m_gameOptions->setGame(game);
     m_gameOptions->onMove([this]() {
         if (m_gameOptions) m_gameOptions->hide();
@@ -972,6 +1179,22 @@ void WiiUMenuApp::showGameContextMenu(GlossyIcon* icon) {
         }
         enterEditMode();
         m_audio.playSfx(Sfx::Activate);
+    });
+    m_gameOptions->onResize([this, titleId](int sizeIndex) {
+        const switchu::widgets::WidgetSize requested = sizeIndex == 2
+            ? switchu::widgets::WidgetSize{2, 2}
+            : (sizeIndex == 1 ? switchu::widgets::WidgetSize{2, 1}
+                              : switchu::widgets::WidgetSize{1, 1});
+        m_gameSizes[titleId] = requested;
+        if (requested == switchu::widgets::WidgetSize{1, 1})
+            m_gameArtwork.erase(titleId);
+        normalizeWidgetPlacements();
+        m_layoutDirty = true;
+        saveMenuLayout();
+        if (m_gameOptions) m_gameOptions->hide();
+        m_navigator.resetToHome();
+        if (m_openFolderId == 0)
+            applyDisplayModel(buildRootFolderModel(), titleId, false);
     });
     m_gameOptions->onCloseSoftware([this]() { m_launcher.terminateApplication(); });
     m_gameOptions->onDeleteSoftware([this, titleId, title]() {
@@ -1091,6 +1314,8 @@ void WiiUMenuApp::handleTouch() {
             return nullptr;
 
         int global = m_grid->currentPage() * m_grid->iconsPerPage() + localHit;
+        if (m_editMode)
+            m_editTargetIndex = global;
         if (!m_grid->focusGlobalIndex(global))
             return nullptr;
 
@@ -1100,7 +1325,12 @@ void WiiUMenuApp::handleTouch() {
 
         focusManager().setFocus(cur);
         if (m_cursor) {
-            m_cursor->moveTo(cur->focusRect().expanded(4.f), 0.f);
+            nxui::Rect cursorRect = cur->focusRect();
+            if (m_editMode && m_editGhostIcon)
+                cursorRect = m_grid->gridSpanRect(
+                    global, m_editGhostIcon->gridSpanColumns(),
+                    m_editGhostIcon->gridSpanRows());
+            m_cursor->moveTo(cursorRect.expanded(4.f), 0.f);
             m_cursor->setVisible(true);
         } else {
             updateCursor();
@@ -1167,7 +1397,10 @@ void WiiUMenuApp::handleTouch() {
                 if (m_editMode) {
                     m_touchEditDragActive = true;
                     m_audio.playSfx(Sfx::Activate);
-                    m_editGhostTargetRect = icon->focusRect().expanded(4.f);
+                    m_editGhostTargetRect = m_grid->gridSpanRect(
+                        m_editTargetIndex,
+                        m_editGhostIcon->gridSpanColumns(),
+                        m_editGhostIcon->gridSpanRows());
                 }
             }
         }
@@ -1227,14 +1460,34 @@ void WiiUMenuApp::handleTouch() {
 #ifdef SWITCHU_MENU
 void WiiUMenuApp::handleSystemAction(SysAction a) {
     switch (a) {
-        case SysAction::HomeButton:
+        case SysAction::HomeButton: {
             DebugLog::log("[pump] HomeButton -> UI update");
             m_launcher.setAppHasForeground(false);
 
-            markSuspendedIcon(m_launcher.suspendedTitleId());
+            std::uint64_t returnFocusId = m_launcher.suspendedTitleId();
+            if (returnFocusId == 0 && m_grid) {
+                if (auto* focused = m_grid->focusManager().current();
+                    focused && focused->tag() == "glossy_icon")
+                    returnFocusId = static_cast<GlossyIcon*>(focused)->titleId();
+            }
+            refreshRecentActivityDuration();
+            if (!m_widgetStore.save())
+                DebugLog::log("[widgets] recent activity duration could not be saved");
             closeActiveOverlays();
-            focusTitle(m_launcher.suspendedTitleId());
+            const bool hasActivityWidget = std::any_of(
+                m_widgetStore.all().begin(), m_widgetStore.all().end(),
+                [](const switchu::widgets::Widget& widget) {
+                    return widget.type == switchu::widgets::WidgetType::RecentlyPlayed
+                        || widget.type == switchu::widgets::WidgetType::RecentPlaytime;
+                });
+            if (hasActivityWidget && m_openFolderId == 0) {
+                applyDisplayModel(buildRootFolderModel(), returnFocusId, false);
+            } else {
+                markSuspendedIcon(m_launcher.suspendedTitleId());
+                focusTitle(returnFocusId);
+            }
             break;
+        }
         default:
             break;
     }
@@ -1242,6 +1495,10 @@ void WiiUMenuApp::handleSystemAction(SysAction a) {
 #endif
 
 void WiiUMenuApp::updateCursor() {
+    if (m_contextMenu && m_contextMenu->isActive()) {
+        if (m_cursor) m_cursor->setVisible(false);
+        return;
+    }
     if (m_grid && m_grid->isTransitioning()) {
         if (m_cursor) m_cursor->setVisible(false); // it would sit at the landing spot
         return;
@@ -1259,6 +1516,11 @@ void WiiUMenuApp::updateCursor() {
         nxui::Rect fr = movingLineFocus
             ? m_grid->focusedDisplayRect()
             : cur->focusRect();
+        if (m_editMode && m_editGhostIcon && m_grid) {
+            fr = m_grid->gridSpanRect(m_editTargetIndex,
+                                      m_editGhostIcon->gridSpanColumns(),
+                                      m_editGhostIcon->gridSpanRows());
+        }
         // The app carousel already owns the motion curve; attaching the ring
         // directly avoids a second easing curve that would visibly lag behind.
         const bool carouselScrolling = movingLineFocus && m_grid->isDynamicLineScrolling();

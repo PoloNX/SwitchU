@@ -1,10 +1,12 @@
 #include "IconGrid.hpp"
 #include "GlossyIcon.hpp"
+#include "GridNavigation.hpp"
 #include <nxui/core/Renderer.hpp>
 #include <nxui/core/Animation.hpp>
 #include <nxui/core/Input.hpp>
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 
 IconGrid::IconGrid() {}
@@ -116,12 +118,17 @@ void IconGrid::layoutPage() {
         int row    = local / m_cols;
         float x = m_originX + col * (m_cellW + m_padX);
         float y = m_originY + row * (m_cellH + m_padY);
-        icon->setRect({x, y, m_cellW, m_cellH});
+        const int spanColumns = std::max(1, icon->gridSpanColumns());
+        const int spanRows = std::max(1, icon->gridSpanRows());
+        icon->setRect({x, y,
+                       m_cellW * spanColumns + m_padX * (spanColumns - 1),
+                       m_cellH * spanRows + m_padY * (spanRows - 1)});
         addChild(icon);
         if (icon->isFocusable())
             fItems.push_back(icon.get());
     }
 
+    bindGridNavigation(start, end);
     bindEdgeActions(start, end);
 
     m_focus.setGrid(fItems, m_cols);
@@ -133,6 +140,89 @@ void IconGrid::layoutPage() {
             }
         }
     }
+}
+
+void IconGrid::bindGridNavigation(int start, int end) {
+    std::vector<GridNavigationItem> items;
+    items.reserve(static_cast<std::size_t>(std::max(0, end - start)));
+    for (int index = start; index < end; ++index) {
+        const auto& icon = m_allIcons[static_cast<std::size_t>(index)];
+        if (!icon || !icon->isFocusable() || !icon->isVisible()) continue;
+        const int local = index - start;
+        items.push_back({index, local % m_cols, local / m_cols,
+                         std::max(1, icon->gridSpanColumns()),
+                         std::max(1, icon->gridSpanRows())});
+    }
+
+    const auto nearestSideTarget = [](const GlossyIcon& source,
+                                      const std::vector<nxui::Widget*>& targets) {
+        nxui::Widget* best = nullptr;
+        float bestDistance = std::numeric_limits<float>::max();
+        const float sourceY = source.focusRect().y + source.focusRect().height * 0.5f;
+        for (auto* target : targets) {
+            if (!target || !target->isVisible() || !target->isFocusable()) continue;
+            const auto rect = target->focusRect();
+            const float distance = std::abs(rect.y + rect.height * 0.5f - sourceY);
+            if (distance < bestDistance) {
+                best = target;
+                bestDistance = distance;
+            }
+        }
+        return best;
+    };
+    const auto bind = [&](GlossyIcon& source, const GridNavigationItem& item,
+                          nxui::FocusDirection focusDirection,
+                          GridNavigationDirection gridDirection) {
+        const int target = findGridNavigationTarget(items, item.index, gridDirection);
+        nxui::Widget* destination = target >= 0
+            ? m_allIcons[static_cast<std::size_t>(target)].get() : nullptr;
+        if (!destination && gridDirection == GridNavigationDirection::Left &&
+            item.column == 0)
+            destination = nearestSideTarget(source, m_gridLeftTargets);
+        if (!destination && gridDirection == GridNavigationDirection::Right &&
+            item.column + std::max(1, item.columns) >= m_cols)
+            destination = nearestSideTarget(source, m_gridRightTargets);
+        source.setCustomNavigation(focusDirection,
+                                   destination);
+    };
+    for (const auto& item : items) {
+        auto& source = *m_allIcons[static_cast<std::size_t>(item.index)];
+        bind(source, item, nxui::FocusDirection::LEFT,
+             GridNavigationDirection::Left);
+        bind(source, item, nxui::FocusDirection::RIGHT,
+             GridNavigationDirection::Right);
+        bind(source, item, nxui::FocusDirection::UP,
+             GridNavigationDirection::Up);
+        bind(source, item, nxui::FocusDirection::DOWN,
+             GridNavigationDirection::Down);
+    }
+}
+
+void IconGrid::setGridSideTargets(std::vector<nxui::Widget*> left,
+                                  std::vector<nxui::Widget*> right) {
+    m_gridLeftTargets = std::move(left);
+    m_gridRightTargets = std::move(right);
+    if (m_layoutMode == AppLayoutMode::Grid)
+        layoutPage();
+}
+
+nxui::Rect IconGrid::gridSpanRect(int globalIndex, int columns, int rows) const {
+    if (globalIndex < 0 || globalIndex >= static_cast<int>(m_allIcons.size()))
+        return {};
+    // The single-row carousel has its own fixed metrics and animation. Edit
+    // ghosts/cursors must follow that displayed rect instead of reconstructing
+    // a cell from the configurable grid dimensions.
+    if (m_layoutMode == AppLayoutMode::DynamicLine)
+        return dynamicIconRect(globalIndex);
+    const int local = globalIndex % std::max(1, iconsPerPage());
+    const int column = local % std::max(1, m_cols);
+    const int row = local / std::max(1, m_cols);
+    const int spanColumns = std::max(1, columns);
+    const int spanRows = std::max(1, rows);
+    return {m_originX + column * (m_cellW + m_padX),
+            m_originY + row * (m_cellH + m_padY),
+            m_cellW * spanColumns + m_padX * (spanColumns - 1),
+            m_cellH * spanRows + m_padY * (spanRows - 1)};
 }
 
 void IconGrid::layoutLine() {
@@ -206,9 +296,13 @@ void IconGrid::positionPage(int page, float dx) {
     const int end   = std::min(start + iconsPerPage(), (int)m_allIcons.size());
     for (int i = start; i < end; ++i) {
         const int local = i - start;
-        m_allIcons[i]->setRect({m_originX + (local % m_cols) * (m_cellW + m_padX) + dx,
-                                m_originY + (local / m_cols) * (m_cellH + m_padY),
-                                m_cellW, m_cellH});
+        auto& icon = m_allIcons[i];
+        const int spanColumns = std::max(1, icon->gridSpanColumns());
+        const int spanRows = std::max(1, icon->gridSpanRows());
+        icon->setRect({m_originX + (local % m_cols) * (m_cellW + m_padX) + dx,
+                       m_originY + (local / m_cols) * (m_cellH + m_padY),
+                       m_cellW * spanColumns + m_padX * (spanColumns - 1),
+                       m_cellH * spanRows + m_padY * (spanRows - 1)});
     }
 }
 
@@ -236,8 +330,10 @@ nxui::Rect IconGrid::dynamicIconRect(int index, float* outScale,
     // carousel in the lower half of the HOME scene.
     const float centerY = m_rect.y + m_rect.height * 0.66f;
     const float offset = m_lineScrollOffset.value();
-    const float baseCellW = m_cellW > 0.f ? m_cellW : 150.f;
-    const float baseCellH = m_cellH > 0.f ? m_cellH : 150.f;
+    // Carousel sizing is intentionally independent from the configurable
+    // grid rows/columns. Changing the grid density must not resize single row.
+    constexpr float baseCellW = 150.f;
+    constexpr float baseCellH = 150.f;
     // The old extra 36 px made neighbouring apps feel disconnected. A small,
     // stable gutter keeps the row compact even when grid padding is reconfigured.
     const float lineSpacing = baseCellW + std::max(8.f, m_padX * 0.4f);
@@ -394,7 +490,43 @@ void IconGrid::startPageTransition(int targetPage) {
     if (targetPage == m_page) return;
 
     const int fromPage = m_page;
+    const int oldGlobalFocus = focusedGlobalIndex();
+    const int wantedLocalCell = oldGlobalFocus >= 0
+        ? oldGlobalFocus % std::max(1, iconsPerPage()) : 0;
     setPage(targetPage);
+
+    // Preserve the logical cell when paging. A continuation cell belonging to
+    // a large widget is not focusable, so choose the closest real anchor
+    // instead of accepting FocusManager's unrelated first-item fallback.
+    const int pageStart = targetPage * iconsPerPage();
+    const int pageEnd = std::min(pageStart + iconsPerPage(),
+                                 static_cast<int>(m_allIcons.size()));
+    int best = -1;
+    int bestDistance = std::numeric_limits<int>::max();
+    const int wantedColumn = wantedLocalCell % std::max(1, m_cols);
+    const int wantedRow = wantedLocalCell / std::max(1, m_cols);
+    const nxui::Vec2 wantedCenter{
+        m_originX + wantedColumn * (m_cellW + m_padX) + m_cellW * 0.5f,
+        m_originY + wantedRow * (m_cellH + m_padY) + m_cellH * 0.5f};
+    for (int index = pageStart; index < pageEnd; ++index) {
+        if (!m_allIcons[static_cast<std::size_t>(index)] ||
+            !m_allIcons[static_cast<std::size_t>(index)]->isFocusable())
+            continue;
+        if (m_allIcons[static_cast<std::size_t>(index)]->focusRect().contains(
+                wantedCenter.x, wantedCenter.y)) {
+            best = index;
+            break;
+        }
+        const int local = index - pageStart;
+        const int distance = std::abs(local % std::max(1, m_cols) - wantedColumn) +
+                             std::abs(local / std::max(1, m_cols) - wantedRow);
+        if (distance < bestDistance) {
+            best = index;
+            bestDistance = distance;
+        }
+    }
+    if (best >= 0)
+        m_focus.setFocus(m_allIcons[static_cast<std::size_t>(best)].get());
 
     if (!m_slideTransition) {
         m_sliding = false;
@@ -463,9 +595,12 @@ void IconGrid::renderPageAt(nxui::Renderer& ren, int page, float dx) {
         auto& icon = m_allIcons[i];
         const nxui::Rect saved = icon->rect();
         const int local = i - start;
+        const int spanColumns = std::max(1, icon->gridSpanColumns());
+        const int spanRows = std::max(1, icon->gridSpanRows());
         icon->setRect({m_originX + (local % m_cols) * (m_cellW + m_padX) + dx,
                        m_originY + (local / m_cols) * (m_cellH + m_padY),
-                       m_cellW, m_cellH});
+                       m_cellW * spanColumns + m_padX * (spanColumns - 1),
+                       m_cellH * spanRows + m_padY * (spanRows - 1)});
         icon->render(ren);
         icon->setRect(saved);
     }

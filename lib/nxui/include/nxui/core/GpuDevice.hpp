@@ -121,6 +121,11 @@ public:
 
     static constexpr uint64_t kDefaultImageBudget = 32u * 1024u * 1024u;
     uint64_t imageMemoryUsed() const { return m_imageMemUsed; }
+    uint64_t imageMemoryBudget() const { return kDefaultImageBudget; }
+    uint64_t imageMemoryAvailable() const {
+        return m_imageMemUsed < kDefaultImageBudget
+            ? kDefaultImageBudget - m_imageMemUsed : 0;
+    }
 
 
     using LogSink = void (*)(const char* message);
@@ -151,6 +156,9 @@ public:
     void resetImagePool() {}
     static constexpr int NUM_OFFSCREEN = 3;
     bool offscreenReady() const { return false; }
+    uint64_t imageMemoryUsed() const { return 0; }
+    uint64_t imageMemoryBudget() const { return UINT64_MAX; }
+    uint64_t imageMemoryAvailable() const { return UINT64_MAX; }
 #endif
 
 private:

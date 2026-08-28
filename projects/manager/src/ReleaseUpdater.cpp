@@ -9,7 +9,9 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cerrno>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <mutex>
@@ -265,7 +267,9 @@ std::string safeRelativePath(std::string raw) {
     return daemon || menu || manager ? raw : std::string();
 }
 
-std::vector<std::string> extractArchive(std::atomic<float>& progress) {
+std::vector<std::string> extractArchive(std::atomic<float>& progress,
+                                        float progressBase,
+                                        float progressSpan) {
     std::error_code ec;
     std::filesystem::remove_all(kStagingRoot, ec);
     std::filesystem::create_directories(kStagingRoot, ec);
@@ -273,11 +277,15 @@ std::vector<std::string> extractArchive(std::atomic<float>& progress) {
 
     unzFile archive = unzOpen64(kArchivePath);
     if (!archive) throw std::runtime_error("Downloaded file is not a readable ZIP archive");
+    unz_global_info64 globalInfo{};
+    const bool hasEntryCount = unzGetGlobalInfo64(archive, &globalInfo) == UNZ_OK
+        && globalInfo.number_entry > 0;
     std::vector<std::string> files;
     std::uint64_t extractedBytes = 0;
     bool hasDaemon = false;
     bool hasMenuMain = false;
     bool hasMenuNpdm = false;
+    std::uint64_t processedEntries = 0;
     int rc = unzGoToFirstFile(archive);
     while (rc == UNZ_OK) {
         unz_file_info64 info{};
@@ -319,14 +327,21 @@ std::vector<std::string> extractArchive(std::atomic<float>& progress) {
             hasMenuNpdm |= relative == "switch/SwitchU/bin/menu/main.npdm";
         }
         rc = unzGoToNextFile(archive);
-        progress.store(std::min(0.98f, progress.load() + 0.0015f));
+        ++processedEntries;
+        if (hasEntryCount) {
+            const float fraction = std::clamp(
+                static_cast<float>(processedEntries)
+                    / static_cast<float>(globalInfo.number_entry),
+                0.f, 1.f);
+            progress.store(progressBase + progressSpan * fraction);
+        }
     }
     unzClose(archive);
     if (rc != UNZ_END_OF_LIST_OF_FILE)
         throw std::runtime_error("ZIP directory is corrupted");
     if (!hasDaemon || !hasMenuMain || !hasMenuNpdm)
         throw std::runtime_error("Release archive does not contain a complete SwitchU installation");
-    progress.store(1.f);
+    progress.store(progressBase + progressSpan);
     return files;
 }
 
@@ -354,9 +369,50 @@ void rollback(std::vector<Replacement>& replacements) {
     fsdevCommitDevice("sdmc");
 }
 
+void copyFileContents(const std::filesystem::path& source,
+                      const std::filesystem::path& destination) {
+    std::FILE* input = std::fopen(source.string().c_str(), "rb");
+    if (!input)
+        throw std::runtime_error("Unable to open staged update file: "
+                                 + std::string(std::strerror(errno)));
+
+    std::FILE* output = std::fopen(destination.string().c_str(), "wb");
+    if (!output) {
+        const int savedErrno = errno;
+        std::fclose(input);
+        throw std::runtime_error("Unable to create update destination: "
+                                 + std::string(std::strerror(savedErrno)));
+    }
+
+    std::array<unsigned char, 64 * 1024> buffer{};
+    bool failed = false;
+    while (!failed) {
+        const std::size_t count = std::fread(buffer.data(), 1, buffer.size(), input);
+        if (count > 0 && std::fwrite(buffer.data(), 1, count, output) != count)
+            failed = true;
+        if (count < buffer.size()) {
+            if (std::ferror(input))
+                failed = true;
+            break;
+        }
+    }
+    if (std::fclose(input) != 0)
+        failed = true;
+    if (std::fclose(output) != 0)
+        failed = true;
+
+    if (failed) {
+        std::error_code removeEc;
+        std::filesystem::remove(destination, removeEc);
+        throw std::runtime_error("Unable to copy an update file to the SD card");
+    }
+}
+
 void installFiles(const std::vector<std::string>& files,
                   bool preserveDisabledOverride,
-                  std::atomic<float>& progress) {
+                  std::atomic<float>& progress,
+                  float progressBase,
+                  float progressSpan) {
     std::vector<Replacement> replacements;
     replacements.reserve(files.size());
     const std::string daemonRelative = "atmosphere/contents/0100000000001000/exefs.nsp";
@@ -378,13 +434,16 @@ void installFiles(const std::vector<std::string>& files,
         std::filesystem::create_directories(item.destination.parent_path(), ec);
         std::filesystem::remove(item.temporary, ec);
         ec.clear();
-        std::filesystem::copy_file(item.source, item.temporary,
-                                   std::filesystem::copy_options::overwrite_existing, ec);
-        if (ec) {
+        try {
+            copyFileContents(item.source, item.temporary);
+        } catch (const std::exception& ex) {
             rollback(replacements);
-            throw std::runtime_error("Unable to stage " + item.destination.string());
+            throw std::runtime_error("Unable to stage " + item.destination.string()
+                                     + ": " + ex.what());
         }
-        progress.store(static_cast<float>(i + 1) / std::max<std::size_t>(1, replacements.size()) * 0.45f);
+        const float fraction = static_cast<float>(i + 1)
+            / std::max<std::size_t>(1, replacements.size());
+        progress.store(progressBase + progressSpan * 0.46f * fraction);
     }
 
     for (std::size_t i = 0; i < replacements.size(); ++i) {
@@ -411,8 +470,9 @@ void installFiles(const std::vector<std::string>& files,
             throw std::runtime_error("Unable to install " + item.destination.string());
         }
         item.applied = true;
-        progress.store(0.45f + static_cast<float>(i + 1)
-            / std::max<std::size_t>(1, replacements.size()) * 0.5f);
+        const float fraction = static_cast<float>(i + 1)
+            / std::max<std::size_t>(1, replacements.size());
+        progress.store(progressBase + progressSpan * (0.46f + 0.49f * fraction));
     }
 
     const Result commitRc = fsdevCommitDevice("sdmc");
@@ -425,7 +485,7 @@ void installFiles(const std::vector<std::string>& files,
         std::filesystem::remove(item.backup, ec);
     }
     fsdevCommitDevice("sdmc");
-    progress.store(1.f);
+    progress.store(progressBase + progressSpan);
 }
 
 } // namespace
@@ -473,7 +533,8 @@ ReleaseInfo ReleaseUpdater::checkLatest() {
 
 UpdateInstallResult ReleaseUpdater::install(const ReleaseInfo& release,
                                             bool preserveDisabledOverride,
-                                            std::atomic<float>& progress,
+                                            std::atomic<float>& downloadProgress,
+                                            std::atomic<float>& installProgress,
                                             std::atomic<int>& stage) {
     UpdateInstallResult result;
     result.version = release.version;
@@ -482,20 +543,22 @@ UpdateInstallResult ReleaseUpdater::install(const ReleaseInfo& release,
             std::lock_guard<std::mutex> lock(g_networkMutex);
             ensureNetworkLocked();
             stage.store(static_cast<int>(UpdateWorkerStage::Downloading));
-            progress.store(0.f);
-            const std::string digest = downloadLocked(release, progress);
+            downloadProgress.store(0.f);
+            installProgress.store(0.f);
+            const std::string digest = downloadLocked(release, downloadProgress);
             switchu::FileLog::log("[updater] download complete sha256=%s", digest.c_str());
         }
         stage.store(static_cast<int>(UpdateWorkerStage::Verifying));
-        progress.store(1.f);
+        downloadProgress.store(1.f);
         stage.store(static_cast<int>(UpdateWorkerStage::Extracting));
-        progress.store(0.f);
-        const auto files = extractArchive(progress);
+        installProgress.store(0.f);
+        constexpr float kExtractionShare = 0.30f;
+        const auto files = extractArchive(installProgress, 0.f, kExtractionShare);
         switchu::FileLog::log("[updater] archive validated files=%lu",
                               static_cast<unsigned long>(files.size()));
         stage.store(static_cast<int>(UpdateWorkerStage::Installing));
-        progress.store(0.f);
-        installFiles(files, preserveDisabledOverride, progress);
+        installFiles(files, preserveDisabledOverride, installProgress,
+                     kExtractionShare, 1.f - kExtractionShare);
         std::error_code ec;
         std::filesystem::remove_all(kStagingRoot, ec);
         std::filesystem::remove(kArchivePath, ec);

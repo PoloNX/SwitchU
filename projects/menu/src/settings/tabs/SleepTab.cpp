@@ -38,7 +38,8 @@ SettingsScreen::Tab settings::tabs::SleepTab::build(SettingsScreen& screen) {
     }
 
     {
-        SettingItem it; it.label = i18n.tr("settings.sleep.sleep_now", "Sleep");
+        SettingItem it; it.label = i18n.tr("settings.sleep.sleep_now_title", "Sleep Mode");
+        it.buttonLabel = i18n.tr("power.sleep", "Sleep");
         it.type = ItemType::Action;
         it.description = i18n.tr("settings.sleep.sleep_now_desc", "Put the console into sleep mode.");
         it.onChange = [&screen, &i18n](SettingItem&) {
@@ -56,7 +57,8 @@ SettingsScreen::Tab settings::tabs::SleepTab::build(SettingsScreen& screen) {
     }
 
     {
-        SettingItem it; it.label = i18n.tr("settings.sleep.shutdown", "Shutdown");
+        SettingItem it; it.label = i18n.tr("settings.sleep.shutdown_title", "Power Off");
+        it.buttonLabel = i18n.tr("power.shutdown", "Shutdown");
         it.type = ItemType::Action;
         it.description = i18n.tr("settings.sleep.shutdown_desc", "Completely power off the console.");
         it.onChange = [&screen, &i18n](SettingItem&) {
@@ -74,7 +76,8 @@ SettingsScreen::Tab settings::tabs::SleepTab::build(SettingsScreen& screen) {
     }
 
     {
-        SettingItem it; it.label = i18n.tr("settings.sleep.reboot", "Reboot");
+        SettingItem it; it.label = i18n.tr("settings.sleep.reboot_title", "Restart Console");
+        it.buttonLabel = i18n.tr("power.reboot", "Reboot");
         it.type = ItemType::Action;
         it.description = i18n.tr("settings.sleep.reboot_desc", "Restart the console.");
         it.onChange = [&screen, &i18n](SettingItem&) {

@@ -176,6 +176,14 @@ bool ManagerActivity::onCreate() {
     m_dialog->setTheme(&m_theme);
     rootBox().addChild(m_dialog);
 
+    m_updateProgressDialog = std::make_shared<UpdateProgressDialog>();
+    m_updateProgressDialog->setFonts(&m_titleFont, &m_smallFont);
+    m_updateProgressDialog->setTheme(&m_theme);
+    m_updateProgressDialog->setLabels(
+        tr("manager.update_download", "Download"),
+        tr("manager.update_installation", "Installation"));
+    rootBox().addChild(m_updateProgressDialog);
+
     rootBox().addAction(static_cast<uint64_t>(nxui::Button::B), [this]() {
         if (!m_loading && !m_rebooting
             && m_updateState != UpdateUiState::Checking
@@ -197,6 +205,7 @@ bool ManagerActivity::onCreate() {
 void ManagerActivity::onDestroy() {
     if (m_updateCheckFuture.valid()) m_updateCheckFuture.wait();
     if (m_updateInstallFuture.valid()) m_updateInstallFuture.wait();
+    endUpdateInputBlock();
     ReleaseUpdater::shutdownNetwork();
     switchu::FileLog::log("[ui] manager closing restart_required=%d",
                           m_restartRequired ? 1 : 0);
@@ -311,7 +320,8 @@ void ManagerActivity::refreshPresentation() {
                 + std::string(" (v") + ReleaseUpdater::kCurrentVersion + ")";
             break;
         case UpdateUiState::Installing: {
-            const int percent = std::clamp(static_cast<int>(m_updateProgress.load() * 100.f), 0, 100);
+            const int percent = std::clamp(
+                static_cast<int>(m_updateInstallProgress.load() * 100.f), 0, 100);
             updateText = tr("manager.updating", "Updating...") + std::string(" ")
                 + std::to_string(percent) + "%";
             break;
@@ -390,14 +400,24 @@ void ManagerActivity::startUpdateInstall() {
         return;
     const bool preserveDisabled = m_snapshot.state == InstallationState::Disabled;
     const ReleaseInfo release = m_latestRelease;
-    m_updateProgress.store(0.f);
+    m_updateDownloadProgress.store(0.f);
+    m_updateInstallProgress.store(0.f);
     m_updateWorkerStage.store(static_cast<int>(UpdateWorkerStage::Idle));
-    m_lastUpdatePercent = -1;
+    m_lastDownloadPercent = -1;
+    m_lastInstallPercent = -1;
+    m_lastUpdateStage = static_cast<int>(UpdateWorkerStage::Idle);
     m_updateState = UpdateUiState::Installing;
+    beginUpdateInputBlock();
+    m_updateProgressDialog->show(
+        tr("manager.update_progress_title", "Installing SwitchU update"));
+    m_updateProgressDialog->setProgress(
+        0.f, 0.f, tr("manager.update_preparing", "Preparing update..."));
     m_updateInstallFuture = std::async(std::launch::async,
         [this, release, preserveDisabled]() {
             return ReleaseUpdater::install(release, preserveDisabled,
-                                           m_updateProgress, m_updateWorkerStage);
+                                           m_updateDownloadProgress,
+                                           m_updateInstallProgress,
+                                           m_updateWorkerStage);
         });
     refreshPresentation();
 }
@@ -423,13 +443,43 @@ void ManagerActivity::syncUpdater() {
     }
 
     if (m_updateState == UpdateUiState::Installing && m_updateInstallFuture.valid()) {
-        const int percent = std::clamp(static_cast<int>(m_updateProgress.load() * 100.f), 0, 100);
-        if (percent != m_lastUpdatePercent) {
-            m_lastUpdatePercent = percent;
+        const int downloadPercent = std::clamp(
+            static_cast<int>(m_updateDownloadProgress.load() * 100.f), 0, 100);
+        const int installPercent = std::clamp(
+            static_cast<int>(m_updateInstallProgress.load() * 100.f), 0, 100);
+        const int workerStage = m_updateWorkerStage.load();
+        if (downloadPercent != m_lastDownloadPercent
+            || installPercent != m_lastInstallPercent
+            || workerStage != m_lastUpdateStage) {
+            m_lastDownloadPercent = downloadPercent;
+            m_lastInstallPercent = installPercent;
+            m_lastUpdateStage = workerStage;
+            std::string status;
+            switch (static_cast<UpdateWorkerStage>(workerStage)) {
+                case UpdateWorkerStage::Downloading:
+                    status = tr("manager.update_stage_downloading", "Downloading update...");
+                    break;
+                case UpdateWorkerStage::Verifying:
+                    status = tr("manager.update_stage_verifying", "Verifying download...");
+                    break;
+                case UpdateWorkerStage::Extracting:
+                    status = tr("manager.update_stage_extracting", "Preparing installation...");
+                    break;
+                case UpdateWorkerStage::Installing:
+                    status = tr("manager.update_stage_installing", "Installing files...");
+                    break;
+                default:
+                    status = tr("manager.update_preparing", "Preparing update...");
+                    break;
+            }
+            m_updateProgressDialog->setProgress(
+                m_updateDownloadProgress.load(), m_updateInstallProgress.load(), status);
             refreshPresentation();
         }
         if (m_updateInstallFuture.wait_for(0s) == std::future_status::ready) {
             const UpdateInstallResult result = m_updateInstallFuture.get();
+            m_updateProgressDialog->hide();
+            endUpdateInputBlock();
             if (result.success) {
                 m_updateState = UpdateUiState::UpToDate;
                 m_restartRequired = true;
@@ -447,6 +497,32 @@ void ManagerActivity::syncUpdater() {
             refreshPresentation();
             focusFirstAvailable();
         }
+    }
+}
+
+void ManagerActivity::beginUpdateInputBlock() {
+    if (!m_exitLockedForUpdate) {
+        const Result rc = appletLockExit();
+        m_exitLockedForUpdate = R_SUCCEEDED(rc);
+        switchu::FileLog::log("[updater] exit lock result=0x%X", rc);
+    }
+    if (!m_homeBlockedForUpdate) {
+        const Result rc = appletBeginBlockingHomeButtonShortAndLongPressed(0);
+        m_homeBlockedForUpdate = R_SUCCEEDED(rc);
+        switchu::FileLog::log("[updater] HOME block result=0x%X", rc);
+    }
+}
+
+void ManagerActivity::endUpdateInputBlock() {
+    if (m_homeBlockedForUpdate) {
+        const Result rc = appletEndBlockingHomeButtonShortAndLongPressed();
+        switchu::FileLog::log("[updater] HOME unblock result=0x%X", rc);
+        m_homeBlockedForUpdate = false;
+    }
+    if (m_exitLockedForUpdate) {
+        const Result rc = appletUnlockExit();
+        switchu::FileLog::log("[updater] exit unlock result=0x%X", rc);
+        m_exitLockedForUpdate = false;
     }
 }
 

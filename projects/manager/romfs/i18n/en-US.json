@@ -53,6 +53,14 @@
     "update_confirm_message": "Download and install SwitchU ",
     "update_confirm_suffix": " from GitHub? Your configuration and themes will be preserved.",
     "update_install": "Install update",
-    "update_error_title": "Update failed"
+    "update_error_title": "Update failed",
+    "update_progress_title": "Installing SwitchU update",
+    "update_download": "Download",
+    "update_installation": "Installation",
+    "update_preparing": "Preparing update...",
+    "update_stage_downloading": "Downloading update...",
+    "update_stage_verifying": "Verifying download...",
+    "update_stage_extracting": "Preparing installation...",
+    "update_stage_installing": "Installing files..."
   }
 }

@@ -12,6 +12,7 @@
     },
     "context": {
       "dialog": "Dialog",
+      "menu": "Context menu",
       "profile_selection": "Profile selection",
       "settings": "Settings",
       "themes": "Themes",
@@ -38,24 +39,28 @@
       "selector": "selector",
       "progress": "progress",
       "info": "information",
-      "section": "section"
+      "section": "section",
+      "widget": "widget"
     },
     "hints": {
       "open": "A to open.",
       "open_user_page": "A to open the user page.",
-      "grid_empty": "Plus creates a folder. A places software being moved out of a folder.",
+      "grid_empty": "Plus opens the add menu. A places software being moved out of a folder.",
       "game_launchable": "A to launch. Plus for options. Y to move. ZL or ZR to change page.",
-      "game_blocked": "A to show why this item is blocked. Plus for options."
+      "game_blocked": "A to show why this item is blocked. Plus for options.",
+      "widget": "Plus for widget options. Y to move. Minus to change view.",
+      "recently_played_widget": "A to launch the recently played game. Plus for widget options. Y to move."
     },
     "actions": {
       "edit_mode": "Directional pad to choose the new position. A to place or enter a folder. B to cancel.",
       "edit_mode_folder": "Directional pad to choose the position. A to place. B to leave the folder while keeping the software selected.",
-      "empty_slot": "Directional pad to navigate. Plus to create a folder. ZL or ZR to change page.",
+      "empty_slot": "Directional pad to navigate. Plus opens the add menu. ZL or ZR to change page.",
       "game_blocked": "A to show the reason. Plus for options. Y to move. ZL or ZR to change page.",
       "game_launchable": "A to launch. Plus for options. Y to move. ZL or ZR to change page.",
       "settings": "Up and down to choose a category. A or right to enter. B to close.",
       "themes": "Up and down to navigate. A to choose. B to close.",
-      "dialog": "Left and right to change choice. A to confirm. B to cancel."
+      "dialog": "Left and right to change choice. A to confirm. B to cancel.",
+      "context_menu": "Up and down to choose. A to confirm. B to close."
     },
     "settings": {
       "tab_prefix": "Tab",
@@ -307,6 +312,8 @@
       "paired_devices": "Paired Devices",
       "no_paired_devices": "No paired devices",
       "discover_devices": "Discover Devices",
+      "search_inactive": "Device search",
+      "search_active": "Device search in progress",
       "start_search": "Search for devices...",
       "stop_search": "Stop searching",
       "connect": "Connect",
@@ -326,6 +333,9 @@
       "6h": "6 hours",
       "12h": "12 hours",
       "never": "Never",
+      "sleep_now_title": "Sleep Mode",
+      "shutdown_title": "Power Off",
+      "reboot_title": "Restart Console",
       "handheld": "Handheld Auto-Sleep",
       "handheld_desc": "Idle delay before automatic sleep in handheld mode.",
       "docked": "Docked Auto-Sleep",
@@ -407,10 +417,13 @@
     "title": "Who's playing?"
   },
   "game": {
+    "tile_size": "Tile size",
+    "tile_size_desc": "Changes the size of this game on the grid.",
     "options": "Software Options",
     "data_management": "Data Management",
     "information": "Information",
     "move": "Move",
+    "move_title": "Move software",
     "move_desc": "Move this software to another position on the HOME menu.",
     "move_prefix": "Move: ",
     "version": "Version",
@@ -444,9 +457,11 @@
     "create": "Create folder",
     "create_hint": "A to create a folder.",
     "open": "Open",
+    "open_title": "Open folder",
     "open_hint": "A to open. Plus for folder options. Y to move.",
     "options": "Folder options",
     "rename": "Rename",
+    "rename_title": "Folder name",
     "delete": "Delete folder",
     "delete_desc": "Games inside will return to the HOME menu.",
     "name_guide": "Enter a folder name",
@@ -484,6 +499,34 @@
     "size_medium": "Medium",
     "size_large": "Large",
     "items": "items"
+  },
+  "add": {
+    "title": "Add"
+  },
+  "widget": {
+    "title": "Widget",
+    "create": "Create new widget",
+    "clock": "Clock",
+    "recently_played": "Recently played",
+    "recent_playtime": "Recent playtime",
+    "random_screenshot": "Random screenshot",
+    "image_pin": "Image pin",
+    "batteries": "Batteries",
+    "choose_type": "Choose widget",
+    "choose_size": "Choose size",
+    "choose_image": "Choose image",
+    "resize": "Resize",
+    "delete": "Delete widget",
+    "no_space": "No space",
+    "no_recent_game": "No recent game",
+    "last_played": "Last played",
+    "played_recently": "Played recently",
+    "recently_played": "Recently played",
+    "no_playtime": "No recent playtime",
+    "error_title": "Widget error",
+    "save_error": "The widget change could not be saved.",
+    "no_assets_title": "No widget images",
+    "no_assets_desc": "Add PNG, JPG, WebP or GIF files to sdmc:/config/SwitchU/widgets/assets/ or to the active theme's widgets folder."
   },
   "controller_test": {
     "title": "Controller Test",
@@ -545,7 +588,19 @@
     "cancel": "Cancel",
     "delete": "Delete",
     "close": "Close",
-    "replace": "Replace"
+    "replace": "Replace",
+    "move": "Move",
+    "uninstall": "Uninstall",
+    "select": "Select",
+    "open": "Open",
+    "rename": "Rename",
+    "connect": "Connect",
+    "test": "Test",
+    "configure": "Configure",
+    "search": "Search",
+    "manage": "Manage",
+    "stop": "Stop",
+    "pair": "Pair"
   },
   "themeshop": {
     "source": {

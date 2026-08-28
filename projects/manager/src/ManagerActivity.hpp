@@ -2,6 +2,7 @@
 
 #include "SwitchUInstallation.hpp"
 #include "ReleaseUpdater.hpp"
+#include "UpdateProgressDialog.hpp"
 #include "widgets/ActionButton.hpp"
 #include "widgets/OverlayDialog.hpp"
 #include "widgets/SelectionCursor.hpp"
@@ -46,6 +47,8 @@ private:
     void startUpdateCheck();
     void startUpdateInstall();
     void syncUpdater();
+    void beginUpdateInputBlock();
+    void endUpdateInputBlock();
     void showError(ToggleError error, int detail);
     std::string errorText(ToggleError error, int detail) const;
     void setButtonVisible(ButtonView& view, bool visible, bool focusable);
@@ -73,6 +76,7 @@ private:
     ButtonView m_rebootButton;
     ButtonView m_laterButton;
     std::shared_ptr<OverlayDialog> m_dialog;
+    std::shared_ptr<UpdateProgressDialog> m_updateProgressDialog;
     std::shared_ptr<SelectionCursor> m_cursor;
 
     bool m_restartRequired = false;
@@ -95,9 +99,14 @@ private:
     ReleaseInfo m_latestRelease;
     std::future<ReleaseInfo> m_updateCheckFuture;
     std::future<UpdateInstallResult> m_updateInstallFuture;
-    std::atomic<float> m_updateProgress{0.f};
+    std::atomic<float> m_updateDownloadProgress{0.f};
+    std::atomic<float> m_updateInstallProgress{0.f};
     std::atomic<int> m_updateWorkerStage{static_cast<int>(UpdateWorkerStage::Idle)};
-    int m_lastUpdatePercent = -1;
+    int m_lastDownloadPercent = -1;
+    int m_lastInstallPercent = -1;
+    int m_lastUpdateStage = static_cast<int>(UpdateWorkerStage::Idle);
+    bool m_exitLockedForUpdate = false;
+    bool m_homeBlockedForUpdate = false;
     std::string m_updateError;
 };
 

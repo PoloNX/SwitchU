@@ -16,6 +16,8 @@ public:
         bool gameCard = false;
         bool suspended = false;
         bool canMove = true;
+        bool canResize = true;
+        int sizeIndex = 0;
     };
 
     GameOptionsScreen();
@@ -23,6 +25,7 @@ public:
     void setGame(const GameInfo& info);
     void setGameIcon(nxui::Texture* icon) { m_game.icon = icon; }
     void onMove(VoidCb cb) { m_moveCb = std::move(cb); }
+    void onResize(IntCb cb) { m_resizeCb = std::move(cb); }
     void onCloseSoftware(VoidCb cb) { m_closeSoftwareCb = std::move(cb); }
     void onDeleteSoftware(VoidCb cb) { m_deleteSoftwareCb = std::move(cb); }
     void onSelectArtwork(std::function<void(ArtworkKind)> cb) {
@@ -38,6 +41,7 @@ protected:
 private:
     GameInfo m_game;
     VoidCb m_moveCb;
+    IntCb m_resizeCb;
     VoidCb m_closeSoftwareCb;
     VoidCb m_deleteSoftwareCb;
     std::function<void(ArtworkKind)> m_selectArtworkCb;

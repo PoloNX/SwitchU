@@ -20,39 +20,8 @@ public:
 
 #ifdef NXUI_BACKEND_DEKO3D
     // deko3d move semantics
-    Texture(Texture&& o) noexcept
-        : m_image(o.m_image)
-        , m_mem(static_cast<dk::MemBlock&&>(o.m_mem))
-        , m_width(o.m_width), m_height(o.m_height)
-        , m_slot(o.m_slot), m_valid(o.m_valid)
-        , m_allocSize(o.m_allocSize)
-        , m_gpu(o.m_gpu)
-    {
-        o.m_width = o.m_height = 0;
-        o.m_slot = -1;
-        o.m_valid = false;
-        o.m_allocSize = 0;
-        o.m_gpu = nullptr;
-    }
-    Texture& operator=(Texture&& o) noexcept {
-        if (this != &o) {
-            if (m_gpu && m_mem && m_allocSize > 0)
-                m_gpu->freeImageMemory(m_allocSize);
-            m_mem   = nullptr;
-            m_image = o.m_image;
-            m_mem   = static_cast<dk::MemBlock&&>(o.m_mem);
-            m_width = o.m_width;  m_height = o.m_height;
-            m_slot  = o.m_slot;   m_valid  = o.m_valid;
-            m_allocSize = o.m_allocSize;
-            m_gpu = o.m_gpu;
-            o.m_width = o.m_height = 0;
-            o.m_slot = -1;
-            o.m_valid = false;
-            o.m_allocSize = 0;
-            o.m_gpu = nullptr;
-        }
-        return *this;
-    }
+    Texture(Texture&& o) noexcept;
+    Texture& operator=(Texture&& o) noexcept;
 #else
     // SDL2 move semantics
     Texture(Texture&& o) noexcept;
@@ -84,6 +53,15 @@ public:
     int  width()  const { return m_width; }
     int  height() const { return m_height; }
     bool valid()  const { return m_valid; }
+    std::size_t allocationSize() const {
+#ifdef NXUI_BACKEND_DEKO3D
+        return (static_cast<std::size_t>(m_allocSize) + kGpuAlign - 1u) &
+               ~(static_cast<std::size_t>(kGpuAlign) - 1u);
+#else
+        return static_cast<std::size_t>(m_width > 0 ? m_width : 0) *
+               static_cast<std::size_t>(m_height > 0 ? m_height : 0) * 4u;
+#endif
+    }
 
     // Descriptor slot in the renderer's image descriptor set
     int  descriptorSlot() const { return m_slot; }
@@ -101,6 +79,7 @@ private:
     dk::UniqueMemBlock m_mem;
     uint32_t m_allocSize = 0;
     GpuDevice* m_gpu = nullptr;
+    Renderer* m_renderer = nullptr;
 #else
     SDL_Texture* m_sdlTex = nullptr;
     GpuDevice*   m_gpu = nullptr;

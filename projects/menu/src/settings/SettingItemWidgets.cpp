@@ -700,7 +700,7 @@ public:
         m_btn = std::make_shared<ActionButton>();
         m_btn->setCornerRadius(9.f);
 
-        m_btnLabel = std::make_shared<nxui::Label>(item.label);
+        m_btnLabel = std::make_shared<nxui::Label>(item.effectiveButtonLabel());
         m_btnLabel->setScale(0.84f);
         m_btnLabel->setHAlign(nxui::Label::HAlign::Center);
         m_btnLabel->setVAlign(nxui::Label::VAlign::Center);
@@ -722,8 +722,9 @@ protected:
             if (rowSmallFont)
                 m_btnLabel->setFont(rowSmallFont);
         }
-        if (m_cachedButtonText != m_item.label) {
-            m_cachedButtonText = m_item.label;
+        const std::string& buttonText = m_item.effectiveButtonLabel();
+        if (m_cachedButtonText != buttonText) {
+            m_cachedButtonText = buttonText;
             m_btnLabel->setText(m_cachedButtonText);
         }
 

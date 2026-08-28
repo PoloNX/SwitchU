@@ -30,6 +30,12 @@ public:
     // Clear all cached glyph textures (call before GPU descriptor reset)
     void clearCache();
 
+    bool maintenanceRequested() const { return m_maintenanceRequested; }
+    std::size_t cacheBytes() const { return m_cacheBytes; }
+    std::size_t cacheEntryCount() const { return m_lruList.size(); }
+    void trimCache(std::size_t maxEntries = 72,
+                   std::size_t maxBytes = 2u * 1024u * 1024u);
+
     int ptSize() const { return m_ptSize; }
     std::uint64_t revision() const { return m_revision; }
 
@@ -43,12 +49,9 @@ private:
     Renderer*  m_ren = nullptr;
     std::uint64_t m_revision = 0;
 
-    // LRU string-texture cache
-    // The list stores entries in LRU order (most-recently-used at front).
-    // The map provides O(1) lookup by string → list iterator.
-    // On eviction, the Texture of the least-recently-used entry is reused
-    // (its descriptor slot and MemBlock are recycled via loadFromPixels).
-    static constexpr size_t kMaxCacheEntries = 384;
+    static constexpr std::size_t kMaxCacheEntries = 144;
+    static constexpr std::size_t kMaxCacheBytes = 4u * 1024u * 1024u;
+    static constexpr std::size_t kGpuHeadroom = 768u * 1024u;
 
     struct CacheEntry {
         std::string key;
@@ -60,6 +63,8 @@ private:
 
     LruList m_lruList;
     LruMap  m_lruMap;
+    std::size_t m_cacheBytes = 0;
+    bool m_maintenanceRequested = false;
 };
 
 } // namespace nxui

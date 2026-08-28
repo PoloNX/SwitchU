@@ -36,7 +36,9 @@ ProgressDialog::ProgressDialog() {
     setVisible(false);
     setFocusable(true);
     setCornerRadius(kPanelRadius);
-    setForceLiquidGlass(true);
+    setLiquidGlassEnabled(false);
+    setForceLiquidGlass(false);
+    setLiquidGlassShaderEnabled(false);
     setBlurEnabled(false);
     setPanelOpacity(0.90f);
 }

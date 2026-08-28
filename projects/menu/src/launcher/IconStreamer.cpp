@@ -192,8 +192,8 @@ bool IconStreamer::needsVisibleLoads(int currentPage, int iconsPerPage) const {
     currentPage = std::clamp(currentPage, 0, std::max(0, totalPages - 1));
     int begin = currentPage * iconsPerPage;
     int end = std::min(totalApps, begin + iconsPerPage);
-    // In single-row mode callers use one icon per logical page. Keep the two
-    // closest icons on either side hot; this is five 160px textures at most.
+    // In single-row mode callers use one icon per logical page. Keep the four
+    // closest icons on either side hot; this is nine 160px textures at most.
     if (iconsPerPage == 1) {
         begin = std::max(0, currentPage - kPageCacheRadius);
         end = std::min(totalApps, currentPage + kPageCacheRadius + 1);
@@ -387,6 +387,13 @@ void IconStreamer::onPageChanged(int currentPage, int iconsPerPage,
 
         auto& slot = *m_pool[(size_t)poolIdx];
         auto& decoded = state->decoded;
+        // A recycled pool texture keeps the same descriptor and address.
+        // Detach every stale consumer before overwriting it, including icons
+        // that moved to another index during a reflow.
+        for (const auto& icon : allIcons) {
+            if (icon && icon->texture() == &slot.texture)
+                icon->setTexture(nullptr);
+        }
         if (slot.texture.loadFromPixels(gpu, ren, decoded.rgba.data(), decoded.w, decoded.h)) {
             slot.appIndex = appIndex;
             m_appToSlot[(size_t)appIndex] = poolIdx;

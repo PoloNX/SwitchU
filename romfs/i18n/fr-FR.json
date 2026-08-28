@@ -12,6 +12,7 @@
     },
     "context": {
       "dialog": "Dialogue",
+      "menu": "Menu contextuel",
       "profile_selection": "Sélection du profil",
       "settings": "Paramètres",
       "themes": "Thèmes",
@@ -38,24 +39,28 @@
       "selector": "sélecteur",
       "progress": "progression",
       "info": "information",
-      "section": "section"
+      "section": "section",
+      "widget": "widget"
     },
     "hints": {
       "open": "A pour ouvrir.",
       "open_user_page": "A pour ouvrir la page utilisateur.",
-      "grid_empty": "Plus crée un dossier. A place le logiciel sorti d’un dossier.",
+      "grid_empty": "Plus ouvre le menu d’ajout. A place le logiciel sorti d’un dossier.",
       "game_launchable": "A pour lancer. Plus pour les options. Y grec pour déplacer. ZL ou ZR pour changer de page.",
-      "game_blocked": "A pour afficher la raison du blocage. Plus pour les options."
+      "game_blocked": "A pour afficher la raison du blocage. Plus pour les options.",
+      "widget": "Plus pour les options du widget. Y grec pour déplacer. Moins pour changer de vue.",
+      "recently_played_widget": "A pour lancer le jeu récent. Plus pour les options du widget. Y grec pour déplacer."
     },
     "actions": {
       "edit_mode": "Croix directionnelle pour choisir la nouvelle position. A pour placer ou entrer dans un dossier. B pour annuler.",
       "edit_mode_folder": "Croix directionnelle pour choisir la position. A pour placer. B pour sortir du dossier en gardant le logiciel sélectionné.",
-      "empty_slot": "Croix directionnelle pour naviguer. Plus pour créer un dossier. ZL ou ZR pour changer de page.",
+      "empty_slot": "Croix directionnelle pour naviguer. Plus ouvre le menu d’ajout. ZL ou ZR pour changer de page.",
       "game_blocked": "A pour afficher la raison. Plus pour les options. Y grec pour déplacer. ZL ou ZR pour changer de page.",
       "game_launchable": "A pour lancer. Plus pour les options. Y grec pour déplacer. ZL ou ZR pour changer de page.",
       "settings": "Haut et bas pour choisir une catégorie. A ou droite pour entrer. B pour fermer.",
       "themes": "Haut et bas pour naviguer. A pour choisir. B pour fermer.",
-      "dialog": "Gauche et droite pour changer de choix. A pour valider. B pour annuler."
+      "dialog": "Gauche et droite pour changer de choix. A pour valider. B pour annuler.",
+      "context_menu": "Haut et bas pour choisir. A pour valider. B pour fermer."
     },
     "settings": {
       "tab_prefix": "Onglet",
@@ -305,6 +310,8 @@
       "paired_devices": "Appareils associés",
       "no_paired_devices": "Aucun appareil associé",
       "discover_devices": "Découvrir des appareils",
+      "search_inactive": "Recherche d’appareils",
+      "search_active": "Recherche d’appareils en cours",
       "start_search": "Rechercher des appareils...",
       "stop_search": "Arrêter la recherche",
       "connect": "Connecter",
@@ -326,6 +333,9 @@
       "6h": "6 heures",
       "12h": "12 heures",
       "never": "Jamais",
+      "sleep_now_title": "Mode veille",
+      "shutdown_title": "Arrêt de la console",
+      "reboot_title": "Redémarrage de la console",
       "handheld": "Veille auto en portable",
       "handheld_desc": "Délai avant veille automatique en mode portable.",
       "docked": "Veille auto en dock",
@@ -407,10 +417,13 @@
     "title": "Qui joue ?"
   },
   "game": {
+    "tile_size": "Taille de la tuile",
+    "tile_size_desc": "Modifie la taille de ce jeu dans la grille.",
     "options": "Options du logiciel",
     "data_management": "Gestion des données",
     "information": "Informations",
     "move": "Déplacer",
+    "move_title": "Déplacer le logiciel",
     "move_desc": "Déplace ce logiciel à une autre position du menu HOME.",
     "move_prefix": "Déplacer : ",
     "version": "Version",
@@ -444,9 +457,11 @@
     "create": "Créer un dossier",
     "create_hint": "A pour créer un dossier.",
     "open": "Ouvrir",
+    "open_title": "Ouvrir le dossier",
     "open_hint": "A pour ouvrir. Plus pour les options. Y pour déplacer.",
     "options": "Options du dossier",
     "rename": "Renommer",
+    "rename_title": "Nom du dossier",
     "delete": "Supprimer le dossier",
     "delete_desc": "Les jeux du dossier retourneront au menu HOME.",
     "name_guide": "Saisissez un nom de dossier",
@@ -484,6 +499,34 @@
     "size_medium": "Moyen",
     "size_large": "Grand",
     "items": "éléments"
+  },
+  "add": {
+    "title": "Ajouter"
+  },
+  "widget": {
+    "title": "Widget",
+    "create": "Créer un nouveau widget",
+    "clock": "Horloge",
+    "recently_played": "Joué récemment",
+    "recent_playtime": "Temps de jeu récent",
+    "random_screenshot": "Capture aléatoire",
+    "image_pin": "Image épinglée",
+    "batteries": "Batteries",
+    "choose_type": "Choisir un widget",
+    "choose_size": "Choisir la taille",
+    "choose_image": "Choisir une image",
+    "resize": "Redimensionner",
+    "delete": "Supprimer le widget",
+    "no_space": "Pas assez de place",
+    "no_recent_game": "Aucun jeu récent",
+    "last_played": "Dernier jeu lancé",
+    "played_recently": "Joué récemment",
+    "recently_played": "Jeu récent",
+    "no_playtime": "Aucun temps de jeu récent",
+    "error_title": "Erreur de widget",
+    "save_error": "La modification du widget n’a pas pu être enregistrée.",
+    "no_assets_title": "Aucune image de widget",
+    "no_assets_desc": "Ajoutez des fichiers PNG, JPG, WebP ou GIF dans sdmc:/config/SwitchU/widgets/assets/ ou dans le dossier widgets du thème actif."
   },
   "controller_test": {
     "title": "Test des manettes",
@@ -544,8 +587,20 @@
     "ok": "OK",
     "cancel": "Annuler",
     "delete": "Supprimer",
-    "close": "Close",
-    "replace": "Replace"
+    "close": "Fermer",
+    "replace": "Remplacer",
+    "move": "Déplacer",
+    "uninstall": "Désinstaller",
+    "select": "Sélectionner",
+    "open": "Ouvrir",
+    "rename": "Renommer",
+    "connect": "Se connecter",
+    "test": "Tester",
+    "configure": "Configurer",
+    "search": "Rechercher",
+    "manage": "Gérer",
+    "stop": "Arrêter",
+    "pair": "Associer"
   },
   "themeshop": {
     "source": {

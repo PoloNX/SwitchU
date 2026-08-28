@@ -191,6 +191,11 @@ void registerEntries(std::vector<PendingApp>& apps,
         entry.folderId = p.folderId;
         entry.folderPreviewCount = p.folderPreviewCount;
         entry.folderColorIndex = p.folderColorIndex;
+        entry.widgetId = p.widgetId;
+        entry.widgetType = p.widgetType;
+        entry.widgetColumns = p.widgetColumns;
+        entry.widgetRows = p.widgetRows;
+        entry.widgetAssetRef = std::move(p.widgetAssetRef);
         model.addEntry(std::move(entry));
     }
 }

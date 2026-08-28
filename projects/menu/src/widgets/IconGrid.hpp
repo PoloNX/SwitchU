@@ -44,6 +44,9 @@ public:
 
     int hitTest(float screenX, float screenY) const;
     nxui::Rect focusedDisplayRect() const;
+    nxui::Rect gridSpanRect(int globalIndex, int columns, int rows) const;
+    void setGridSideTargets(std::vector<nxui::Widget*> left,
+                            std::vector<nxui::Widget*> right);
 
     int focusedGlobalIndex() const;
     bool focusGlobalIndex(int idx);
@@ -73,6 +76,7 @@ private:
     void renderPageAt(nxui::Renderer& ren, int page, float dx);
     void renderDynamicLine(nxui::Renderer& ren);
     void bindEdgeActions(int start, int end);
+    void bindGridNavigation(int start, int end);
     nxui::Rect dynamicIconRect(int index, float* outScale = nullptr,
                                float* outOpacity = nullptr,
                                float* outDistance = nullptr) const;
@@ -86,6 +90,8 @@ private:
     nxui::AnimatedFloat m_layoutReveal{1.f};
     nxui::Widget* m_lineUpTarget = nullptr;
     nxui::Widget* m_lineDownTarget = nullptr;
+    std::vector<nxui::Widget*> m_gridLeftTargets;
+    std::vector<nxui::Widget*> m_gridRightTargets;
 
     int m_cols = 5, m_rows = 3;
     int m_page = 0, m_totalPages = 1;

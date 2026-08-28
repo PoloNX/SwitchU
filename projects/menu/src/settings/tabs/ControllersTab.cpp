@@ -15,6 +15,7 @@ SettingsScreen::Tab settings::tabs::ControllersTab::build(SettingsScreen& screen
     {
         SettingItem it;
         it.label = i18n.tr("settings.controllers.test", "Test Input Devices");
+        it.buttonLabel = i18n.tr("button.test", "Test");
         it.description = i18n.tr(
             "settings.controllers.test_desc",
             "Test joysticks, buttons, and the touch screen.");
@@ -29,6 +30,7 @@ SettingsScreen::Tab settings::tabs::ControllersTab::build(SettingsScreen& screen
     {
         SettingItem it;
         it.label = i18n.tr("settings.controllers.pairing", "Change Grip/Order");
+        it.buttonLabel = i18n.tr("button.open", "Open");
         it.description = i18n.tr(
             "settings.controllers.pairing_desc",
             "Pair controllers and change their player order.");
@@ -43,6 +45,7 @@ SettingsScreen::Tab settings::tabs::ControllersTab::build(SettingsScreen& screen
     {
         SettingItem it;
         it.label = i18n.tr("settings.controllers.remapping", "Change Button Mapping");
+        it.buttonLabel = i18n.tr("button.open", "Open");
         it.description = i18n.tr(
             "settings.controllers.remapping_desc",
             "Open the system controller button mapping tool.");

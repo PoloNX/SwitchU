@@ -16,6 +16,7 @@
 #include "core/AccessibilityManager.hpp"
 #include "widgets/LaunchAnimation.hpp"
 #include "widgets/OverlayDialog.hpp"
+#include "widgets/ContextMenu.hpp"
 #include "widgets/ProgressDialog.hpp"
 #include "widgets/AppletButton.hpp"
 #include "widgets/PageIndicator.hpp"
@@ -31,6 +32,7 @@
 #include "themeshop/ThemeShopScreen.hpp"
 #include "core/Config.hpp"
 #include "core/FolderStore.hpp"
+#include "core/WidgetStore.hpp"
 #include "core/ThemePreset.hpp"
 #include "sidebar/SidebarManager.hpp"
 #include "launcher/AppletLauncher.hpp"
@@ -53,6 +55,7 @@
 #include <atomic>
 #include <future>
 #include <utility>
+#include <unordered_map>
 #include <switch.h>
 #ifdef SWITCHU_MENU
 #include <switchu/smi_protocol.hpp>
@@ -112,6 +115,40 @@ private:
     void openCapturedFolder();
     void closeFolder(bool preserveEditMode = false);
     void createFolder(int targetSlot = -1);
+    void showAddContextMenu(int targetSlot, const nxui::Rect& anchor);
+    void showWidgetTypeMenu(int targetSlot, const nxui::Rect& anchor);
+    void showWidgetSizeMenu(int targetSlot, const nxui::Rect& anchor,
+                            switchu::widgets::WidgetType type);
+    void showWidgetAssetMenu(int targetSlot, const nxui::Rect& anchor,
+                             switchu::widgets::WidgetType type,
+                             switchu::widgets::WidgetSize size);
+    void showWidgetOptionsMenu(std::uint32_t widgetId, int slot,
+                               const nxui::Rect& anchor);
+    void createWidget(int targetSlot, switchu::widgets::WidgetType type,
+                      switchu::widgets::WidgetSize size,
+                      const std::string& assetRef = {});
+    bool saveWidgetsOrReport(const char* operation);
+    bool canPlaceWidget(int targetSlot, switchu::widgets::WidgetSize size,
+                        std::uint32_t ignoringWidgetId = 0) const;
+    void normalizeWidgetPlacements();
+    std::vector<std::pair<std::string, std::string>> listWidgetAssets(bool screenshotsOnly) const;
+    std::string resolveWidgetAssetRef(const std::string& assetRef) const;
+    std::string randomScreenshotPath(std::uint32_t widgetId) const;
+    std::string widgetTypeLabel(switchu::widgets::WidgetType type) const;
+    std::string widgetDurationLabel(std::uint64_t seconds) const;
+    void refreshRecentActivityDuration();
+    void ensureRecentWidgetAssets(std::uint64_t titleId);
+    void ensureGameArtwork(std::uint64_t titleId);
+    switchu::widgets::WidgetSize gameGridSize(std::uint64_t titleId,
+                                               AppLayoutMode mode) const;
+    bool canPlaceGridItem(int targetSlot, switchu::widgets::WidgetSize size,
+                          std::uint64_t ignoringTitleId = 0,
+                          std::uint64_t alsoIgnoringTitleId = 0) const;
+#ifdef SWITCHU_MENU
+    void activateApplication(GlossyIcon* source, AppEntry* entry,
+                             std::uint64_t titleId,
+                             const std::string& launchTitle);
+#endif
     void renameFolder(std::uint32_t folderId);
     void showFolderContextMenu(std::uint32_t folderId);
     bool saveFoldersOrReport(const char* operation);
@@ -263,6 +300,7 @@ private:
     std::shared_ptr<LaunchAnimation>   m_launchAnim;
     std::shared_ptr<OverlayDialog>     m_userSelect;
     std::shared_ptr<OverlayDialog>     m_dialog;
+    std::shared_ptr<ContextMenu>       m_contextMenu;
     std::shared_ptr<ProgressDialog>    m_progressDialog;
     std::shared_ptr<SettingsScreen>    m_settings;
     std::shared_ptr<ThemeShopScreen>   m_themeShop;
@@ -274,6 +312,9 @@ private:
     nxui::Texture m_gameCardTex;
     nxui::Texture m_arrowTexLeft;
     nxui::Texture m_arrowTexRight;
+    nxui::Texture m_batteryConsoleTex;
+    nxui::Texture m_batteryJoyconLeftTex;
+    nxui::Texture m_batteryJoyconRightTex;
     nxui::AnimatedFloat m_arrowCenterY;
     bool m_arrowCenterInit = false;
 
@@ -333,6 +374,7 @@ private:
     bool m_showWireframe     = false;
     bool m_editMode          = false;
     int  m_editSourceIndex   = -1;
+    int  m_editTargetIndex   = -1;
     int  m_editOriginRootSlot = -1;
     int  m_editOriginFolderIndex = -1;
     std::uint32_t m_editOriginFolderId = 0;
@@ -345,8 +387,26 @@ private:
     nxui::Rect m_editGhostTargetRect {0.f, 0.f, 0.f, 0.f};
     float m_editGhostPulse = 0.f;
     std::vector<uint64_t> m_layoutSlots;
+    std::unordered_map<std::uint64_t, switchu::widgets::WidgetSize> m_gameSizes;
     bool m_layoutDirty = false;
     switchu::folders::FolderStore m_folderStore;
+    switchu::widgets::WidgetStore m_widgetStore;
+    std::uint64_t m_recentWidgetAssetTitleId = 0;
+    std::unique_ptr<nxui::Texture> m_recentWidgetHero;
+    std::unique_ptr<nxui::Texture> m_recentWidgetLogo;
+    std::unique_ptr<nxui::Texture> m_recentWidgetIcon;
+    struct GameArtworkTextures {
+        std::unique_ptr<nxui::Texture> hero;
+        std::unique_ptr<nxui::Texture> logo;
+    };
+    std::unordered_map<std::uint64_t, GameArtworkTextures> m_gameArtwork;
+    struct RetainedImagePin {
+        std::string assetRef;
+        std::shared_ptr<GlossyIcon> icon;
+    };
+    std::unordered_map<std::uint64_t, RetainedImagePin> m_retainedImagePins;
+    int m_consoleBatteryPercent = 0;
+    bool m_consoleBatteryCharging = false;
     std::vector<AppEntry> m_allApps;
     std::uint32_t m_openFolderId = 0;
     std::uint32_t m_requestedFolderId = 0;
@@ -388,6 +448,7 @@ private:
     bool m_forceThemeResourceReload   = false;
     std::uint64_t m_gameOptionsTitleId = 0;
     std::uint32_t m_folderOptionsId = 0;
+    nxui::Widget* m_contextMenuReturnFocus = nullptr;
     nxui::Widget* m_dialogReturnFocus = nullptr;
     bool m_dialogWasActive            = false;
     bool m_suppressNextNavigateSfx    = false;

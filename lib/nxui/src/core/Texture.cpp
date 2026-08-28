@@ -12,7 +12,49 @@
 
 namespace nxui {
 
+Texture::Texture(Texture&& o) noexcept
+    : m_image(o.m_image)
+    , m_mem(static_cast<dk::MemBlock&&>(o.m_mem))
+    , m_width(o.m_width), m_height(o.m_height)
+    , m_slot(o.m_slot), m_valid(o.m_valid)
+    , m_allocSize(o.m_allocSize)
+    , m_gpu(o.m_gpu), m_renderer(o.m_renderer) {
+    o.m_width = o.m_height = 0;
+    o.m_slot = -1;
+    o.m_valid = false;
+    o.m_allocSize = 0;
+    o.m_gpu = nullptr;
+    o.m_renderer = nullptr;
+}
+
+Texture& Texture::operator=(Texture&& o) noexcept {
+    if (this == &o) return *this;
+    if (m_renderer && m_slot >= 0)
+        m_renderer->releaseTextureSlot(m_slot);
+    if (m_gpu && m_mem && m_allocSize > 0)
+        m_gpu->freeImageMemory(m_allocSize);
+    m_mem = nullptr;
+    m_image = o.m_image;
+    m_mem = static_cast<dk::MemBlock&&>(o.m_mem);
+    m_width = o.m_width;
+    m_height = o.m_height;
+    m_slot = o.m_slot;
+    m_valid = o.m_valid;
+    m_allocSize = o.m_allocSize;
+    m_gpu = o.m_gpu;
+    m_renderer = o.m_renderer;
+    o.m_width = o.m_height = 0;
+    o.m_slot = -1;
+    o.m_valid = false;
+    o.m_allocSize = 0;
+    o.m_gpu = nullptr;
+    o.m_renderer = nullptr;
+    return *this;
+}
+
 Texture::~Texture() {
+    if (m_renderer && m_slot >= 0)
+        m_renderer->releaseTextureSlot(m_slot);
     if (m_gpu && m_mem && m_allocSize > 0)
         m_gpu->freeImageMemory(m_allocSize);
 }
@@ -21,6 +63,7 @@ bool Texture::loadFromPixels(GpuDevice& gpu, Renderer& ren,
                              const uint8_t* rgba, int w, int h)
 {
     m_gpu = &gpu;
+    m_renderer = &ren;
     int oldSlot = m_slot;
     uint32_t oldAllocSize = m_allocSize;
 
@@ -52,6 +95,8 @@ bool Texture::loadFromPixels(GpuDevice& gpu, Renderer& ren,
 
         m_mem = gpu.allocImageMemory(needed);
         if (!m_mem) {
+            if (oldSlot >= 0)
+                ren.releaseTextureSlot(oldSlot);
             std::printf("[Texture] allocImageMemory FAILED (%dx%d) — GPU budget exhausted\n", w, h);
             return false;
         }
@@ -61,6 +106,7 @@ bool Texture::loadFromPixels(GpuDevice& gpu, Renderer& ren,
     m_image.initialize(layout, m_mem, 0);
 
     if (!gpu.uploadTexture(m_image, rgba, w * h * 4, w, h)) {
+        m_slot = oldSlot;
         std::printf("[Texture] uploadTexture FAILED (%dx%d)\n", w, h);
         return false;
     }
@@ -85,6 +131,7 @@ bool Texture::loadFromPixelsPooled(GpuDevice& gpu, Renderer& ren,
                                     const uint8_t* rgba, int w, int h)
 {
     m_gpu = &gpu;
+    m_renderer = &ren;
     m_valid = false;
     m_slot  = -1;
     m_width  = w;

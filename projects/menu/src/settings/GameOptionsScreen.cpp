@@ -42,16 +42,33 @@ void GameOptionsScreen::buildTabs() {
 
     if (m_game.canMove) {
         SettingItem move;
-        move.label = i18n.tr("game.move", "Move");
+        move.label = i18n.tr("game.move_title", "Move software");
+        move.buttonLabel = i18n.tr("button.move", "Move");
         move.description = i18n.tr("game.move_desc", "Move this software to another position on the HOME menu.");
         move.type = ItemType::Action;
         move.onChange = [this](SettingItem&) { if (m_moveCb) m_moveCb(); };
         data.items.push_back(std::move(move));
     }
 
+    if (m_game.canResize) {
+        SettingItem size;
+        size.label = i18n.tr("game.tile_size", "Tile size");
+        size.description = i18n.tr(
+            "game.tile_size_desc", "Changes the size of this game on the grid.");
+        size.type = ItemType::Selector;
+        size.options = {"1×1", "2×1", "2×2"};
+        size.intVal = std::clamp(m_game.sizeIndex, 0, 2);
+        size.onChange = [this](SettingItem& self) {
+            m_game.sizeIndex = std::clamp(self.intVal, 0, 2);
+            if (m_resizeCb) m_resizeCb(m_game.sizeIndex);
+        };
+        data.items.push_back(std::move(size));
+    }
+
     if (m_game.suspended) {
         SettingItem close;
         close.label = i18n.tr("game.close_title", "Close software");
+        close.buttonLabel = i18n.tr("button.close", "Close");
         close.description = i18n.tr("game.close_desc", "Close the running software. Unsaved progress may be lost.");
         close.type = ItemType::Action;
         close.onChange = [this](SettingItem&) { if (m_closeSoftwareCb) m_closeSoftwareCb(); };
@@ -60,6 +77,7 @@ void GameOptionsScreen::buildTabs() {
 
     SettingItem erase;
     erase.label = i18n.tr("game.delete_software", "Delete Software");
+    erase.buttonLabel = i18n.tr("button.uninstall", "Uninstall");
     erase.description = m_game.gameCard
         ? i18n.tr("game.delete_gamecard_unavailable", "Game card software cannot be deleted from the console.")
         : i18n.tr("game.delete_software_desc", "Deletes the software from the console. Save data is not deleted.");
@@ -94,6 +112,7 @@ void GameOptionsScreen::buildTabs() {
                                                     ArtworkKind kind) {
         SettingItem item;
         item.label = i18n.tr(labelKey, label);
+        item.buttonLabel = i18n.tr("button.select", "Select");
         item.description = i18n.tr(descriptionKey, description);
         item.type = ItemType::Action;
         item.onChange = [this, kind](SettingItem&) {

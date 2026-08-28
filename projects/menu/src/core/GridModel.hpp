@@ -4,12 +4,15 @@
 #include <string>
 #include <vector>
 #include <utility>
+#include "WidgetStore.hpp"
 
 
 enum class GridEntryKind : std::uint8_t {
     Empty,
     Application,
     Folder,
+    Widget,
+    WidgetContinuation,
 };
 
 inline constexpr std::uint64_t kFolderTitleIdPrefix = 0xF100000000000000ULL;
@@ -33,9 +36,15 @@ struct AppEntry {
     std::uint32_t folderId = 0;
     int folderPreviewCount = 0;
     int folderColorIndex = 0;
+    std::uint32_t widgetId = 0;
+    switchu::widgets::WidgetType widgetType = switchu::widgets::WidgetType::Clock;
+    int widgetColumns = 1;
+    int widgetRows = 1;
+    std::string widgetAssetRef;
 
     bool isApplication() const { return kind == GridEntryKind::Application; }
     bool isFolder() const { return kind == GridEntryKind::Folder; }
+    bool isWidget() const { return kind == GridEntryKind::Widget; }
     const std::string& steamGridDbTitle() const {
         return englishTitle.empty() ? title : englishTitle;
     }

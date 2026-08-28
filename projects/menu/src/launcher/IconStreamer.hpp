@@ -113,7 +113,7 @@ private:
     int m_lastIconsPerPage = -1;
     int m_pinnedIndex = -1;
 
-    static constexpr int kPageCacheRadius = 2;
+    static constexpr int kPageCacheRadius = 4;
     static constexpr int kIconSize        = 160;
     static constexpr int kUploadsPerFrame = 1;
     static constexpr int kMaxPendingDecodes = 4;

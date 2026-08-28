@@ -34,6 +34,7 @@ SettingsScreen::Tab settings::tabs::SteamGridDbTab::build(SettingsScreen& screen
     SettingItem apiKey;
     apiKey.type = ItemType::Action;
     apiKey.label = i18n.tr("settings.steamgriddb.api_key", "API key");
+    apiKey.buttonLabel = i18n.tr("button.configure", "Configure");
     apiKey.description = screen.m_steamGridDbHasApiKey
         ? i18n.tr("settings.steamgriddb.api_key_set", "Configured (hidden)")
         : i18n.tr("settings.steamgriddb.api_key_missing", "Not configured");
@@ -45,6 +46,7 @@ SettingsScreen::Tab settings::tabs::SteamGridDbTab::build(SettingsScreen& screen
     SettingItem scan;
     scan.type = ItemType::Action;
     scan.label = i18n.tr("settings.steamgriddb.scan", "Search artwork for missing assets");
+    scan.buttonLabel = i18n.tr("button.search", "Search");
     scan.description = i18n.tr("settings.steamgriddb.scan_desc",
         "Downloads a hero and logo only for applications that do not already have artwork.");
     scan.onChange = [&screen](SettingItem&) {

@@ -36,7 +36,8 @@ public:
     static ReleaseInfo checkLatest();
     static UpdateInstallResult install(const ReleaseInfo& release,
                                        bool preserveDisabledOverride,
-                                       std::atomic<float>& progress,
+                                       std::atomic<float>& downloadProgress,
+                                       std::atomic<float>& installProgress,
                                        std::atomic<int>& stage);
     static void shutdownNetwork();
 };

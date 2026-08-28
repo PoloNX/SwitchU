@@ -291,6 +291,9 @@ void WiiUMenuApp::createSettings() {
         app().gpu().waitIdle();
         m_fontNormal.clearCache();
         m_fontSmall.clearCache();
+#ifdef NXUI_BACKEND_DEKO3D
+        app().renderer().reclaimReleasedTextureSlotsAfterIdle();
+#endif
         m_settingsNeedRefresh = true;
     });
     m_settings->onDefaultProfileChange([this](const std::string& uidHex) {
@@ -678,6 +681,22 @@ void WiiUMenuApp::syncSteamGridDb() {
             == std::future_status::ready) {
         const auto result = m_steamGridDbApplyFuture.get();
         if (result.success) {
+            // Wide tiles and recent widgets can still be referenced by frames
+            // already submitted to deko3d. Drain them before destroying their
+            // old textures after a manual artwork replacement.
+            DebugLog::log("[steamgriddb-ui] draining GPU before replacing artwork title=%016lX",
+                          static_cast<unsigned long>(result.titleId));
+            app().gpu().waitIdle();
+#ifdef NXUI_BACKEND_DEKO3D
+            app().renderer().reclaimReleasedTextureSlotsAfterIdle();
+#endif
+            m_gameArtwork.erase(result.titleId);
+            if (m_recentWidgetAssetTitleId == result.titleId) {
+                m_recentWidgetAssetTitleId = 0;
+                m_recentWidgetHero.reset();
+                m_recentWidgetLogo.reset();
+                m_recentWidgetIcon.reset();
+            }
             if (result.kind == SteamGridDbManager::ArtworkKind::Icon && m_grid) {
                 m_iconStreamer.reloadTitle(result.titleId, m_grid->currentPage(),
                                            m_grid->iconsPerPage(), app().gpu(),
@@ -685,6 +704,10 @@ void WiiUMenuApp::syncSteamGridDb() {
             } else {
                 showFocusedSteamGridDbArtwork(true);
             }
+            if (m_grid && m_openFolderId == 0 &&
+                gameGridSize(result.titleId, AppLayoutMode::Grid) !=
+                    switchu::widgets::WidgetSize{1, 1})
+                applyDisplayModel(buildRootFolderModel(), result.titleId, false);
         }
         if (m_steamGridDbPicker && m_steamGridDbPicker->isActive())
             m_steamGridDbPicker->setMessage(result.message, false);
@@ -1596,6 +1619,9 @@ void WiiUMenuApp::applyThemeResources(const ThemePreset& preset) {
         DebugLog::log("[theme-apply] settings current tab rebuilt for font change");
     }
 
+    if (needsGpuResourceReload)
+        ren.reclaimReleasedTextureSlotsAfterIdle();
+
     DebugLog::log("[theme-apply] resources done: preset=%s", presetRef.c_str());
 }
 
@@ -1723,6 +1749,8 @@ void WiiUMenuApp::applyTheme() {
         m_dialog->setHighlightColor(m_theme.panelHighlight);
         m_dialog->cursor().setColor(m_theme.cursorNormal);
     }
+    if (m_contextMenu)
+        m_contextMenu->setTheme(&m_theme);
     DebugLog::log("[theme-apply] widget recolor overlays done");
 
     if (m_settings)

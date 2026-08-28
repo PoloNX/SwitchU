@@ -47,6 +47,8 @@ std::string itemValueText(const TabbedOverlayScreen::SettingItem& item) {
             int idx = std::clamp(item.intVal, 0, (int)item.options.size() - 1);
             return item.options[(size_t)idx];
         }
+        case TabbedOverlayScreen::ItemType::Action:
+            return item.effectiveButtonLabel();
         case TabbedOverlayScreen::ItemType::Info:
         case TabbedOverlayScreen::ItemType::Progress:
             return item.infoText;

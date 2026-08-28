@@ -44,6 +44,7 @@ void rebuildDynamicItems(SettingsScreen::Tab& t, TabbedOverlayScreen& screen) {
                     ? i18n.tr("settings.bluetooth.connected", "Connected")
                     : i18n.tr("settings.bluetooth.not_connected", "Not connected");
                 it.type = ItemType::Action;
+                it.buttonLabel = i18n.tr("button.manage", "Manage");
                 auto dev = device;
                 it.onChange = [dev, isConnected, &screen](SettingItem&) {
                     auto& i = nxui::I18n::instance();
@@ -85,8 +86,11 @@ void rebuildDynamicItems(SettingsScreen::Tab& t, TabbedOverlayScreen& screen) {
             SettingItem it;
             bool searching = bluetooth::IsDiscovering();
             it.label = searching
-                ? i18n.tr("settings.bluetooth.stop_search", "Stop searching")
-                : i18n.tr("settings.bluetooth.start_search", "Search for devices...");
+                ? i18n.tr("settings.bluetooth.search_active", "Device search in progress")
+                : i18n.tr("settings.bluetooth.search_inactive", "Device search");
+            it.buttonLabel = searching
+                ? i18n.tr("button.stop", "Stop")
+                : i18n.tr("button.search", "Search");
             it.type = ItemType::Action;
             it.onChange = [](SettingItem&) {
                 if (bluetooth::IsDiscovering())
@@ -103,6 +107,7 @@ void rebuildDynamicItems(SettingsScreen::Tab& t, TabbedOverlayScreen& screen) {
                 SettingItem it;
                 it.label = bluetooth::DeviceName(device);
                 it.type = ItemType::Action;
+                it.buttonLabel = i18n.tr("button.pair", "Pair");
                 auto dev = device;
                 it.onChange = [dev, &screen](SettingItem&) {
                     auto& i = nxui::I18n::instance();

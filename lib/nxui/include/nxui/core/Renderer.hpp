@@ -153,6 +153,8 @@ public:
 #ifdef NXUI_BACKEND_DEKO3D
     int registerTexture(const dk::ImageView& view);
     void updateTexture(int slot, const dk::ImageView& view);
+    void releaseTextureSlot(int slot);
+    void reclaimReleasedTextureSlotsAfterIdle();
 #endif
     void bindTexture(int slot);
     void resetTextureSlots();
@@ -209,6 +211,13 @@ private:
 
     // Texture descriptor tracking
     int m_nextDescSlot = 0;
+    std::vector<int> m_freeDescSlots;
+    struct DeferredDescSlot {
+        int slot = -1;
+        std::uint64_t reusableFrame = 0;
+    };
+    std::vector<DeferredDescSlot> m_deferredDescSlots;
+    std::uint64_t m_frameSerial = 0;
     static constexpr int WHITE_TEX_SLOT = 0;
 
     // Offscreen target descriptor slots

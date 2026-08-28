@@ -84,19 +84,22 @@ void FolderOptionsScreen::buildTabs() {
     management.name = i18n.tr("folder.management", "Management");
 
     SettingItem open;
-    open.label = i18n.tr("folder.open", "Open");
+    open.label = i18n.tr("folder.open_title", "Open folder");
+    open.buttonLabel = i18n.tr("button.open", "Open");
     open.type = ItemType::Action;
     open.onChange = [this](SettingItem&) { if (m_openCb) m_openCb(); };
     management.items.push_back(std::move(open));
 
     SettingItem rename;
-    rename.label = i18n.tr("folder.rename", "Rename");
+    rename.label = i18n.tr("folder.rename_title", "Folder name");
+    rename.buttonLabel = i18n.tr("button.rename", "Rename");
     rename.type = ItemType::Action;
     rename.onChange = [this](SettingItem&) { if (m_renameCb) m_renameCb(); };
     management.items.push_back(std::move(rename));
 
     SettingItem erase;
     erase.label = i18n.tr("folder.delete", "Delete folder");
+    erase.buttonLabel = i18n.tr("button.delete", "Delete");
     erase.description = i18n.tr("folder.delete_desc", "Games inside will return to the HOME menu.");
     erase.type = ItemType::Action;
     erase.onChange = [this](SettingItem&) { if (m_deleteCb) m_deleteCb(); };

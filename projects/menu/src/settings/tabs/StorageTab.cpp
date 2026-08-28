@@ -405,6 +405,7 @@ SettingsScreen::Tab settings::tabs::StorageTab::build(SettingsScreen& screen) {
 
     auto& uninstall = t.items.emplace_back();
     uninstall.label = i18n.tr("settings.storage.uninstall_game", "Uninstall Selected Game");
+    uninstall.buttonLabel = i18n.tr("button.uninstall", "Uninstall");
     uninstall.type = ItemType::Action;
     uninstall.description = i18n.tr("settings.storage.uninstall_game_desc", "Permanently delete the selected title from the system.");
     uninstall.onChange = [&screen, appsPtr, selectedIndex, &i18n](SettingItem& /* self */) {

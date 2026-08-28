@@ -66,6 +66,7 @@ void SteamGridDbBackdrop::showTitle(std::uint64_t titleId, bool forceReload) {
     }
 
     if (forceReload) {
+        m_waitForGpuBeforeUpload = true;
         // Evict only transient UI state. The disk cache fingerprints its source,
         // so a replaced asset invalidates itself while a freshly prepared cache
         // remains available for this reload.
@@ -349,6 +350,18 @@ void SteamGridDbBackdrop::onUpdate(float dt) {
         auto& decoded = *m_readyArtwork;
         auto& target = m_sets[1 - m_current];
         if (m_uploadStage == 0) {
+            if (m_waitForGpuBeforeUpload) {
+                // The inactive set may still be referenced by an in-flight
+                // crossfade command buffer. Replacing its image storage before
+                // the queue drains causes a GPU read page fault.
+                DebugLog::log("[steamgriddb-ui] draining GPU before forced backdrop upload title=%016lX",
+                              static_cast<unsigned long>(decoded.titleId));
+                m_gpu.waitIdle();
+#ifdef NXUI_BACKEND_DEKO3D
+                m_renderer.reclaimReleasedTextureSlotsAfterIdle();
+#endif
+                m_waitForGpuBeforeUpload = false;
+            }
             target.hasHero = !decoded.hero.rgba.empty()
                 && target.hero.loadFromPixels(m_gpu, m_renderer, decoded.hero.rgba.data(),
                                               decoded.hero.width, decoded.hero.height);

@@ -47,6 +47,7 @@ SettingsScreen::Tab settings::tabs::InternetTab::build(SettingsScreen& screen) {
 
     {
         SettingItem it; it.label = i18n.tr("settings.internet.wifi_ssid", "WiFi Network"); it.type = ItemType::Action;
+        it.buttonLabel = i18n.tr("button.connect", "Connect");
         it.description = !ssid.empty() ? ssid : i18n.tr("settings.internet.not_connected", "Not connected");
         it.onChange = [&screen](SettingItem&) {
             if (screen.m_netConnectCb) screen.m_netConnectCb();

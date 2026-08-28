@@ -98,6 +98,7 @@ public:
 
     struct SettingItem {
         std::string label;
+        std::string buttonLabel;
         ItemType    type = ItemType::Info;
         std::string description;
 
@@ -112,6 +113,10 @@ public:
         bool                     wrapLabel = false;
 
         std::function<void(SettingItem&)> onChange;
+
+        const std::string& effectiveButtonLabel() const {
+            return buttonLabel.empty() ? label : buttonLabel;
+        }
 
         bool focusable() const {
             return type == ItemType::Toggle || type == ItemType::Slider

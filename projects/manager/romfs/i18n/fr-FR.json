@@ -53,6 +53,14 @@
     "update_confirm_message": "Télécharger et installer SwitchU ",
     "update_confirm_suffix": " depuis GitHub ? Votre configuration et vos thèmes seront conservés.",
     "update_install": "Installer la mise à jour",
-    "update_error_title": "Échec de la mise à jour"
+    "update_error_title": "Échec de la mise à jour",
+    "update_progress_title": "Installation de la mise à jour SwitchU",
+    "update_download": "Téléchargement",
+    "update_installation": "Installation",
+    "update_preparing": "Préparation de la mise à jour…",
+    "update_stage_downloading": "Téléchargement de la mise à jour…",
+    "update_stage_verifying": "Vérification du téléchargement…",
+    "update_stage_extracting": "Préparation de l'installation…",
+    "update_stage_installing": "Installation des fichiers…"
   }
 }

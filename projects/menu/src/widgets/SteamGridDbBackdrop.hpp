@@ -87,6 +87,7 @@ private:
     std::vector<std::uint64_t> m_missingArtworkTitleIds;
     std::vector<DecodedArtwork> m_decodedCache;
     int m_uploadStage = 0;
+    bool m_waitForGpuBeforeUpload = false;
     AppLayoutMode m_layoutMode = AppLayoutMode::Grid;
     nxui::AnimatedFloat m_fade{1.f};
     nxui::AnimatedFloat m_artworkOpacity{1.f};
