@@ -523,6 +523,67 @@ static void recordOperationResult(uint64_t requestId,
         static_cast<unsigned>(command), titleId, result);
 }
 
+struct ScopedService {
+    Service value{};
+
+    ScopedService() = default;
+    ScopedService(const ScopedService&) = delete;
+    ScopedService& operator=(const ScopedService&) = delete;
+
+    ~ScopedService() {
+        serviceClose(&value);
+    }
+};
+
+static Result openTimeAdminService(ScopedService& out) {
+    const Result rc = smGetService(&out.value, "time:a");
+    switchu::FileLog::log(
+        "[settings-time] daemon open time:a rc=0x%X", rc);
+    return rc;
+}
+
+static Result setLiveAutomaticCorrection(bool enabled) {
+    ScopedService admin;
+    Result rc = openTimeAdminService(admin);
+    if (R_SUCCEEDED(rc)) {
+        const u8 flag = enabled ? 1 : 0;
+        rc = serviceDispatchIn(&admin.value, 101, flag);
+    }
+
+    switchu::FileLog::log(
+        "[settings-time] daemon live automaticCorrection enabled=%d rc=0x%X",
+        enabled ? 1 : 0, rc);
+    return rc;
+}
+
+static Result setInternetTimeSync(bool enabled) {
+    const Result setsysRc =
+        setsysSetUserSystemClockAutomaticCorrectionEnabled(enabled);
+    const Result liveRc = R_SUCCEEDED(setsysRc)
+        ? setLiveAutomaticCorrection(enabled)
+        : setsysRc;
+
+    bool confirmed = !enabled;
+    const Result confirmRc =
+        setsysIsUserSystemClockAutomaticCorrectionEnabled(&confirmed);
+    Result result = 0;
+    if (R_FAILED(setsysRc)) {
+        result = setsysRc;
+    } else if (R_FAILED(liveRc)) {
+        result = liveRc;
+    } else if (R_FAILED(confirmRc)) {
+        result = confirmRc;
+    } else if (confirmed != enabled) {
+        result = MAKERESULT(Module_Libnx, 908);
+    }
+
+    switchu::FileLog::log(
+        "[settings-time] daemon internetTimeSync enabled=%d setsys=0x%X live=0x%X confirm=0x%X state=%d result=0x%X",
+        enabled ? 1 : 0, setsysRc, liveRc, confirmRc,
+        confirmed ? 1 : 0, result);
+    return result;
+}
+
 static Result setManualDateTime(const smi::ManualDateTimeArgs& args) {
     TimeCalendarTime calendar{};
     calendar.year = static_cast<u16>(args.year);
@@ -544,49 +605,55 @@ static Result setManualDateTime(const smi::ManualDateTimeArgs& args) {
         rc = MAKERESULT(Module_Libnx, 902);
     if (R_FAILED(rc))
         return rc;
+    const u64 targetTimestamp = timestamps[0];
 
-    rc = timeSetCurrentTime(TimeType_UserSystemClock, timestamps[0]);
-    switchu::FileLog::log(
-        "[settings-time] daemon timeSetCurrentTime(User) rc=0x%X", rc);
-    if (R_FAILED(rc)) {
-        TimeSteadyClockTimePoint steady{};
-        const Result steadyRc = timeGetStandardSteadyClockTimePoint(&steady);
-        switchu::FileLog::log(
-            "[settings-time] daemon fallback steady rc=0x%X point=%lld",
-            steadyRc, (long long)steady.time_point);
-        if (R_FAILED(steadyRc))
-            return rc;
+    auto isCloseToTarget = [&](u64 actual) -> bool {
+        const u64 delta = actual > targetTimestamp ? actual - targetTimestamp
+                                                   : targetTimestamp - actual;
+        return delta <= 120;
+    };
 
-        TimeSystemClockContext context{};
-        context.offset = static_cast<s64>(timestamps[0]) - steady.time_point;
-        context.timestamp = steady;
-        const Result ctxRc = setsysSetUserSystemClockContext(&context);
+    auto waitForUserClock = [&]() -> Result {
+        Result lastRc = 0;
+        u64 last = 0;
+        for (int attempt = 0; attempt < 20; ++attempt) {
+            lastRc = timeGetCurrentTime(TimeType_UserSystemClock, &last);
+            const bool close = R_SUCCEEDED(lastRc) && isCloseToTarget(last);
+            if (close)
+                return 0;
+            svcSleepThread(100'000'000ULL);
+        }
         switchu::FileLog::log(
-            "[settings-time] daemon setsysSetUserSystemClockContext rc=0x%X offset=%lld",
-            ctxRc, (long long)context.offset);
-        if (R_SUCCEEDED(ctxRc))
-            return static_cast<Result>(smi::kManualDateTimeRestartRequiredResult);
-        return rc;
+            "[settings-time] daemon user clock verification failed rc=0x%X posix=%llu",
+            lastRc, (unsigned long long)last);
+        return R_FAILED(lastRc) ? lastRc : MAKERESULT(Module_Libnx, 906);
+    };
+
+    const Result enableRc = setLiveAutomaticCorrection(true);
+    Result networkRc = enableRc;
+    Result waitRc = enableRc;
+    if (R_SUCCEEDED(enableRc)) {
+        networkRc = timeSetCurrentTime(
+            TimeType_NetworkSystemClock, targetTimestamp);
+        switchu::FileLog::log(
+            "[settings-time] daemon temporary automaticCorrection network set rc=0x%X",
+            networkRc);
+        if (R_SUCCEEDED(networkRc))
+            waitRc = waitForUserClock();
     }
 
-    u64 confirmed = 0;
-    const Result confirmRc = timeGetCurrentTime(TimeType_UserSystemClock, &confirmed);
+    const Result restoreRc = setLiveAutomaticCorrection(false);
     switchu::FileLog::log(
-        "[settings-time] daemon confirm rc=0x%X posix=%llu",
-        confirmRc, (unsigned long long)confirmed);
-    if (R_FAILED(confirmRc))
-        return confirmRc;
-    const u64 expected = timestamps[0];
-    const u64 delta = confirmed > expected ? confirmed - expected : expected - confirmed;
-    if (delta > 120) {
-        switchu::FileLog::log(
-            "[settings-time] daemon verification failed expected=%llu actual=%llu delta=%llu",
-            (unsigned long long)expected,
-            (unsigned long long)confirmed,
-            (unsigned long long)delta);
-        return MAKERESULT(Module_Libnx, 904);
-    }
-    return 0;
+        "[settings-time] daemon temporary automaticCorrection enable=0x%X network=0x%X wait=0x%X restore=0x%X",
+        enableRc, networkRc, waitRc, restoreRc);
+
+    if (R_FAILED(enableRc))
+        return enableRc;
+    if (R_FAILED(networkRc))
+        return networkRc;
+    if (R_FAILED(waitRc))
+        return waitRc;
+    return restoreRc;
 }
 
 static void pushNotification(smi::MenuMessage msg,
@@ -1150,6 +1217,27 @@ static Result launchUserProfile(AccountUid uid) {
     return rc;
 }
 
+static void pushCommandResult(uint64_t requestId, Result result, const char* command) {
+    const smi::CommandHeader response{
+        smi::kCommandMagic,
+        static_cast<uint32_t>(result),
+        requestId,
+    };
+    AppletStorage storage{};
+    Result rc = appletCreateStorage(&storage, sizeof(response));
+    const bool created = R_SUCCEEDED(rc);
+    if (created)
+        rc = appletStorageWrite(&storage, 0, &response, sizeof(response));
+    if (R_SUCCEEDED(rc)) {
+        daemon::menu_la::pushStorage(&storage);
+        return;
+    }
+    if (created)
+        appletStorageClose(&storage);
+    switchu::FileLog::log(
+        "[smi] %s response create FAIL: 0x%X", command, rc);
+}
+
 static void handleMenuCommand() {
     if (!daemon::menu_la::isActive()) return;
 
@@ -1322,24 +1410,14 @@ static void handleMenuCommand() {
     case smi::SystemMessage::SetManualDateTime: {
         auto args = reader.pop<smi::ManualDateTimeArgs>();
         result = setManualDateTime(args);
-        smi::CommandHeader response{
-            smi::kCommandMagic,
-            static_cast<uint32_t>(result),
-            requestId,
-        };
-        AppletStorage respSt;
-        Result respRc = appletCreateStorage(&respSt, sizeof(response));
-        const bool storageCreated = R_SUCCEEDED(respRc);
-        if (storageCreated)
-            respRc = appletStorageWrite(&respSt, 0, &response, sizeof(response));
-        if (R_SUCCEEDED(respRc)) {
-            daemon::menu_la::pushStorage(&respSt);
-        } else {
-            if (storageCreated)
-                appletStorageClose(&respSt);
-            switchu::FileLog::log(
-                "[smi] SetManualDateTime response create FAIL: 0x%X", respRc);
-        }
+        pushCommandResult(requestId, result, "SetManualDateTime");
+        return;
+    }
+
+    case smi::SystemMessage::SetInternetTimeSync: {
+        auto args = reader.pop<smi::InternetTimeSyncArgs>();
+        result = setInternetTimeSync(args.enabled != 0);
+        pushCommandResult(requestId, result, "SetInternetTimeSync");
         return;
     }
 

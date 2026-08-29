@@ -11,6 +11,8 @@
 
 namespace switchu::menu::smi_cmd {
 
+static constexpr int kCommandResponseRetries = 400;
+
 inline uint64_t nextRequestId() {
     static std::atomic<uint64_t> next{1};
     return next.fetch_add(1, std::memory_order_relaxed);
@@ -75,6 +77,24 @@ inline Result launchUserPage(AccountUid uid) {
     return pushOutStorage(buf, sizeof(buf));
 }
 
+static Result waitForCommandResponse(uint64_t requestId) {
+    uint8_t response[smi::kStorageSize]{};
+    size_t actual = 0;
+    for (int retry = 0; retry < kCommandResponseRetries; ++retry) {
+        const Result rc = popInStorage(response, sizeof(response), &actual);
+        if (R_SUCCEEDED(rc) && actual >= sizeof(smi::CommandHeader)) {
+            smi::CommandHeader responseHeader{};
+            std::memcpy(&responseHeader, response, sizeof(responseHeader));
+            if (responseHeader.magic == smi::kCommandMagic &&
+                responseHeader.request_id == requestId) {
+                return static_cast<Result>(responseHeader.message);
+            }
+        }
+        svcSleepThread(10'000'000ULL);
+    }
+    return MAKERESULT(Module_Libnx, 0xFF);
+}
+
 inline Result setManualDateTime(const smi::ManualDateTimeArgs& value) {
     uint8_t buf[sizeof(smi::CommandHeader) + sizeof(smi::ManualDateTimeArgs)]{};
     auto* hdr = reinterpret_cast<smi::CommandHeader*>(buf);
@@ -89,24 +109,24 @@ inline Result setManualDateTime(const smi::ManualDateTimeArgs& value) {
     Result rc = pushOutStorage(buf, sizeof(buf));
     if (R_FAILED(rc)) return rc;
 
-    uint8_t response[smi::kStorageSize]{};
-    size_t actual = 0;
-    for (int retry = 0; retry < 200; retry++) {
-        rc = popInStorage(response, sizeof(response), &actual);
-        if (R_SUCCEEDED(rc)) {
-            if (actual >= sizeof(smi::CommandHeader)) {
-                smi::CommandHeader responseHeader{};
-                std::memcpy(&responseHeader, response, sizeof(responseHeader));
-                if (responseHeader.magic == smi::kCommandMagic &&
-                    responseHeader.request_id == requestId) {
-                    return static_cast<Result>(responseHeader.message);
-                }
-            }
-        }
-        svcSleepThread(10'000'000ULL);
-    }
+    return waitForCommandResponse(requestId);
+}
+
+inline Result setInternetTimeSync(bool enabled) {
+    uint8_t buf[sizeof(smi::CommandHeader) + sizeof(smi::InternetTimeSyncArgs)]{};
+    auto* hdr = reinterpret_cast<smi::CommandHeader*>(buf);
+    auto* args = reinterpret_cast<smi::InternetTimeSyncArgs*>(buf + sizeof(smi::CommandHeader));
+
+    hdr->magic = smi::kCommandMagic;
+    hdr->message = static_cast<uint32_t>(smi::SystemMessage::SetInternetTimeSync);
+    const uint64_t requestId = nextRequestId();
+    hdr->request_id = requestId;
+    args->enabled = enabled ? 1 : 0;
+
+    Result rc = pushOutStorage(buf, sizeof(buf));
     if (R_FAILED(rc)) return rc;
-    return MAKERESULT(Module_Libnx, 0xFF);
+
+    return waitForCommandResponse(requestId);
 }
 
 inline Result resumeApplication() {

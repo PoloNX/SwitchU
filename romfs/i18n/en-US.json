@@ -192,7 +192,6 @@
       "manual_time_popup_hint": "Left/right selects a field. Up/down changes its value.",
       "manual_time_footer": "A Confirm   ·   B Cancel",
       "manual_time_saved": "Date and time updated.",
-      "manual_time_saved_reboot_required": "Date and time saved. Restart to apply it.",
       "manual_time_invalid": "Enter a valid date using YYYY-MM-DD HH:MM.",
       "disable_internet_time_first": "Disable Internet clock synchronization first.",
       "time_change_failed": "The date and time setting could not be changed.",

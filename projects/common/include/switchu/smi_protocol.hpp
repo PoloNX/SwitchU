@@ -8,9 +8,6 @@ static constexpr uint32_t kCommandMagic      = 0x53575543;
 static constexpr uint32_t kStorageSize       = 0x8000;
 static constexpr uint32_t kMaxRetries        = 5000;
 static constexpr uint64_t kRetrySleepNs      = 10'000'000;
-// MAKERESULT(Module_Libnx, 905): non-fatal daemon status, not a Horizon error.
-static constexpr uint32_t kManualDateTimeRestartRequiredResult = 0x71359;
-
 enum class MenuMessage : uint32_t {
     Invalid               =  0,
     HomeRequest           =  1,
@@ -50,6 +47,7 @@ enum class SystemMessage : uint32_t {
     GetSystemStatus       = 31,
     IsApplicationValid    = 32,
     SetManualDateTime     = 33,
+    SetInternetTimeSync   = 34,
 
     MenuReady             = 40,
     MenuClosing           = 41,
@@ -87,6 +85,12 @@ struct ManualDateTimeArgs {
     uint32_t minute;
 };
 static_assert(sizeof(ManualDateTimeArgs) == 20);
+
+struct InternetTimeSyncArgs {
+    uint8_t enabled;
+    uint8_t _pad[7];
+};
+static_assert(sizeof(InternetTimeSyncArgs) == 8);
 
 struct OperationOutcome {
     uint64_t request_id;
