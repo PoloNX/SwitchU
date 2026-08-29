@@ -17,8 +17,8 @@
 
 ---
 
-- [Features](#features)
 - [Screenshots](#screenshots)
+  [Installation](#installation)
 - [How to build](#how-to-build)
 - [SwitchU Manager](#switchu-manager)
 - [Help me](#help-me)
@@ -39,6 +39,10 @@
 ![](./screenshots/5.jpg)
 
 </details>
+
+## Installation
+
+Download ``SwitchU.zip`` [here](https://github.com/PoloNX/SwitchU/releases/latest) and extract ``atmosphere`` and ``switch`` folders at the root of your sdcard
 
 ## How to build
 
