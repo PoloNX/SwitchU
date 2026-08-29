@@ -458,6 +458,10 @@ void WiiUMenuApp::onDestroy() {
     // activity. Drain them while the entire object graph is still alive, and
     // only then shut down HTTP, Bluetooth, accessibility and audio.
     m_iconStreamer.cancelPending();
+    if (m_recentWidgetAssetDecode)
+        m_recentWidgetAssetDecode->cancelled.store(true);
+    if (m_gameArtworkDecode)
+        m_gameArtworkDecode->cancelled.store(true);
     m_threadPool.shutdown();
 
     if (m_accessibilityFuture.valid()) {
@@ -572,12 +576,26 @@ void WiiUMenuApp::buildUserAvatarBar(bool loadImmediately) {
         m_userAvatarBar->setSize(0.f, 56.f);
     }
 
+    m_pendingProfileUids.clear();
+    m_pendingProfileIndex = 0;
+    if (!loadImmediately && m_fastReturnRequested) {
+        auto state = std::make_shared<DeferredProfileList>();
+        m_deferredProfileList = state;
+        m_deferredProfileListFuture = m_threadPool.submit([state]() {
+            AccountUid uids[8] = {};
+            s32 count = 0;
+            state->result = accountListAllUsers(uids, 8, &count);
+            if (R_SUCCEEDED(state->result) && count > 0)
+                state->uids.assign(uids, uids + count);
+        });
+        DebugLog::log("[profiles] account enumeration deferred off fast-return path");
+        return;
+    }
+
     AccountUid uids[8] = {};
     s32 count = 0;
     Result rc = accountListAllUsers(uids, 8, &count);
     DebugLog::log("[profiles] accountListAllUsers rc=0x%X count=%d", rc, count);
-    m_pendingProfileUids.clear();
-    m_pendingProfileIndex = 0;
     if (R_SUCCEEDED(rc) && count > 0)
         m_pendingProfileUids.assign(uids, uids + count);
 
@@ -1358,26 +1376,72 @@ GridModel WiiUMenuApp::buildOpenFolderModel(std::uint32_t folderId) const {
     const auto* folder = m_folderStore.find(folderId);
     if (!folder)
         return model;
-    for (std::uint64_t titleId : folder->titleIds) {
-        if (titleId == 0) {
-            model.addEntry({});  // an open slot: it holds the ones after it in place
-            continue;
-        }
-        auto found = std::find_if(m_allApps.begin(), m_allApps.end(),
-            [titleId](const AppEntry& app) { return app.titleId == titleId; });
-        if (found != m_allApps.end())
-            model.addEntry(*found);
-        else
-            DebugLog::log("[folders] missing title ignored folder=%u tid=%016lX",
-                          folderId, static_cast<unsigned long>(titleId));
-    }
     const auto [folderCols, folderRows] = folderGridDimensions(folderId);
     const int perPage = std::max(1, folderCols * folderRows);
-    const int occupied = (model.count() + perPage - 1) / perPage;
+    const int occupied = (static_cast<int>(folder->titleIds.size()) + perPage - 1) /
+                         perPage;
     const int pages = std::clamp(std::max(folder->pageCount, occupied),
                                  1, switchu::folders::kMaxFolderPages);
-    while (model.count() < pages * perPage)
-        model.addEntry({});
+    std::vector<std::uint64_t> slots = folder->titleIds;
+    slots.resize(static_cast<std::size_t>(pages * perPage), 0);
+    std::vector<int> coveredBy(slots.size(), -1);
+    std::unordered_map<int, AppEntry> anchors;
+
+    for (int index = 0; index < static_cast<int>(slots.size()); ++index) {
+        const std::uint64_t titleId = slots[static_cast<std::size_t>(index)];
+        if (titleId == 0) continue;
+        auto found = std::find_if(m_allApps.begin(), m_allApps.end(),
+            [titleId](const AppEntry& app) { return app.titleId == titleId; });
+        if (found == m_allApps.end()) {
+            DebugLog::log("[folders] missing title ignored folder=%u tid=%016lX",
+                          folderId, static_cast<unsigned long>(titleId));
+            continue;
+        }
+
+        AppEntry entry = *found;
+        const auto size = gameGridSize(titleId, m_appLayoutMode);
+        entry.widgetColumns = std::max(1, size.columns);
+        entry.widgetRows = std::max(1, size.rows);
+        const int local = index % perPage;
+        const int column = local % folderCols;
+        const int row = local / folderCols;
+        bool fits = column + entry.widgetColumns <= folderCols &&
+                    row + entry.widgetRows <= folderRows;
+        for (int dy = 0; fits && dy < entry.widgetRows; ++dy) {
+            for (int dx = 0; dx < entry.widgetColumns; ++dx) {
+                const int cell = index + dy * folderCols + dx;
+                if (cell >= static_cast<int>(slots.size()) ||
+                    (cell != index && slots[static_cast<std::size_t>(cell)] != 0) ||
+                    coveredBy[static_cast<std::size_t>(cell)] >= 0) {
+                    fits = false;
+                    break;
+                }
+            }
+        }
+        if (!fits) {
+            entry.widgetColumns = 1;
+            entry.widgetRows = 1;
+        }
+        anchors.emplace(index, entry);
+        for (int dy = 0; dy < entry.widgetRows; ++dy)
+            for (int dx = 0; dx < entry.widgetColumns; ++dx)
+                coveredBy[static_cast<std::size_t>(index + dy * folderCols + dx)] = index;
+    }
+
+    for (int index = 0; index < static_cast<int>(slots.size()); ++index) {
+        if (coveredBy[static_cast<std::size_t>(index)] >= 0 &&
+            coveredBy[static_cast<std::size_t>(index)] != index) {
+            AppEntry continuation;
+            continuation.kind = GridEntryKind::WidgetContinuation;
+            model.addEntry(std::move(continuation));
+            continue;
+        }
+        const auto anchor = anchors.find(index);
+        if (anchor != anchors.end())
+            model.addEntry(anchor->second);
+        else
+            model.addEntry({});
+    }
     if (m_appLayoutMode == AppLayoutMode::DynamicLine)
         return compactDynamicLineEntries(model);
     return model;
@@ -1386,20 +1450,43 @@ GridModel WiiUMenuApp::buildOpenFolderModel(std::uint32_t folderId) const {
 void WiiUMenuApp::applyDisplayModel(GridModel model, std::uint64_t focusId, bool animate) {
     if (!m_grid)
         return;
-    // Animated image pins own several GPU textures. Preserve their icon
-    // object across a reflow/move so a second animation is not uploaded while
-    // the first one is still alive.
+    const auto isImageAssetWidget = [](switchu::widgets::WidgetType type) {
+        return type == switchu::widgets::WidgetType::ImagePin ||
+               type == switchu::widgets::WidgetType::RandomScreenshot;
+    };
+    // Image widgets own GPU textures, sometimes several animation frames.
+    // Preserve their icon object across a reflow/move: destroying it directly
+    // after the previous frame was submitted can release image memory still in
+    // use by Deko3D and crash the menu.
     const auto previousIcons = m_grid->allIcons();
     for (int i = 0; i < m_model.count() && i < static_cast<int>(previousIcons.size()); ++i) {
         const auto& entry = m_model.at(i);
-        if (entry.isWidget() &&
-            entry.widgetType == switchu::widgets::WidgetType::ImagePin &&
+        if (entry.isWidget() && isImageAssetWidget(entry.widgetType) &&
             entry.titleId != 0 && previousIcons[static_cast<std::size_t>(i)])
             m_retainedImagePins[entry.titleId] = {
                 entry.widgetAssetRef,
+                previousIcons[static_cast<std::size_t>(i)]->widgetImageAssetPath(),
                 previousIcons[static_cast<std::size_t>(i)]};
     }
     m_model = std::move(model);
+    // Retention only bridges a reflow/move of the current model. Keeping pins
+    // from a closed folder or another page tree would keep every GIF frame
+    // alive indefinitely.
+    for (auto it = m_retainedImagePins.begin(); it != m_retainedImagePins.end();) {
+        bool stillPresent = false;
+        for (int i = 0; i < m_model.count(); ++i) {
+            const auto& entry = m_model.at(i);
+            if (entry.titleId == it->first && entry.isWidget() &&
+                isImageAssetWidget(entry.widgetType)) {
+                stillPresent = true;
+                break;
+            }
+        }
+        if (!stillPresent)
+            it = m_retainedImagePins.erase(it);
+        else
+            ++it;
+    }
     std::vector<std::shared_ptr<GlossyIcon>> icons;
     std::vector<std::uint64_t> titleIds;
     icons.reserve(m_model.count());
@@ -1407,11 +1494,15 @@ void WiiUMenuApp::applyDisplayModel(GridModel model, std::uint64_t focusId, bool
     for (int i = 0; i < m_model.count(); ++i) {
         const auto& entry = m_model.at(i);
         std::shared_ptr<GlossyIcon> icon;
-        if (entry.isWidget() &&
-            entry.widgetType == switchu::widgets::WidgetType::ImagePin) {
+        if (entry.isWidget() && isImageAssetWidget(entry.widgetType)) {
             const auto found = m_retainedImagePins.find(entry.titleId);
+            const std::string resolvedPath =
+                entry.widgetType == switchu::widgets::WidgetType::RandomScreenshot
+                    ? randomScreenshotPath(entry.widgetId)
+                    : resolveWidgetAssetRef(entry.widgetAssetRef);
             if (found != m_retainedImagePins.end() &&
-                found->second.assetRef == entry.widgetAssetRef) {
+                found->second.assetRef == entry.widgetAssetRef &&
+                found->second.assetPath == resolvedPath) {
                 icon = found->second.icon;
                 if (icon)
                     icon->setGridSpan(entry.widgetColumns, entry.widgetRows);
@@ -1477,6 +1568,7 @@ void WiiUMenuApp::applyDisplayModel(GridModel model, std::uint64_t focusId, bool
     }
     m_iconStreamer.onPageChanged(m_grid->currentPage(), m_grid->iconsPerPage(),
                                  app().gpu(), app().renderer(), m_grid->allIcons());
+    m_widgetAssetPage = -1;
     if (animate) m_grid->startAppearAnimation();
     else for (auto& icon : m_grid->allIcons()) icon->forceVisible();
     updateCursor();
@@ -1588,52 +1680,250 @@ void WiiUMenuApp::refreshRecentActivityDuration() {
 
 void WiiUMenuApp::ensureRecentWidgetAssets(std::uint64_t titleId) {
     if (titleId == 0 || m_recentWidgetAssetTitleId == titleId) return;
+    if (m_recentWidgetAssetDecode)
+        m_recentWidgetAssetDecode->cancelled.store(true);
     m_recentWidgetAssetTitleId = titleId;
-    m_recentWidgetHero.reset();
-    m_recentWidgetLogo.reset();
-    m_recentWidgetIcon.reset();
-
-    std::error_code error;
     const std::string heroPath = SteamGridDbManager::heroPath(titleId);
-    if (std::filesystem::is_regular_file(heroPath, error)) {
-        auto texture = std::make_unique<nxui::Texture>();
-        if (texture->loadFromFile(app().gpu(), app().renderer(), heroPath, 640))
-            m_recentWidgetHero = std::move(texture);
-    }
-    error.clear();
     const std::string logoPath = SteamGridDbManager::logoPath(titleId);
-    if (std::filesystem::is_regular_file(logoPath, error)) {
-        auto texture = std::make_unique<nxui::Texture>();
-        if (texture->loadFromFile(app().gpu(), app().renderer(), logoPath, 384))
-            m_recentWidgetLogo = std::move(texture);
+    m_recentWidgetAssetReady.reset();
+    m_recentWidgetAssetUploadStage = 0;
+
+    auto state = std::make_shared<RecentWidgetAssetDecodeState>();
+    state->titleId = titleId;
+    m_recentWidgetAssetDecode = state;
+    m_recentWidgetAssetFuture = m_threadPool.submit(
+        [state, heroPath, logoPath, titleId]() {
+            const auto started = std::chrono::steady_clock::now();
+            std::error_code error;
+            if (std::filesystem::is_regular_file(heroPath, error) &&
+                !state->cancelled.load()) {
+                state->hero = steamgriddb::artwork::decode(heroPath, 640, 360, true);
+            }
+            error.clear();
+            if (std::filesystem::is_regular_file(logoPath, error) &&
+                !state->cancelled.load()) {
+                state->logo = steamgriddb::artwork::decode(logoPath, 384, 192, false);
+            }
+            if (!state->cancelled.load()) {
+                const auto iconData = AppListLoader::loadIconData(titleId);
+                if (!state->cancelled.load())
+                    state->icon = IconStreamer::decodeIconData(iconData);
+            }
+            state->elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - started).count();
+        });
+    DebugLog::log("[widget-recent-assets] queued title=0x%016lX",
+                  static_cast<unsigned long>(titleId));
+}
+
+void WiiUMenuApp::syncRecentWidgetTextures() {
+    if (!m_grid) return;
+    const bool matches = m_recentWidgetLoadedTitleId != 0 &&
+                         m_recentWidgetLoadedTitleId == m_recentWidgetAssetTitleId;
+    for (const auto& icon : m_grid->allIcons()) {
+        if (!icon || icon->entryKind() != GridEntryKind::Widget)
+            continue;
+        if (icon->widgetType() != switchu::widgets::WidgetType::RecentlyPlayed &&
+            icon->widgetType() != switchu::widgets::WidgetType::RecentPlaytime)
+            continue;
+        if (icon->widgetGameTitleId() != m_recentWidgetAssetTitleId)
+            continue;
+        icon->setWidgetGameTextures(
+            m_recentWidgetAssetTitleId,
+            matches ? m_recentWidgetHero.get() : nullptr,
+            matches ? m_recentWidgetLogo.get() : nullptr,
+            matches ? m_recentWidgetIcon.get() : nullptr);
     }
-    const auto iconData = AppListLoader::loadIconData(titleId);
-    if (!iconData.empty()) {
+}
+
+void WiiUMenuApp::pollRecentWidgetAssets() {
+    if (!m_recentWidgetAssetReady && m_recentWidgetAssetFuture.valid() &&
+        m_recentWidgetAssetFuture.wait_for(std::chrono::seconds(0)) ==
+            std::future_status::ready) {
+        try {
+            m_recentWidgetAssetFuture.get();
+            auto decoded = std::move(m_recentWidgetAssetDecode);
+            if (decoded && !decoded->cancelled.load() &&
+                decoded->titleId == m_recentWidgetAssetTitleId) {
+                DebugLog::log(
+                    "[widget-recent-assets] decoded title=0x%016lX hero=%zu logo=%zu icon=%zu in %ldms",
+                    static_cast<unsigned long>(decoded->titleId),
+                    decoded->hero.rgba.size(), decoded->logo.rgba.size(),
+                    decoded->icon.rgba.size(), static_cast<long>(decoded->elapsedMs));
+                m_recentWidgetAssetReady = std::move(decoded);
+                m_recentWidgetAssetUploadStage = 0;
+            }
+        } catch (const std::exception& ex) {
+            DebugLog::log("[widget-recent-assets] decode failed: %s", ex.what());
+            m_recentWidgetAssetDecode.reset();
+        } catch (...) {
+            DebugLog::log("[widget-recent-assets] decode failed: unknown exception");
+            m_recentWidgetAssetDecode.reset();
+        }
+    }
+
+    if (!m_recentWidgetAssetReady)
+        return;
+
+    auto& decoded = *m_recentWidgetAssetReady;
+    if (m_recentWidgetAssetUploadStage == 0) {
         auto texture = std::make_unique<nxui::Texture>();
-        if (texture->loadFromMemory(app().gpu(), app().renderer(),
-                                    iconData.data(), iconData.size(), 192))
+        if (!decoded.hero.rgba.empty() && texture->loadFromPixels(
+                app().gpu(), app().renderer(), decoded.hero.rgba.data(),
+                decoded.hero.width, decoded.hero.height))
+            m_recentWidgetHero = std::move(texture);
+        else
+            m_recentWidgetHero.reset();
+        decoded.hero.rgba.clear();
+    } else if (m_recentWidgetAssetUploadStage == 1) {
+        auto texture = std::make_unique<nxui::Texture>();
+        if (!decoded.logo.rgba.empty() && texture->loadFromPixels(
+                app().gpu(), app().renderer(), decoded.logo.rgba.data(),
+                decoded.logo.width, decoded.logo.height))
+            m_recentWidgetLogo = std::move(texture);
+        else
+            m_recentWidgetLogo.reset();
+        decoded.logo.rgba.clear();
+    } else if (m_recentWidgetAssetUploadStage == 2) {
+        auto texture = std::make_unique<nxui::Texture>();
+        if (!decoded.icon.rgba.empty() && texture->loadFromPixels(
+                app().gpu(), app().renderer(), decoded.icon.rgba.data(),
+                decoded.icon.w, decoded.icon.h))
             m_recentWidgetIcon = std::move(texture);
+        else
+            m_recentWidgetIcon.reset();
+        decoded.icon.rgba.clear();
+    }
+
+    m_recentWidgetLoadedTitleId = decoded.titleId;
+    ++m_recentWidgetAssetUploadStage;
+    syncRecentWidgetTextures();
+    if (m_recentWidgetAssetUploadStage >= 3) {
+        DebugLog::log("[widget-recent-assets] upload complete title=0x%016lX",
+                      static_cast<unsigned long>(decoded.titleId));
+        m_recentWidgetAssetReady.reset();
+        m_recentWidgetAssetUploadStage = 0;
     }
 }
 
 void WiiUMenuApp::ensureGameArtwork(std::uint64_t titleId) {
     if (titleId == 0 || m_gameArtwork.count(titleId)) return;
-    GameArtworkTextures artwork;
-    std::error_code error;
+    if ((m_gameArtworkDecode && m_gameArtworkDecode->titleId == titleId) ||
+        (m_gameArtworkReady && m_gameArtworkReady->titleId == titleId) ||
+        std::find(m_gameArtworkDecodeQueue.begin(), m_gameArtworkDecodeQueue.end(),
+                  titleId) != m_gameArtworkDecodeQueue.end())
+        return;
+    m_gameArtworkDecodeQueue.push_back(titleId);
+    startNextGameArtworkDecode();
+}
+
+void WiiUMenuApp::startNextGameArtworkDecode() {
+    if (m_gameArtworkFuture.valid() || m_gameArtworkDecode || m_gameArtworkReady ||
+        m_gameArtworkDecodeQueue.empty())
+        return;
+    const std::uint64_t titleId = m_gameArtworkDecodeQueue.front();
+    m_gameArtworkDecodeQueue.erase(m_gameArtworkDecodeQueue.begin());
+    auto state = std::make_shared<GameArtworkDecodeState>();
+    state->titleId = titleId;
+    m_gameArtworkDecode = state;
     const std::string heroPath = SteamGridDbManager::heroPath(titleId);
-    if (std::filesystem::is_regular_file(heroPath, error)) {
-        auto texture = std::make_unique<nxui::Texture>();
-        if (texture->loadFromFile(app().gpu(), app().renderer(), heroPath, 640))
-            artwork.hero = std::move(texture);
-    }
-    error.clear();
     const std::string logoPath = SteamGridDbManager::logoPath(titleId);
-    if (std::filesystem::is_regular_file(logoPath, error)) {
-        auto texture = std::make_unique<nxui::Texture>();
-        if (texture->loadFromFile(app().gpu(), app().renderer(), logoPath, 384))
-            artwork.logo = std::move(texture);
+    m_gameArtworkFuture = m_threadPool.submit([state, heroPath, logoPath]() {
+        const auto started = std::chrono::steady_clock::now();
+        std::error_code error;
+        if (std::filesystem::is_regular_file(heroPath, error) &&
+            !state->cancelled.load()) {
+            state->hero = steamgriddb::artwork::decode(heroPath, 640, 360, true);
+        }
+        error.clear();
+        if (std::filesystem::is_regular_file(logoPath, error) &&
+            !state->cancelled.load()) {
+            state->logo = steamgriddb::artwork::decode(logoPath, 384, 192, false);
+        }
+        state->elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - started).count();
+    });
+    DebugLog::log("[game-artwork] queued title=0x%016lX remaining=%zu",
+                  static_cast<unsigned long>(titleId),
+                  m_gameArtworkDecodeQueue.size());
+}
+
+void WiiUMenuApp::syncGameArtworkTextures(std::uint64_t titleId) {
+    if (!m_grid) return;
+    const auto artwork = m_gameArtwork.find(titleId);
+    if (artwork == m_gameArtwork.end()) return;
+    for (const auto& icon : m_grid->allIcons()) {
+        if (icon && icon->entryKind() == GridEntryKind::Application &&
+            icon->titleId() == titleId && icon->gridSpanColumns() > 1 &&
+            icon->gridSpanRows() == 1) {
+            icon->setWideGameTextures(artwork->second.hero.get(),
+                                      artwork->second.logo.get());
+        }
     }
-    m_gameArtwork.emplace(titleId, std::move(artwork));
+}
+
+void WiiUMenuApp::pollGameArtworkAssets() {
+    if (!m_gameArtworkReady && m_gameArtworkFuture.valid() &&
+        m_gameArtworkFuture.wait_for(std::chrono::seconds(0)) ==
+            std::future_status::ready) {
+        try {
+            m_gameArtworkFuture.get();
+            auto decoded = std::move(m_gameArtworkDecode);
+            if (decoded && !decoded->cancelled.load()) {
+                DebugLog::log(
+                    "[game-artwork] decoded title=0x%016lX hero=%zu logo=%zu in %ldms",
+                    static_cast<unsigned long>(decoded->titleId),
+                    decoded->hero.rgba.size(), decoded->logo.rgba.size(),
+                    static_cast<long>(decoded->elapsedMs));
+                m_gameArtworkReady = std::move(decoded);
+                m_gameArtworkUploadTextures = {};
+                m_gameArtworkUploadStage = 0;
+            }
+        } catch (const std::exception& ex) {
+            DebugLog::log("[game-artwork] decode failed: %s", ex.what());
+            m_gameArtworkDecode.reset();
+        } catch (...) {
+            DebugLog::log("[game-artwork] decode failed: unknown exception");
+            m_gameArtworkDecode.reset();
+        }
+    }
+
+    // Let recent-widget artwork finish first. This keeps the combined handoff
+    // capped to one large texture upload on these frames.
+    if (!m_gameArtworkReady) {
+        startNextGameArtworkDecode();
+        return;
+    }
+    if (m_recentWidgetAssetReady)
+        return;
+
+    auto& decoded = *m_gameArtworkReady;
+    if (m_gameArtworkUploadStage == 0) {
+        auto texture = std::make_unique<nxui::Texture>();
+        if (!decoded.hero.rgba.empty() && texture->loadFromPixels(
+                app().gpu(), app().renderer(), decoded.hero.rgba.data(),
+                decoded.hero.width, decoded.hero.height))
+            m_gameArtworkUploadTextures.hero = std::move(texture);
+        decoded.hero.rgba.clear();
+    } else {
+        auto texture = std::make_unique<nxui::Texture>();
+        if (!decoded.logo.rgba.empty() && texture->loadFromPixels(
+                app().gpu(), app().renderer(), decoded.logo.rgba.data(),
+                decoded.logo.width, decoded.logo.height))
+            m_gameArtworkUploadTextures.logo = std::move(texture);
+        decoded.logo.rgba.clear();
+    }
+    ++m_gameArtworkUploadStage;
+    if (m_gameArtworkUploadStage >= 2) {
+        const std::uint64_t titleId = decoded.titleId;
+        m_gameArtwork[titleId] = std::move(m_gameArtworkUploadTextures);
+        m_gameArtworkReady.reset();
+        m_gameArtworkUploadStage = 0;
+        syncGameArtworkTextures(titleId);
+        DebugLog::log("[game-artwork] upload complete title=0x%016lX",
+                      static_cast<unsigned long>(titleId));
+        startNextGameArtworkDecode();
+    }
 }
 
 bool WiiUMenuApp::saveWidgetsOrReport(const char* operation) {
@@ -1843,6 +2133,155 @@ std::string WiiUMenuApp::resolveWidgetAssetRef(const std::string& assetRef) cons
         return m_effectivePreset.installPath + "/" + relative;
     }
     return {};
+}
+
+void WiiUMenuApp::syncWidgetPageAssets() {
+    if (!m_grid || m_grid->allIcons().empty()) return;
+
+    const auto& icons = m_grid->allIcons();
+    m_widgetAssetCurrentScratch.assign(icons.size(), 0);
+    m_widgetAssetKeepScratch.assign(icons.size(), 0);
+    auto& current = m_widgetAssetCurrentScratch;
+    auto& keep = m_widgetAssetKeepScratch;
+    const bool dynamicLine = m_appLayoutMode == AppLayoutMode::DynamicLine;
+    const int page = dynamicLine
+        ? std::max(0, m_grid->focusedGlobalIndex())
+        : m_grid->currentPage();
+    const bool pageChanged = page != m_widgetAssetPage;
+    const bool sliding = m_grid->isTransitioning();
+    const bool transitionEnded = m_widgetAssetsWereSliding && !sliding;
+    m_widgetAssetPage = page;
+    m_widgetAssetsWereSliding = sliding;
+
+    if (dynamicLine) {
+        // The carousel renderer keeps roughly four neighbours on each side in
+        // view. One extra item avoids a decode exactly as it enters the clip.
+        const int begin = std::max(0, page - 5);
+        const int end = std::min(static_cast<int>(icons.size()), page + 6);
+        for (int i = begin; i < end; ++i) {
+            keep[static_cast<std::size_t>(i)] = true;
+            current[static_cast<std::size_t>(i)] = true;
+        }
+    } else {
+        const int perPage = std::max(1, m_grid->iconsPerPage());
+        const int totalPages = std::max(1, m_grid->totalPages());
+        const auto markPage = [&](int wantedPage, bool visibleNow) {
+            if (wantedPage < 0 || wantedPage >= totalPages) return;
+            const int begin = wantedPage * perPage;
+            const int end = std::min(begin + perPage,
+                                     static_cast<int>(icons.size()));
+            for (int i = begin; i < end; ++i) {
+                keep[static_cast<std::size_t>(i)] = true;
+                if (visibleNow)
+                    current[static_cast<std::size_t>(i)] = true;
+            }
+        };
+        markPage(page, true);
+        // Adjacent pages are warmed progressively while idle. Normal page
+        // changes therefore never decode a GIF in the middle of the slide.
+        markPage(page - 1, false);
+        markPage(page + 1, false);
+    }
+
+    if (pageChanged || transitionEnded) {
+        for (std::size_t i = 0; i < icons.size(); ++i) {
+            if (current[i] && icons[i])
+                icons[i]->allowWidgetImageAssetRetry();
+        }
+    }
+
+    // Decoding is performed by the worker pool. Keep the Deko side deliberately
+    // small: at most two finished frames are uploaded per UI frame.
+    int animationUploads = 0;
+    for (const auto& icon : icons) {
+        if (!icon || !icon->isWidgetImageAssetLoading()) continue;
+        if (animationUploads >= 2) break;
+        if (icon->pollWidgetImageAssetLoad(app().gpu(), app().renderer()))
+            ++animationUploads;
+    }
+
+    bool currentNeedsMemory = false;
+    for (std::size_t i = 0; i < icons.size(); ++i) {
+        const auto* icon = icons[i].get();
+        if (current[i] && icon && icon->hasWidgetImageAsset() &&
+            !icon->isWidgetImageAssetLoaded() &&
+            !icon->widgetImageAssetLoadAttempted()) {
+            currentNeedsMemory = true;
+            break;
+        }
+    }
+
+    // Do not release the outgoing page until its last transition frame has
+    // completed. Destruction of Deko image memory also requires the queue to
+    // be idle because the preceding frame may still reference it.
+    std::vector<GlossyIcon*> release;
+    constexpr std::uint64_t kCurrentPageReserve = 12u * 1024u * 1024u;
+    const bool reclaimPrefetchForCurrent = !sliding && currentNeedsMemory &&
+        app().gpu().imageMemoryAvailable() < kCurrentPageReserve;
+    if (!sliding) {
+        for (std::size_t i = 0; i < icons.size(); ++i) {
+            auto* icon = icons[i].get();
+            const bool retainedForSmoothPaging = keep[i] &&
+                !(reclaimPrefetchForCurrent && !current[i]);
+            if (!icon || retainedForSmoothPaging || icon == m_editSourceIcon ||
+                !icon->hasWidgetImageAsset() ||
+                (!icon->isWidgetImageAssetLoaded() &&
+                 !icon->isWidgetImageAssetLoading()))
+                continue;
+            release.push_back(icon);
+        }
+    }
+    if (!release.empty()) {
+        const bool releasesGpuMemory = std::any_of(
+            release.begin(), release.end(),
+            [](const GlossyIcon* icon) {
+                return icon && icon->isWidgetImageAssetLoaded();
+            });
+        if (releasesGpuMemory)
+            app().gpu().waitIdle();
+        bool released = false;
+        for (auto* icon : release)
+            released = icon->unloadWidgetImageAsset() || released;
+#ifdef NXUI_BACKEND_DEKO3D
+        if (released)
+            app().renderer().reclaimReleasedTextureSlotsAfterIdle();
+#endif
+        DebugLog::log("[widget-assets] released=%zu page=%d gpu=%llu/%llu",
+                      release.size(), page,
+                      static_cast<unsigned long long>(app().gpu().imageMemoryUsed()),
+                      static_cast<unsigned long long>(app().gpu().imageMemoryBudget()));
+    }
+
+    // Visible assets have priority and are all attempted before rendering.
+    // A failure is remembered until the page changes, preventing an expensive
+    // GIF decode loop when the fixed GPU budget is genuinely exhausted.
+    for (std::size_t i = 0; i < icons.size(); ++i) {
+        auto* icon = icons[i].get();
+        if (!current[i] || !icon || !icon->hasWidgetImageAsset() ||
+            icon->isWidgetImageAssetLoaded() ||
+            icon->widgetImageAssetLoadAttempted())
+            continue;
+        icon->startWidgetImageAssetLoad(
+            m_threadPool, app().gpu(), app().renderer());
+    }
+
+    if (sliding) return;
+
+    // Decode at most one off-screen asset per frame. Keep enough space for
+    // text and for a reasonably-sized current-page animation; prefetching is
+    // opportunistic and must never starve the UI itself.
+    constexpr std::uint64_t kPrefetchReserve = 8u * 1024u * 1024u;
+    if (app().gpu().imageMemoryAvailable() <= kPrefetchReserve) return;
+    for (std::size_t i = 0; i < icons.size(); ++i) {
+        auto* icon = icons[i].get();
+        if (!keep[i] || current[i] || !icon ||
+            !icon->hasWidgetImageAsset() || icon->isWidgetImageAssetLoaded() ||
+            icon->widgetImageAssetLoadAttempted())
+            continue;
+        icon->startWidgetImageAssetLoad(
+            m_threadPool, app().gpu(), app().renderer());
+        break;
+    }
 }
 
 std::vector<std::pair<std::string, std::string>>
@@ -2428,7 +2867,8 @@ std::shared_ptr<GlossyIcon> WiiUMenuApp::makeIcon(const AppEntry& entry) {
         icon->setLoadingColor(m_theme.cursorNormal);
         icon->setWidgetData(entry.widgetType, entry.widgetColumns, entry.widgetRows,
                             std::move(primary), std::move(secondary), assetPath,
-                            &app().gpu(), &app().renderer());
+                            &app().gpu(), &app().renderer(),
+                            !assetPath.empty());
         if (entry.widgetType == switchu::widgets::WidgetType::RecentlyPlayed)
             icon->setWidgetHeader(i18n.tr("widget.recently_played", "Recently played"));
         if (entry.widgetType == switchu::widgets::WidgetType::RecentPlaytime)
@@ -2443,9 +2883,11 @@ std::shared_ptr<GlossyIcon> WiiUMenuApp::makeIcon(const AppEntry& entry) {
              entry.widgetType == switchu::widgets::WidgetType::RecentPlaytime) &&
             recent.titleId != 0) {
             ensureRecentWidgetAssets(recent.titleId);
+            const bool assetsMatch = m_recentWidgetLoadedTitleId == recent.titleId;
             icon->setWidgetGameTextures(recent.titleId,
-                m_recentWidgetHero.get(), m_recentWidgetLogo.get(),
-                m_recentWidgetIcon.get());
+                assetsMatch ? m_recentWidgetHero.get() : nullptr,
+                assetsMatch ? m_recentWidgetLogo.get() : nullptr,
+                assetsMatch ? m_recentWidgetIcon.get() : nullptr);
         }
         icon->setAccessibilityLabel(entry.title);
         icon->setAccessibilityRole(i18n.tr("accessibility.roles.widget", "widget"));
@@ -2690,9 +3132,14 @@ void WiiUMenuApp::buildGrid() {
     m_background->setRect({0, 0, 1280, 720});
     applyThemeResources(m_effectivePreset);
 
+    const auto iconBuildStarted = std::chrono::steady_clock::now();
     std::vector<std::shared_ptr<GlossyIcon>> icons;
     for (int i = 0; i < m_model.count(); ++i)
         icons.push_back(makeIcon(m_model.at(i)));
+    DebugLog::log("[init] grid icon objects built count=%d in %ldms",
+                  m_model.count(),
+                  static_cast<long>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                      std::chrono::steady_clock::now() - iconBuildStarted).count()));
 
     GridLayoutMetrics gridMetrics = computeGridLayoutMetrics();
 
@@ -3391,6 +3838,15 @@ void WiiUMenuApp::finalizeRefresh() {
 #endif
 
 void WiiUMenuApp::onUpdate(float dt) {
+    // Widget-owned images are intentionally managed before recording the next
+    // frame. This is the only safe point to retire Deko textures from pages
+    // that have left the screen and to warm the next page.
+    syncWidgetPageAssets();
+    // Reading and decoding happens on a worker. Transfer at most one recent
+    // widget texture to the GPU per frame so returning HOME remains smooth.
+    pollRecentWidgetAssets();
+    pollGameArtworkAssets();
+
 #ifdef NXUI_BACKEND_DEKO3D
     // Text is cached as GPU textures. Keep a reserved image-memory margin for
     // labels that only appear after opening a screen (notably Settings).
@@ -3570,6 +4026,31 @@ void WiiUMenuApp::onUpdate(float dt) {
         m_iconStreamer.onPageChanged(streamPage, streamPageSize,
                                      app().gpu(), app().renderer(),
                                      m_grid->allIcons());
+    }
+
+    if (m_deferredProfileListFuture.valid() &&
+        m_deferredProfileListFuture.wait_for(std::chrono::seconds(0)) ==
+            std::future_status::ready) {
+        try {
+            m_deferredProfileListFuture.get();
+            if (m_deferredProfileList) {
+                m_pendingProfileUids = std::move(m_deferredProfileList->uids);
+                m_pendingProfileIndex = 0;
+                m_deferredProfileFrames = 1;
+                DebugLog::log("[profiles] deferred accountListAllUsers rc=0x%X count=%d",
+                              m_deferredProfileList->result,
+                              static_cast<int>(m_pendingProfileUids.size()));
+                if (m_pendingProfileUids.empty())
+                    appendAddUserButton();
+            }
+        } catch (const std::exception& ex) {
+            DebugLog::log("[profiles] deferred enumeration failed: %s", ex.what());
+            appendAddUserButton();
+        } catch (...) {
+            DebugLog::log("[profiles] deferred enumeration failed: unknown exception");
+            appendAddUserButton();
+        }
+        m_deferredProfileList.reset();
     }
 
     if (m_deferredProfileFrames > 0) {

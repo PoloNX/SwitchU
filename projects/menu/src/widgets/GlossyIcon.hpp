@@ -8,14 +8,17 @@
 #include <memory>
 #include <vector>
 #include <algorithm>
+#include <future>
 
-namespace nxui { class Font; }
+namespace nxui { class Font; class ThreadPool; }
+struct WidgetGifDecodeState;
 
 
 
 class GlossyIcon : public nxui::GlassWidget {
 public:
     GlossyIcon();
+    ~GlossyIcon() override;
 
     void setTitle(const std::string& t) { m_title = t; }
     const std::string& title() const    { return m_title; }
@@ -47,7 +50,21 @@ public:
     void setWidgetData(switchu::widgets::WidgetType type, int columns, int rows,
                        std::string primary, std::string secondary,
                        const std::string& assetPath,
-                       nxui::GpuDevice* gpu, nxui::Renderer* renderer);
+                       nxui::GpuDevice* gpu, nxui::Renderer* renderer,
+                       bool deferAssetLoad = false);
+    bool hasWidgetImageAsset() const { return !m_widgetAssetPath.empty(); }
+    const std::string& widgetImageAssetPath() const { return m_widgetAssetPath; }
+    bool isWidgetImageAssetLoaded() const;
+    bool widgetImageAssetLoadAttempted() const { return m_widgetAssetLoadAttempted; }
+    bool loadWidgetImageAsset(nxui::GpuDevice& gpu, nxui::Renderer& renderer);
+    bool startWidgetImageAssetLoad(nxui::ThreadPool& threadPool,
+                                   nxui::GpuDevice& gpu,
+                                   nxui::Renderer& renderer);
+    bool pollWidgetImageAssetLoad(nxui::GpuDevice& gpu,
+                                  nxui::Renderer& renderer);
+    bool isWidgetImageAssetLoading() const;
+    bool unloadWidgetImageAsset();
+    void allowWidgetImageAssetRetry();
     void setWidgetHeader(std::string header) { m_widgetHeader = std::move(header); }
     void setWidgetGameAssets(std::uint64_t titleId,
                              const std::string& heroPath,
@@ -58,6 +75,8 @@ public:
                                nxui::Texture* hero,
                                nxui::Texture* logo,
                                nxui::Texture* gameIcon);
+    switchu::widgets::WidgetType widgetType() const { return m_widgetType; }
+    std::uint64_t widgetGameTitleId() const { return m_widgetGameTitleId; }
     void copyWidgetPresentationFrom(GlossyIcon& source);
     void setGridSpan(int columns, int rows) {
         m_widgetColumns = std::max(1, columns);
@@ -139,6 +158,11 @@ private:
     std::string m_widgetPrimary;
     std::string m_widgetSecondary;
     std::string m_widgetHeader;
+    std::string m_widgetAssetPath;
+    bool m_widgetAssetLoadAttempted = false;
+    std::shared_ptr<WidgetGifDecodeState> m_widgetGifDecode;
+    std::future<void> m_widgetGifDecodeFuture;
+    std::size_t m_widgetGifUploadIndex = 0;
     std::unique_ptr<nxui::Texture> m_widgetTexture;
     nxui::Texture* m_widgetExternalTexture = nullptr;
     std::unique_ptr<nxui::Texture> m_widgetHeroTexture;

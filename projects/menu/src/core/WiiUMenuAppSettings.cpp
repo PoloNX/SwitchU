@@ -467,6 +467,34 @@ void WiiUMenuApp::createSettings() {
         m_dialog->show(title, msg, std::move(dlgButtons));
         focusManager().setFocus(m_dialog.get());
     });
+    m_settings->onDateTimeEditorRequest(
+        [this](const TabbedOverlayScreen::DateTimeEditorValue& initial,
+               TabbedOverlayScreen::DateTimeCommitCb onCommit) {
+            if (!m_dialog) return;
+            m_dialogReturnFocus = m_settings.get();
+            OverlayDialog::DateTimeValue dialogValue;
+            dialogValue.year = initial.year;
+            dialogValue.month = initial.month;
+            dialogValue.day = initial.day;
+            dialogValue.hour = initial.hour;
+            dialogValue.minute = initial.minute;
+            m_dialog->showDateTimeEditor(
+                dialogValue,
+                [this, onCommit = std::move(onCommit)](
+                    const OverlayDialog::DateTimeValue& value) mutable {
+                    TabbedOverlayScreen::DateTimeEditorValue committed;
+                    committed.year = value.year;
+                    committed.month = value.month;
+                    committed.day = value.day;
+                    committed.hour = value.hour;
+                    committed.minute = value.minute;
+                    const bool saved = !onCommit || onCommit(committed);
+                    if (saved)
+                        m_clockService.invalidate();
+                    return saved;
+                });
+            focusManager().setFocus(m_dialog.get());
+        });
     m_settings->onClosed([this]() {
         m_navigator.routeDidClose(switchu::navigation::Route::Settings);
         if (m_configSaveFuture.valid())

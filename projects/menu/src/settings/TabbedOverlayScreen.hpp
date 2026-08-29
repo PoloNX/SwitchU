@@ -62,6 +62,22 @@ public:
     void onDialogRequest(DialogRequestCb cb) { m_dialogRequestCb = std::move(cb); }
     void requestDialog(const std::string& title, const std::string& msg,
                        std::vector<DialogButtonDef> buttons);
+
+    struct DateTimeEditorValue {
+        int year = 2000;
+        int month = 1;
+        int day = 1;
+        int hour = 0;
+        int minute = 0;
+    };
+    using DateTimeCommitCb = std::function<bool(const DateTimeEditorValue&)>;
+    using DateTimeEditorRequestCb =
+        std::function<void(const DateTimeEditorValue&, DateTimeCommitCb)>;
+    void onDateTimeEditorRequest(DateTimeEditorRequestCb cb) {
+        m_dateTimeEditorRequestCb = std::move(cb);
+    }
+    void requestDateTimeEditor(const DateTimeEditorValue& initial,
+                               DateTimeCommitCb onCommit);
     void requestToast(const std::string& msg, float holdSeconds = 2.5f);
 
     using BoolCb = std::function<void(bool)>;
@@ -271,6 +287,7 @@ protected:
     VoidCb  m_closeSfxCb;
     VoidCb  m_closedCb;
     DialogRequestCb m_dialogRequestCb;
+    DateTimeEditorRequestCb m_dateTimeEditorRequestCb;
     BoolCb  m_toggleSfxCb;
     BoolCb  m_sliderSfxCb;
     StringCb m_accessibilityCb;

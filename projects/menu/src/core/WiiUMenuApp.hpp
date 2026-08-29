@@ -24,6 +24,7 @@
 #include "widgets/FolderBackdrop.hpp"
 #include "widgets/SteamGridDbBackdrop.hpp"
 #include "steamgriddb/SteamGridDbManager.hpp"
+#include "steamgriddb/ArtworkCache.hpp"
 #include "settings/SettingsScreen.hpp"
 #include "settings/GameOptionsScreen.hpp"
 #include "settings/SteamGridDbPickerScreen.hpp"
@@ -133,12 +134,18 @@ private:
     void normalizeWidgetPlacements();
     std::vector<std::pair<std::string, std::string>> listWidgetAssets(bool screenshotsOnly) const;
     std::string resolveWidgetAssetRef(const std::string& assetRef) const;
+    void syncWidgetPageAssets();
     std::string randomScreenshotPath(std::uint32_t widgetId) const;
     std::string widgetTypeLabel(switchu::widgets::WidgetType type) const;
     std::string widgetDurationLabel(std::uint64_t seconds) const;
     void refreshRecentActivityDuration();
     void ensureRecentWidgetAssets(std::uint64_t titleId);
+    void pollRecentWidgetAssets();
+    void syncRecentWidgetTextures();
     void ensureGameArtwork(std::uint64_t titleId);
+    void startNextGameArtworkDecode();
+    void pollGameArtworkAssets();
+    void syncGameArtworkTextures(std::uint64_t titleId);
     switchu::widgets::WidgetSize gameGridSize(std::uint64_t titleId,
                                                AppLayoutMode mode) const;
     bool canPlaceGridItem(int targetSlot, switchu::widgets::WidgetSize size,
@@ -392,19 +399,50 @@ private:
     switchu::folders::FolderStore m_folderStore;
     switchu::widgets::WidgetStore m_widgetStore;
     std::uint64_t m_recentWidgetAssetTitleId = 0;
+    std::uint64_t m_recentWidgetLoadedTitleId = 0;
     std::unique_ptr<nxui::Texture> m_recentWidgetHero;
     std::unique_ptr<nxui::Texture> m_recentWidgetLogo;
     std::unique_ptr<nxui::Texture> m_recentWidgetIcon;
+    struct RecentWidgetAssetDecodeState {
+        std::uint64_t titleId = 0;
+        steamgriddb::artwork::DecodedImage hero;
+        steamgriddb::artwork::DecodedImage logo;
+        IconStreamer::DecodedIcon icon;
+        std::atomic<bool> cancelled{false};
+        std::int64_t elapsedMs = 0;
+    };
+    std::shared_ptr<RecentWidgetAssetDecodeState> m_recentWidgetAssetDecode;
+    std::shared_ptr<RecentWidgetAssetDecodeState> m_recentWidgetAssetReady;
+    std::future<void> m_recentWidgetAssetFuture;
+    int m_recentWidgetAssetUploadStage = 0;
     struct GameArtworkTextures {
         std::unique_ptr<nxui::Texture> hero;
         std::unique_ptr<nxui::Texture> logo;
     };
     std::unordered_map<std::uint64_t, GameArtworkTextures> m_gameArtwork;
+    struct GameArtworkDecodeState {
+        std::uint64_t titleId = 0;
+        steamgriddb::artwork::DecodedImage hero;
+        steamgriddb::artwork::DecodedImage logo;
+        std::atomic<bool> cancelled{false};
+        std::int64_t elapsedMs = 0;
+    };
+    std::vector<std::uint64_t> m_gameArtworkDecodeQueue;
+    std::shared_ptr<GameArtworkDecodeState> m_gameArtworkDecode;
+    std::shared_ptr<GameArtworkDecodeState> m_gameArtworkReady;
+    std::future<void> m_gameArtworkFuture;
+    GameArtworkTextures m_gameArtworkUploadTextures;
+    int m_gameArtworkUploadStage = 0;
     struct RetainedImagePin {
         std::string assetRef;
+        std::string assetPath;
         std::shared_ptr<GlossyIcon> icon;
     };
     std::unordered_map<std::uint64_t, RetainedImagePin> m_retainedImagePins;
+    int m_widgetAssetPage = -1;
+    bool m_widgetAssetsWereSliding = false;
+    std::vector<std::uint8_t> m_widgetAssetCurrentScratch;
+    std::vector<std::uint8_t> m_widgetAssetKeepScratch;
     int m_consoleBatteryPercent = 0;
     bool m_consoleBatteryCharging = false;
     std::vector<AppEntry> m_allApps;
@@ -456,6 +494,12 @@ private:
     int  m_deferredInitialAssetFrames = 0;
     bool m_deferredStaticTextures = false;
     int  m_deferredProfileFrames = 0;
+    struct DeferredProfileList {
+        std::vector<AccountUid> uids;
+        Result result = 0;
+    };
+    std::shared_ptr<DeferredProfileList> m_deferredProfileList;
+    std::future<void> m_deferredProfileListFuture;
     std::vector<AccountUid> m_pendingProfileUids;
     std::size_t m_pendingProfileIndex = 0;
     std::future<void> m_accessibilityFuture;

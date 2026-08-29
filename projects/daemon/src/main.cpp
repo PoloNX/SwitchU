@@ -45,6 +45,7 @@ extern "C" {
     u32 __nx_fs_num_sessions = 3;
 
     size_t __nx_heap_size = 0x800000;
+    TimeServiceType __nx_time_service_type = TimeServiceType_System;
 }
 
 extern "C" void __appInit(void) {
@@ -520,6 +521,72 @@ static void recordOperationResult(uint64_t requestId,
         "[operation] request=%lu command=%u title=0x%016lX FAIL=0x%X",
         static_cast<unsigned long>(requestId),
         static_cast<unsigned>(command), titleId, result);
+}
+
+static Result setManualDateTime(const smi::ManualDateTimeArgs& args) {
+    TimeCalendarTime calendar{};
+    calendar.year = static_cast<u16>(args.year);
+    calendar.month = static_cast<u8>(args.month);
+    calendar.day = static_cast<u8>(args.day);
+    calendar.hour = static_cast<u8>(args.hour);
+    calendar.minute = static_cast<u8>(args.minute);
+    calendar.second = 0;
+
+    u64 timestamps[2]{};
+    s32 timestampCount = 0;
+    Result rc = timeToPosixTimeWithMyRule(&calendar, timestamps, 2, &timestampCount);
+    switchu::FileLog::log(
+        "[settings-time] daemon convert %04u-%02u-%02u %02u:%02u rc=0x%X count=%d posix=%llu",
+        args.year, args.month, args.day, args.hour, args.minute,
+        rc, timestampCount,
+        (unsigned long long)(timestampCount > 0 ? timestamps[0] : 0));
+    if (R_SUCCEEDED(rc) && timestampCount <= 0)
+        rc = MAKERESULT(Module_Libnx, 902);
+    if (R_FAILED(rc))
+        return rc;
+
+    rc = timeSetCurrentTime(TimeType_UserSystemClock, timestamps[0]);
+    switchu::FileLog::log(
+        "[settings-time] daemon timeSetCurrentTime(User) rc=0x%X", rc);
+    if (R_FAILED(rc)) {
+        TimeSteadyClockTimePoint steady{};
+        const Result steadyRc = timeGetStandardSteadyClockTimePoint(&steady);
+        switchu::FileLog::log(
+            "[settings-time] daemon fallback steady rc=0x%X point=%lld",
+            steadyRc, (long long)steady.time_point);
+        if (R_FAILED(steadyRc))
+            return rc;
+
+        TimeSystemClockContext context{};
+        context.offset = static_cast<s64>(timestamps[0]) - steady.time_point;
+        context.timestamp = steady;
+        const Result ctxRc = setsysSetUserSystemClockContext(&context);
+        switchu::FileLog::log(
+            "[settings-time] daemon setsysSetUserSystemClockContext rc=0x%X offset=%lld",
+            ctxRc, (long long)context.offset);
+        if (R_SUCCEEDED(ctxRc))
+            return static_cast<Result>(smi::kManualDateTimeRestartRequiredResult);
+        return rc;
+    }
+
+    u64 confirmed = 0;
+    const Result confirmRc = timeGetCurrentTime(TimeType_UserSystemClock, &confirmed);
+    switchu::FileLog::log(
+        "[settings-time] daemon confirm rc=0x%X posix=%llu",
+        confirmRc, (unsigned long long)confirmed);
+    if (R_FAILED(confirmRc))
+        return confirmRc;
+    const u64 expected = timestamps[0];
+    const u64 delta = confirmed > expected ? confirmed - expected : expected - confirmed;
+    if (delta > 120) {
+        switchu::FileLog::log(
+            "[settings-time] daemon verification failed expected=%llu actual=%llu delta=%llu",
+            (unsigned long long)expected,
+            (unsigned long long)confirmed,
+            (unsigned long long)delta);
+        return MAKERESULT(Module_Libnx, 904);
+    }
+    return 0;
 }
 
 static void pushNotification(smi::MenuMessage msg,
@@ -1249,6 +1316,30 @@ static void handleMenuCommand() {
             daemon::menu_la::pushStorage(&respSt);
         else
             switchu::FileLog::log("[smi] GetSystemStatus response create FAIL: 0x%X", respRc);
+        return;
+    }
+
+    case smi::SystemMessage::SetManualDateTime: {
+        auto args = reader.pop<smi::ManualDateTimeArgs>();
+        result = setManualDateTime(args);
+        smi::CommandHeader response{
+            smi::kCommandMagic,
+            static_cast<uint32_t>(result),
+            requestId,
+        };
+        AppletStorage respSt;
+        Result respRc = appletCreateStorage(&respSt, sizeof(response));
+        const bool storageCreated = R_SUCCEEDED(respRc);
+        if (storageCreated)
+            respRc = appletStorageWrite(&respSt, 0, &response, sizeof(response));
+        if (R_SUCCEEDED(respRc)) {
+            daemon::menu_la::pushStorage(&respSt);
+        } else {
+            if (storageCreated)
+                appletStorageClose(&respSt);
+            switchu::FileLog::log(
+                "[smi] SetManualDateTime response create FAIL: 0x%X", respRc);
+        }
         return;
     }
 

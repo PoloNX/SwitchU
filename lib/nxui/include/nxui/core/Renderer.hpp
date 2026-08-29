@@ -107,6 +107,8 @@ public:
     void drawTexture(const Texture* tex, const Rect& dest, const Color& tint = Color::white());
     void drawTextureSub(const Texture* tex, const Rect& src, const Rect& dest, const Color& tint = Color::white());
     void drawTextureRounded(const Texture* tex, const Rect& dest, float radius, const Color& tint = Color::white());
+    void drawTextureSubRounded(const Texture* tex, const Rect& src, const Rect& dest,
+                               float radius, const Color& tint = Color::white());
     void drawText(const std::string& text, const Vec2& pos, Font* font, const Color& color, float scale = 1.f);
 
     // Post-processing

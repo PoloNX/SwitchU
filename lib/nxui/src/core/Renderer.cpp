@@ -820,6 +820,24 @@ void Renderer::drawTextureRounded(const Texture* tex, const Rect& dest, float ra
                       tint, Rect{0.f, 0.f, 1.f, 1.f});
 }
 
+void Renderer::drawTextureSubRounded(const Texture* tex, const Rect& src,
+                                     const Rect& dest, float radius,
+                                     const Color& tint) {
+    if (!tex) return;
+    if (radius <= 0.f) {
+        drawTextureSub(tex, src, dest, tint);
+        return;
+    }
+    const float tw = static_cast<float>(tex->width());
+    const float th = static_cast<float>(tex->height());
+    if (tw <= 0.f || th <= 0.f) return;
+    bindTexture(tex->descriptorSlot());
+    drawRoundedMasked(dest,
+                      std::min(radius, std::min(dest.width, dest.height) * 0.5f),
+                      tint,
+                      Rect{src.x / tw, src.y / th, src.width / tw, src.height / th});
+}
+
 void Renderer::drawText(const std::string& text, const Vec2& pos, Font* font,
                          const Color& color, float scale) {
     if (!font || text.empty()) return;

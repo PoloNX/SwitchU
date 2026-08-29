@@ -86,6 +86,12 @@ void TabbedOverlayScreen::requestDialog(const std::string& title, const std::str
     if (m_dialogRequestCb) m_dialogRequestCb(title, msg, std::move(buttons));
 }
 
+void TabbedOverlayScreen::requestDateTimeEditor(
+    const DateTimeEditorValue& initial, DateTimeCommitCb onCommit) {
+    if (m_dateTimeEditorRequestCb)
+        m_dateTimeEditorRequestCb(initial, std::move(onCommit));
+}
+
 void TabbedOverlayScreen::requestToast(const std::string& msg, float holdSeconds) {
     if (msg.empty()) return;
     m_toastText = msg;

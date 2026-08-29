@@ -19,6 +19,14 @@ class IconStreamer {
 public:
     using IconDataLoader = std::function<std::vector<uint8_t>(uint64_t titleId)>;
 
+    struct DecodedIcon {
+        std::vector<uint8_t> rgba;
+        int w = 0, h = 0;
+    };
+
+    // CPU-only helper. Safe on a ThreadPool worker; upload stays on the UI thread.
+    static DecodedIcon decodeIconData(const std::vector<uint8_t>& data);
+
     // Prepare icon metadata for all apps after the app list has been fetched.
     void init(int appCount);
     void setIconDataLoader(IconDataLoader loader);
@@ -68,13 +76,6 @@ public:
     bool needsVisibleLoads(int currentPage, int iconsPerPage) const;
 
 private:
-    struct DecodedIcon {
-        std::vector<uint8_t> rgba;
-        int w = 0, h = 0;
-    };
-
-    static DecodedIcon decodeAndScale(const std::vector<uint8_t>& data);
-
     struct DecodeState {
         DecodedIcon decoded;
         bool failed = false;

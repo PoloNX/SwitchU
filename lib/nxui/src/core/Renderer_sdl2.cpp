@@ -373,10 +373,20 @@ void Renderer::drawTextureSub(const Texture* tex, const Rect& src, const Rect& d
 }
 
 void Renderer::drawTextureRounded(const Texture* tex, const Rect& dest, float radius, const Color& tint) {
+    if (!tex) return;
+    drawTextureSubRounded(tex,
+                          {0.f, 0.f, static_cast<float>(tex->width()),
+                           static_cast<float>(tex->height())},
+                          dest, radius, tint);
+}
+
+void Renderer::drawTextureSubRounded(const Texture* tex, const Rect& src,
+                                     const Rect& dest, float radius,
+                                     const Color& tint) {
     // SDL2 cannot do rounded texture clipping easily; fall back to a regular textured rect,
     // unless a rounded geometry path is explicitly used below.
     if (!tex) return;
-    if (radius <= 0.f) { drawTexture(tex, dest, tint); return; }
+    if (radius <= 0.f) { drawTextureSub(tex, src, dest, tint); return; }
 
     flush();
 
@@ -393,9 +403,12 @@ void Renderer::drawTextureRounded(const Texture* tex, const Rect& dest, float ra
     float fcx = dest.x + dest.width * 0.5f;
     float fcy = dest.y + dest.height * 0.5f;
 
+    const float texWidth = static_cast<float>(tex->width());
+    const float texHeight = static_cast<float>(tex->height());
+    if (texWidth <= 0.f || texHeight <= 0.f) return;
     auto toUV = [&](float px, float py) -> Vec2 {
-        return {(px - dest.x) / dest.width,
-                (py - dest.y) / dest.height};
+        return {(src.x + (px - dest.x) / dest.width * src.width) / texWidth,
+                (src.y + (py - dest.y) / dest.height * src.height) / texHeight};
     };
 
     constexpr int segs = 8;

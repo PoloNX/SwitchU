@@ -26,6 +26,14 @@ public:
     using CancelCallback = std::function<void()>;
     using VoidCb = std::function<void()>;
     using UserSelectCallback = std::function<void(AccountUid uid)>;
+    struct DateTimeValue {
+        int year = 2000;
+        int month = 1;
+        int day = 1;
+        int hour = 0;
+        int minute = 0;
+    };
+    using DateTimeSaveCallback = std::function<bool(const DateTimeValue&)>;
 
     OverlayDialog();
 
@@ -44,6 +52,9 @@ public:
               CancelCallback onCancel = {});
     bool loadUsers(nxui::GpuDevice& gpu, nxui::Renderer& ren);
     void showUserSelect(UserSelectCallback onSelect, CancelCallback onCancel = {});
+    void showDateTimeEditor(const DateTimeValue& initial,
+                            DateTimeSaveCallback onSave,
+                            CancelCallback onCancel = {});
 
     void hide();
 
@@ -82,14 +93,20 @@ public:
 private:
     void buildWidgetTree();
     void buildUserSelect();
+    void buildDateTimeEditor();
     void animateButtonFocus(float duration, nxui::EasingFunc easing);
     void setupActions();
     void setupUserActions();
+    void setupDateTimeActions();
     void activateSelected();
     void activateSelectedUser();
+    void saveDateTime();
+    void moveDateTimeField(int direction);
+    void adjustDateTimeField(int direction);
     void cancel();
     void syncCursor();
     void syncUserCursor();
+    void syncDateTimeCursor();
     void announceCurrentSelection(bool forceRepeat = false, bool forceContext = false);
     void currentAccessibilityParts(std::string& context,
                                    std::string& position,
@@ -100,12 +117,15 @@ private:
     void syncUserOpacities();
     nxui::Rect userAvatarRect(int index) const;
     void renderUserContent(nxui::Renderer& ren, float alpha);
+    void renderDateTimeContent(nxui::Renderer& ren, float alpha);
+    nxui::Rect dateTimeFieldRect(int index) const;
 
     nxui::Rect panelRect() const;
 
     enum class DialogMode {
         Buttons,
         UserSelect,
+        DateTime,
     };
 
     struct UserEntry {
@@ -146,6 +166,9 @@ private:
 
     CancelCallback m_onCancel;
     UserSelectCallback m_onUserSelect;
+    DateTimeSaveCallback m_onDateTimeSave;
+    DateTimeValue m_dateTime{};
+    int m_dateTimeField = 0;
     VoidCb         m_navSfxCb;
     VoidCb         m_activateSfxCb;
     VoidCb         m_closeSfxCb;

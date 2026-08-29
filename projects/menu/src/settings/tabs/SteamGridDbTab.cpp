@@ -64,12 +64,6 @@ SettingsScreen::Tab settings::tabs::SteamGridDbTab::build(SettingsScreen& screen
     };
     tab.items.push_back(std::move(scan));
 
-    SettingItem result;
-    result.type = ItemType::Info;
-    result.label = i18n.tr("settings.steamgriddb.results", "Results");
-    result.infoText = i18n.tr("settings.steamgriddb.no_results", "No scan completed yet");
-    tab.items.push_back(std::move(result));
-
     tab.onUpdate = [](SettingsScreen::Tab& current, TabbedOverlayScreen& base) {
         auto& owner = static_cast<SettingsScreen&>(base);
         if (current.items.size() < 6) return;
@@ -78,26 +72,6 @@ SettingsScreen::Tab settings::tabs::SteamGridDbTab::build(SettingsScreen& screen
         key.description = owner.m_steamGridDbHasApiKey
             ? nxui::I18n::instance().tr("settings.steamgriddb.api_key_set", "Configured (hidden)")
             : nxui::I18n::instance().tr("settings.steamgriddb.api_key_missing", "Not configured");
-
-        auto& progress = current.items[4];
-        if (owner.m_steamGridDbRunning && owner.m_steamGridDbTotal > 0) {
-            progress.floatVal = std::clamp(
-                static_cast<float>(owner.m_steamGridDbCompleted)
-                    / static_cast<float>(owner.m_steamGridDbTotal), 0.f, 1.f);
-            progress.description = owner.m_steamGridDbCurrent.empty()
-                ? owner.m_steamGridDbMessage : owner.m_steamGridDbCurrent;
-        } else if (owner.m_steamGridDbFinished) {
-            progress.floatVal = 1.f;
-            progress.description = owner.m_steamGridDbMessage;
-        } else {
-            progress.floatVal = 0.f;
-        }
-
-        auto& result = current.items[5];
-        if (owner.m_steamGridDbTotal > 0) {
-            result.infoText = std::to_string(owner.m_steamGridDbMatched) + " found, "
-                            + std::to_string(owner.m_steamGridDbFailed) + " missing";
-        }
     };
 
     return tab;

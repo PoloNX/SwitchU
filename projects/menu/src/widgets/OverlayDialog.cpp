@@ -23,6 +23,17 @@ static nxui::Rect scaledRect(const nxui::Rect& rect, float scale) {
     return scaled;
 }
 
+static bool dateTimeLeapYear(int year) {
+    return (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+}
+
+static int dateTimeDaysInMonth(int year, int month) {
+    static constexpr int days[] =
+        {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+    month = std::clamp(month, 1, 12);
+    return days[month - 1] + ((month == 2 && dateTimeLeapYear(year)) ? 1 : 0);
+}
+
 } // namespace
 
 
@@ -248,6 +259,34 @@ void OverlayDialog::buildUserSelect() {
     m_userAvatarRects.resize(m_users.size());
 }
 
+void OverlayDialog::buildDateTimeEditor() {
+    m_mode = DialogMode::DateTime;
+    clearChildren();
+    m_btnWidgets.clear();
+    m_buttonFocus.clear();
+    m_titleLabel.reset();
+    m_messageLabel.reset();
+    m_buttonRow.reset();
+
+    m_panelW = 760.f;
+    m_panelH = 300.f;
+    setAxis(nxui::Axis::COLUMN);
+    setRect(panelRect());
+    setCornerRadius(kPanelRadius);
+    setPadding(0.f);
+    setBackingEnabled(false);
+    setLiquidGlassEnabled(false);
+    setBlurEnabled(false);
+    setWireframeEnabled(false);
+    setPanelOpacity(0.94f);
+    if (m_theme) {
+        setBaseColor(m_theme->panelBase.withAlpha(
+            m_theme->mode == nxui::ThemeMode::Dark ? 0.95f : 0.96f));
+        setBorderColor(m_theme->panelBorder.withAlpha(0.42f));
+        setHighlightColor(m_theme->panelHighlight.withAlpha(0.10f));
+    }
+}
+
 void OverlayDialog::animateButtonFocus(float duration, nxui::EasingFunc easing) {
     int n = (int)m_buttonFocus.size();
     for (int i = 0; i < n; ++i) {
@@ -283,6 +322,29 @@ void OverlayDialog::currentAccessibilityParts(std::string& context,
             position = std::to_string(m_selected + 1) + " sur " + std::to_string((int)m_users.size());
         if (m_accessibilitySpeakHints)
             summary += ". Gauche et droite pour changer de profil. A pour valider. B pour annuler.";
+        return;
+    }
+
+    if (m_mode == DialogMode::DateTime) {
+        auto& i18n = nxui::I18n::instance();
+        const std::string labels[5] = {
+            i18n.tr("settings.system.year", "Year"),
+            i18n.tr("settings.system.month", "Month"),
+            i18n.tr("settings.system.day", "Day"),
+            i18n.tr("settings.system.hour", "Hour"),
+            i18n.tr("settings.system.minute", "Minute"),
+        };
+        const int values[5] = {m_dateTime.year, m_dateTime.month, m_dateTime.day,
+                               m_dateTime.hour, m_dateTime.minute};
+        summary = labels[m_dateTimeField] + " " +
+                  std::to_string(values[m_dateTimeField]);
+        if (m_accessibilitySpeakPosition)
+            position = std::to_string(m_dateTimeField + 1) + " sur 5";
+        if (m_accessibilitySpeakHints)
+            summary += ". " + i18n.tr(
+                "settings.system.manual_time_popup_hint",
+                "Left/right selects a field. Up/down changes its value.");
+        forceRepeat = true;
         return;
     }
 
@@ -426,6 +488,51 @@ void OverlayDialog::showUserSelect(UserSelectCallback onSelect, CancelCallback o
     announceCurrentSelection();
 }
 
+void OverlayDialog::showDateTimeEditor(const DateTimeValue& initial,
+                                       DateTimeSaveCallback onSave,
+                                       CancelCallback onCancel) {
+    auto& i18n = nxui::I18n::instance();
+    m_title = i18n.tr("settings.system.manual_time", "Set Date and Time");
+    m_message = i18n.tr(
+        "settings.system.manual_time_popup_hint",
+        "Left/right selects a field. Up/down changes its value.");
+    m_buttons.clear();
+    m_dateTime = initial;
+    m_dateTime.year = std::clamp(m_dateTime.year, 2000, 2099);
+    m_dateTime.month = std::clamp(m_dateTime.month, 1, 12);
+    m_dateTime.day = std::clamp(
+        m_dateTime.day, 1, dateTimeDaysInMonth(m_dateTime.year, m_dateTime.month));
+    m_dateTime.hour = std::clamp(m_dateTime.hour, 0, 23);
+    m_dateTime.minute = std::clamp(m_dateTime.minute, 0, 59);
+    m_dateTimeField = 0;
+    m_onDateTimeSave = std::move(onSave);
+    m_onCancel = std::move(onCancel);
+
+    m_active = true;
+    m_animatingOut = false;
+    m_backdropCacheValid = false;
+    m_cachedPreBlurRadius = -1.f;
+    m_cachedBlurIterations = -1;
+    buildDateTimeEditor();
+
+    m_overlayAlpha.setImmediate(0.f);
+    m_panelScale.setImmediate(0.92f);
+    m_contentReveal.setImmediate(0.f);
+    m_overlayAlpha.set(1.f, 0.24f, nxui::Easing::outCubic);
+    m_panelScale.set(1.f, 0.28f, nxui::Easing::outCubic);
+    m_contentReveal.set(1.f, 0.34f, nxui::Easing::outCubic);
+
+    setFocusable(true);
+    setVisible(true);
+    setupDateTimeActions();
+    m_touchHitButton = -1;
+    m_touchHitUser = -1;
+    m_touchOnSelected = false;
+    m_ignoreInitialTouchRelease = true;
+    m_pendingInitialAccessibilityFrames = 2;
+    syncDateTimeCursor();
+}
+
 void OverlayDialog::hide() {
     if (!m_active || m_animatingOut) return;
 
@@ -487,6 +594,64 @@ void OverlayDialog::setupUserActions() {
     });
 }
 
+void OverlayDialog::setupDateTimeActions() {
+    clearActions();
+    addDirectionAction(nxui::FocusDirection::LEFT,
+                       [this]() { moveDateTimeField(-1); });
+    addDirectionAction(nxui::FocusDirection::RIGHT,
+                       [this]() { moveDateTimeField(1); });
+    addDirectionAction(nxui::FocusDirection::UP,
+                       [this]() { adjustDateTimeField(1); });
+    addDirectionAction(nxui::FocusDirection::DOWN,
+                       [this]() { adjustDateTimeField(-1); });
+    addAction(static_cast<uint64_t>(nxui::Button::A), [this]() {
+        if (m_active && !m_animatingOut) saveDateTime();
+    });
+    addAction(static_cast<uint64_t>(nxui::Button::B), [this]() {
+        if (m_active && !m_animatingOut) cancel();
+    });
+}
+
+void OverlayDialog::moveDateTimeField(int direction) {
+    if (!m_active || m_animatingOut || direction == 0) return;
+    m_dateTimeField = (m_dateTimeField + (direction > 0 ? 1 : 4)) % 5;
+    syncDateTimeCursor();
+    if (m_navSfxCb) m_navSfxCb();
+    announceCurrentSelection(true, false);
+}
+
+void OverlayDialog::adjustDateTimeField(int direction) {
+    if (!m_active || m_animatingOut || direction == 0) return;
+    const auto wrap = [direction](int value, int minimum, int maximum) {
+        value += direction > 0 ? 1 : -1;
+        if (value > maximum) value = minimum;
+        if (value < minimum) value = maximum;
+        return value;
+    };
+    switch (m_dateTimeField) {
+        case 0: m_dateTime.year = wrap(m_dateTime.year, 2000, 2099); break;
+        case 1: m_dateTime.month = wrap(m_dateTime.month, 1, 12); break;
+        case 2:
+            m_dateTime.day = wrap(
+                m_dateTime.day, 1,
+                dateTimeDaysInMonth(m_dateTime.year, m_dateTime.month));
+            break;
+        case 3: m_dateTime.hour = wrap(m_dateTime.hour, 0, 23); break;
+        case 4: m_dateTime.minute = wrap(m_dateTime.minute, 0, 59); break;
+    }
+    m_dateTime.day = std::min(
+        m_dateTime.day, dateTimeDaysInMonth(m_dateTime.year, m_dateTime.month));
+    if (m_navSfxCb) m_navSfxCb();
+    announceCurrentSelection(true, false);
+}
+
+void OverlayDialog::saveDateTime() {
+    const bool saved = !m_onDateTimeSave || m_onDateTimeSave(m_dateTime);
+    if (!saved) return;
+    if (m_activateSfxCb) m_activateSfxCb();
+    hide();
+}
+
 void OverlayDialog::activateSelected() {
     if (m_selected < 0 || m_selected >= (int)m_buttons.size()) return;
 
@@ -516,6 +681,43 @@ void OverlayDialog::cancel() {
 
 void OverlayDialog::handleTouch(nxui::Input& input) {
     if (!m_active || m_animatingOut) return;
+
+    if (m_mode == DialogMode::DateTime) {
+        if (input.touchDown()) {
+            if (m_ignoreInitialTouchRelease)
+                m_ignoreInitialTouchRelease = false;
+            m_touchHitButton = -1;
+            for (int i = 0; i < 5; ++i) {
+                if (dateTimeFieldRect(i).expanded(10.f).contains(
+                        input.touchX(), input.touchY())) {
+                    m_touchHitButton = i;
+                    break;
+                }
+            }
+        }
+        if (input.touchUp()) {
+            if (m_ignoreInitialTouchRelease) {
+                m_ignoreInitialTouchRelease = false;
+                m_touchHitButton = -1;
+                return;
+            }
+            const float dx = std::abs(input.touchDeltaX());
+            const float dy = std::abs(input.touchDeltaY());
+            if (dx < 20.f && dy < 20.f) {
+                if (m_touchHitButton >= 0) {
+                    m_dateTimeField = m_touchHitButton;
+                    syncDateTimeCursor();
+                    if (m_navSfxCb) m_navSfxCb();
+                    announceCurrentSelection(true, false);
+                } else if (!scaledRect(rect(), m_panelScale.value()).contains(
+                               input.touchX(), input.touchY())) {
+                    cancel();
+                }
+            }
+            m_touchHitButton = -1;
+        }
+        return;
+    }
 
     if (m_mode == DialogMode::UserSelect) {
         const bool dpadLeft = input.isDown(nxui::Button::DLeft) ||
@@ -658,6 +860,10 @@ void OverlayDialog::handleTouch(nxui::Input& input) {
 
 
 void OverlayDialog::syncCursor() {
+    if (m_mode == DialogMode::DateTime) {
+        syncDateTimeCursor();
+        return;
+    }
     if (m_mode == DialogMode::UserSelect) {
         syncUserCursor();
         return;
@@ -669,6 +875,14 @@ void OverlayDialog::syncCursor() {
     }
     if (m_theme)
         m_cursor.setColor(m_theme->cursorNormal);
+    m_cursor.setOpacity(m_overlayAlpha.value());
+}
+
+void OverlayDialog::syncDateTimeCursor() {
+    const nxui::Rect field = dateTimeFieldRect(m_dateTimeField);
+    m_cursor.setCornerRadius(17.f * m_panelScale.value());
+    m_cursor.moveTo(field.expanded(4.f), 17.f * m_panelScale.value(), 0.14f);
+    if (m_theme) m_cursor.setColor(m_theme->cursorNormal);
     m_cursor.setOpacity(m_overlayAlpha.value());
 }
 
@@ -746,6 +960,116 @@ nxui::Rect OverlayDialog::userAvatarRect(int index) const {
         kUserAvatarSize * sc,
         kUserAvatarSize * sc,
     };
+}
+
+nxui::Rect OverlayDialog::dateTimeFieldRect(int index) const {
+    if (index < 0 || index >= 5) return {};
+    const nxui::Rect panel = scaledRect(panelRect(), m_panelScale.value());
+    const float sc = m_panelScale.value();
+    static constexpr float widths[5] = {132.f, 86.f, 86.f, 86.f, 86.f};
+    constexpr float gap = 20.f;
+    float totalWidth = gap * 4.f;
+    for (float width : widths) totalWidth += width;
+    float x = panel.x + (panel.width - totalWidth * sc) * 0.5f;
+    for (int i = 0; i < index; ++i)
+        x += (widths[i] + gap) * sc;
+    return {x, panel.y + 112.f * sc, widths[index] * sc, 72.f * sc};
+}
+
+void OverlayDialog::renderDateTimeContent(nxui::Renderer& ren, float alpha) {
+    if (alpha <= 0.01f) return;
+    const nxui::Rect panel = scaledRect(panelRect(), m_panelScale.value());
+    const float sc = m_panelScale.value();
+    const float contentAlpha = alpha * m_contentReveal.value();
+    nxui::Font* bodyFont = m_smallFont ? m_smallFont : m_font;
+    const nxui::Color primary = m_theme ? m_theme->textPrimary : nxui::Color::white();
+    const nxui::Color secondary = m_theme ? m_theme->textSecondary
+        : nxui::Color(0.82f, 0.82f, 0.9f, 1.f);
+    const nxui::Color accent = m_theme ? m_theme->cursorNormal : nxui::Color::white();
+    auto& i18n = nxui::I18n::instance();
+
+    if (m_font) {
+        const nxui::Vec2 titleSize = m_font->measure(m_title);
+        ren.drawText(m_title,
+            {panel.x + (panel.width - titleSize.x * 0.92f * sc) * 0.5f,
+             panel.y + 28.f * sc},
+            m_font, primary.withAlpha(contentAlpha), 0.92f * sc);
+    }
+    if (bodyFont) {
+        const nxui::Vec2 hintSize = bodyFont->measure(m_message);
+        const float hintScale = std::min(0.72f * sc,
+            hintSize.x > 0.f ? (panel.width - 80.f * sc) / hintSize.x : 0.72f * sc);
+        ren.drawText(m_message,
+            {panel.x + (panel.width - hintSize.x * hintScale) * 0.5f,
+             panel.y + 70.f * sc},
+            bodyFont, secondary.withAlpha(contentAlpha), hintScale);
+    }
+
+    const std::string labels[5] = {
+        i18n.tr("settings.system.year", "Year"),
+        i18n.tr("settings.system.month", "Month"),
+        i18n.tr("settings.system.day", "Day"),
+        i18n.tr("settings.system.hour", "Hour"),
+        i18n.tr("settings.system.minute", "Minute"),
+    };
+    char values[5][8]{};
+    std::snprintf(values[0], sizeof(values[0]), "%04d", m_dateTime.year);
+    std::snprintf(values[1], sizeof(values[1]), "%02d", m_dateTime.month);
+    std::snprintf(values[2], sizeof(values[2]), "%02d", m_dateTime.day);
+    std::snprintf(values[3], sizeof(values[3]), "%02d", m_dateTime.hour);
+    std::snprintf(values[4], sizeof(values[4]), "%02d", m_dateTime.minute);
+
+    for (int i = 0; i < 5; ++i) {
+        const nxui::Rect field = dateTimeFieldRect(i);
+        const bool selected = i == m_dateTimeField;
+        const nxui::Color base = m_theme
+            ? m_theme->panelBase.withAlpha(selected ? 0.98f : 0.88f)
+            : nxui::Color(0.15f, 0.17f, 0.23f, selected ? 0.98f : 0.88f);
+        const nxui::Color border = selected ? accent :
+            (m_theme ? m_theme->panelBorder : nxui::Color::white());
+        ren.drawFrostedInset(field, base, border.withAlpha(selected ? 0.72f : 0.28f),
+                            primary.withAlpha(selected ? 0.14f : 0.06f),
+                            17.f * sc, contentAlpha);
+        if (bodyFont) {
+            const nxui::Vec2 labelSize = bodyFont->measure(labels[i]);
+            const float labelScale = 0.60f * sc;
+            ren.drawText(labels[i],
+                {field.x + (field.width - labelSize.x * labelScale) * 0.5f,
+                 field.y - 23.f * sc}, bodyFont,
+                secondary.withAlpha(contentAlpha), labelScale);
+        }
+        if (m_font) {
+            const nxui::Vec2 valueSize = m_font->measure(values[i]);
+            const float valueScale = 1.05f * sc;
+            ren.drawText(values[i],
+                {field.x + (field.width - valueSize.x * valueScale) * 0.5f,
+                 field.y + (field.height - valueSize.y * valueScale) * 0.5f},
+                m_font, primary.withAlpha(contentAlpha), valueScale);
+        }
+        if (selected) {
+            const nxui::Vec2 center{field.x + field.width * 0.5f, field.y};
+            ren.drawTriangle({center.x, center.y - 15.f * sc},
+                             {center.x - 6.f * sc, center.y - 7.f * sc},
+                             {center.x + 6.f * sc, center.y - 7.f * sc},
+                             accent.withAlpha(contentAlpha));
+            const float bottom = field.bottom();
+            ren.drawTriangle({center.x, bottom + 15.f * sc},
+                             {center.x - 6.f * sc, bottom + 7.f * sc},
+                             {center.x + 6.f * sc, bottom + 7.f * sc},
+                             accent.withAlpha(contentAlpha));
+        }
+    }
+
+    if (bodyFont) {
+        const std::string footer = i18n.tr(
+            "settings.system.manual_time_footer", "A Confirm   ·   B Cancel");
+        const nxui::Vec2 footerSize = bodyFont->measure(footer);
+        const float footerScale = 0.68f * sc;
+        ren.drawText(footer,
+            {panel.x + (panel.width - footerSize.x * footerScale) * 0.5f,
+             panel.bottom() - 42.f * sc}, bodyFont,
+            secondary.withAlpha(contentAlpha), footerScale);
+    }
 }
 
 void OverlayDialog::renderUserContent(nxui::Renderer& ren, float alpha) {
@@ -879,6 +1203,8 @@ void OverlayDialog::render(nxui::Renderer& ren) {
 
     if (m_mode == DialogMode::UserSelect) {
         renderUserContent(ren, alpha);
+    } else if (m_mode == DialogMode::DateTime) {
+        renderDateTimeContent(ren, alpha);
     } else {
         for (auto& c : children())
             c->render(ren);

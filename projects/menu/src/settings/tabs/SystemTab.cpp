@@ -1,4 +1,6 @@
 #include "TabBuilders.hpp"
+#include "core/DebugLog.hpp"
+#include "smi_commands.hpp"
 #include <nxui/core/I18n.hpp>
 #include <switch.h>
 #include <algorithm>
@@ -55,6 +57,133 @@ std::vector<ProfileOption> listProfileOptions() {
         out.push_back(std::move(option));
     }
     return out;
+}
+
+bool closeTimestamp(u64 lhs, u64 rhs, u64 toleranceSeconds = 120) {
+    return lhs > rhs ? (lhs - rhs) <= toleranceSeconds
+                     : (rhs - lhs) <= toleranceSeconds;
+}
+
+bool currentDateTimeValue(TabbedOverlayScreen::DateTimeEditorValue& value) {
+    u64 timestamp = 0;
+    TimeCalendarTime calendar{};
+    TimeCalendarAdditionalInfo additional{};
+    if (R_FAILED(timeGetCurrentTime(TimeType_UserSystemClock, &timestamp)) ||
+        R_FAILED(timeToCalendarTimeWithMyRule(timestamp, &calendar, &additional)))
+        return false;
+    value.year = calendar.year;
+    value.month = calendar.month;
+    value.day = calendar.day;
+    value.hour = calendar.hour;
+    value.minute = calendar.minute;
+    return true;
+}
+
+bool setManualDateTime(
+    SettingsScreen& screen,
+    const TabbedOverlayScreen::DateTimeEditorValue& value) {
+    auto& i18n = nxui::I18n::instance();
+    switchu::smi::ManualDateTimeArgs daemonArgs{};
+    daemonArgs.year = static_cast<uint32_t>(value.year);
+    daemonArgs.month = static_cast<uint32_t>(value.month);
+    daemonArgs.day = static_cast<uint32_t>(value.day);
+    daemonArgs.hour = static_cast<uint32_t>(value.hour);
+    daemonArgs.minute = static_cast<uint32_t>(value.minute);
+    Result daemonRc = switchu::menu::smi_cmd::setManualDateTime(daemonArgs);
+    DebugLog::log("[settings-time] daemon SetManualDateTime rc=0x%X", daemonRc);
+    if (R_SUCCEEDED(daemonRc)) {
+        screen.requestToast(i18n.tr(
+            "settings.system.manual_time_saved", "Date and time updated."));
+        return true;
+    }
+    if (daemonRc == switchu::smi::kManualDateTimeRestartRequiredResult) {
+        screen.requestToast(i18n.tr(
+            "settings.system.manual_time_saved_reboot_required",
+            "Date and time saved. Restart to apply it."));
+        return true;
+    }
+
+    TimeCalendarTime calendar{};
+    calendar.year = static_cast<u16>(value.year);
+    calendar.month = static_cast<u8>(value.month);
+    calendar.day = static_cast<u8>(value.day);
+    calendar.hour = static_cast<u8>(value.hour);
+    calendar.minute = static_cast<u8>(value.minute);
+    calendar.second = 0;
+    u64 timestamps[2]{};
+    s32 timestampCount = 0;
+    Result rc = timeToPosixTimeWithMyRule(
+        &calendar, timestamps, 2, &timestampCount);
+    DebugLog::log(
+        "[settings-time] commit requested %04d-%02d-%02d %02d:%02d convert rc=0x%X count=%d posix=%llu",
+        value.year, value.month, value.day, value.hour, value.minute,
+        rc, timestampCount,
+        (unsigned long long)(timestampCount > 0 ? timestamps[0] : 0));
+    if (R_SUCCEEDED(rc) && timestampCount <= 0)
+        rc = MAKERESULT(Module_Libnx, 902);
+    if (R_SUCCEEDED(rc) && timestampCount > 0) {
+        rc = timeSetCurrentTime(TimeType_UserSystemClock, timestamps[0]);
+        DebugLog::log("[settings-time] timeSetCurrentTime(User) rc=0x%X", rc);
+        if (R_SUCCEEDED(rc)) {
+            u64 confirmed = 0;
+            const Result confirmRc =
+                timeGetCurrentTime(TimeType_UserSystemClock, &confirmed);
+            DebugLog::log(
+                "[settings-time] direct confirm rc=0x%X posix=%llu",
+                confirmRc, (unsigned long long)confirmed);
+            if (R_FAILED(confirmRc) || !closeTimestamp(confirmed, timestamps[0]))
+                rc = R_FAILED(confirmRc) ? confirmRc : MAKERESULT(Module_Libnx, 903);
+        }
+    }
+    if (R_FAILED(rc) && timestampCount > 0) {
+        TimeSteadyClockTimePoint steady{};
+        const Result steadyRc = timeGetStandardSteadyClockTimePoint(&steady);
+        DebugLog::log(
+            "[settings-time] fallback steady rc=0x%X point=%lld",
+            steadyRc, (long long)steady.time_point);
+        if (R_SUCCEEDED(steadyRc)) {
+            TimeSystemClockContext context{};
+            context.offset = static_cast<s64>(timestamps[0]) - steady.time_point;
+            context.timestamp = steady;
+            const Result ctxRc = setsysSetUserSystemClockContext(&context);
+            DebugLog::log(
+                "[settings-time] setsysSetUserSystemClockContext rc=0x%X offset=%lld",
+                ctxRc, (long long)context.offset);
+            rc = ctxRc;
+        } else {
+            rc = steadyRc;
+        }
+    }
+    if (R_SUCCEEDED(rc) && timestampCount > 0) {
+        u64 confirmed = 0;
+        const Result confirmRc =
+            timeGetCurrentTime(TimeType_UserSystemClock, &confirmed);
+        DebugLog::log(
+            "[settings-time] commit success confirm rc=0x%X posix=%llu",
+            confirmRc, (unsigned long long)confirmed);
+        if (R_FAILED(confirmRc) || !closeTimestamp(confirmed, timestamps[0])) {
+            rc = R_FAILED(confirmRc) ? confirmRc : MAKERESULT(Module_Libnx, 904);
+            DebugLog::log(
+                "[settings-time] commit verification failed rc=0x%X expected=%llu actual=%llu",
+                rc, (unsigned long long)timestamps[0],
+                (unsigned long long)confirmed);
+        } else {
+            screen.requestToast(i18n.tr(
+                "settings.system.manual_time_saved", "Date and time updated."));
+            return true;
+        }
+    }
+    DebugLog::log(
+        "[settings-time] commit failed rc=0x%X daemonRc=0x%X count=%d",
+        rc, daemonRc, timestampCount);
+    const std::string failureText = i18n.tr(
+        "settings.system.time_change_failed",
+        "The date and time setting could not be changed.");
+    char fallback[128];
+    std::snprintf(fallback, sizeof(fallback),
+                  "%s (0x%X)", failureText.c_str(), rc);
+    screen.requestToast(fallback);
+    return false;
 }
 
 } // namespace
@@ -131,6 +260,64 @@ SettingsScreen::Tab settings::tabs::SystemTab::build(SettingsScreen& screen) {
             it.infoText = tz.name;
         else
             it.infoText = i18n.tr("common.na", "N/A");
+        t.items.push_back(std::move(it));
+    }
+
+    {
+        bool automatic = true;
+        const Result stateResult =
+            setsysIsUserSystemClockAutomaticCorrectionEnabled(&automatic);
+        SettingItem it;
+        it.label = i18n.tr("settings.system.internet_time", "Synchronize Clock via Internet");
+        it.description = i18n.tr(
+            "settings.system.internet_time_desc",
+            "Automatically correct the console clock using network time.");
+        it.type = ItemType::Toggle;
+        it.boolVal = R_SUCCEEDED(stateResult) ? automatic : true;
+        it.anim01 = it.boolVal ? 1.f : 0.f;
+        it.onChange = [&screen](SettingItem& self) {
+            const Result rc =
+                setsysSetUserSystemClockAutomaticCorrectionEnabled(self.boolVal);
+            if (R_FAILED(rc)) {
+                self.boolVal = !self.boolVal;
+                screen.requestToast(nxui::I18n::instance().tr(
+                    "settings.system.time_change_failed",
+                    "The date and time setting could not be changed."));
+            }
+        };
+        t.items.push_back(std::move(it));
+    }
+
+    {
+        SettingItem it;
+        it.label = i18n.tr("settings.system.manual_time", "Set Date and Time");
+        it.description = i18n.tr(
+            "settings.system.manual_time_desc",
+            "Available when Internet clock synchronization is disabled.");
+        it.type = ItemType::Action;
+        it.buttonLabel = i18n.tr("settings.system.manual_time_button", "Change");
+        it.onChange = [&screen](SettingItem&) {
+            bool automatic = true;
+            const Result stateRc =
+                setsysIsUserSystemClockAutomaticCorrectionEnabled(&automatic);
+            if (R_FAILED(stateRc) || automatic) {
+                screen.requestToast(nxui::I18n::instance().tr(
+                    "settings.system.disable_internet_time_first",
+                    "Disable Internet clock synchronization first."));
+                return;
+            }
+            TabbedOverlayScreen::DateTimeEditorValue initial;
+            if (!currentDateTimeValue(initial)) {
+                screen.requestToast(nxui::I18n::instance().tr(
+                    "settings.system.time_change_failed",
+                    "The date and time setting could not be changed."));
+                return;
+            }
+            screen.requestDateTimeEditor(
+                initial, [&screen](const auto& value) {
+                    return setManualDateTime(screen, value);
+                });
+        };
         t.items.push_back(std::move(it));
     }
 

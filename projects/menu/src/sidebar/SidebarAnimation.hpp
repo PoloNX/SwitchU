@@ -4,16 +4,32 @@
 #include <nxui/core/Renderer.hpp>
 #include <vector>
 #include <string>
+#include <cstddef>
 
 class SidebarAnimation {
 public:
-    bool load(nxui::GpuDevice& gpu, nxui::Renderer& ren, const std::string& webpPath);
+    bool load(nxui::GpuDevice& gpu, nxui::Renderer& ren,
+              const std::string& webpPath,
+              int maximumSide = 0,
+              std::size_t maximumGpuBytes = 0);
 
     void update(float dt, bool focused);
 
     nxui::Texture* currentFrame();
 
     void reset();
+
+    // Drop the decoded/uploaded frames. reset() only rewinds playback and is
+    // intentionally kept separate because sidebar animations use it when they
+    // merely lose focus.
+    void clear();
+
+    // GPU upload half of the asynchronous widget-animation pipeline. Pixel
+    // decoding happens on a worker; at most a few finished frames are appended
+    // from the render thread on each update.
+    bool appendFrame(nxui::GpuDevice& gpu, nxui::Renderer& ren,
+                     const std::uint8_t* rgba, int width, int height,
+                     int durationMs);
 
     bool hasFrames() const { return !m_frames.empty(); }
 

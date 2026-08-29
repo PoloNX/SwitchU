@@ -1,18 +1,149 @@
 #include "GlossyIcon.hpp"
 #include "FolderPalette.hpp"
 #include "BatteryDrawing.hpp"
+#include "core/DebugLog.hpp"
 #include <nxui/core/Renderer.hpp>
 #include <nxui/core/Font.hpp>
+#include <nxui/core/ThreadPool.hpp>
+#include <nxui/third_party/stb/stb_image.h>
 #include <algorithm>
+#include <atomic>
 #include <cctype>
+#include <chrono>
 #include <ctime>
 #include <cmath>
 #include <filesystem>
+#include <fstream>
 #ifdef SWITCHU_MENU
 #include <switch.h>
 #endif
 
+struct WidgetGifDecodeState {
+    std::vector<std::vector<std::uint8_t>> frames;
+    std::vector<int> durationsMs;
+    int width = 0;
+    int height = 0;
+    long decodeMilliseconds = 0;
+    std::atomic<bool> cancelled{false};
+};
+
 namespace {
+
+constexpr int kWidgetAnimationMaximumSide = 192;
+constexpr std::size_t kWidgetAnimationGpuBytes = 1u * 1024u * 1024u;
+
+bool hasGifExtension(std::string path) {
+    std::transform(path.begin(), path.end(), path.begin(),
+                   [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    return path.ends_with(".gif");
+}
+
+nxui::Rect centeredCoverSource(const nxui::Texture& texture,
+                               const nxui::Rect& destination) {
+    const float sourceWidth = static_cast<float>(texture.width());
+    const float sourceHeight = static_cast<float>(texture.height());
+    if (sourceWidth <= 0.f || sourceHeight <= 0.f ||
+        destination.width <= 0.f || destination.height <= 0.f)
+        return {0.f, 0.f, sourceWidth, sourceHeight};
+
+    const float sourceAspect = sourceWidth / sourceHeight;
+    const float targetAspect = destination.width / destination.height;
+    if (sourceAspect > targetAspect) {
+        const float croppedWidth = sourceHeight * targetAspect;
+        return {(sourceWidth - croppedWidth) * 0.5f, 0.f,
+                croppedWidth, sourceHeight};
+    }
+    const float croppedHeight = sourceWidth / targetAspect;
+    return {0.f, (sourceHeight - croppedHeight) * 0.5f,
+            sourceWidth, croppedHeight};
+}
+
+void decodeWidgetGif(const std::string& path,
+                     const std::shared_ptr<WidgetGifDecodeState>& state) {
+    if (!state || state->cancelled.load()) return;
+    const auto started = std::chrono::steady_clock::now();
+    std::ifstream input(path, std::ios::binary | std::ios::ate);
+    if (!input.is_open()) return;
+    const std::streamoff size = input.tellg();
+    if (size <= 0 || size > static_cast<std::streamoff>(64u * 1024u * 1024u)) return;
+    input.seekg(0, std::ios::beg);
+    std::vector<std::uint8_t> bytes(static_cast<std::size_t>(size));
+    if (!input.read(reinterpret_cast<char*>(bytes.data()),
+                    static_cast<std::streamsize>(bytes.size())) ||
+        state->cancelled.load())
+        return;
+
+    int* delays = nullptr;
+    int width = 0;
+    int height = 0;
+    int frameCount = 0;
+    int channels = 0;
+    stbi_uc* decoded = stbi_load_gif_from_memory(
+        bytes.data(), static_cast<int>(bytes.size()), &delays,
+        &width, &height, &frameCount, &channels, 4);
+    if (!decoded || width <= 0 || height <= 0 || frameCount <= 0) {
+        if (decoded) stbi_image_free(decoded);
+        if (delays) stbi_image_free(delays);
+        return;
+    }
+
+    int outputWidth = width;
+    int outputHeight = height;
+    if (outputWidth > kWidgetAnimationMaximumSide ||
+        outputHeight > kWidgetAnimationMaximumSide) {
+        const float scale = std::min(
+            static_cast<float>(kWidgetAnimationMaximumSide) / outputWidth,
+            static_cast<float>(kWidgetAnimationMaximumSide) / outputHeight);
+        outputWidth = std::max(1, static_cast<int>(std::round(outputWidth * scale)));
+        outputHeight = std::max(1, static_cast<int>(std::round(outputHeight * scale)));
+    }
+    const std::size_t bytesPerFrame = static_cast<std::size_t>(outputWidth) *
+        outputHeight * 4u;
+    const int selectedFrameCount = std::min(frameCount, static_cast<int>(
+        std::max<std::size_t>(1u, kWidgetAnimationGpuBytes /
+            std::max<std::size_t>(1u, bytesPerFrame))));
+
+    state->width = outputWidth;
+    state->height = outputHeight;
+    state->frames.reserve(static_cast<std::size_t>(selectedFrameCount));
+    state->durationsMs.reserve(static_cast<std::size_t>(selectedFrameCount));
+    for (int frame = 0; frame < selectedFrameCount && !state->cancelled.load(); ++frame) {
+        const int sourceFrame = frame * frameCount / selectedFrameCount;
+        const int nextSourceFrame = (frame + 1) * frameCount / selectedFrameCount;
+        const auto* source = decoded +
+            static_cast<std::size_t>(sourceFrame) * width * height * 4u;
+        std::vector<std::uint8_t> pixels(bytesPerFrame);
+        if (outputWidth == width && outputHeight == height) {
+            std::copy_n(source, bytesPerFrame, pixels.data());
+        } else {
+            for (int y = 0; y < outputHeight; ++y) {
+                const int sourceY = y * height / outputHeight;
+                for (int x = 0; x < outputWidth; ++x) {
+                    const int sourceX = x * width / outputWidth;
+                    const auto* pixel = source +
+                        (static_cast<std::size_t>(sourceY) * width + sourceX) * 4u;
+                    auto* target = pixels.data() +
+                        (static_cast<std::size_t>(y) * outputWidth + x) * 4u;
+                    std::copy_n(pixel, 4, target);
+                }
+            }
+        }
+        int duration = 0;
+        for (int sourceIndex = sourceFrame;
+             sourceIndex < nextSourceFrame; ++sourceIndex)
+            duration += delays ? delays[sourceIndex] : 100;
+        state->frames.push_back(std::move(pixels));
+        state->durationsMs.push_back(std::max(20, duration));
+    }
+    stbi_image_free(decoded);
+    if (delays) stbi_image_free(delays);
+    if (state->cancelled.load()) {
+        state->frames.clear();
+        state->durationsMs.clear();
+    }
+    state->decodeMilliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - started).count();
+}
 
 void drawBatteryRing(nxui::Renderer& ren, const nxui::Vec2& center,
                      float radius, int percent, bool charging,
@@ -128,32 +259,160 @@ GlossyIcon::GlossyIcon() {
     setBlurEnabled(false);
 }
 
+GlossyIcon::~GlossyIcon() {
+    if (m_widgetGifDecode)
+        m_widgetGifDecode->cancelled.store(true);
+}
+
 void GlossyIcon::setWidgetData(switchu::widgets::WidgetType type,
                                int columns, int rows,
                                std::string primary, std::string secondary,
                                const std::string& assetPath,
-                               nxui::GpuDevice* gpu, nxui::Renderer* renderer) {
+                               nxui::GpuDevice* gpu, nxui::Renderer* renderer,
+                               bool deferAssetLoad) {
     m_widgetType = type;
     m_widgetColumns = std::max(1, columns);
     m_widgetRows = std::max(1, rows);
     m_widgetPrimary = std::move(primary);
     m_widgetSecondary = std::move(secondary);
+    if (m_widgetGifDecode)
+        m_widgetGifDecode->cancelled.store(true);
+    m_widgetGifDecode.reset();
+    m_widgetGifDecodeFuture = {};
+    m_widgetGifUploadIndex = 0;
+    m_widgetAssetPath = assetPath;
+    m_widgetAssetLoadAttempted = false;
     m_widgetTexture.reset();
-    m_widgetAnimation.reset();
+    m_widgetAnimation.clear();
     m_widgetExternalTexture = nullptr;
-    if (assetPath.empty() || !gpu || !renderer) return;
+    if (assetPath.empty() || !gpu || !renderer || deferAssetLoad) return;
 
-    std::string extension = assetPath;
+    loadWidgetImageAsset(*gpu, *renderer);
+}
+
+bool GlossyIcon::isWidgetImageAssetLoaded() const {
+    return m_widgetAnimation.hasFrames() ||
+           (m_widgetTexture && m_widgetTexture->valid());
+}
+
+bool GlossyIcon::loadWidgetImageAsset(nxui::GpuDevice& gpu,
+                                      nxui::Renderer& renderer) {
+    if (m_widgetAssetPath.empty()) return false;
+    if (isWidgetImageAssetLoaded()) return true;
+
+    m_widgetAssetLoadAttempted = true;
+
+    std::string extension = m_widgetAssetPath;
     std::transform(extension.begin(), extension.end(), extension.begin(),
                    [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
     if ((extension.ends_with(".webp") || extension.ends_with(".gif")) &&
-        m_widgetAnimation.load(*gpu, *renderer, assetPath)) {
-        if (m_widgetAnimation.frameCount() > 0) return;
+        m_widgetAnimation.load(gpu, renderer, m_widgetAssetPath,
+                               kWidgetAnimationMaximumSide,
+                               kWidgetAnimationGpuBytes)) {
+        if (m_widgetAnimation.frameCount() > 0) return true;
     }
 
     auto texture = std::make_unique<nxui::Texture>();
-    if (texture->loadFromFile(*gpu, *renderer, assetPath, 512))
+    if (texture->loadFromFile(gpu, renderer, m_widgetAssetPath, 512)) {
         m_widgetTexture = std::move(texture);
+        return true;
+    }
+    return false;
+}
+
+bool GlossyIcon::startWidgetImageAssetLoad(nxui::ThreadPool& threadPool,
+                                           nxui::GpuDevice& gpu,
+                                           nxui::Renderer& renderer) {
+    if (m_widgetAssetPath.empty() || isWidgetImageAssetLoaded() ||
+        isWidgetImageAssetLoading())
+        return false;
+    if (!hasGifExtension(m_widgetAssetPath))
+        return loadWidgetImageAsset(gpu, renderer);
+
+    m_widgetAssetLoadAttempted = true;
+    m_widgetGifUploadIndex = 0;
+    auto state = std::make_shared<WidgetGifDecodeState>();
+    m_widgetGifDecode = state;
+    const std::string path = m_widgetAssetPath;
+    m_widgetGifDecodeFuture = threadPool.submit(
+        [state, path]() { decodeWidgetGif(path, state); });
+    return true;
+}
+
+bool GlossyIcon::pollWidgetImageAssetLoad(nxui::GpuDevice& gpu,
+                                          nxui::Renderer& renderer) {
+    if (!m_widgetGifDecode) return false;
+    if (m_widgetGifDecodeFuture.valid()) {
+        if (m_widgetGifDecodeFuture.wait_for(std::chrono::seconds(0)) !=
+            std::future_status::ready)
+            return false;
+        try {
+            m_widgetGifDecodeFuture.get();
+            DebugLog::log("[widget-gif] decoded frames=%d size=%dx%d in %ldms path=%s",
+                          static_cast<int>(m_widgetGifDecode->frames.size()),
+                          m_widgetGifDecode->width, m_widgetGifDecode->height,
+                          m_widgetGifDecode->decodeMilliseconds,
+                          m_widgetAssetPath.c_str());
+        } catch (...) {
+            m_widgetGifDecode->cancelled.store(true);
+        }
+    }
+
+    auto state = m_widgetGifDecode;
+    if (state->cancelled.load() || state->frames.empty() ||
+        state->width <= 0 || state->height <= 0) {
+        m_widgetGifDecode.reset();
+        m_widgetGifUploadIndex = 0;
+        return false;
+    }
+    if (m_widgetGifUploadIndex >= state->frames.size()) {
+        m_widgetGifDecode.reset();
+        m_widgetGifUploadIndex = 0;
+        return false;
+    }
+
+    const std::size_t index = m_widgetGifUploadIndex;
+    const bool uploaded = m_widgetAnimation.appendFrame(
+        gpu, renderer, state->frames[index].data(),
+        state->width, state->height, state->durationsMs[index]);
+    if (!uploaded) {
+        state->cancelled.store(true);
+        m_widgetGifDecode.reset();
+        m_widgetGifUploadIndex = 0;
+        return false;
+    }
+    ++m_widgetGifUploadIndex;
+    if (m_widgetGifUploadIndex >= state->frames.size()) {
+        DebugLog::log("[widget-gif] upload complete frames=%d path=%s",
+                      static_cast<int>(state->frames.size()),
+                      m_widgetAssetPath.c_str());
+        m_widgetGifDecode.reset();
+        m_widgetGifUploadIndex = 0;
+    }
+    return true;
+}
+
+bool GlossyIcon::isWidgetImageAssetLoading() const {
+    return static_cast<bool>(m_widgetGifDecode);
+}
+
+void GlossyIcon::allowWidgetImageAssetRetry() {
+    if (!isWidgetImageAssetLoading())
+        m_widgetAssetLoadAttempted = false;
+}
+
+bool GlossyIcon::unloadWidgetImageAsset() {
+    const bool hadGpuAsset = isWidgetImageAssetLoaded();
+    if (m_widgetGifDecode)
+        m_widgetGifDecode->cancelled.store(true);
+    m_widgetGifDecode.reset();
+    m_widgetGifDecodeFuture = {};
+    m_widgetGifUploadIndex = 0;
+    m_widgetAnimation.clear();
+    m_widgetTexture.reset();
+    m_widgetExternalTexture = nullptr;
+    m_widgetAssetLoadAttempted = false;
+    return hadGpuAsset;
 }
 
 void GlossyIcon::setWidgetGameAssets(std::uint64_t titleId,
@@ -455,12 +714,11 @@ void GlossyIcon::onContentRender(nxui::Renderer& ren) {
     if (m_entryKind == GridEntryKind::Widget) {
         const nxui::Rect inner = r.shrunk(std::max(8.f, 10.f * s));
         if (m_widgetType == switchu::widgets::WidgetType::RecentlyPlayed) {
-            // Match Recent Playtime's inset card, with the hero replacing its
-            // blue content rectangle.
             const nxui::Rect card = inner;
             const float contentRadius = std::max(8.f, rad - 5.f);
             if (m_widgetHero && m_widgetHero->valid()) {
-                ren.drawTextureRounded(m_widgetHero, card,
+                ren.drawTextureSubRounded(
+                    m_widgetHero, centeredCoverSource(*m_widgetHero, card), card,
                     contentRadius, nxui::Color::white().withAlpha(m_opacity));
             } else {
                 ren.drawRoundedRect(card, m_loadingColor.withAlpha(0.20f * m_opacity),
@@ -559,7 +817,7 @@ void GlossyIcon::onContentRender(nxui::Renderer& ren) {
 
         if (m_widgetType == switchu::widgets::WidgetType::Batteries) {
             ren.drawRoundedRect(inner,
-                nxui::Color(0.035f, 0.045f, 0.075f, 0.72f * m_opacity),
+                m_loadingColor.withAlpha(0.13f * m_opacity),
                 std::max(12.f, rad - 5.f));
             const int capacity = m_widgetRows >= 2 ? 4 : 3;
             const int count = std::min(capacity,
@@ -785,11 +1043,13 @@ void GlossyIcon::onContentRender(nxui::Renderer& ren) {
         const nxui::Rect card = r.shrunk(std::max(8.f, 10.f * s));
         const float contentRadius = std::max(8.f, rad - 5.f);
         if (m_wideGameHero && m_wideGameHero->valid()) {
-            ren.drawTextureRounded(m_wideGameHero, card, contentRadius,
-                                   nxui::Color::white().withAlpha(m_opacity));
+            ren.drawTextureSubRounded(
+                m_wideGameHero, centeredCoverSource(*m_wideGameHero, card), card,
+                contentRadius, nxui::Color::white().withAlpha(m_opacity));
         } else if (m_tex && m_tex->valid()) {
-            ren.drawTextureRounded(m_tex, card, contentRadius,
-                                   nxui::Color::white().withAlpha(m_opacity));
+            ren.drawTextureSubRounded(
+                m_tex, centeredCoverSource(*m_tex, card), card,
+                contentRadius, nxui::Color::white().withAlpha(m_opacity));
         } else {
             ren.drawRoundedRect(card,
                 m_loadingColor.withAlpha(0.18f * m_opacity), contentRadius);

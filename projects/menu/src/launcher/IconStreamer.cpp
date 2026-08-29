@@ -214,7 +214,7 @@ bool IconStreamer::needsVisibleLoads(int currentPage, int iconsPerPage) const {
 // ---------------------------------------------------------------------------
 // Decode a single compressed icon to RGBA, downscaling to kIconSize if needed.
 // ---------------------------------------------------------------------------
-IconStreamer::DecodedIcon IconStreamer::decodeAndScale(const std::vector<uint8_t>& data) {
+IconStreamer::DecodedIcon IconStreamer::decodeIconData(const std::vector<uint8_t>& data) {
     DecodedIcon out{};
     if (data.empty()) return out;
 
@@ -460,7 +460,7 @@ void IconStreamer::onPageChanged(int currentPage, int iconsPerPage,
                 state->failed = true;
                 return;
             }
-            state->decoded = IconStreamer::decodeAndScale(compressed);
+            state->decoded = IconStreamer::decodeIconData(compressed);
             state->failed = state->decoded.rgba.empty();
         };
 
