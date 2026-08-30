@@ -15,6 +15,8 @@ static AppletHolder g_holder = {};
 static bool g_active = false;
 static bool g_holderCreated = false;
 static bool g_externalRegistered = false;
+static bool g_commandEventInitialized = false;
+static bool g_commandEventAvailable = false;
 static LibAppletExitReason g_lastExitReason = LibAppletExitReason_Normal;
 static uint64_t g_startedAtTick = 0;
 static uint64_t g_lastRuntimeNs = 0;
@@ -32,7 +34,21 @@ inline Event* stateChangedEvent() {
 }
 
 inline Event* commandEvent() {
-    return g_holderCreated ? &g_holder.PopInteractiveOutDataEvent : nullptr;
+    if (!g_holderCreated)
+        return nullptr;
+
+    // libnx initializes PopInteractiveOutDataEvent lazily. Returning the field
+    // directly before this accessor has run adds handle 0 to waitObjects(),
+    // which produces KERNELRESULT(InvalidHandle) (0xE401) every loop tick.
+    if (!g_commandEventInitialized) {
+        g_commandEventInitialized = true;
+        Event* event = nullptr;
+        const Result rc = appletHolderGetPopInteractiveOutDataEvent(&g_holder, &event);
+        g_commandEventAvailable = R_SUCCEEDED(rc) && event != nullptr;
+        if (!g_commandEventAvailable)
+            switchu::FileLog::log("[menu_la] command event unavailable rc=0x%X", rc);
+    }
+    return g_commandEventAvailable ? &g_holder.PopInteractiveOutDataEvent : nullptr;
 }
 
 inline Result create() {
@@ -62,6 +78,8 @@ inline Result cleanupHolder() {
         g_holderCreated = false;
     }
     g_active = false;
+    g_commandEventInitialized = false;
+    g_commandEventAvailable = false;
     if (g_externalRegistered) {
         const Result rc = switchu::daemon::unregisterExternalContent(
             switchu::smi::kMenuTakeoverProgramId);

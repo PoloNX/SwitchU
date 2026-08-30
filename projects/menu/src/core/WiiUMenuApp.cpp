@@ -1898,16 +1898,23 @@ void WiiUMenuApp::pollGameArtworkAssets() {
         return;
 
     auto& decoded = *m_gameArtworkReady;
+    constexpr std::uint64_t kTextImageReserve = 4u * 1024u * 1024u;
     if (m_gameArtworkUploadStage == 0) {
         auto texture = std::make_unique<nxui::Texture>();
-        if (!decoded.hero.rgba.empty() && texture->loadFromPixels(
+        if (!decoded.hero.rgba.empty() &&
+            app().gpu().imageMemoryAvailable() >
+                kTextImageReserve + decoded.hero.rgba.size() &&
+            texture->loadFromPixels(
                 app().gpu(), app().renderer(), decoded.hero.rgba.data(),
                 decoded.hero.width, decoded.hero.height))
             m_gameArtworkUploadTextures.hero = std::move(texture);
         decoded.hero.rgba.clear();
     } else {
         auto texture = std::make_unique<nxui::Texture>();
-        if (!decoded.logo.rgba.empty() && texture->loadFromPixels(
+        if (!decoded.logo.rgba.empty() &&
+            app().gpu().imageMemoryAvailable() >
+                kTextImageReserve + decoded.logo.rgba.size() &&
+            texture->loadFromPixels(
                 app().gpu(), app().renderer(), decoded.logo.rgba.data(),
                 decoded.logo.width, decoded.logo.height))
             m_gameArtworkUploadTextures.logo = std::move(texture);
@@ -2181,6 +2188,80 @@ void WiiUMenuApp::syncWidgetPageAssets() {
         // changes therefore never decode a GIF in the middle of the slide.
         markPage(page - 1, false);
         markPage(page + 1, false);
+    }
+
+    // Each wide game card owns a 640x360 hero and a 384x192 logo. Loading
+    // those textures while constructing the complete grid made their lifetime
+    // global and exhausted the 32 MiB Deko image budget. Keep only the page
+    // being rendered (plus the outgoing page during a slide) resident.
+    std::unordered_set<std::uint64_t> currentGameArtwork;
+    std::unordered_set<std::uint64_t> retainedGameArtwork;
+    for (std::size_t i = 0; i < icons.size(); ++i) {
+        const auto* icon = icons[i].get();
+        if (!icon || icon->entryKind() != GridEntryKind::Application ||
+            icon->gridSpanColumns() <= 1 || icon->gridSpanRows() != 1)
+            continue;
+        if (current[i]) {
+            currentGameArtwork.insert(icon->titleId());
+            retainedGameArtwork.insert(icon->titleId());
+        } else if (sliding && keep[i]) {
+            retainedGameArtwork.insert(icon->titleId());
+        }
+        if (icon == m_editSourceIcon)
+            retainedGameArtwork.insert(icon->titleId());
+    }
+
+    m_gameArtworkDecodeQueue.erase(
+        std::remove_if(m_gameArtworkDecodeQueue.begin(), m_gameArtworkDecodeQueue.end(),
+            [&currentGameArtwork](std::uint64_t titleId) {
+                return !currentGameArtwork.count(titleId);
+            }),
+        m_gameArtworkDecodeQueue.end());
+    if (m_gameArtworkDecode &&
+        !currentGameArtwork.count(m_gameArtworkDecode->titleId))
+        m_gameArtworkDecode->cancelled.store(true);
+    if (m_gameArtworkReady &&
+        !currentGameArtwork.count(m_gameArtworkReady->titleId)) {
+        m_gameArtworkReady.reset();
+        m_gameArtworkUploadTextures = {};
+        m_gameArtworkUploadStage = 0;
+    }
+
+    std::vector<std::uint64_t> releaseGameArtwork;
+    for (const auto& entry : m_gameArtwork) {
+        if (!retainedGameArtwork.count(entry.first))
+            releaseGameArtwork.push_back(entry.first);
+    }
+    if (!releaseGameArtwork.empty()) {
+        for (const auto& icon : icons) {
+            if (icon && std::find(releaseGameArtwork.begin(),
+                                  releaseGameArtwork.end(), icon->titleId()) !=
+                            releaseGameArtwork.end())
+                icon->setWideGameTextures(nullptr, nullptr);
+        }
+        app().gpu().waitIdle();
+        for (const std::uint64_t titleId : releaseGameArtwork)
+            m_gameArtwork.erase(titleId);
+#ifdef NXUI_BACKEND_DEKO3D
+        app().renderer().reclaimReleasedTextureSlotsAfterIdle();
+#endif
+        DebugLog::log("[game-artwork] released=%zu page=%d gpu=%llu/%llu",
+                      releaseGameArtwork.size(), page,
+                      static_cast<unsigned long long>(app().gpu().imageMemoryUsed()),
+                      static_cast<unsigned long long>(app().gpu().imageMemoryBudget()));
+    }
+    for (std::size_t i = 0; i < icons.size(); ++i) {
+        auto* icon = icons[i].get();
+        if (!icon || !current[i] ||
+            icon->entryKind() != GridEntryKind::Application ||
+            icon->gridSpanColumns() <= 1 || icon->gridSpanRows() != 1)
+            continue;
+        const auto artwork = m_gameArtwork.find(icon->titleId());
+        if (artwork != m_gameArtwork.end())
+            icon->setWideGameTextures(artwork->second.hero.get(),
+                                      artwork->second.logo.get());
+        else
+            ensureGameArtwork(icon->titleId());
     }
 
     if (pageChanged || transitionEnded) {
@@ -2957,7 +3038,6 @@ std::shared_ptr<GlossyIcon> WiiUMenuApp::makeIcon(const AppEntry& entry) {
     icon->setGridSpan(entry.widgetColumns, entry.widgetRows);
     if (entry.widgetColumns > 1 && entry.widgetRows == 1 &&
         m_appLayoutMode == AppLayoutMode::Grid) {
-        ensureGameArtwork(entry.titleId);
         const auto artwork = m_gameArtwork.find(entry.titleId);
         if (artwork != m_gameArtwork.end())
             icon->setWideGameTextures(artwork->second.hero.get(),

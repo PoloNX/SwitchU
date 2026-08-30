@@ -288,8 +288,13 @@ void IconStreamer::onPageChanged(int currentPage, int iconsPerPage,
 
     int visibleStartApp = currentPage * iconsPerPage;
     int visibleEndApp   = std::min(totalApps, visibleStartApp + iconsPerPage);
-    int cacheStartPage  = std::max(0, currentPage - kPageCacheRadius);
-    int cacheEndPage    = std::min(totalPages - 1, currentPage + kPageCacheRadius);
+    // Four neighbours are inexpensive in the one-item carousel, but the same
+    // radius in the 5x3 grid can retain 135 textures. Keep three grid pages
+    // hot under the enlarged image budget without returning to that extreme.
+    const int cacheRadius = iconsPerPage == 1
+        ? kPageCacheRadius : kGridPageCacheRadius;
+    int cacheStartPage  = std::max(0, currentPage - cacheRadius);
+    int cacheEndPage    = std::min(totalPages - 1, currentPage + cacheRadius);
     int cacheStartApp   = cacheStartPage * iconsPerPage;
     int cacheEndApp     = std::min(totalApps, (cacheEndPage + 1) * iconsPerPage);
 
@@ -346,6 +351,23 @@ void IconStreamer::onPageChanged(int currentPage, int iconsPerPage,
          pendingIndex < m_pendingDecodes.size() && uploads < kUploadsPerFrame;) {
         auto& pending = m_pendingDecodes[pendingIndex];
         if (pending.future.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
+            ++pendingIndex;
+            continue;
+        }
+
+        // Text uses the same image-memory pool. Leave this completed decode
+        // queued until enough room exists instead of triggering Font's
+        // emergency cache eviction and making every label disappear.
+        const bool hasReusableTexture = std::any_of(
+            m_freeSlots.begin(), m_freeSlots.end(),
+            [this](int slotIndex) {
+                return slotIndex >= 0 && slotIndex < static_cast<int>(m_pool.size()) &&
+                       m_pool[static_cast<std::size_t>(slotIndex)] &&
+                       m_pool[static_cast<std::size_t>(slotIndex)]->texture.valid();
+            });
+        if (!hasReusableTexture &&
+            gpu.imageMemoryAvailable() <= kGpuImageReserve +
+                                              kIconSize * kIconSize * 4u) {
             ++pendingIndex;
             continue;
         }

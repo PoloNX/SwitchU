@@ -119,7 +119,10 @@ public:
     dk::UniqueMemBlock allocImageMemory(uint32_t size);
     void freeImageMemory(uint32_t size);
 
-    static constexpr uint64_t kDefaultImageBudget = 32u * 1024u * 1024u;
+    // The menu applet reserves a 224 MiB heap. Keep the dynamic image cache
+    // well below that process ceiling so CPU-side decodes, audio and Deko's
+    // fixed framebuffer/offscreen pools retain comfortable headroom.
+    static constexpr uint64_t kDefaultImageBudget = 64u * 1024u * 1024u;
     uint64_t imageMemoryUsed() const { return m_imageMemUsed; }
     uint64_t imageMemoryBudget() const { return kDefaultImageBudget; }
     uint64_t imageMemoryAvailable() const {
