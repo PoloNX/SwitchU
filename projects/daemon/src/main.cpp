@@ -238,6 +238,9 @@ static daemon::SystemActionQueue g_actionQueue;
 static smi::OperationOutcome g_lastOperationFailure{};
 static bool g_foregroundAppletActive = false;
 static bool g_pendingForegroundAppletHome = false;
+static bool g_pendingHomeMenuLaunch = false;
+static const char* g_pendingHomeMenuSource = nullptr;
+static uint64_t g_pendingHomeMenuStartedAt = 0;
 static uint8_t g_lastBatteryPercent = 0xFF;
 static PsmChargerType g_lastChargerType = (PsmChargerType)0xFF;
 
@@ -760,6 +763,35 @@ static void stopControlCacheWorker();
 static Result startEventManager();
 static void stopEventManager();
 
+static Result launchPendingHomeMenu() {
+    if (!g_pendingHomeMenuLaunch)
+        return 0;
+
+    const char* source = g_pendingHomeMenuSource ? g_pendingHomeMenuSource : "home";
+    const uint64_t startedAt = g_pendingHomeMenuStartedAt;
+    g_pendingHomeMenuLaunch = false;
+    g_pendingHomeMenuSource = nullptr;
+    g_pendingHomeMenuStartedAt = 0;
+
+    const auto status = buildSystemStatus();
+    switchu::FileLog::log(
+        "[%s] HOME foreground acquired; launching MainMenu status.running=%d suspended=0x%016lX",
+        source, status.app_running ? 1 : 0, status.suspended_app_id);
+    const uint64_t launchStartedAt = armGetSystemTick();
+    const Result rc = daemon::menu_la::launch(smi::MenuStartMode::MainMenu, status);
+    const uint64_t launchDoneAt = armGetSystemTick();
+    switchu::FileLog::log(
+        "[%s] HOME MainMenu launch rc=0x%X foreground_wait=%lums launch=%lums total=%lums",
+        source, rc,
+        static_cast<unsigned long>(armTicksToNs(launchStartedAt - startedAt) / 1'000'000ULL),
+        static_cast<unsigned long>(armTicksToNs(launchDoneAt - launchStartedAt) / 1'000'000ULL),
+        static_cast<unsigned long>(armTicksToNs(launchDoneAt - startedAt) / 1'000'000ULL));
+    if (R_SUCCEEDED(rc))
+        g_appCatalogRefreshDelay = 200;
+    logHomeState(source, "after");
+    return rc;
+}
+
 static void requestPowerStateChange(const char* source, bool reboot) {
     Result rc = spsmInitialize();
     if (R_SUCCEEDED(rc)) {
@@ -826,30 +858,24 @@ static void openMenuFromHome(const char* source) {
     logHomeState(source, "request");
     cancelViewPolling("home");
 
+    if (g_pendingHomeMenuLaunch) {
+        switchu::FileLog::log("[%s] HOME ignored: foreground handoff already pending", source);
+        return;
+    }
+
     if (daemon::app::isRunning() && daemon::app::hasForeground()) {
-        const uint64_t focusStartedAt = armGetSystemTick();
         if (!takeForegroundFromRunningApp(source)) {
             switchu::FileLog::log("[%s] HOME aborted: foreground request failed", source);
             return;
         }
-        const uint64_t focusDoneAt = armGetSystemTick();
-        const auto status = buildSystemStatus();
-        switchu::FileLog::log("[%s] HOME launching MainMenu status.running=%d suspended=0x%016lX",
-                              source, status.app_running ? 1 : 0, status.suspended_app_id);
-        Result menuRc = daemon::menu_la::launch(smi::MenuStartMode::MainMenu, status);
-        const uint64_t launchDoneAt = armGetSystemTick();
-        switchu::FileLog::log(
-            "[%s] HOME MainMenu launch rc=0x%X focus=%lums launch=%lums total=%lums",
-            source, menuRc,
-            static_cast<unsigned long>(armTicksToNs(focusDoneAt - focusStartedAt)
-                                       / 1'000'000ULL),
-            static_cast<unsigned long>(armTicksToNs(launchDoneAt - focusDoneAt)
-                                       / 1'000'000ULL),
-            static_cast<unsigned long>(armTicksToNs(launchDoneAt - homeStartedAt)
-                                       / 1'000'000ULL));
-        if (R_SUCCEEDED(menuRc))
-            g_appCatalogRefreshDelay = 200;
-        logHomeState(source, "after");
+
+        // appletRequestToGetForeground() only queues the ownership transfer.
+        // Creating an AllForeground library applet before AE confirms message 1
+        // races qlaunch's own foreground transition and can crash the daemon.
+        g_pendingHomeMenuLaunch = true;
+        g_pendingHomeMenuSource = source;
+        g_pendingHomeMenuStartedAt = homeStartedAt;
+        switchu::FileLog::log("[%s] HOME waiting for ChangeIntoForeground", source);
         return;
     }
 
@@ -971,6 +997,7 @@ static void handleAppletMessages() {
     switch (msg) {
         case 1:
         switchu::FileLog::log("[ae] -> ChangeIntoForeground");
+        launchPendingHomeMenu();
         break;
 
         case 2:
@@ -1695,6 +1722,12 @@ static void mainLoop() {
 
     if (daemon::app::checkFinished()) {
         switchu::FileLog::log("[main] app exited");
+        if (g_pendingHomeMenuLaunch) {
+            switchu::FileLog::log("[main] clearing pending HOME foreground handoff: app exited");
+            g_pendingHomeMenuLaunch = false;
+            g_pendingHomeMenuSource = nullptr;
+            g_pendingHomeMenuStartedAt = 0;
+        }
         if (daemon::menu_la::isActive()) {
             pushNotification(smi::MenuMessage::ApplicationExited);
         } else {
