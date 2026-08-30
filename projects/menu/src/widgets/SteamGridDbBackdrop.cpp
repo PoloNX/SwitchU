@@ -43,7 +43,10 @@ void SteamGridDbBackdrop::setPreloadTitles(std::vector<std::uint64_t> titleIds) 
                 != m_preloadTitleIds.end())
             continue;
         m_preloadTitleIds.push_back(titleId);
-        if (m_preloadTitleIds.size() >= 8)
+        // Keep this in lockstep with the decoded-cache capacity. Queuing more
+        // titles than can be retained makes the oldest entry get evicted and
+        // immediately decoded again forever.
+        if (m_preloadTitleIds.size() >= kDecodedCacheLimit)
             break;
     }
 }
