@@ -3187,8 +3187,24 @@ std::shared_ptr<GlossyIcon> WiiUMenuApp::makeIcon(const AppEntry& entry) {
 
 void WiiUMenuApp::buildGrid() {
     reloadThemePresets();
+    applyAutoThemeConfig();
 
     m_activePresetName = m_config.themePreset;
+
+    // If automatic day/night switching is enabled, let it pick the startup
+    // preset before any widget is built, so the correct theme is applied in one
+    // pass instead of rebuilding after the fact. evaluate() consumes the current
+    // phase, so onUpdate won't re-trigger until the phase actually changes.
+    {
+        const auto snapshot = m_clockService.refresh();
+        if (auto desired = m_autoTheme.evaluate(snapshot)) {
+            if (findPresetPtr(*desired)) {
+                m_activePresetName = *desired;
+                m_config.themePreset = *desired;
+            }
+        }
+    }
+
     ThemePreset* preset = findPresetPtr(m_activePresetName);
     if (!preset) {
         m_activePresetName = "builtin:Default Light";
@@ -4018,6 +4034,18 @@ void WiiUMenuApp::onUpdate(float dt) {
     if (m_folderCaptureReady)
         openCapturedFolder();
 
+    // Periodically re-check whether the automatic day/night theme should switch.
+    // Cheap: ClockService::refresh() is cached and shared with the clock widget.
+    if (m_autoTheme.mode() != switchu::services::AutoThemeMode::Off) {
+        pollGeoLocationFetch();
+        maybeFetchGeoLocation();
+        m_autoThemeCheckTimer += dt;
+        if (m_autoThemeCheckTimer >= 30.f) {
+            m_autoThemeCheckTimer = 0.f;
+            evaluateAutoTheme(false);
+        }
+    }
+
     if (m_config.actionHintStyle != "panel")
         syncHintCapsules(dt);
 
@@ -4315,6 +4343,10 @@ void WiiUMenuApp::onUpdate(float dt) {
                 break;
             case switchu::smi::MenuMessage::WakeUp:
                 m_clockService.invalidate();
+                // Time may have jumped across the day/night boundary while
+                // asleep; force an immediate re-evaluation on the next check.
+                m_autoThemeCheckTimer = 30.f;
+                evaluateAutoTheme(true);
                 break;
             case switchu::smi::MenuMessage::OperationFailed:
                 if (m_dialog) {

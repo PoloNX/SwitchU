@@ -26,6 +26,18 @@ struct AppConfig {
 
     std::string themePreset = "Default Light";
 
+    // Automatic day/night theme switching.
+    std::string autoThemeMode = "off";       // "off" | "manual" | "geo"
+    std::string autoThemeDayPreset;          // preset id/name used during the day
+    std::string autoThemeNightPreset;        // preset id/name used during the night
+    int         autoThemeDayStartHour = 7;   // manual boundary [0..23]
+    int         autoThemeNightStartHour = 19;// manual boundary [0..23]
+    // Cached IP-geolocated position for the geolocation mode.
+    bool        autoThemeGeoResolved = false;
+    double      autoThemeGeoLat = 0.0;       // degrees, north positive
+    double      autoThemeGeoLon = 0.0;       // degrees, east positive
+    std::string autoThemeGeoCity;            // human-readable resolved location
+
     bool load();
 
     bool save() const;

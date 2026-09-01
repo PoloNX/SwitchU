@@ -29,6 +29,7 @@
 #include "settings/GameOptionsScreen.hpp"
 #include "settings/SteamGridDbPickerScreen.hpp"
 #include "settings/FolderOptionsScreen.hpp"
+#include "settings/AutoThemeScreen.hpp"
 #include "settings/ControllerTestScreen.hpp"
 #include "themeshop/ThemeShopScreen.hpp"
 #include "core/Config.hpp"
@@ -42,6 +43,7 @@
 #include "core/SystemMessages.hpp"
 #include "navigation/MenuNavigator.hpp"
 #include "services/ClockService.hpp"
+#include "services/AutoThemeService.hpp"
 #ifdef SWITCHU_DEBUG_UI
 #include "debug/DebugImGuiOverlay.hpp"
 #endif
@@ -237,6 +239,10 @@ private:
     void createThemeShop();
     void createGameOptions();
     void createFolderOptions();
+    void createAutoThemeScreen();
+    void openAutoThemeSettings();
+    void refreshAutoThemeSummary();
+    void pushGeoDisplayToScreen();
     void createControllerTest();
     void reloadThemePresets();
     void refreshThemeShopState();
@@ -244,6 +250,10 @@ private:
     void startThemePackageTransfer(const ThemeCatalogClient::Entry& entry, bool installMode);
     void syncThemePackageTransfer();
     void activateThemePreset(ThemePreset* preset, bool applyBundledSound);
+    void applyAutoThemeConfig();
+    void evaluateAutoTheme(bool force);
+    void maybeFetchGeoLocation();
+    void pollGeoLocationFetch();
     std::string resolveSoundPresetId(const std::string& preset) const;
     void loadSoundPreset(const std::string& preset);
     void changeSoundPreset(const std::string& preset);
@@ -289,6 +299,18 @@ private:
     GridModel    m_model;
     nxui::Theme  m_theme;
     switchu::services::ClockService m_clockService;
+    switchu::services::AutoThemeService m_autoTheme;
+    float                    m_autoThemeCheckTimer = 0.f;
+
+    struct GeoFetchResult {
+        bool ok = false;
+        double lat = 0.0;
+        double lon = 0.0;
+        std::string city;
+    };
+    std::future<void>        m_geoFetchFuture;
+    std::shared_ptr<GeoFetchResult> m_geoFetchResult;
+    bool                     m_geoFetchInFlight = false;
 
     std::string              m_activePresetName = "Default Light";
     ThemeColorSet            m_activeColors;
@@ -314,6 +336,7 @@ private:
     std::shared_ptr<GameOptionsScreen> m_gameOptions;
     std::shared_ptr<SteamGridDbPickerScreen> m_steamGridDbPicker;
     std::shared_ptr<FolderOptionsScreen> m_folderOptions;
+    std::shared_ptr<AutoThemeScreen>   m_autoThemeScreen;
     std::shared_ptr<ControllerTestScreen> m_controllerTest;
 
     nxui::Texture m_gameCardTex;

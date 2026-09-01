@@ -113,5 +113,22 @@ ThemeShopScreen::Tab themeshop::tabs::OptionsTab::build(ThemeShopScreen& screen)
         t.items.push_back(std::move(it));
     }
 
+    // --- Automatic day/night theme -----------------------------------------
+    // A single entry opens a dedicated window with all the auto-theme settings.
+    {
+        SettingItem it;
+        it.label = i18n.tr("themeshop.options.auto_theme", "Automatic Theme");
+        it.description = screen.m_autoThemeSummary.empty()
+            ? i18n.tr("themeshop.options.auto_theme_desc",
+                      "Switch between a day theme and a night theme automatically.")
+            : screen.m_autoThemeSummary;
+        it.type = ItemType::Action;
+        it.onChange = [&screen](SettingItem&) {
+            if (screen.m_autoThemeOpenCb)
+                screen.m_autoThemeOpenCb();
+        };
+        t.items.push_back(std::move(it));
+    }
+
     return t;
 }

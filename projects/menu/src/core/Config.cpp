@@ -65,6 +65,15 @@ bool AppConfig::load() {
     readJsonOpt(j, "steamGridDbEnabled", steamGridDbEnabled);
     readJsonOpt(j, "steamGridDbApiKey", steamGridDbApiKey);
     readJsonOpt(j, "themePreset", themePreset);
+    readJsonOpt(j, "autoThemeMode", autoThemeMode);
+    readJsonOpt(j, "autoThemeDayPreset", autoThemeDayPreset);
+    readJsonOpt(j, "autoThemeNightPreset", autoThemeNightPreset);
+    readJsonOpt(j, "autoThemeDayStartHour", autoThemeDayStartHour);
+    readJsonOpt(j, "autoThemeNightStartHour", autoThemeNightStartHour);
+    readJsonOpt(j, "autoThemeGeoResolved", autoThemeGeoResolved);
+    readJsonOpt(j, "autoThemeGeoLat", autoThemeGeoLat);
+    readJsonOpt(j, "autoThemeGeoLon", autoThemeGeoLon);
+    readJsonOpt(j, "autoThemeGeoCity", autoThemeGeoCity);
 
     if (musicVolume < 0.f) musicVolume = 0.f;
     if (musicVolume > 1.f) musicVolume = 1.f;
@@ -79,6 +88,18 @@ bool AppConfig::load() {
     if (!defaultProfileEnabled) defaultProfileUid.clear();
     accessibilitySpeechRate = std::clamp(accessibilitySpeechRate, 120, 320);
     if (themePreset.empty()) themePreset = "Default Light";
+
+    if (autoThemeMode != "off" && autoThemeMode != "manual" && autoThemeMode != "geo")
+        autoThemeMode = "off";
+    autoThemeDayStartHour = std::clamp(autoThemeDayStartHour, 0, 23);
+    autoThemeNightStartHour = std::clamp(autoThemeNightStartHour, 0, 23);
+    if (autoThemeGeoLat < -90.0 || autoThemeGeoLat > 90.0
+        || autoThemeGeoLon < -180.0 || autoThemeGeoLon > 180.0) {
+        autoThemeGeoResolved = false;
+        autoThemeGeoLat = 0.0;
+        autoThemeGeoLon = 0.0;
+        autoThemeGeoCity.clear();
+    }
 
     return true;
 }
@@ -111,6 +132,15 @@ bool AppConfig::save() const {
     j["steamGridDbEnabled"] = steamGridDbEnabled;
     j["steamGridDbApiKey"] = steamGridDbApiKey;
     j["themePreset"] = themePreset;
+    j["autoThemeMode"] = (autoThemeMode == "manual" || autoThemeMode == "geo") ? autoThemeMode : "off";
+    j["autoThemeDayPreset"] = autoThemeDayPreset;
+    j["autoThemeNightPreset"] = autoThemeNightPreset;
+    j["autoThemeDayStartHour"] = std::clamp(autoThemeDayStartHour, 0, 23);
+    j["autoThemeNightStartHour"] = std::clamp(autoThemeNightStartHour, 0, 23);
+    j["autoThemeGeoResolved"] = autoThemeGeoResolved;
+    j["autoThemeGeoLat"] = autoThemeGeoLat;
+    j["autoThemeGeoLon"] = autoThemeGeoLon;
+    j["autoThemeGeoCity"] = autoThemeGeoCity;
 
     std::ofstream f(kConfigPath, std::ios::trunc);
     if (!f.is_open()) return false;
