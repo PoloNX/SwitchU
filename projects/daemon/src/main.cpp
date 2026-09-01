@@ -225,14 +225,19 @@ static std::atomic<bool> g_appCatalogRefreshPending{false};
 // relaunched menu receives one coalesced refresh instead of keeping a stale
 // catalogue until the daemon is restarted.
 static std::atomic<bool> g_catalogChangedWhileMenuAway{false};
-static int g_appCatalogRefreshDelay = 0;
+static uint64_t g_catalogHoldStartTick = 0;
+static uint64_t g_catalogHoldNs = 0;
+static constexpr uint64_t kCatalogHoldAfterHomeNs = 2'000'000'000ULL;
+static constexpr uint64_t kCatalogHoldAfterMenuLaunchNs = 800'000'000ULL;
+static constexpr uint64_t kCatalogHoldAfterMenuReadyNs = 200'000'000ULL;
 static constexpr const char* kAppCatalogPath = "sdmc:/config/SwitchU/applist.bin";
 static constexpr const char* kAppCatalogTmpPath = "sdmc:/config/SwitchU/applist.tmp";
 static constexpr const char* kAppCatalogBackupPath = "sdmc:/config/SwitchU/applist.bak";
 static std::mutex g_controlCacheQueueMutex;
 static std::vector<uint64_t> g_controlCacheQueue;
 static std::atomic<bool> g_controlCacheRefreshPending{false};
-static std::atomic<int> g_controlCacheRefreshDelay{0};
+static std::atomic<uint64_t> g_controlCacheHoldStartTick{0};
+static constexpr uint64_t kControlCacheCoalesceNs = 600'000'000ULL;
 
 static daemon::SystemActionQueue g_actionQueue;
 static smi::OperationOutcome g_lastOperationFailure{};
@@ -249,6 +254,37 @@ static bool shouldDeferViewPolling() {
            daemon::app::hasForeground() &&
            !daemon::menu_la::isActive() &&
            !g_foregroundAppletActive;
+}
+
+static uint64_t elapsedNsSince(uint64_t startTick) {
+    return armTicksToNs(armGetSystemTick() - startTick);
+}
+
+static uint64_t catalogHoldRemainingNs() {
+    if (g_catalogHoldStartTick == 0)
+        return 0;
+    const uint64_t elapsed = elapsedNsSince(g_catalogHoldStartTick);
+    return elapsed >= g_catalogHoldNs ? 0 : g_catalogHoldNs - elapsed;
+}
+
+static void armCatalogHold(uint64_t holdNs) {
+    g_catalogHoldStartTick = armGetSystemTick();
+    g_catalogHoldNs = holdNs;
+}
+
+static void shortenCatalogHold(uint64_t holdNs) {
+    if (catalogHoldRemainingNs() > holdNs)
+        armCatalogHold(holdNs);
+}
+
+static void clearCatalogHold() {
+    g_catalogHoldStartTick = 0;
+    g_catalogHoldNs = 0;
+}
+
+static bool controlCacheHoldActive() {
+    const uint64_t startTick = g_controlCacheHoldStartTick.load();
+    return startTick != 0 && elapsedNsSince(startTick) < kControlCacheCoalesceNs;
 }
 
 static bool listApplicationRecords(std::vector<switchu::ns::ExtApplicationRecord>& records,
@@ -787,7 +823,7 @@ static Result launchPendingHomeMenu() {
         static_cast<unsigned long>(armTicksToNs(launchDoneAt - launchStartedAt) / 1'000'000ULL),
         static_cast<unsigned long>(armTicksToNs(launchDoneAt - startedAt) / 1'000'000ULL));
     if (R_SUCCEEDED(rc))
-        g_appCatalogRefreshDelay = 200;
+        armCatalogHold(kCatalogHoldAfterHomeNs);
     logHomeState(source, "after");
     return rc;
 }
@@ -890,7 +926,7 @@ static void openMenuFromHome(const char* source) {
         Result menuRc = daemon::menu_la::launch(smi::MenuStartMode::MainMenu, buildSystemStatus());
         switchu::FileLog::log("[%s] HOME MainMenu launch rc=0x%X", source, menuRc);
         if (R_SUCCEEDED(menuRc))
-            g_appCatalogRefreshDelay = 80;
+            armCatalogHold(kCatalogHoldAfterMenuLaunchNs);
     }
 }
 
@@ -1452,6 +1488,7 @@ static void handleMenuCommand() {
         switchu::FileLog::log("[smi] menu ready");
         g_lastOperationFailure = {};
         g_batteryRefreshPending.store(true);
+        shortenCatalogHold(kCatalogHoldAfterMenuReadyNs);
         break;
 
     case smi::SystemMessage::MenuClosing:
@@ -1630,6 +1667,7 @@ static void mainLoop() {
         if (!g_initialEventSkipped) {
             g_initialEventSkipped = true;
             g_appCatalogRefreshPending.store(false);
+            clearCatalogHold();
             switchu::FileLog::log("[views] skipping initial catch-up event");
         } else {
             switchu::FileLog::log("[views] app record event — starting poll");
@@ -1639,10 +1677,9 @@ static void mainLoop() {
     }
 
     if (g_appCatalogRefreshPending.load() && !shouldDeferViewPolling() &&
-        g_appCatalogRefreshDelay > 0) {
-        --g_appCatalogRefreshDelay;
-    } else if (g_appCatalogRefreshPending.load() && !shouldDeferViewPolling()) {
+        catalogHoldRemainingNs() == 0) {
         g_appCatalogRefreshPending.store(false);
+        clearCatalogHold();
         bool catalogChanged = false;
         if (rebuildAppCatalog("record-event", &catalogChanged)) {
             if (catalogChanged) {
@@ -1654,9 +1691,9 @@ static void mainLoop() {
             didWork = true;
         }
     }
-    if (g_controlCacheRefreshPending.load() && g_controlCacheRefreshDelay.load() > 0) {
-        --g_controlCacheRefreshDelay;
-    } else if (g_controlCacheRefreshPending.exchange(false)) {
+    if (g_controlCacheRefreshPending.load() && !controlCacheHoldActive() &&
+        g_controlCacheRefreshPending.exchange(false)) {
+        g_controlCacheHoldStartTick.store(0);
         if (daemon::menu_la::isActive())
             pushNotification(smi::MenuMessage::AppRecordsChanged);
         else
@@ -1747,6 +1784,9 @@ static void mainLoop() {
 static bool mainLoopNeedsFastTick() {
     if (g_powerSequenceStarted.load())
         return false;
+    if (shouldDeferViewPolling()) {
+        return g_menuRelaunchCooldown > 0 || !g_actionQueue.empty();
+    }
     return g_eventPollsRemaining > 0
         || g_appCatalogRefreshPending.load()
         || g_controlCacheRefreshPending.load()
@@ -1979,8 +2019,8 @@ static void controlCacheThreadFunc(void* arg) {
                                   static_cast<unsigned long>(elapsedMs),
                                   ok ? 1 : 0);
             if (ok) {
-                g_controlCacheRefreshPending.store(true);
-                g_controlCacheRefreshDelay.store(60);
+                if (!g_controlCacheRefreshPending.exchange(true))
+                    g_controlCacheHoldStartTick.store(armGetSystemTick());
                 ueventSignal(&g_mainWakeEvent);
             }
         } else {
