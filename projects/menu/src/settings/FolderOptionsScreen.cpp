@@ -85,7 +85,8 @@ void FolderOptionsScreen::buildTabs() {
     SettingItem style;
     style.label = i18n.tr("folder.style", "Folder style");
     style.description = i18n.tr(
-        "folder.style_desc", "Choose the classic tile look or a translucent glass look.");
+        "folder.style_desc",
+        "Applies Classic or Glass to every folder, including new ones.");
     style.type = ItemType::Selector;
     style.options = {
         i18n.tr("folder.style_classic", "Classic"),

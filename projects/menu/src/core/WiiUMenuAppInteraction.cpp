@@ -1286,7 +1286,7 @@ void WiiUMenuApp::showFolderContextMenu(std::uint32_t folderId) {
     info.itemCount = static_cast<int>(folder->titleCount());
     info.colorIndex = folder->colorIndex;
     info.sizeIndex = folder->sizeIndex;
-    info.styleIndex = folder->styleIndex;
+    info.styleIndex = m_config.folderStyle;
     m_folderOptions->setFolder(info);
     m_folderOptions->onOpen([this, folderId]() {
         if (m_folderOptions) m_folderOptions->hide();
@@ -1318,17 +1318,23 @@ void WiiUMenuApp::showFolderContextMenu(std::uint32_t folderId) {
             return;
         saveFoldersOrReport("folder_size");
     });
-    m_folderOptions->onStyleChange([this, folderId](int styleIndex) {
-        if (!m_folderStore.setStyleIndex(folderId, styleIndex) ||
-            !saveFoldersOrReport("folder_style"))
+    m_folderOptions->onStyleChange([this](int styleIndex) {
+        const int clamped = std::clamp(styleIndex, 0, switchu::folders::kFolderStyleCount - 1);
+        if (m_config.folderStyle == clamped)
             return;
-        const std::uint64_t id = folderTitleId(folderId);
-        const int index = findTitleIndex(id);
-        if (index >= 0 && index < m_model.count()) {
-            m_model.at(index).folderStyleIndex = styleIndex;
-            const auto& icons = m_grid->allIcons();
-            if (index < static_cast<int>(icons.size()) && icons[static_cast<std::size_t>(index)])
-                icons[static_cast<std::size_t>(index)]->setFolderStyleIndex(styleIndex);
+        m_config.folderStyle = clamped;
+        if (m_configSaveFuture.valid())
+            m_configSaveFuture.wait();
+        m_configSaveFuture = m_threadPool.submit([config = m_config]() {
+            config.save();
+        });
+        if (!m_grid)
+            return;
+        const auto& icons = m_grid->allIcons();
+        for (int i = 0; i < m_model.count() && i < static_cast<int>(icons.size()); ++i) {
+            if (!m_model.at(i).isFolder() || !icons[static_cast<std::size_t>(i)])
+                continue;
+            icons[static_cast<std::size_t>(i)]->setFolderStyleIndex(clamped);
         }
     });
     m_folderOptions->onDelete([this, folderId, name]() {

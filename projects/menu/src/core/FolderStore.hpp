@@ -18,7 +18,6 @@ struct Folder {
     std::vector<std::uint64_t> titleIds;
     int colorIndex = 0;
     int sizeIndex = 1;
-    int styleIndex = kDefaultFolderStyle;
     int pageCount = 1;
 
     std::size_t titleCount() const;
@@ -46,7 +45,6 @@ public:
     bool removeTitle(std::uint32_t folderId, std::uint64_t titleId);
     bool setColorIndex(std::uint32_t folderId, int colorIndex);
     bool setSizeIndex(std::uint32_t folderId, int sizeIndex);
-    bool setStyleIndex(std::uint32_t folderId, int styleIndex);
     bool setPageCount(std::uint32_t folderId, int pages);
     std::uint32_t folderForTitle(std::uint64_t titleId) const;
 

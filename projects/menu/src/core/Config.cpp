@@ -65,6 +65,7 @@ bool AppConfig::load() {
     readJsonOpt(j, "steamGridDbEnabled", steamGridDbEnabled);
     readJsonOpt(j, "steamGridDbApiKey", steamGridDbApiKey);
     readJsonOpt(j, "themePreset", themePreset);
+    readJsonOpt(j, "folderStyle", folderStyle);
 
     if (musicVolume < 0.f) musicVolume = 0.f;
     if (musicVolume > 1.f) musicVolume = 1.f;
@@ -79,6 +80,7 @@ bool AppConfig::load() {
     if (!defaultProfileEnabled) defaultProfileUid.clear();
     accessibilitySpeechRate = std::clamp(accessibilitySpeechRate, 120, 320);
     if (themePreset.empty()) themePreset = "Default Light";
+    folderStyle = std::clamp(folderStyle, 0, 1);
 
     return true;
 }
@@ -111,6 +113,7 @@ bool AppConfig::save() const {
     j["steamGridDbEnabled"] = steamGridDbEnabled;
     j["steamGridDbApiKey"] = steamGridDbApiKey;
     j["themePreset"] = themePreset;
+    j["folderStyle"] = std::clamp(folderStyle, 0, 1);
 
     std::ofstream f(kConfigPath, std::ios::trunc);
     if (!f.is_open()) return false;
