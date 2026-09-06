@@ -1,5 +1,6 @@
 #include "FolderOptionsScreen.hpp"
 #include "widgets/FolderPalette.hpp"
+#include "core/FolderStore.hpp"
 #include <nxui/core/I18n.hpp>
 #include <nxui/core/Renderer.hpp>
 #include <algorithm>
@@ -29,6 +30,8 @@ void FolderOptionsScreen::setFolder(const FolderInfo& info) {
     m_folder = info;
     m_folder.colorIndex = std::clamp(m_folder.colorIndex, 0, 7);
     m_folder.sizeIndex = std::clamp(m_folder.sizeIndex, 0, 2);
+    m_folder.styleIndex = std::clamp(m_folder.styleIndex, 0,
+                                     switchu::folders::kFolderStyleCount - 1);
     m_tabs.clear();
     m_cachedTabContentWidgets.clear();
     warmup();
@@ -78,6 +81,24 @@ void FolderOptionsScreen::buildTabs() {
         if (m_sizeCb) m_sizeCb(m_folder.sizeIndex);
     };
     appearance.items.push_back(std::move(size));
+
+    SettingItem style;
+    style.label = i18n.tr("folder.style", "Folder style");
+    style.description = i18n.tr(
+        "folder.style_desc",
+        "Applies Classic or Glass to every folder, including new ones.");
+    style.type = ItemType::Selector;
+    style.options = {
+        i18n.tr("folder.style_classic", "Classic"),
+        i18n.tr("folder.style_glass", "Glass"),
+    };
+    style.intVal = m_folder.styleIndex;
+    style.onChange = [this](SettingItem& self) {
+        m_folder.styleIndex = std::clamp(self.intVal, 0,
+                                         switchu::folders::kFolderStyleCount - 1);
+        if (m_styleCb) m_styleCb(m_folder.styleIndex);
+    };
+    appearance.items.push_back(std::move(style));
     m_tabs.push_back(std::move(appearance));
 
     Tab management;
@@ -119,25 +140,40 @@ void FolderOptionsScreen::drawOverlayHeader(nxui::Renderer& ren,
         return;
 
     const nxui::Rect shell{panel.x + 30.f, panel.y + 24.f, 92.f, 92.f};
-    ren.drawRoundedRect({shell.x, shell.y + 5.f, shell.width, shell.height},
-                        nxui::Color::black().withAlpha(0.22f * opacity), 18.f);
-    ren.drawRoundedRect(shell, nxui::Color(0.92f, 0.95f, 0.94f, 0.96f * opacity), 18.f);
-    ren.drawRoundedRectOutline(shell.shrunk(1.f),
-                               nxui::Color::white().withAlpha(0.90f * opacity),
-                               17.f, 2.f);
-
     const nxui::Color accent = switchu::folders::colorForIndex(m_folder.colorIndex);
-    constexpr float cell = 19.f;
-    constexpr float gap = 4.f;
-    const float gridSize = cell * 3.f + gap * 2.f;
-    const float gx = shell.x + (shell.width - gridSize) * 0.5f;
-    const float gy = shell.y + (shell.height - gridSize) * 0.5f;
-    for (int i = 0; i < 9; ++i) {
-        nxui::Rect tile{gx + (i % 3) * (cell + gap),
-                        gy + (i / 3) * (cell + gap), cell, cell};
-        ren.drawRoundedRect(tile, accent.withAlpha(0.96f * opacity), 4.f);
-        ren.drawRoundedRect({tile.x + 2.f, tile.y + 2.f, tile.width - 4.f, 3.f},
-                            nxui::Color::white().withAlpha(0.20f * opacity), 1.5f);
+    const bool classic = m_folder.styleIndex == switchu::folders::kFolderStyleClassic;
+
+    if (classic) {
+        ren.drawRoundedRect({shell.x, shell.y + 5.f, shell.width, shell.height},
+                            nxui::Color::black().withAlpha(0.22f * opacity), 18.f);
+        ren.drawRoundedRect(shell, nxui::Color(0.92f, 0.95f, 0.94f, 0.96f * opacity), 18.f);
+        ren.drawRoundedRectOutline(shell.shrunk(1.f),
+                                   nxui::Color::white().withAlpha(0.90f * opacity),
+                                   17.f, 2.f);
+
+        constexpr float cell = 19.f;
+        constexpr float gap = 4.f;
+        const float gridSize = cell * 3.f + gap * 2.f;
+        const float gx = shell.x + (shell.width - gridSize) * 0.5f;
+        const float gy = shell.y + (shell.height - gridSize) * 0.5f;
+        for (int i = 0; i < 9; ++i) {
+            nxui::Rect tile{gx + (i % 3) * (cell + gap),
+                            gy + (i / 3) * (cell + gap), cell, cell};
+            ren.drawRoundedRect(tile, accent.withAlpha(0.96f * opacity), 4.f);
+            ren.drawRoundedRect({tile.x + 2.f, tile.y + 2.f, tile.width - 4.f, 3.f},
+                                nxui::Color::white().withAlpha(0.20f * opacity), 1.5f);
+        }
+    } else {
+        ren.drawRoundedRect(shell,
+                            nxui::Color(0.04f, 0.07f, 0.11f, 0.50f * opacity), 18.f);
+        ren.drawRoundedRect(shell, accent.withAlpha(0.18f * opacity), 18.f);
+        ren.drawRoundedRectOutline(shell.shrunk(1.f),
+                                   nxui::Color::white().withAlpha(0.40f * opacity),
+                                   17.f, 1.5f);
+        ren.drawRoundedRect({shell.x + 8.f, shell.y + 8.f, shell.width - 16.f, 10.f},
+                            accent.withAlpha(0.82f * opacity), 4.f);
+        ren.drawRoundedRect({shell.x + 14.f, shell.y + 42.f, shell.width - 28.f, 22.f},
+                            nxui::Color(0.02f, 0.04f, 0.08f, 0.55f * opacity), 8.f);
     }
 
     const float textX = shell.right() + 24.f;

@@ -258,6 +258,10 @@ private:
     void reattachEditSourceIcon();
     void stopEditGhost();
     void updateEditGhost(float dt);
+    // Re-anchor move-mode placement after the grid model changes (folder
+    // open/close, rebuild). preferEmptySlot is used when dropping into a
+    // folder so the cursor starts on a free cell instead of a stale root index.
+    void syncEditPlacementAfterModelChange(bool preferEmptySlot);
     bool commitEditModePlacement();
     bool activateEditModeTarget();
     bool moveFocusedIcon(nxui::FocusDirection dir);

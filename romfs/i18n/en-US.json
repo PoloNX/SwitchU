@@ -515,6 +515,10 @@
     "size_small": "Small",
     "size_medium": "Medium",
     "size_large": "Large",
+    "style": "Folder style",
+    "style_desc": "Applies Classic or Glass to every folder, including new ones.",
+    "style_classic": "Classic",
+    "style_glass": "Glass",
     "items": "items"
   },
   "add": {
