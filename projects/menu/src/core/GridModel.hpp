@@ -5,6 +5,7 @@
 #include <vector>
 #include <utility>
 #include "WidgetStore.hpp"
+#include "FolderStore.hpp"
 
 
 enum class GridEntryKind : std::uint8_t {
@@ -36,6 +37,7 @@ struct AppEntry {
     std::uint32_t folderId = 0;
     int folderPreviewCount = 0;
     int folderColorIndex = 0;
+    int folderStyleIndex = switchu::folders::kDefaultFolderStyle;
     std::uint32_t widgetId = 0;
     switchu::widgets::WidgetType widgetType = switchu::widgets::WidgetType::Clock;
     int widgetColumns = 1;

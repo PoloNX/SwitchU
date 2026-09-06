@@ -268,6 +268,7 @@ bool appEntriesRefreshEquivalent(const AppEntry& a, const AppEntry& b) {
            a.folderId == b.folderId &&
            a.folderPreviewCount == b.folderPreviewCount &&
            a.folderColorIndex == b.folderColorIndex &&
+           a.folderStyleIndex == b.folderStyleIndex &&
            a.widgetId == b.widgetId &&
            a.widgetType == b.widgetType &&
            a.widgetColumns == b.widgetColumns &&
@@ -1087,6 +1088,7 @@ void WiiUMenuApp::composeRootPending(std::vector<PendingApp>& apps) {
         item.folderId = folder.id;
         item.folderPreviewCount = static_cast<int>(folder.titleCount());
         item.folderColorIndex = folder.colorIndex;
+        item.folderStyleIndex = folder.styleIndex;
         itemOrder.push_back(item.titleId);
         byId.emplace(item.titleId, std::move(item));
     }
@@ -1257,6 +1259,7 @@ GridModel WiiUMenuApp::buildRootFolderModel() {
         entry.folderId = folder.id;
         entry.folderPreviewCount = static_cast<int>(folder.titleCount());
         entry.folderColorIndex = folder.colorIndex;
+        entry.folderStyleIndex = folder.styleIndex;
         entries.emplace(entry.titleId, std::move(entry));
     }
     for (const auto& widget : m_widgetStore.all()) {
@@ -1571,6 +1574,10 @@ void WiiUMenuApp::applyDisplayModel(GridModel model, std::uint64_t focusId, bool
     m_widgetAssetPage = -1;
     if (animate) m_grid->startAppearAnimation();
     else for (auto& icon : m_grid->allIcons()) icon->forceVisible();
+    // Safety net for any rebuild while moving: never leave an out-of-range
+    // placement index (that pins the ghost at the origin).
+    if (m_editMode && (m_editTargetIndex < 0 || m_editTargetIndex >= m_model.count()))
+        syncEditPlacementAfterModelChange(m_openFolderId != 0);
     updateCursor();
 }
 
@@ -2741,11 +2748,16 @@ void WiiUMenuApp::openCapturedFolder() {
         m_folderHeaderLabel->setTextColor(m_theme.textPrimary);
     }
     m_grid->setRect({kGridRectX, 148.f, kGridRectW, 470.f});
+    // Don't inherit the root page number into the folder grid.
+    m_grid->setPage(0);
     applyDisplayModel(buildOpenFolderModel(m_openFolderId), m_folderOpenFocusTitleId, false);
     m_folderOpenFocusTitleId = 0;
     syncPageIndicator();
-    if (m_editMode)
+    if (m_editMode) {
+        // Always re-anchor: the previous target was a root-grid index.
+        syncEditPlacementAfterModelChange(true);
         reattachEditSourceIcon();
+    }
     if (!refocus)
         m_audio.playSfx(Sfx::ModalShow);
 }
@@ -2769,6 +2781,9 @@ void WiiUMenuApp::closeFolder(bool preserveEditMode) {
     applyDisplayModel(buildRootFolderModel(), folderTitleId(oldId), false);
     syncPageIndicator();
     if (preserveEditMode) {
+        // Focus is on the folder we just left; use that as the root placement target.
+        m_editTargetIndex = findTitleIndex(folderTitleId(oldId));
+        syncEditPlacementAfterModelChange(false);
         reattachEditSourceIcon();
         m_titlePill->setText(nxui::I18n::instance().tr("game.move_prefix", "Move: ") + m_editHeldTitle);
         m_titlePill->setVisible(true);
@@ -2888,6 +2903,7 @@ std::shared_ptr<GlossyIcon> WiiUMenuApp::makeIcon(const AppEntry& entry) {
     icon->setFolderPreviewCount(entry.folderPreviewCount);
     icon->setFolderVisualSeed(entry.folderId);
     icon->setFolderColorIndex(entry.folderColorIndex);
+    icon->setFolderStyleIndex(entry.folderStyleIndex);
     if (entry.kind == GridEntryKind::WidgetContinuation) {
         icon->setTag("widget_continuation");
         icon->setFocusable(false);

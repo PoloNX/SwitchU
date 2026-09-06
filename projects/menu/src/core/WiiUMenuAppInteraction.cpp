@@ -267,6 +267,55 @@ void WiiUMenuApp::reattachEditSourceIcon() {
         m_editGhostIcon->setTexture(m_editSourceIcon->texture());
 }
 
+void WiiUMenuApp::syncEditPlacementAfterModelChange(bool preferEmptySlot) {
+    if (!m_editMode || !m_grid || m_model.count() <= 0)
+        return;
+
+    const int count = m_model.count();
+    int target = m_editTargetIndex;
+    const bool stale = target < 0 || target >= count;
+
+    if (preferEmptySlot || stale) {
+        target = 0;
+        if (preferEmptySlot) {
+            for (int i = 0; i < count; ++i) {
+                const auto& entry = m_model.at(i);
+                if (entry.kind == GridEntryKind::Empty ||
+                    (entry.titleId == 0 &&
+                     entry.kind != GridEntryKind::WidgetContinuation)) {
+                    target = i;
+                    break;
+                }
+            }
+        } else {
+            const int focused = m_grid->focusedGlobalIndex();
+            if (focused >= 0 && focused < count)
+                target = focused;
+        }
+    }
+
+    m_editTargetIndex = std::clamp(target, 0, count - 1);
+    if (m_grid->focusGlobalIndex(m_editTargetIndex)) {
+        if (auto* focused = m_grid->focusManager().current()) {
+            focusManager().setFocus(focused);
+            if (focused->tag() == "glossy_icon")
+                bindEditActions(static_cast<GlossyIcon*>(focused));
+        }
+    }
+
+    const int spanColumns = m_editGhostIcon
+        ? std::max(1, m_editGhostIcon->gridSpanColumns()) : 1;
+    const int spanRows = m_editGhostIcon
+        ? std::max(1, m_editGhostIcon->gridSpanRows()) : 1;
+    m_editGhostTargetRect = m_grid->gridSpanRect(
+        m_editTargetIndex, spanColumns, spanRows);
+    if (m_editGhostIcon)
+        m_editGhostIcon->setRect(m_editGhostTargetRect);
+    updateCursor();
+    DebugLog::log("[edit] sync placement target=%d preferEmpty=%d stale=%d",
+                  m_editTargetIndex, preferEmptySlot ? 1 : 0, stale ? 1 : 0);
+}
+
 void WiiUMenuApp::updateEditGhost(float dt) {
     if (!m_editMode || !m_editGhostIcon)
         return;
@@ -618,6 +667,10 @@ bool WiiUMenuApp::activateEditModeTarget() {
     const AppEntry targetEntry = m_model.at(target);
     if (m_openFolderId == 0 && targetEntry.isFolder() &&
         m_editHeldTitleId < kFolderTitleIdPrefix) {
+        // Drop the root-grid index before the folder model loads. Leaving it
+        // intact made page-2+ folders keep an out-of-range target, which pinned
+        // the edit ghost at (0,0) and blocked further movement (#95).
+        m_editTargetIndex = -1;
         detachEditSourceIcon();
         unbindEditActions();
         requestOpenFolder(targetEntry.folderId);
@@ -1233,6 +1286,7 @@ void WiiUMenuApp::showFolderContextMenu(std::uint32_t folderId) {
     info.itemCount = static_cast<int>(folder->titleCount());
     info.colorIndex = folder->colorIndex;
     info.sizeIndex = folder->sizeIndex;
+    info.styleIndex = folder->styleIndex;
     m_folderOptions->setFolder(info);
     m_folderOptions->onOpen([this, folderId]() {
         if (m_folderOptions) m_folderOptions->hide();
@@ -1263,6 +1317,19 @@ void WiiUMenuApp::showFolderContextMenu(std::uint32_t folderId) {
         if (!m_folderStore.setSizeIndex(folderId, sizeIndex))
             return;
         saveFoldersOrReport("folder_size");
+    });
+    m_folderOptions->onStyleChange([this, folderId](int styleIndex) {
+        if (!m_folderStore.setStyleIndex(folderId, styleIndex) ||
+            !saveFoldersOrReport("folder_style"))
+            return;
+        const std::uint64_t id = folderTitleId(folderId);
+        const int index = findTitleIndex(id);
+        if (index >= 0 && index < m_model.count()) {
+            m_model.at(index).folderStyleIndex = styleIndex;
+            const auto& icons = m_grid->allIcons();
+            if (index < static_cast<int>(icons.size()) && icons[static_cast<std::size_t>(index)])
+                icons[static_cast<std::size_t>(index)]->setFolderStyleIndex(styleIndex);
+        }
     });
     m_folderOptions->onDelete([this, folderId, name]() {
         auto& local = nxui::I18n::instance();

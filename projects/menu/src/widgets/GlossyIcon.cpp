@@ -1,5 +1,6 @@
 #include "GlossyIcon.hpp"
 #include "FolderPalette.hpp"
+#include "core/FolderStore.hpp"
 #include "BatteryDrawing.hpp"
 #include "core/DebugLog.hpp"
 #include <nxui/core/Renderer.hpp>
@@ -936,91 +937,170 @@ void GlossyIcon::onContentRender(nxui::Renderer& ren) {
 
     if (m_entryKind == GridEntryKind::Folder) {
         nxui::Color accent = switchu::folders::colorForIndex(m_folderColorIndex);
+        const bool classic = m_folderStyleIndex == switchu::folders::kFolderStyleClassic;
 
-        const float inset = 10.f * s;
-        const nxui::Rect shell = r.shrunk(inset);
-        const float shellRadius = std::max(12.f, rad - 2.f);
-        ren.drawRoundedRect({shell.x, shell.y + 4.f * s, shell.width, shell.height},
-                            nxui::Color(0.03f, 0.05f, 0.08f, 0.30f * m_opacity),
-                            shellRadius);
-        ren.drawRoundedRect(shell,
-                            nxui::Color(0.94f, 0.97f, 0.96f, 0.96f * m_opacity),
-                            shellRadius);
-        ren.drawRoundedRect(shell.shrunk(3.f * s),
-                            nxui::Color(0.72f, 0.78f, 0.79f, 0.28f * m_opacity),
-                            std::max(8.f, shellRadius - 3.f * s));
-        ren.drawRoundedRectOutline(shell.shrunk(1.f * s),
-                                   nxui::Color::white().withAlpha(0.92f * m_opacity),
-                                   std::max(8.f, shellRadius - 1.f * s), 2.f * s);
+        if (classic) {
+            const float inset = 10.f * s;
+            const nxui::Rect shell = r.shrunk(inset);
+            const float shellRadius = std::max(12.f, rad - 2.f);
+            ren.drawRoundedRect({shell.x, shell.y + 4.f * s, shell.width, shell.height},
+                                nxui::Color(0.03f, 0.05f, 0.08f, 0.30f * m_opacity),
+                                shellRadius);
+            ren.drawRoundedRect(shell,
+                                nxui::Color(0.94f, 0.97f, 0.96f, 0.96f * m_opacity),
+                                shellRadius);
+            ren.drawRoundedRect(shell.shrunk(3.f * s),
+                                nxui::Color(0.72f, 0.78f, 0.79f, 0.28f * m_opacity),
+                                std::max(8.f, shellRadius - 3.f * s));
+            ren.drawRoundedRectOutline(shell.shrunk(1.f * s),
+                                       nxui::Color::white().withAlpha(0.92f * m_opacity),
+                                       std::max(8.f, shellRadius - 1.f * s), 2.f * s);
 
-        const bool named = m_font && !m_title.empty();
+            const bool named = m_font && !m_title.empty();
+            const float cell = std::min(shell.width, shell.height) * 0.185f;
+            const float gap = cell * 0.18f;
+            const float gridSize = cell * 3.f + gap * 2.f;
+            const float gridX = shell.x + (shell.width - gridSize) * 0.5f;
+            const float gridY = shell.y + (shell.height - gridSize) * 0.5f;
+            for (int i = 0; i < 9; ++i) {
+                const int col = i % 3;
+                const int row = i / 3;
+                const nxui::Rect cellRect{gridX + col * (cell + gap),
+                                          gridY + row * (cell + gap), cell, cell};
+                ren.drawRoundedRect({cellRect.x, cellRect.y + 1.8f * s,
+                                     cellRect.width, cellRect.height},
+                                    nxui::Color(0.05f, 0.08f, 0.10f,
+                                                0.16f * m_opacity),
+                                    cell * 0.20f);
+                const float variation = 0.92f + 0.035f * static_cast<float>((i + row) % 3);
+                nxui::Color cellColor(
+                    std::min(1.f, accent.r * variation),
+                    std::min(1.f, accent.g * variation),
+                    std::min(1.f, accent.b * variation),
+                    0.94f * m_opacity);
+                ren.drawRoundedRect(cellRect, cellColor, cell * 0.20f);
+                ren.drawRoundedRect({cellRect.x + cell * 0.10f,
+                                     cellRect.y + cell * 0.08f,
+                                     cellRect.width * 0.80f,
+                                     std::max(1.f, cellRect.height * 0.13f)},
+                                    nxui::Color::white().withAlpha(0.18f * m_opacity),
+                                    cell * 0.08f);
+            }
 
-        const float cell = std::min(shell.width, shell.height) * 0.185f;
-        const float gap = cell * 0.18f;
-        const float gridSize = cell * 3.f + gap * 2.f;
-        const float gridX = shell.x + (shell.width - gridSize) * 0.5f;
-        const float gridY = shell.y + (shell.height - gridSize) * 0.5f;
-        for (int i = 0; i < 9; ++i) {
-            const int col = i % 3;
-            const int row = i / 3;
-            const nxui::Rect cellRect{gridX + col * (cell + gap),
-                                      gridY + row * (cell + gap), cell, cell};
-            ren.drawRoundedRect({cellRect.x, cellRect.y + 1.8f * s,
-                                 cellRect.width, cellRect.height},
-                                nxui::Color(0.05f, 0.08f, 0.10f,
-                                            0.16f * m_opacity),
-                                cell * 0.20f);
-            const float variation = 0.92f + 0.035f * static_cast<float>((i + row) % 3);
-            nxui::Color cellColor(
-                std::min(1.f, accent.r * variation),
-                std::min(1.f, accent.g * variation),
-                std::min(1.f, accent.b * variation),
-                0.94f * m_opacity);
-            ren.drawRoundedRect(cellRect, cellColor, cell * 0.20f);
-            ren.drawRoundedRect({cellRect.x + cell * 0.10f,
-                                 cellRect.y + cell * 0.08f,
-                                 cellRect.width * 0.80f,
-                                 std::max(1.f, cellRect.height * 0.13f)},
-                                nxui::Color::white().withAlpha(0.18f * m_opacity),
-                                cell * 0.08f);
+            if (named) {
+                const nxui::Vec2 measured = m_font->measure(m_title);
+                const float room = std::max(8.f, shell.width - 6.f * s);
+                float textScale = 1.05f * s;
+                if (measured.x > 0.f)
+                    textScale = std::min(textScale, room / measured.x);
+                textScale = std::max(0.38f * s, textScale);
+
+                const float textW = measured.x * textScale;
+                const float textH = measured.y * textScale;
+                const nxui::Vec2 textPos{shell.x + (shell.width - textW) * 0.5f,
+                                         shell.y + (shell.height - textH) * 0.5f};
+
+                const float halo = std::max(1.f, 1.5f * s);
+                const nxui::Color shadow(0.05f, 0.16f, 0.26f, 0.34f * m_opacity);
+                const nxui::Vec2 offsets[8] = {
+                    {-halo, 0.f}, {halo, 0.f}, {0.f, -halo}, {0.f, halo},
+                    {-halo, -halo}, {halo, -halo}, {-halo, halo}, {halo, halo}};
+                for (const nxui::Vec2& off : offsets)
+                    ren.drawText(m_title, {textPos.x + off.x, textPos.y + off.y},
+                                 m_font, shadow, textScale);
+
+                ren.drawText(m_title,
+                             {textPos.x, textPos.y + halo * 0.7f},
+                             m_font,
+                             nxui::Color(0.04f, 0.14f, 0.24f, 0.30f * m_opacity),
+                             textScale);
+
+                ren.drawText(m_title, textPos, m_font,
+                             nxui::Color::white().withAlpha(0.98f * m_opacity),
+                             textScale);
+            }
+
+            if (m_focused) {
+                ren.drawRoundedRectOutline(shell.expanded(2.f * s),
+                                           accent.withAlpha(0.42f * m_opacity),
+                                           shellRadius + 2.f * s, 2.f * s);
+            }
+            return;
         }
 
+        // Glass style — translucent shell with an accent slice and contrast band.
+        const float inset = 8.f * s;
+        const nxui::Rect shell = r.shrunk(inset);
+        const float shellRadius = std::max(12.f, rad - 2.f);
+
+        ren.drawRoundedRect(shell,
+                            nxui::Color(0.04f, 0.07f, 0.11f, 0.42f * m_opacity),
+                            shellRadius);
+        ren.drawRoundedRect(shell,
+                            accent.withAlpha(0.16f * m_opacity),
+                            shellRadius);
+        ren.drawRoundedRectOutline(shell.shrunk(1.f * s),
+                                   nxui::Color::white().withAlpha(0.38f * m_opacity),
+                                   std::max(8.f, shellRadius - 1.f * s), 1.5f * s);
+
+        const float sliceH = std::max(4.f, shell.height * 0.09f);
+        ren.drawRoundedRect({shell.x + 3.f * s, shell.y + 3.f * s,
+                             shell.width - 6.f * s, sliceH},
+                            accent.withAlpha(0.78f * m_opacity),
+                            sliceH * 0.45f);
+        ren.drawRoundedRect({shell.x + 3.f * s, shell.y + 3.f * s,
+                             shell.width - 6.f * s, sliceH * 0.45f},
+                            nxui::Color::white().withAlpha(0.22f * m_opacity),
+                            sliceH * 0.35f);
+
+        const bool named = m_font && !m_title.empty();
         if (named) {
             const nxui::Vec2 measured = m_font->measure(m_title);
-            const float room = std::max(8.f, shell.width - 6.f * s);
-            float textScale = 1.05f * s;
+            const float room = std::max(8.f, shell.width - 18.f * s);
+            float textScale = 0.92f * s;
             if (measured.x > 0.f)
                 textScale = std::min(textScale, room / measured.x);
-            textScale = std::max(0.38f * s, textScale);
+            textScale = std::max(0.40f * s, textScale);
 
             const float textW = measured.x * textScale;
             const float textH = measured.y * textScale;
             const nxui::Vec2 textPos{shell.x + (shell.width - textW) * 0.5f,
-                                     shell.y + (shell.height - textH) * 0.5f};
+                                     shell.y + (shell.height - textH) * 0.52f};
 
-            const float halo = std::max(1.f, 1.5f * s);
-            const nxui::Color shadow(0.05f, 0.16f, 0.26f, 0.34f * m_opacity);
-            const nxui::Vec2 offsets[8] = {
-                {-halo, 0.f}, {halo, 0.f}, {0.f, -halo}, {0.f, halo},
-                {-halo, -halo}, {halo, -halo}, {-halo, halo}, {halo, halo}};
-            for (const nxui::Vec2& off : offsets)
-                ren.drawText(m_title, {textPos.x + off.x, textPos.y + off.y},
-                             m_font, shadow, textScale);
-
-            ren.drawText(m_title,
-                         {textPos.x, textPos.y + halo * 0.7f},
-                         m_font,
-                         nxui::Color(0.04f, 0.14f, 0.24f, 0.30f * m_opacity),
-                         textScale);
+            const float bandPadX = 10.f * s;
+            const float bandPadY = 6.f * s;
+            const nxui::Rect band{
+                std::max(shell.x + 4.f * s, textPos.x - bandPadX),
+                textPos.y - bandPadY,
+                std::min(shell.width - 8.f * s, textW + bandPadX * 2.f),
+                textH + bandPadY * 2.f};
+            ren.drawRoundedRect(band,
+                                nxui::Color(0.02f, 0.04f, 0.08f, 0.62f * m_opacity),
+                                std::max(6.f, band.height * 0.35f));
 
             ren.drawText(m_title, textPos, m_font,
                          nxui::Color::white().withAlpha(0.98f * m_opacity),
                          textScale);
+        } else {
+            const float cell = std::min(shell.width, shell.height) * 0.16f;
+            const float gap = cell * 0.22f;
+            const float gridSize = cell * 2.f + gap;
+            const float gridX = shell.x + (shell.width - gridSize) * 0.5f;
+            const float gridY = shell.y + (shell.height - gridSize) * 0.52f;
+            for (int i = 0; i < 4; ++i) {
+                const int col = i % 2;
+                const int row = i / 2;
+                const nxui::Rect cellRect{gridX + col * (cell + gap),
+                                          gridY + row * (cell + gap), cell, cell};
+                ren.drawRoundedRect(cellRect,
+                                    accent.withAlpha(0.55f * m_opacity),
+                                    cell * 0.22f);
+            }
         }
 
         if (m_focused) {
             ren.drawRoundedRectOutline(shell.expanded(2.f * s),
-                                       accent.withAlpha(0.42f * m_opacity),
+                                       accent.withAlpha(0.50f * m_opacity),
                                        shellRadius + 2.f * s, 2.f * s);
         }
         return;

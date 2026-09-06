@@ -106,10 +106,13 @@ bool FolderStore::load() {
             folder.colorIndex = std::clamp(
                 item.value("color", static_cast<int>(folder.id % 8u)), 0, 7);
             folder.sizeIndex = std::clamp(item.value("size", 1), 0, 2);
+            folder.styleIndex = std::clamp(
+                item.value("style", kDefaultFolderStyle), 0, kFolderStyleCount - 1);
             folder.pageCount = std::clamp(item.value("pages", 1), 1, kMaxFolderPages);
         } catch (...) {
             folder.colorIndex = static_cast<int>(folder.id % 8u);
             folder.sizeIndex = 1;
+            folder.styleIndex = kDefaultFolderStyle;
             folder.pageCount = 1;
         }
         usedIds.insert(folder.id);
@@ -146,6 +149,7 @@ bool FolderStore::save() const {
         item["name"] = folder.name;
         item["color"] = folder.colorIndex;
         item["size"] = folder.sizeIndex;
+        item["style"] = folder.styleIndex;
         item["pages"] = folder.pageCount;
         item["titles"] = nlohmann::json::array();
         for (std::uint64_t titleId : folder.titleIds)
@@ -236,6 +240,7 @@ std::uint32_t FolderStore::create(std::string name) {
     folder.name = std::move(name);
     folder.colorIndex = static_cast<int>(id % 8u);
     folder.sizeIndex = 1;
+    folder.styleIndex = kDefaultFolderStyle;
     m_folders.push_back(std::move(folder));
     return id;
 }
@@ -351,6 +356,14 @@ bool FolderStore::setSizeIndex(std::uint32_t folderId, int sizeIndex) {
     if (!folder)
         return false;
     folder->sizeIndex = std::clamp(sizeIndex, 0, 2);
+    return true;
+}
+
+bool FolderStore::setStyleIndex(std::uint32_t folderId, int styleIndex) {
+    Folder* folder = find(folderId);
+    if (!folder)
+        return false;
+    folder->styleIndex = std::clamp(styleIndex, 0, kFolderStyleCount - 1);
     return true;
 }
 

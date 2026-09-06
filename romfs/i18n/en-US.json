@@ -515,6 +515,10 @@
     "size_small": "Small",
     "size_medium": "Medium",
     "size_large": "Large",
+    "style": "Folder style",
+    "style_desc": "Choose the classic tile look or a translucent glass look.",
+    "style_classic": "Classic",
+    "style_glass": "Glass",
     "items": "items"
   },
   "add": {
