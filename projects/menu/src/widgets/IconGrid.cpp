@@ -563,8 +563,29 @@ void IconGrid::onUpdate(float dt) {
                                    nxui::Easing::outCubic);
         }
 
-        for (int i = 0; i < (int)m_allIcons.size(); ++i) {
-            m_allIcons[i]->setRect(dynamicIconRect(i));
+        // Every rect on the line is a pure function of the scroll offset, the
+        // reveal value and the grid rect. At rest all three are constant, so
+        // recomputing them each frame produced identical values for the whole
+        // installed library. Recompute only when one of those inputs moved.
+        const float offsetNow = m_lineScrollOffset.value();
+        const float revealNow = m_layoutReveal.value();
+        const bool layoutDirty =
+            m_lineLayoutCacheCount != (int)m_allIcons.size()
+            || std::abs(m_lineLayoutCacheOffset - offsetNow) > 0.0001f
+            || std::abs(m_lineLayoutCacheReveal - revealNow) > 0.0001f
+            || std::abs(m_lineLayoutCacheRect.x - m_rect.x) > 0.0001f
+            || std::abs(m_lineLayoutCacheRect.y - m_rect.y) > 0.0001f
+            || std::abs(m_lineLayoutCacheRect.width - m_rect.width) > 0.0001f
+            || std::abs(m_lineLayoutCacheRect.height - m_rect.height) > 0.0001f;
+
+        if (layoutDirty) {
+            for (int i = 0; i < (int)m_allIcons.size(); ++i) {
+                m_allIcons[i]->setRect(dynamicIconRect(i));
+            }
+            m_lineLayoutCacheCount = (int)m_allIcons.size();
+            m_lineLayoutCacheOffset = offsetNow;
+            m_lineLayoutCacheReveal = revealNow;
+            m_lineLayoutCacheRect = m_rect;
         }
         return;
     }
@@ -609,14 +630,13 @@ void IconGrid::renderPageAt(nxui::Renderer& ren, int page, float dx) {
 void IconGrid::renderDynamicLine(nxui::Renderer& ren) {
     ren.pushClipRect(m_rect);
 
-    struct RenderCandidate {
-        int index;
-        float absD;
-        float d;
-        float s;
-        float a;
-    };
-    std::vector<RenderCandidate> candidates;
+    // The focused index is a linear scan over every icon. Reading it inside the
+    // loop made the whole pass quadratic in the installed title count for a
+    // value that cannot change while the loop runs.
+    const int focusedIndex = focusedGlobalIndex();
+
+    auto& candidates = m_lineRenderScratch;
+    candidates.clear();
     candidates.reserve(m_allIcons.size());
 
     for (int i = 0; i < (int)m_allIcons.size(); ++i) {
@@ -624,9 +644,9 @@ void IconGrid::renderDynamicLine(nxui::Renderer& ren) {
         float a = 1.f;
         float absD = 0.f;
         const nxui::Rect r = dynamicIconRect(i, &s, &a, &absD);
-        if (absD > 4.5f && i != focusedGlobalIndex()) continue;
+        if (absD > 4.5f && i != focusedIndex) continue;
         const float d = r.center().x - m_rect.center().x;
-        candidates.push_back({i, absD, d, s, a});
+        candidates.push_back({i, absD, d, s, a, r});
     }
 
     std::sort(candidates.begin(), candidates.end(), [](const auto& lhs, const auto& rhs) {
@@ -638,7 +658,7 @@ void IconGrid::renderDynamicLine(nxui::Renderer& ren) {
         const nxui::Rect savedRect = icon->rect();
         const float savedOp = icon->opacity();
 
-        icon->setRect(dynamicIconRect(c.index));
+        icon->setRect(c.rect);
         icon->setOpacity(savedOp * c.a);
         icon->render(ren);
 
