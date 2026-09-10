@@ -1571,6 +1571,7 @@ void WiiUMenuApp::applyDisplayModel(GridModel model, std::uint64_t focusId, bool
     m_widgetAssetPage = -1;
     if (animate) m_grid->startAppearAnimation();
     else for (auto& icon : m_grid->allIcons()) icon->forceVisible();
+    syncEditJiggle();
     updateCursor();
 }
 

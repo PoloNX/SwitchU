@@ -112,6 +112,7 @@ private:
     GridModel buildRootFolderModel();
     GridModel buildOpenFolderModel(std::uint32_t folderId) const;
     void applyDisplayModel(GridModel model, std::uint64_t focusId, bool animate);
+    void syncEditJiggle();
     void syncPageIndicator();
     void flipPageFromEdge(int dir);
     void requestOpenFolder(std::uint32_t folderId, std::uint64_t focusTitleId = 0);

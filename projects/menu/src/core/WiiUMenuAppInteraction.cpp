@@ -246,6 +246,19 @@ void WiiUMenuApp::detachEditSourceIcon() {
     m_editSourceIcon = nullptr;
     if (m_editGhostIcon && !m_editGhostTexture)
         m_editGhostIcon->setTexture(nullptr);
+    syncEditJiggle();
+}
+
+void WiiUMenuApp::syncEditJiggle() {
+    if (!m_grid)
+        return;
+    const auto& icons = m_grid->allIcons();
+    for (std::size_t i = 0; i < icons.size(); ++i) {
+        if (!icons[i])
+            continue;
+        const bool on = m_editMode && icons[i].get() != m_editSourceIcon;
+        icons[i]->setJiggle(on, static_cast<float>(i) * 1.7f);
+    }
 }
 
 void WiiUMenuApp::reattachEditSourceIcon() {
@@ -262,6 +275,7 @@ void WiiUMenuApp::reattachEditSourceIcon() {
     m_editSourceIndex = index;
     m_editSourceIcon = icon.get();
     m_editSourceIcon->setOpacity(0.10f);
+    syncEditJiggle();
     m_iconStreamer.setPinnedIndex(index);
     if (m_editGhostIcon && !m_editGhostTexture)
         m_editGhostIcon->setTexture(m_editSourceIcon->texture());
@@ -349,6 +363,7 @@ void WiiUMenuApp::enterEditMode() {
     m_editHeldTitle = icon->title();
     startEditGhost(icon);
     bindEditActions(icon);
+    syncEditJiggle();
     m_titlePill->setText(nxui::I18n::instance().tr("game.move_prefix", "Move: ") + m_editHeldTitle);
     m_titlePill->setVisible(true);
     m_accessibility.announce(nxui::I18n::instance().tr(
@@ -370,6 +385,7 @@ void WiiUMenuApp::exitEditMode() {
     m_editHeldTitleId = 0;
     m_editHeldTitle.clear();
     stopEditGhost();
+    syncEditJiggle();
 
     auto* cur = focusManager().current();
     if (isEditableIcon(cur)) {

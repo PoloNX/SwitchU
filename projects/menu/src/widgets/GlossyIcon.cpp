@@ -253,6 +253,7 @@ GlossyIcon::GlossyIcon() {
     m_appearOpacity.setImmediate(0.f);
     m_focusScale.setImmediate(1.f);
     m_focusGlow.setImmediate(0.f);
+    m_jiggleAmount.setImmediate(0.f);
     setCornerRadius(16.f);
     setPadding(8.f);
     setLiquidGlassEnabled(true);
@@ -525,6 +526,14 @@ void GlossyIcon::forceVisible() {
     m_appearOpacity.setImmediate(1.f);
 }
 
+void GlossyIcon::setJiggle(bool on, float phaseSeed) {
+    if (on && !m_jiggle)
+        m_jigglePhase = 0.f;
+    m_jiggle = on;
+    m_jiggleSeed = phaseSeed;
+    m_jiggleAmount.set(on ? 1.f : 0.f, 0.18f, nxui::Easing::outCubic);
+}
+
 void GlossyIcon::onContentUpdate(float dt) {
     if (m_appearing) {
         m_appearTimer += dt;
@@ -583,6 +592,8 @@ void GlossyIcon::onContentUpdate(float dt) {
         }
     }
 #endif
+    if (m_jiggle || m_jiggleAmount.value() > 0.001f)
+        m_jigglePhase += dt;
 }
 
 void GlossyIcon::onRender(nxui::Renderer& ren) {
@@ -601,6 +612,24 @@ void GlossyIcon::onRender(nxui::Renderer& ren) {
         drawRect.y += (savedRect.height - h) * 0.5f;
         drawRect.width = w;
         drawRect.height = h;
+    }
+
+    const float jig = m_jiggleAmount.value();
+    if (jig > 0.001f) {
+        const float p = m_jigglePhase;
+        const float sq = std::sin(p * 10.2f + m_jiggleSeed * 2.3f);
+        const float jw = drawRect.width  * (1.f + 0.012f * jig * sq);
+        const float jh = drawRect.height * (1.f - 0.012f * jig * sq);
+        drawRect.x += (drawRect.width  - jw) * 0.5f
+                    + 2.2f * jig * std::sin(p * 9.0f  + m_jiggleSeed);
+        drawRect.y += (drawRect.height - jh) * 0.5f
+                    + 1.8f * jig * std::sin(p * 11.3f + m_jiggleSeed * 1.7f);
+        drawRect.width  = jw;
+        drawRect.height = jh;
+    }
+
+    if (drawRect.x != savedRect.x || drawRect.y != savedRect.y ||
+        drawRect.width != savedRect.width || drawRect.height != savedRect.height) {
         m_rect = drawRect;
     }
     setScale(1.f);
