@@ -220,17 +220,21 @@ nxui::Rect IconGrid::gridSpanRect(int globalIndex, int columns, int rows) const 
     // The single-row carousel has its own fixed metrics and animation. Edit
     // ghosts/cursors must follow that displayed rect instead of reconstructing
     // a cell from the configurable grid dimensions.
-    if (m_layoutMode == AppLayoutMode::DynamicLine)
-        return dynamicIconRect(globalIndex);
     const int local = globalIndex % std::max(1, iconsPerPage());
     const int column = local % std::max(1, m_cols);
     const int row = local / std::max(1, m_cols);
     const int spanColumns = std::max(1, columns);
     const int spanRows = std::max(1, rows);
-    return {m_originX + column * (m_cellW + m_padX),
-            m_originY + row * (m_cellH + m_padY),
-            m_cellW * spanColumns + m_padX * (spanColumns - 1),
-            m_cellH * spanRows + m_padY * (spanRows - 1)};
+    const nxui::Rect slot{m_originX + column * (m_cellW + m_padX),
+                          m_originY + row * (m_cellH + m_padY),
+                          m_cellW * spanColumns + m_padX * (spanColumns - 1),
+                          m_cellH * spanRows + m_padY * (spanRows - 1)};
+    // still travelling
+    if (m_layoutMorphing)
+        return morphBlend(globalIndex, slot);
+    if (m_layoutMode == AppLayoutMode::DynamicLine)
+        return dynamicIconRect(globalIndex);
+    return slot;
 }
 
 void IconGrid::layoutLine() {
@@ -391,16 +395,19 @@ nxui::Rect IconGrid::gridSlotRect(int globalIndex) const {
             m_cellH * spanRows + m_padY * (spanRows - 1)};
 }
 
+nxui::Rect IconGrid::morphBlend(int globalIndex, const nxui::Rect& gridRect) const {
+    const int perPage = std::max(1, iconsPerPage());
+    const int start = m_layoutMorphPage * perPage;
+    const nxui::Rect line = dynamicIconRect(globalIndex);
+    const bool inGrid = globalIndex >= start && globalIndex < start + perPage;
+    return nxui::Rect::lerp(inGrid ? gridRect : line, line,
+                            clamp01(m_layoutMorph.value()));
+}
+
 nxui::Rect IconGrid::focusedDisplayRect() const {
     const int focused = focusedGlobalIndex();
-    if (m_layoutMorphing && focused >= 0) {
-        const int perPage = std::max(1, iconsPerPage());
-        const int start = m_layoutMorphPage * perPage;
-        const nxui::Rect line = dynamicIconRect(focused);
-        const nxui::Rect grid = (focused >= start && focused < start + perPage)
-            ? gridSlotRect(focused) : line;
-        return nxui::Rect::lerp(grid, line, clamp01(m_layoutMorph.value()));
-    }
+    if (m_layoutMorphing && focused >= 0)
+        return morphBlend(focused, gridSlotRect(focused));
     if (m_layoutMode == AppLayoutMode::DynamicLine) {
         if (focused >= 0)
             return dynamicIconRect(focused);

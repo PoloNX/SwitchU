@@ -2736,7 +2736,12 @@ void WiiUMenuApp::setAppLayoutMode(AppLayoutMode mode) {
         if (auto* current = m_grid->focusManager().current();
             current && current->tag() == "glossy_icon")
             focused = static_cast<GlossyIcon*>(current)->titleId();
+        const bool editing = m_editMode;
+        if (editing)
+            detachEditSourceIcon();
         applyDisplayModel(buildRootFolderModel(), focused, false);
+        if (editing)
+            reattachEditSourceIcon();
     }
     configureDynamicLineNavigation();
 

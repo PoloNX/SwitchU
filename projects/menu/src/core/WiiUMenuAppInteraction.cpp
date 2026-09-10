@@ -298,7 +298,7 @@ void WiiUMenuApp::updateEditGhost(float dt) {
         m_editGhostTargetRect = m_grid->gridSpanRect(
             target, m_editGhostIcon->gridSpanColumns(),
             m_editGhostIcon->gridSpanRows());
-        discreteTarget = true;
+        discreteTarget = !m_grid->isLayoutMorphing();
     } else if (m_cursor && m_cursor->isVisible()) {
         m_editGhostTargetRect = m_cursor->currentRect();
     } else if (auto* cur = focusManager().current()) {

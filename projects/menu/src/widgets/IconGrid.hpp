@@ -87,6 +87,7 @@ private:
     void renderDynamicLine(nxui::Renderer& ren);
     void renderLayoutMorph(nxui::Renderer& ren);
     nxui::Rect gridSlotRect(int globalIndex) const;
+    nxui::Rect morphBlend(int globalIndex, const nxui::Rect& gridRect) const;
     void bindEdgeActions(int start, int end);
     void bindGridNavigation(int start, int end);
     nxui::Rect dynamicIconRect(int index, float* outScale = nullptr,
