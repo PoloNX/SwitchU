@@ -4636,10 +4636,10 @@ void WiiUMenuApp::onUpdate(float dt) {
 
     nxui::AnimationManager::instance().update(dt);
 
-    // In dynamic-line mode the focused widget itself is moving. Sample its
-    // interpolated display rectangle every frame so the focus ring remains
-    // attached to the app throughout the carousel transition.
-    if (m_grid && m_grid->isDynamicLine()) {
+    // In dynamic-line mode, and while a layout morph is in flight, the focused
+    // widget itself is moving. Sample its interpolated display rectangle every
+    // frame so the focus ring remains attached to the app throughout.
+    if (m_grid && (m_grid->isDynamicLine() || m_grid->isLayoutMorphing())) {
         auto* focused = focusManager().current();
         if (focused && focused->tag() == "glossy_icon")
             updateCursor();
