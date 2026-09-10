@@ -11,6 +11,13 @@
 
 class GlossyIcon;
 
+struct IconAppearOptions {
+    float baseDelay = 0.f;
+    float stagger   = 0.40f;
+    bool  fromTile  = false;
+    nxui::Rect origin{};
+};
+
 class IconGrid : public nxui::Widget {
 public:
     IconGrid();
@@ -52,14 +59,14 @@ public:
     bool focusGlobalIndex(int idx);
     bool swapSlots(int a, int b);
 
-    void startAppearAnimation();
+    void startAppearAnimation(const IconAppearOptions& opt = IconAppearOptions{});
 
     void startPageTransition(int targetPage);
     bool isTransitioning() const { return m_sliding; }
 
-    void setSlideTransition(bool enabled) { m_slideTransition = enabled; }
-
     void bumpEdge(int dir);
+
+    void setSlideTransition(bool enabled) { m_slideTransition = enabled; }
     void setEdgePaging(bool enabled) { m_edgePaging = enabled; }
     void onEdgePage(std::function<void(int dir)> cb) { m_onEdgePage = std::move(cb); }
 

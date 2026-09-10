@@ -57,6 +57,9 @@ static constexpr float kGridRectY = 90.f;
 static constexpr float kGridRectW = 1280.f;
 static constexpr float kGridRectH = 540.f;
 
+static constexpr float kFolderZoomCascadeDelay   = 0.06f;
+static constexpr float kFolderZoomCascadeStagger = 0.18f;
+
 static constexpr float kGridBaseCellW = 150.f;
 static constexpr float kGridBaseCellH = 150.f;
 static constexpr float kGridBasePadX  = 20.f;
@@ -1447,7 +1450,8 @@ GridModel WiiUMenuApp::buildOpenFolderModel(std::uint32_t folderId) const {
     return model;
 }
 
-void WiiUMenuApp::applyDisplayModel(GridModel model, std::uint64_t focusId, bool animate) {
+void WiiUMenuApp::applyDisplayModel(GridModel model, std::uint64_t focusId, bool animate,
+                                    const IconAppearOptions& appear) {
     if (!m_grid)
         return;
     const auto isImageAssetWidget = [](switchu::widgets::WidgetType type) {
@@ -1569,7 +1573,7 @@ void WiiUMenuApp::applyDisplayModel(GridModel model, std::uint64_t focusId, bool
     m_iconStreamer.onPageChanged(m_grid->currentPage(), m_grid->iconsPerPage(),
                                  app().gpu(), app().renderer(), m_grid->allIcons());
     m_widgetAssetPage = -1;
-    if (animate) m_grid->startAppearAnimation();
+    if (animate) m_grid->startAppearAnimation(appear);
     else for (auto& icon : m_grid->allIcons()) icon->forceVisible();
     syncEditJiggle();
     updateCursor();
@@ -2600,6 +2604,7 @@ void WiiUMenuApp::requestOpenFolder(std::uint32_t folderId, std::uint64_t focusT
     m_folderOpenFocusTitleId = focusTitleId;
     m_folderCaptureRequested = true;
     m_folderCaptureReady = false;
+    m_folderZoomOriginRect = folderTileRect(folderId);
     if (m_cursor) m_cursor->setVisible(false);
 }
 
@@ -2633,6 +2638,22 @@ void WiiUMenuApp::snapCursorToFocus() {
     if (m_cursor && focusManager().current())
         m_cursor->moveTo(focusManager().current()->focusRect().expanded(4.f), 0.01f);
     updateCursor();
+}
+
+nxui::Rect WiiUMenuApp::folderTileRect(std::uint32_t folderId) const {
+    if (!m_grid)
+        return {};
+    const std::uint64_t tid = folderTitleId(folderId);
+    const int perPage = m_grid->iconsPerPage();
+    const int start   = m_grid->currentPage() * perPage;
+    const int end     = std::min(start + perPage,
+                                 static_cast<int>(m_grid->allIcons().size()));
+    for (int i = start; i < end; ++i) {
+        const auto& icon = m_grid->allIcons()[static_cast<std::size_t>(i)];
+        if (icon && icon->titleId() == tid)
+            return icon->focusRect();
+    }
+    return {};
 }
 
 void WiiUMenuApp::syncPageIndicator() {
@@ -2749,8 +2770,21 @@ void WiiUMenuApp::openCapturedFolder() {
         m_folderHeaderLabel->setText(folder->name);
         m_folderHeaderLabel->setTextColor(m_theme.textPrimary);
     }
-    m_grid->setRect({kGridRectX, 148.f, kGridRectW, 470.f});
-    applyDisplayModel(buildOpenFolderModel(m_openFolderId), m_folderOpenFocusTitleId, false);
+    const nxui::Rect folderGridRect{kGridRectX, 148.f, kGridRectW, 470.f};
+    m_grid->setRect(folderGridRect);
+    const bool zoom = !refocus && m_folderZoom && m_folderZoomOriginRect.width > 0.f;
+    IconAppearOptions appear;
+    if (zoom) {
+        m_folderZoom->open(m_folderZoomOriginRect, folderGridRect,
+                           switchu::folders::colorForIndex(folder->colorIndex),
+                           [this]() { snapCursorToFocus(); });
+        appear.baseDelay = kFolderZoomCascadeDelay;
+        appear.stagger   = kFolderZoomCascadeStagger;
+        appear.fromTile  = true;
+        appear.origin    = m_folderZoomOriginRect;
+    }
+    applyDisplayModel(buildOpenFolderModel(m_openFolderId), m_folderOpenFocusTitleId,
+                      zoom, appear);
     m_folderOpenFocusTitleId = 0;
     syncPageIndicator();
     if (m_editMode)
@@ -2774,9 +2808,21 @@ void WiiUMenuApp::closeFolder(bool preserveEditMode) {
     if (m_rightSidebar) m_rightSidebar->setVisible(true);
     if (m_pageIndicator)
         m_pageIndicator->clearActiveColor();
+    const nxui::Rect folderGridRect{kGridRectX, 148.f, kGridRectW, 470.f};
     m_grid->setRect({kGridRectX, kGridRectY, kGridRectW, kGridRectH});
     applyDisplayModel(buildRootFolderModel(), folderTitleId(oldId), false);
     syncPageIndicator();
+    if (m_folderZoom) {
+        const nxui::Rect tile = folderTileRect(oldId);
+        if (tile.width > 0.f) {
+            m_folderZoomOriginRect = tile;
+            const auto* old = m_folderStore.find(oldId);
+            if (m_cursor) m_cursor->setVisible(false);
+            m_folderZoom->close(folderGridRect, tile,
+                                switchu::folders::colorForIndex(old ? old->colorIndex : 0),
+                                [this]() { snapCursorToFocus(); });
+        }
+    }
     if (preserveEditMode) {
         reattachEditSourceIcon();
         m_titlePill->setText(nxui::I18n::instance().tr("game.move_prefix", "Move: ") + m_editHeldTitle);
@@ -3299,6 +3345,9 @@ void WiiUMenuApp::buildGrid() {
 
     m_launchAnim = std::make_shared<LaunchAnimation>();
 
+    m_folderZoom = std::make_shared<FolderZoom>();
+    m_folderZoom->setRect({0, 0, 1280, 720});
+
     m_userSelect = std::make_shared<OverlayDialog>();
     m_userSelect->setFont(&m_fontNormal);
     m_userSelect->setSmallFont(&m_fontSmall);
@@ -3585,6 +3634,7 @@ void WiiUMenuApp::buildGrid() {
     // Keep live SteamGridDB artwork above the folder's frozen transition
     // snapshot, while still placing it behind every interactive HOME widget.
     m_contentLayer->addChild(m_steamGridDbBackdrop);
+    m_contentLayer->addChild(m_folderZoom);
     m_contentLayer->addChild(m_grid);
     m_contentLayer->addChild(m_folderHeader);
     m_contentLayer->addChild(m_leftSidebar);

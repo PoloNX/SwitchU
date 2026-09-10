@@ -1517,7 +1517,8 @@ void WiiUMenuApp::updateCursor() {
         if (m_cursor) m_cursor->setVisible(false);
         return;
     }
-    if (m_grid && m_grid->isTransitioning()) {
+    if ((m_grid && m_grid->isTransitioning()) ||
+        (m_folderZoom && m_folderZoom->isPlaying())) {
         if (m_cursor) m_cursor->setVisible(false); // it would sit at the landing spot
         return;
     }

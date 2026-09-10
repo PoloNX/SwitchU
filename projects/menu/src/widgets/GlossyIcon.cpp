@@ -520,6 +520,7 @@ void GlossyIcon::startAppear(float delay) {
 
 void GlossyIcon::forceVisible() {
     m_appearing = false;
+    m_hasAppearOrigin = false;
     m_appearDelay = 0.f;
     m_appearTimer = 0.f;
     m_animScale.setImmediate(1.f);
@@ -599,17 +600,28 @@ void GlossyIcon::onContentUpdate(float dt) {
 void GlossyIcon::onRender(nxui::Renderer& ren) {
     float externalScale = scale();
     float focusS = m_focusScale.value();
-    float s = m_animScale.value() * externalScale * focusS;
+    float appear = m_animScale.value();
     float a = m_appearOpacity.value();
-    if (s < 0.01f || a < 0.01f) return;
 
     nxui::Rect savedRect = m_rect;
-    nxui::Rect drawRect = savedRect;
+    nxui::Rect base = savedRect;
+    float s;
+    if (m_hasAppearOrigin) {
+        if (appear >= 0.999f)
+            m_hasAppearOrigin = false;
+        base = nxui::Rect::lerp(m_appearOrigin, savedRect, appear);
+        s = externalScale * focusS;
+    } else {
+        s = appear * externalScale * focusS;
+    }
+    if (s < 0.01f || a < 0.01f) return;
+
+    nxui::Rect drawRect = base;
     if (std::abs(s - 1.f) > 0.001f) {
-        float w = savedRect.width * s;
-        float h = savedRect.height * s;
-        drawRect.x += (savedRect.width - w) * 0.5f;
-        drawRect.y += (savedRect.height - h) * 0.5f;
+        float w = base.width * s;
+        float h = base.height * s;
+        drawRect.x = base.x + (base.width - w) * 0.5f;
+        drawRect.y = base.y + (base.height - h) * 0.5f;
         drawRect.width = w;
         drawRect.height = h;
     }

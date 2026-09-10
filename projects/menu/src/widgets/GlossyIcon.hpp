@@ -103,6 +103,10 @@ public:
     void startAppear(float delay);
     void forceVisible();
 
+    void setAppearOrigin(const nxui::Rect& origin) {
+        m_appearOrigin = origin; m_hasAppearOrigin = true;
+    }
+
     void setJiggle(bool on, float phaseSeed = 0.f);
     bool isJiggling() const { return m_jiggle; }
 
@@ -154,6 +158,8 @@ private:
     float         m_appearDelay = 0.f;
     float         m_appearTimer = 0.f;
     bool          m_appearing   = false;
+    nxui::Rect    m_appearOrigin{};
+    bool          m_hasAppearOrigin = false;
     GridEntryKind m_entryKind = GridEntryKind::Application;
     int           m_folderPreviewCount = 0;
     std::uint32_t m_folderVisualSeed = 0;

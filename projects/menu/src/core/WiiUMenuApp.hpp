@@ -23,6 +23,7 @@
 #include "widgets/UserAvatarButton.hpp"
 #include "widgets/FolderBackdrop.hpp"
 #include "widgets/SteamGridDbBackdrop.hpp"
+#include "widgets/FolderZoom.hpp"
 #include "steamgriddb/SteamGridDbManager.hpp"
 #include "steamgriddb/ArtworkCache.hpp"
 #include "settings/SettingsScreen.hpp"
@@ -111,7 +112,9 @@ private:
     void composeRootPending(std::vector<PendingApp>& apps);
     GridModel buildRootFolderModel();
     GridModel buildOpenFolderModel(std::uint32_t folderId) const;
-    void applyDisplayModel(GridModel model, std::uint64_t focusId, bool animate);
+    void applyDisplayModel(GridModel model, std::uint64_t focusId, bool animate,
+                           const IconAppearOptions& appear = {});
+    nxui::Rect folderTileRect(std::uint32_t folderId) const;
     void snapCursorToFocus();
     void syncEditJiggle();
     void syncPageIndicator();
@@ -359,6 +362,8 @@ private:
     std::shared_ptr<nxui::Box> m_userAvatarBar;
     std::shared_ptr<FolderBackdrop> m_folderBackdrop;
     std::shared_ptr<SteamGridDbBackdrop> m_steamGridDbBackdrop;
+    std::shared_ptr<FolderZoom>     m_folderZoom;
+    nxui::Rect                      m_folderZoomOriginRect{};
     std::shared_ptr<nxui::GlassPanel> m_folderHeader;
     std::shared_ptr<nxui::Label> m_folderHeaderLabel;
     std::vector<std::shared_ptr<UserAvatarButton>> m_userAvatarButtons;

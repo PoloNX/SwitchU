@@ -459,14 +459,16 @@ int IconGrid::hitTest(float screenX, float screenY) const {
     return -1;
 }
 
-void IconGrid::startAppearAnimation() {
+void IconGrid::startAppearAnimation(const IconAppearOptions& opt) {
     if (m_layoutMode == AppLayoutMode::DynamicLine) {
         int cur = focusedGlobalIndex();
         int center = cur >= 0 ? cur : 0;
         for (int i = 0; i < (int)m_allIcons.size(); ++i) {
             float dist = static_cast<float>(std::abs(i - center));
             float delay = std::min(0.40f, dist * 0.06f);
-            m_allIcons[i]->startAppear(delay);
+            if (opt.fromTile)
+                m_allIcons[i]->setAppearOrigin(opt.origin);
+            m_allIcons[i]->startAppear(opt.baseDelay + delay);
         }
         return;
     }
@@ -478,8 +480,9 @@ void IconGrid::startAppearAnimation() {
         int col   = local % m_cols;
         int row   = local / m_cols;
         float t   = maxDist > 0 ? (float)(col + row) / maxDist : 0.f;
-        float delay = t * 0.40f;
-        m_allIcons[i]->startAppear(delay);
+        if (opt.fromTile)
+            m_allIcons[i]->setAppearOrigin(opt.origin);
+        m_allIcons[i]->startAppear(opt.baseDelay + t * opt.stagger);
     }
 }
 
