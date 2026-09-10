@@ -5257,8 +5257,13 @@ void WiiUMenuApp::onRender(nxui::Renderer& ren) {
     }
 
     // Final topmost pass for move-mode ghost.
-    if (m_editMode && m_editGhostIcon)
+    if (m_editMode && m_editGhostIcon) {
+        const nxui::Rect gr = m_editGhostIcon->rect();
+        ren.drawRoundedRect({gr.x + 2.f, gr.y + 12.f, gr.width, gr.height},
+                            nxui::Color(0.02f, 0.04f, 0.06f, 0.32f),
+                            m_editGhostIcon->cornerRadius() + 2.f);
         m_editGhostIcon->render(ren);
+    }
 
     renderPageArrows(ren);
     if (m_config.actionHintStyle == "panel")
