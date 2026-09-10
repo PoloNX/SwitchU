@@ -1537,7 +1537,7 @@ void WiiUMenuApp::applyDisplayModel(GridModel model, std::uint64_t focusId, bool
     // the edge columns are free to flip the page instead.
     const bool inFolder = (m_openFolderId != 0);
     m_grid->setEdgePaging(inFolder);
-    m_grid->setSlideTransition(inFolder);
+    m_grid->setSlideTransition(true);
     m_grid->setLayoutMode(m_appLayoutMode);
     m_grid->setup(std::move(icons), columns, rows, metrics.cellW, metrics.cellH,
                   metrics.padX, metrics.padY);
@@ -2607,8 +2607,10 @@ void WiiUMenuApp::flipPageFromEdge(int dir) {
     if (!m_grid || m_grid->isTransitioning())
         return;
     const int target = m_grid->currentPage() + dir;
-    if (target < 0 || target >= m_grid->totalPages())
+    if (target < 0 || target >= m_grid->totalPages()) {
+        m_grid->bumpEdge(dir);
         return;
+    }
 
     const int cols = std::max(1, m_grid->columns());
     const int perPage = std::max(1, m_grid->iconsPerPage());
@@ -2625,6 +2627,12 @@ void WiiUMenuApp::flipPageFromEdge(int dir) {
             focusManager().setFocus(focused);
     }
     m_audio.playSfx(Sfx::PageChange);
+}
+
+void WiiUMenuApp::snapCursorToFocus() {
+    if (m_cursor && focusManager().current())
+        m_cursor->moveTo(focusManager().current()->focusRect().expanded(4.f), 0.01f);
+    updateCursor();
 }
 
 void WiiUMenuApp::syncPageIndicator() {
@@ -4099,9 +4107,7 @@ void WiiUMenuApp::onUpdate(float dt) {
         if (sliding) {
             if (m_cursor) m_cursor->setVisible(false);
         } else {
-            if (m_cursor && focusManager().current())
-                m_cursor->moveTo(focusManager().current()->focusRect().expanded(4.f), 0.01f);
-            updateCursor();
+            snapCursorToFocus();
         }
     }
 #ifdef SWITCHU_DEBUG_UI

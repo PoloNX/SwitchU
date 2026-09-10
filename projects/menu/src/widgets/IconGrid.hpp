@@ -58,6 +58,8 @@ public:
     bool isTransitioning() const { return m_sliding; }
 
     void setSlideTransition(bool enabled) { m_slideTransition = enabled; }
+
+    void bumpEdge(int dir);
     void setEdgePaging(bool enabled) { m_edgePaging = enabled; }
     void onEdgePage(std::function<void(int dir)> cb) { m_onEdgePage = std::move(cb); }
 
@@ -108,7 +110,11 @@ private:
     float m_slideT          = 0.f;
     float m_slideInDx       = 0.f;
     float m_slideOutDx      = 0.f;
-    static constexpr float kSlideDuration = 0.30f;
+    static constexpr float kSlideDuration = 0.34f;
+
+    nxui::AnimatedFloat m_edgeBump;
+    bool  m_bumping = false;
+    static constexpr float kEdgeBumpDistance = 26.f;
 
     std::function<void()> m_onPageSwitched;
     std::function<void(int)> m_onEdgePage;

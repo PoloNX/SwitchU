@@ -489,6 +489,9 @@ void IconGrid::startPageTransition(int targetPage) {
     targetPage = std::clamp(targetPage, 0, m_totalPages - 1);
     if (targetPage == m_page) return;
 
+    m_bumping = false;
+    m_edgeBump.setImmediate(0.f);
+
     const int fromPage = m_page;
     const int oldGlobalFocus = focusedGlobalIndex();
     const int wantedLocalCell = oldGlobalFocus >= 0
@@ -553,6 +556,17 @@ void IconGrid::startPageTransition(int targetPage) {
     if (m_onPageSwitched) m_onPageSwitched();
 }
 
+void IconGrid::bumpEdge(int dir) {
+    if (m_layoutMode == AppLayoutMode::DynamicLine) return;
+    if (dir == 0 || m_sliding || m_bumping)
+        return;
+    m_bumping = true;
+    m_edgeBump.set(-dir * kEdgeBumpDistance, 0.10f, nxui::Easing::outCubic);
+    m_edgeBump.onComplete([this]() {
+        m_edgeBump.set(0.f, 0.34f, nxui::Easing::outElastic);
+    });
+}
+
 void IconGrid::onUpdate(float dt) {
     m_layoutReveal.update(dt);
     if (m_layoutMode == AppLayoutMode::DynamicLine) {
@@ -569,12 +583,20 @@ void IconGrid::onUpdate(float dt) {
         return;
     }
 
+    if (m_bumping) {
+        positionPage(m_page, m_edgeBump.value());
+        if (std::abs(m_edgeBump.value()) < 0.05f && m_edgeBump.target() == 0.f) {
+            m_bumping = false;
+            positionPage(m_page, 0.f);
+        }
+    }
+
     if (!m_sliding)
         return;
 
     m_slideT += dt;
     const float t = std::clamp(m_slideT / kSlideDuration, 0.f, 1.f);
-    const float eased = nxui::Easing::outCubic(t);
+    const float eased = nxui::Easing::inOutCubic(t);
     const float stride = pageStride();
 
     m_slideInDx  = (1.f - eased) * stride * (float)m_slideDir;
@@ -671,9 +693,10 @@ void IconGrid::render(nxui::Renderer& ren) {
         return;
     }
 
-    if (m_sliding) {
+    if (m_sliding || m_bumping) {
         ren.pushClipRect(m_rect);
-        renderPageAt(ren, m_slidePrevPage, m_slideOutDx);
+        if (m_sliding)
+            renderPageAt(ren, m_slidePrevPage, m_slideOutDx);
         for (auto& c : m_children) c->render(ren);
         ren.popClipRect();
         return;
