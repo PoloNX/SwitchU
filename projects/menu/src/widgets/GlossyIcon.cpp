@@ -471,6 +471,9 @@ void GlossyIcon::setWidgetGameTextures(std::uint64_t titleId,
 
 void GlossyIcon::copyWidgetPresentationFrom(GlossyIcon& source) {
     m_entryKind = source.m_entryKind;
+    m_folderColorIndex = source.m_folderColorIndex;
+    m_folderPreviewCount = source.m_folderPreviewCount;
+    m_folderVisualSeed = source.m_folderVisualSeed;
     m_widgetType = source.m_widgetType;
     m_widgetColumns = source.m_widgetColumns;
     m_widgetRows = source.m_widgetRows;

@@ -13,6 +13,10 @@
 #include <unordered_set>
 #include <nxui/core/I18n.hpp>
 
+namespace {
+constexpr float kEditGhostMoveDuration = 0.20f;
+}
+
 bool WiiUMenuApp::isEditableIcon(nxui::Widget* w) const {
     if (!w || w->tag() != "glossy_icon")
         return false;
@@ -218,6 +222,8 @@ void WiiUMenuApp::startEditGhost(GlossyIcon* sourceIcon) {
                                ghost->gridSpanColumns(), ghost->gridSpanRows())
         : sourceIcon->focusRect();
     ghost->setRect(m_editGhostTargetRect);
+    m_editGhostRect.setImmediate(m_editGhostTargetRect);
+    m_editGhostRectInit = true;
     m_editGhostPulse = 0.f;
 
     m_editGhostIcon = ghost;
@@ -236,6 +242,7 @@ void WiiUMenuApp::stopEditGhost() {
 
     m_editGhostIcon.reset();
     m_editGhostTexture.reset();
+    m_editGhostRectInit = false;
     m_editGhostPulse = 0.f;
 }
 
@@ -285,11 +292,13 @@ void WiiUMenuApp::updateEditGhost(float dt) {
     if (!m_editMode || !m_editGhostIcon)
         return;
 
+    bool discreteTarget = false;
     if (m_grid && m_editTargetIndex >= 0) {
         const int target = m_editTargetIndex;
         m_editGhostTargetRect = m_grid->gridSpanRect(
             target, m_editGhostIcon->gridSpanColumns(),
             m_editGhostIcon->gridSpanRows());
+        discreteTarget = true;
     } else if (m_cursor && m_cursor->isVisible()) {
         m_editGhostTargetRect = m_cursor->currentRect();
     } else if (auto* cur = focusManager().current()) {
@@ -303,7 +312,28 @@ void WiiUMenuApp::updateEditGhost(float dt) {
     m_editGhostIcon->setPanelOpacity(std::min(1.f, pulse + 0.12f));
     m_editGhostIcon->setScale(1.07f + 0.025f * std::sin(m_editGhostPulse * 7.f));
 
-    m_editGhostIcon->setRect(m_editGhostTargetRect);
+    if (!m_editGhostRectInit) {
+        m_editGhostRect.setImmediate(m_editGhostTargetRect);
+        m_editGhostRectInit = true;
+    } else if (!discreteTarget) {
+        m_editGhostRect.setImmediate(m_editGhostTargetRect);
+    } else {
+        const nxui::Rect cur = m_editGhostRect.target();
+        constexpr float eps = 0.5f;
+        if (std::abs(cur.x - m_editGhostTargetRect.x) >= eps ||
+            std::abs(cur.y - m_editGhostTargetRect.y) >= eps ||
+            std::abs(cur.width - m_editGhostTargetRect.width) >= eps ||
+            std::abs(cur.height - m_editGhostTargetRect.height) >= eps) {
+            const nxui::Vec2 from = m_editGhostRect.value().center();
+            const nxui::Vec2 to = m_editGhostTargetRect.center();
+            const float dist = (to - from).length();
+            const float dur = kEditGhostMoveDuration
+                            * (1.f + std::clamp(dist / 320.f, 0.f, 2.4f) * 0.50f);
+            m_editGhostRect.set(m_editGhostTargetRect, dur, nxui::Easing::outCubic);
+        }
+    }
+
+    m_editGhostIcon->setRect(m_editGhostRect.value());
 }
 
 void WiiUMenuApp::unbindEditActions() {

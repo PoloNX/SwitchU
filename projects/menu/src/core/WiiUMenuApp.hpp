@@ -422,6 +422,8 @@ private:
     std::shared_ptr<GlossyIcon> m_editGhostIcon;
     std::unique_ptr<nxui::Texture> m_editGhostTexture;
     nxui::Rect m_editGhostTargetRect {0.f, 0.f, 0.f, 0.f};
+    nxui::AnimatedRect m_editGhostRect;
+    bool m_editGhostRectInit = false;
     float m_editGhostPulse = 0.f;
     std::vector<uint64_t> m_layoutSlots;
     std::unordered_map<std::uint64_t, switchu::widgets::WidgetSize> m_gameSizes;
