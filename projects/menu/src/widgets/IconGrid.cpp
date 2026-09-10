@@ -30,10 +30,12 @@ void IconGrid::setup(std::vector<std::shared_ptr<GlossyIcon>> icons,
 
 void IconGrid::setLayoutMode(AppLayoutMode mode) {
     if (m_layoutMode == mode) return;
-    m_layoutMode = mode;
     int cur = focusedGlobalIndex();
-    m_layoutReveal.setImmediate(0.86f);
-    m_layoutReveal.set(1.f, 0.24f, nxui::Easing::outCubic);
+    const int perPage = std::max(1, iconsPerPage());
+    m_layoutMorphPage = (mode == AppLayoutMode::DynamicLine)
+        ? m_page
+        : (cur >= 0 ? cur / perPage : m_page);
+    m_layoutMode = mode;
     if (m_layoutMode == AppLayoutMode::DynamicLine) {
         m_lineScrollOffset.setImmediate(cur >= 0 ? static_cast<float>(cur) : 0.f);
         layoutLine();
@@ -44,6 +46,12 @@ void IconGrid::setLayoutMode(AppLayoutMode mode) {
     if (cur >= 0 && cur < (int)m_allIcons.size() && m_allIcons[cur]->isFocusable()) {
         m_focus.setFocus(m_allIcons[cur].get());
     }
+
+    const bool toLine = m_layoutMode == AppLayoutMode::DynamicLine;
+    m_layoutMorphing = true;
+    m_layoutMorph.setImmediate(toLine ? 0.f : 1.f);
+    m_layoutMorph.set(toLine ? 1.f : 0.f, kLayoutMorphDuration,
+                      nxui::Easing::inOutCubic);
 }
 
 bool IconGrid::isDynamicLineScrolling() const {
@@ -354,11 +362,6 @@ nxui::Rect IconGrid::dynamicIconRect(int index, float* outScale,
         a = std::max(0.0f, 0.76f - (absD - 1.0f) * 0.24f);
     }
 
-    const float reveal = clamp01(m_layoutReveal.value());
-    const float revealScale = 0.94f + reveal * 0.06f;
-    s *= revealScale;
-    a *= reveal;
-
     const float liftT = std::min(absD, 1.f);
     const float smoothLift = liftT * liftT * (3.f - 2.f * liftT);
     const float sideLift = 32.f * smoothLift;
@@ -373,9 +376,32 @@ nxui::Rect IconGrid::dynamicIconRect(int index, float* outScale,
     return {x, y, w, h};
 }
 
+nxui::Rect IconGrid::gridSlotRect(int globalIndex) const {
+    if (globalIndex < 0 || globalIndex >= (int)m_allIcons.size())
+        return {};
+    const auto& icon = m_allIcons[(std::size_t)globalIndex];
+    const int spanColumns = icon ? std::max(1, icon->gridSpanColumns()) : 1;
+    const int spanRows    = icon ? std::max(1, icon->gridSpanRows())    : 1;
+    const int local  = globalIndex % std::max(1, iconsPerPage());
+    const int column = local % std::max(1, m_cols);
+    const int row    = local / std::max(1, m_cols);
+    return {m_originX + column * (m_cellW + m_padX),
+            m_originY + row * (m_cellH + m_padY),
+            m_cellW * spanColumns + m_padX * (spanColumns - 1),
+            m_cellH * spanRows + m_padY * (spanRows - 1)};
+}
+
 nxui::Rect IconGrid::focusedDisplayRect() const {
+    const int focused = focusedGlobalIndex();
+    if (m_layoutMorphing && focused >= 0) {
+        const int perPage = std::max(1, iconsPerPage());
+        const int start = m_layoutMorphPage * perPage;
+        const nxui::Rect line = dynamicIconRect(focused);
+        const nxui::Rect grid = (focused >= start && focused < start + perPage)
+            ? gridSlotRect(focused) : line;
+        return nxui::Rect::lerp(grid, line, clamp01(m_layoutMorph.value()));
+    }
     if (m_layoutMode == AppLayoutMode::DynamicLine) {
-        const int focused = focusedGlobalIndex();
         if (focused >= 0)
             return dynamicIconRect(focused);
     }
@@ -571,7 +597,10 @@ void IconGrid::bumpEdge(int dir) {
 }
 
 void IconGrid::onUpdate(float dt) {
-    m_layoutReveal.update(dt);
+    if (m_layoutMorphing &&
+        std::abs(m_layoutMorph.value() - m_layoutMorph.target()) < 0.001f)
+        m_layoutMorphing = false;
+
     if (m_layoutMode == AppLayoutMode::DynamicLine) {
         m_lineScrollOffset.update(dt);
         int cur = focusedGlobalIndex();
@@ -674,25 +703,61 @@ void IconGrid::renderDynamicLine(nxui::Renderer& ren) {
     ren.popClipRect();
 }
 
+void IconGrid::renderLayoutMorph(nxui::Renderer& ren) {
+    const float t = clamp01(m_layoutMorph.value());
+    const int perPage = std::max(1, iconsPerPage());
+    const int gridStart = m_layoutMorphPage * perPage;
+    const int gridEnd = std::min(gridStart + perPage, (int)m_allIcons.size());
+
+    struct Candidate { int index; float absD; };
+    std::vector<Candidate> candidates;
+    candidates.reserve(m_allIcons.size());
+    for (int i = 0; i < (int)m_allIcons.size(); ++i) {
+        if (!m_allIcons[i]) continue;
+        float absD = 0.f;
+        dynamicIconRect(i, nullptr, nullptr, &absD);
+        const bool inGrid = i >= gridStart && i < gridEnd;
+        if (!inGrid && absD > 4.5f) continue;
+        candidates.push_back({i, absD});
+    }
+    
+    // Far icons first so the centred one ends up on top, as in the carousel.
+    std::sort(candidates.begin(), candidates.end(),
+              [](const auto& lhs, const auto& rhs) { return lhs.absD > rhs.absD; });
+
+    ren.pushClipRect(m_rect);
+    for (const auto& c : candidates) {
+        auto& icon = m_allIcons[c.index];
+        float lineAlpha = 1.f;
+        const nxui::Rect lineRect = dynamicIconRect(c.index, nullptr, &lineAlpha);
+        const bool inGrid = c.index >= gridStart && c.index < gridEnd;
+        const nxui::Rect gridRect = inGrid ? gridSlotRect(c.index) : lineRect;
+        const float gridAlpha = inGrid ? 1.f : 0.f;
+
+        const nxui::Rect savedRect = icon->rect();
+        const float savedOp = icon->opacity();
+        icon->setRect(nxui::Rect::lerp(gridRect, lineRect, t));
+        icon->setOpacity(savedOp * nxui::lerpf(gridAlpha, lineAlpha, t));
+        icon->render(ren);
+        icon->setRect(savedRect);
+        icon->setOpacity(savedOp);
+    }
+    ren.popClipRect();
+}
+
 void IconGrid::render(nxui::Renderer& ren) {
     if (!m_visible || m_opacity <= 0.f) return;
 
     if (!m_children.empty() && ren.gpu().offscreenReady())
         ren.captureToOffscreen(true);
 
-    if (m_layoutMode == AppLayoutMode::DynamicLine) {
-        renderDynamicLine(ren);
+    if (m_layoutMorphing) {
+        renderLayoutMorph(ren);
         return;
     }
 
-    const float reveal = clamp01(m_layoutReveal.value());
-    if (reveal < 0.999f) {
-        for (auto& c : m_children) {
-            const float savedOp = c->opacity();
-            c->setOpacity(savedOp * reveal);
-            c->render(ren);
-            c->setOpacity(savedOp);
-        }
+    if (m_layoutMode == AppLayoutMode::DynamicLine) {
+        renderDynamicLine(ren);
         return;
     }
 

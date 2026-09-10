@@ -34,6 +34,7 @@ public:
     AppLayoutMode layoutMode() const { return m_layoutMode; }
     bool isDynamicLine() const { return m_layoutMode == AppLayoutMode::DynamicLine; }
     bool isDynamicLineScrolling() const;
+    bool isLayoutMorphing() const { return m_layoutMorphing; }
     void setDynamicLineUpTarget(nxui::Widget* target);
     void setDynamicLineDownTarget(nxui::Widget* target);
 
@@ -84,6 +85,8 @@ private:
     void positionPage(int page, float dx);
     void renderPageAt(nxui::Renderer& ren, int page, float dx);
     void renderDynamicLine(nxui::Renderer& ren);
+    void renderLayoutMorph(nxui::Renderer& ren);
+    nxui::Rect gridSlotRect(int globalIndex) const;
     void bindEdgeActions(int start, int end);
     void bindGridNavigation(int start, int end);
     nxui::Rect dynamicIconRect(int index, float* outScale = nullptr,
@@ -96,7 +99,11 @@ private:
 
     AppLayoutMode m_layoutMode = AppLayoutMode::Grid;
     nxui::AnimatedFloat m_lineScrollOffset{0.f};
-    nxui::AnimatedFloat m_layoutReveal{1.f};
+    // 0 = grid geometry (usual), 1 = carousel geometry (single row)
+    nxui::AnimatedFloat m_layoutMorph{0.f};
+    bool m_layoutMorphing = false;
+    int  m_layoutMorphPage = 0;
+    static constexpr float kLayoutMorphDuration = 0.40f;
     nxui::Widget* m_lineUpTarget = nullptr;
     nxui::Widget* m_lineDownTarget = nullptr;
     std::vector<nxui::Widget*> m_gridLeftTargets;

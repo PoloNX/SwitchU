@@ -23,7 +23,6 @@ private:
     void play(const nxui::Rect& from, const nxui::Rect& to, const nxui::Color& tint,
               float dur, nxui::EasingFunc ease,
               float radiusFrom, float radiusTo,
-              float fadeDelay, float fadeDur,
               nxui::VoidCallback onDone);
 
     bool  m_playing = false;
@@ -32,12 +31,12 @@ private:
 
     nxui::AnimatedRect  m_panel;
     nxui::AnimatedFloat m_radius;
-    nxui::AnimatedFloat m_alpha;
+    nxui::AnimatedFloat m_progress;
     nxui::Color         m_tint;
     nxui::VoidCallback  m_onDone;
 
-    static constexpr float kOpenDur   = 0.28f;
-    static constexpr float kCloseDur  = 0.22f;
+    static constexpr float kOpenDur   = 0.24f;
+    static constexpr float kCloseDur  = 0.20f;
     static constexpr float kTileRadius = 16.f;
     static constexpr float kGridRadius = 28.f;
 };

@@ -1560,7 +1560,9 @@ void WiiUMenuApp::updateCursor() {
 
     auto* cur = focusManager().current();
     if (cur) {
-        const bool movingLineFocus = m_grid && m_grid->isDynamicLine()
+        const bool morphing = m_grid && m_grid->isLayoutMorphing();
+        const bool movingLineFocus = m_grid
+                                  && (m_grid->isDynamicLine() || morphing)
                                   && cur->tag() == "glossy_icon";
         nxui::Rect fr = movingLineFocus
             ? m_grid->focusedDisplayRect()
@@ -1572,7 +1574,8 @@ void WiiUMenuApp::updateCursor() {
         }
         // The app carousel already owns the motion curve; attaching the ring
         // directly avoids a second easing curve that would visibly lag behind.
-        const bool carouselScrolling = movingLineFocus && m_grid->isDynamicLineScrolling();
+        const bool carouselScrolling = movingLineFocus
+                                    && (morphing || m_grid->isDynamicLineScrolling());
         m_cursor->moveTo(fr.expanded(4.f), carouselScrolling ? 0.f : 0.2f);
         m_cursor->setVisible(true);
     } else {

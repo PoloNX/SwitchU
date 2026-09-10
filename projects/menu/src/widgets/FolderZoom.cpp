@@ -1,18 +1,18 @@
 #include "FolderZoom.hpp"
 #include <nxui/core/Renderer.hpp>
 #include <algorithm>
+#include <cmath>
 
 
 void FolderZoom::play(const nxui::Rect& from, const nxui::Rect& to, const nxui::Color& tint,
                       float dur, nxui::EasingFunc ease,
                       float radiusFrom, float radiusTo,
-                      float fadeDelay, float fadeDur,
                       nxui::VoidCallback onDone)
 {
     m_tint    = tint;
     m_onDone  = std::move(onDone);
     m_timer   = 0.f;
-    m_dur     = std::max(dur, fadeDelay + fadeDur);
+    m_dur     = dur;
     m_playing = true;
     setVisible(true);
 
@@ -20,22 +20,22 @@ void FolderZoom::play(const nxui::Rect& from, const nxui::Rect& to, const nxui::
     m_panel.set(to, dur, ease);
     m_radius.setImmediate(radiusFrom);
     m_radius.set(radiusTo, dur, ease);
-    m_alpha.setImmediate(1.f);
-    m_alpha.set(0.f, fadeDur, nxui::Easing::outQuad, fadeDelay);
+    m_progress.setImmediate(0.f);
+    m_progress.set(1.f, dur, nxui::Easing::linear);
 }
 
 void FolderZoom::open(const nxui::Rect& tile, const nxui::Rect& gridRect,
                       const nxui::Color& tint, nxui::VoidCallback onDone)
 {
     play(tile, gridRect, tint, kOpenDur, nxui::Easing::outCubic,
-         kTileRadius, kGridRadius, kOpenDur * 0.45f, kOpenDur * 0.65f, std::move(onDone));
+         kTileRadius, kGridRadius, std::move(onDone));
 }
 
 void FolderZoom::close(const nxui::Rect& gridRect, const nxui::Rect& tile,
                        const nxui::Color& tint, nxui::VoidCallback onDone)
 {
     play(gridRect, tile, tint, kCloseDur, nxui::Easing::inOutCubic,
-         kGridRadius, kTileRadius, kCloseDur - 0.08f, 0.08f, std::move(onDone));
+         kGridRadius, kTileRadius, std::move(onDone));
 }
 
 void FolderZoom::stop() {
@@ -61,17 +61,16 @@ void FolderZoom::onUpdate(float dt) {
 void FolderZoom::onRender(nxui::Renderer& ren) {
     if (!m_playing)
         return;
-    const float a = m_alpha.value() * opacity();
-    if (a <= 0.005f)
+    const float p = std::clamp(m_progress.value(), 0.f, 1.f);
+    const float fade = std::pow(1.f - p, 1.6f) * opacity();
+    if (fade <= 0.005f)
         return;
 
     const nxui::Rect r = m_panel.value();
     const float cr = m_radius.value();
 
-    ren.drawRoundedRect({r.x + 1.f, r.y + 6.f, r.width, r.height},
-                        nxui::Color(0.02f, 0.04f, 0.06f, 0.18f * a), cr + 1.f);
-    ren.drawRoundedRect(r, m_tint.withAlpha(0.34f * a), cr);
-    ren.drawRoundedRect({r.x, r.y, r.width, r.height * 0.4f},
-                        nxui::Color(1.f, 1.f, 1.f, 0.05f * a), cr);
-    ren.drawRoundedRectOutline(r, m_tint.withAlpha(0.55f * a), cr, 2.f);
+    ren.drawRoundedRect(r, nxui::Color(1.f, 1.f, 1.f, 0.10f * fade), cr);
+    ren.drawRoundedRectOutline(r.shrunk(2.f), m_tint.withAlpha(0.30f * fade),
+                               std::max(4.f, cr - 2.f), 1.f);
+    ren.drawRoundedRectOutline(r, nxui::Color::white().withAlpha(0.85f * fade), cr, 2.f);
 }
