@@ -40,6 +40,28 @@ bool hasGifExtension(std::string path) {
     return path.ends_with(".gif");
 }
 
+void drawStar(nxui::Renderer& ren, const nxui::Vec2& center,
+              float outerRadius, const nxui::Color& color) {
+    constexpr int points = 5;
+    constexpr float pi = 3.14159265358979323846f;
+    const float innerRadius = outerRadius * 0.382f;
+    nxui::Vec2 outer[points];
+    nxui::Vec2 inner[points];
+    for (int i = 0; i < points; ++i) {
+        const float outerAngle = -pi * 0.5f + i * (2.f * pi / points);
+        const float innerAngle = outerAngle + pi / points;
+        outer[i] = {center.x + outerRadius * std::cos(outerAngle),
+                    center.y + outerRadius * std::sin(outerAngle)};
+        inner[i] = {center.x + innerRadius * std::cos(innerAngle),
+                    center.y + innerRadius * std::sin(innerAngle)};
+    }
+    for (int i = 0; i < points; ++i) {
+        const int previous = (i + points - 1) % points;
+        ren.drawTriangle(center, outer[i], inner[i], color);
+        ren.drawTriangle(center, inner[previous], outer[i], color);
+    }
+}
+
 nxui::Rect centeredCoverSource(const nxui::Texture& texture,
                                const nxui::Rect& destination) {
     const float sourceWidth = static_cast<float>(texture.width());
@@ -672,6 +694,25 @@ void GlossyIcon::onRender(nxui::Renderer& ren) {
                                  badgeW - cardInset*2, badgeH - cardInset*2},
                                 nxui::Color(0.95f, 0.75f, 0.2f, 0.9f * a), 2.f * s);
         }
+    }
+
+    if (m_isFavorite && s > 0.5f) {
+        const float badgeSize = 25.f * s;
+        const float badgeX = r.x + r.width - badgeSize - 6.f * s;
+        const float badgeY = r.y + 6.f * s;
+        const nxui::Vec2 center{badgeX + badgeSize * 0.5f,
+                                badgeY + badgeSize * 0.5f};
+        // A small glass-like medallion keeps the marker legible without
+        // turning it into a flat sticker on top of the icon.
+        ren.drawCircle(center, badgeSize * 0.58f,
+                       nxui::Color(1.f, 0.80f, 0.22f, 0.18f * a), 20);
+        ren.drawCircle(center, badgeSize * 0.5f,
+                       nxui::Color(0.04f, 0.06f, 0.09f, 0.72f * a), 20);
+        ren.drawRoundedRectOutline({badgeX, badgeY, badgeSize, badgeSize},
+                                   nxui::Color(1.f, 0.86f, 0.30f, 0.58f * a),
+                                   badgeSize * 0.5f, 1.2f * s);
+        drawStar(ren, center, 7.7f * s,
+                 nxui::Color(1.f, 0.86f, 0.22f, 0.98f * a));
     }
 
     if (m_suspended && s > 0.5f) {

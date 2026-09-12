@@ -1,6 +1,11 @@
 #pragma once
 #include "core/AppLayoutMode.hpp"
+#include <algorithm>
+#include <cstdint>
+#include <limits>
 #include <string>
+#include <utility>
+#include <vector>
 
 struct AppConfig {
     bool  musicEnabled = true;
@@ -23,6 +28,43 @@ struct AppConfig {
     int   accessibilitySpeechRate = 190;
     bool  steamGridDbEnabled = true;
     std::string steamGridDbApiKey;
+
+    // 0 keeps the hand-made layout. The other modes are display-only
+    // projections and never overwrite layout.json.
+    int sortMode = 0;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> lastOpened;
+    std::uint64_t lastOpenedSequence = 0;
+    std::vector<std::uint64_t> favoriteTitleIds;
+
+    bool isFavorite(std::uint64_t titleId) const {
+        return std::find(favoriteTitleIds.begin(), favoriteTitleIds.end(), titleId) !=
+               favoriteTitleIds.end();
+    }
+    void setFavorite(std::uint64_t titleId, bool favorite) {
+        auto it = std::find(favoriteTitleIds.begin(), favoriteTitleIds.end(), titleId);
+        if (favorite && it == favoriteTitleIds.end())
+            favoriteTitleIds.push_back(titleId);
+        else if (!favorite && it != favoriteTitleIds.end())
+            favoriteTitleIds.erase(it);
+    }
+    std::uint64_t lastOpenedAt(std::uint64_t titleId) const {
+        for (const auto& entry : lastOpened)
+            if (entry.first == titleId) return entry.second;
+        return 0;
+    }
+    void noteOpened(std::uint64_t titleId) {
+        for (const auto& entry : lastOpened)
+            lastOpenedSequence = std::max(lastOpenedSequence, entry.second);
+        if (lastOpenedSequence != std::numeric_limits<std::uint64_t>::max())
+            ++lastOpenedSequence;
+        for (auto& entry : lastOpened) {
+            if (entry.first == titleId) {
+                entry.second = lastOpenedSequence;
+                return;
+            }
+        }
+        lastOpened.emplace_back(titleId, lastOpenedSequence);
+    }
 
     std::string themePreset = "Default Light";
     // See switchu::folders::kFolderStyle*. Applies to every folder tile.

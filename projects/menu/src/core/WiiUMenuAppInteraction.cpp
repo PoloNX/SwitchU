@@ -1100,6 +1100,33 @@ void WiiUMenuApp::wireGlobalActions() {
         m_accessibility.repeatLastAnnouncement();
     });
 
+    root.addAction(static_cast<uint64_t>(nxui::Button::R), [this]() {
+        if (m_navigator.route() != switchu::navigation::Route::Home ||
+            focusRoot() != &rootBox() || m_openFolderId != 0 || m_editMode ||
+            m_appLayoutMode == AppLayoutMode::DynamicLine)
+            return;
+        cycleSortMode();
+    });
+
+    root.addAction(static_cast<uint64_t>(nxui::Button::RStick), [this]() {
+        if (m_navigator.route() != switchu::navigation::Route::Home ||
+            focusRoot() != &rootBox() || m_editMode)
+            return;
+        auto* current = focusManager().current();
+        if (!current || current->tag() != "glossy_icon") return;
+        auto* icon = static_cast<GlossyIcon*>(current);
+        const int index = findTitleIndex(icon->titleId());
+        if (index < 0 || !m_model.at(index).isApplication()) return;
+
+        const bool favorite = !m_config.isFavorite(icon->titleId());
+        m_config.setFavorite(icon->titleId(), favorite);
+        m_config.save();
+        icon->setFavorite(favorite);
+        m_audio.playSfx(favorite ? Sfx::Activate : Sfx::ToggleOff);
+        if (m_config.sortMode == 3 && m_openFolderId == 0)
+            reflowHomeGrid();
+    });
+
     // The grid holds the open folder's model, so paging works inside a folder too.
     root.addAction(static_cast<uint64_t>(nxui::Button::ZL), [this]() {
         if (m_navigator.route() != switchu::navigation::Route::Home || focusRoot() != &rootBox())

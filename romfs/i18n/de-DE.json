@@ -388,7 +388,12 @@
   },
   "hint": {
     "repeat": "Wiederholen",
-    "voice": "Stimme"
+    "voice": "Stimme",
+    "sort_custom": "Meine Reihenfolge",
+    "sort_alpha": "A-Z",
+    "sort_recent": "Zuletzt",
+    "sort_favorites": "Favoriten",
+    "favorite": "Favorit"
   },
   "accessibility": {
     "speech": {

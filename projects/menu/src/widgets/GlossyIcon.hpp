@@ -35,6 +35,8 @@ public:
 
     void setSuspended(bool s)     { m_suspended = s; }
     bool isSuspended() const      { return m_suspended; }
+    void setFavorite(bool favorite) { m_isFavorite = favorite; }
+    bool isFavorite() const { return m_isFavorite; }
     void setMotionPaused(bool paused) { m_motionPaused = paused; }
     bool motionPaused() const { return m_motionPaused; }
 
@@ -131,6 +133,7 @@ private:
     bool        m_focused = false;
     bool        m_focusable = true;
     bool        m_suspended = false;
+    bool        m_isFavorite = false;
     bool        m_motionPaused = false;
     bool        m_isGameCard = false;
     bool        m_notLaunchable = false;

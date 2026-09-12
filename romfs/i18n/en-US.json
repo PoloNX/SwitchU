@@ -156,7 +156,12 @@
     "voice": "Voice",
     "options": "Options",
     "switch_layout": "Switch view",
-    "search": "Search"
+    "search": "Search",
+    "sort_custom": "My order",
+    "sort_alpha": "A-Z",
+    "sort_recent": "Recent",
+    "sort_favorites": "Favorites",
+    "favorite": "Favorite"
   },
   "settings": {
     "tabs": {

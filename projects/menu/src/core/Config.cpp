@@ -1,6 +1,7 @@
 #include "Config.hpp"
 #include "FolderStore.hpp"
 #include <cstdio>
+#include <cstdlib>
 #include <fstream>
 #include <algorithm>
 #include <filesystem>
@@ -75,6 +76,29 @@ bool AppConfig::load() {
     readJsonOpt(j, "accessibilitySpeechRate", accessibilitySpeechRate);
     readJsonOpt(j, "steamGridDbEnabled", steamGridDbEnabled);
     readJsonOpt(j, "steamGridDbApiKey", steamGridDbApiKey);
+    readJsonOpt(j, "sortMode", sortMode);
+    readJsonOpt(j, "lastOpenedSequence", lastOpenedSequence);
+    lastOpened.clear();
+    if (auto it = j.find("lastOpened"); it != j.end() && it->is_object()) {
+        for (auto& [key, value] : it->items()) {
+            if (!value.is_number_unsigned()) continue;
+            const auto titleId = std::strtoull(key.c_str(), nullptr, 16);
+            if (titleId != 0)
+                lastOpened.emplace_back(titleId, value.get<std::uint64_t>());
+        }
+    }
+    favoriteTitleIds.clear();
+    if (auto it = j.find("favorites"); it != j.end() && it->is_array()) {
+        for (const auto& value : *it) {
+            std::uint64_t titleId = 0;
+            if (value.is_string())
+                titleId = std::strtoull(value.get_ref<const std::string&>().c_str(), nullptr, 16);
+            else if (value.is_number_unsigned())
+                titleId = value.get<std::uint64_t>();
+            if (titleId != 0 && !isFavorite(titleId))
+                favoriteTitleIds.push_back(titleId);
+        }
+    }
     readJsonOpt(j, "themePreset", themePreset);
     readJsonOpt(j, "folderStyle", folderStyle);
     const bool hasShowCoverKey = j.find("folderShowCover") != j.end();
@@ -92,6 +116,7 @@ bool AppConfig::load() {
     if (soundPreset.empty()) soundPreset = "wiiu";
     if (!defaultProfileEnabled) defaultProfileUid.clear();
     accessibilitySpeechRate = std::clamp(accessibilitySpeechRate, 120, 320);
+    sortMode = std::clamp(sortMode, 0, 3);
     if (themePreset.empty()) themePreset = "Default Light";
     if (!hasShowCoverKey) {
         // Local 9-style table used while vetting Cover/Plate as separate styles.
@@ -146,6 +171,28 @@ bool AppConfig::save() const {
     j["accessibilitySpeechRate"] = std::clamp(accessibilitySpeechRate, 120, 320);
     j["steamGridDbEnabled"] = steamGridDbEnabled;
     j["steamGridDbApiKey"] = steamGridDbApiKey;
+    j["sortMode"] = std::clamp(sortMode, 0, 3);
+    j["lastOpenedSequence"] = lastOpenedSequence;
+    {
+        nlohmann::json opened = nlohmann::json::object();
+        char key[17];
+        for (const auto& entry : lastOpened) {
+            std::snprintf(key, sizeof(key), "%016llX",
+                          static_cast<unsigned long long>(entry.first));
+            opened[key] = entry.second;
+        }
+        j["lastOpened"] = std::move(opened);
+    }
+    {
+        nlohmann::json favorites = nlohmann::json::array();
+        char key[17];
+        for (const auto titleId : favoriteTitleIds) {
+            std::snprintf(key, sizeof(key), "%016llX",
+                          static_cast<unsigned long long>(titleId));
+            favorites.push_back(std::string(key));
+        }
+        j["favorites"] = std::move(favorites);
+    }
     j["themePreset"] = themePreset;
     j["folderStyle"] = std::clamp(folderStyle, 0, switchu::folders::kFolderStyleCount - 1);
     j["folderShowCover"] = folderShowCover;

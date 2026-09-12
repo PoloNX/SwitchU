@@ -31,6 +31,7 @@
 #include <ctime>
 #include <random>
 #include <optional>
+#include <limits>
 
 namespace {
 
@@ -1573,12 +1574,100 @@ GridModel WiiUMenuApp::buildRootFolderModel() {
         m_layoutDirty = true;
     }
 
+    // Automatic views are only a projection of the personal layout. Folders
+    // and widgets remain anchored (including every cell of a wide tile), while
+    // applications fill the remaining cells in the requested order.
+    std::vector<std::uint64_t> projected;
+    if (m_config.sortMode != 0 && m_appLayoutMode == AppLayoutMode::Grid) {
+        const int columns = std::clamp(m_config.gridColumns, 3, 8);
+        projected.assign(m_layoutSlots.size(), 0);
+        std::vector<bool> reserved(m_layoutSlots.size(), false);
+
+        for (std::size_t index = 0; index < m_layoutSlots.size(); ++index) {
+            const auto stored = m_layoutSlots[index];
+            const auto found = entries.find(stored);
+            const bool movableApplication = found != entries.end() &&
+                found->second.isApplication() && found->second.widgetColumns == 1 &&
+                found->second.widgetRows == 1;
+            if (stored == 0 || found == entries.end() || movableApplication)
+                continue;
+            projected[index] = stored;
+            const int spanColumns = std::max(1, found->second.widgetColumns);
+            const int spanRows = std::max(1, found->second.widgetRows);
+            for (int dy = 0; dy < spanRows; ++dy) {
+                for (int dx = 0; dx < spanColumns; ++dx) {
+                    const std::size_t cell = index +
+                        static_cast<std::size_t>(dy * columns + dx);
+                    if (cell < reserved.size()) reserved[cell] = true;
+                }
+            }
+        }
+
+        std::unordered_map<std::uint64_t, int> personalRank;
+        int rank = 0;
+        for (const auto stored : m_layoutSlots) {
+            if (stored != 0 && !personalRank.count(stored))
+                personalRank.emplace(stored, rank++);
+        }
+        std::vector<std::uint64_t> applications;
+        applications.reserve(entries.size());
+        for (const auto& pair : entries) {
+            if (pair.second.isApplication() && pair.second.widgetColumns == 1 &&
+                pair.second.widgetRows == 1)
+                applications.push_back(pair.first);
+        }
+        std::sort(applications.begin(), applications.end(),
+                  [&](const auto left, const auto right) {
+            const auto leftIt = personalRank.find(left);
+            const auto rightIt = personalRank.find(right);
+            const int leftRank = leftIt == personalRank.end()
+                ? std::numeric_limits<int>::max() : leftIt->second;
+            const int rightRank = rightIt == personalRank.end()
+                ? std::numeric_limits<int>::max() : rightIt->second;
+            return leftRank != rightRank ? leftRank < rightRank : left < right;
+        });
+
+        const int mode = m_config.sortMode;
+        std::stable_sort(applications.begin(), applications.end(),
+                         [&](const auto left, const auto right) {
+            if (mode == 3) {
+                const bool leftFavorite = m_config.isFavorite(left);
+                const bool rightFavorite = m_config.isFavorite(right);
+                return leftFavorite != rightFavorite && leftFavorite;
+            }
+            if (mode == 2) {
+                const auto leftOpened = m_config.lastOpenedAt(left);
+                const auto rightOpened = m_config.lastOpenedAt(right);
+                return leftOpened != rightOpened && leftOpened > rightOpened;
+            }
+            const auto& leftTitle = entries.at(left).title;
+            const auto& rightTitle = entries.at(right).title;
+            const std::size_t shared = std::min(leftTitle.size(), rightTitle.size());
+            for (std::size_t i = 0; i < shared; ++i) {
+                const auto leftChar = static_cast<unsigned char>(
+                    std::tolower(static_cast<unsigned char>(leftTitle[i])));
+                const auto rightChar = static_cast<unsigned char>(
+                    std::tolower(static_cast<unsigned char>(rightTitle[i])));
+                if (leftChar != rightChar) return leftChar < rightChar;
+            }
+            return leftTitle.size() < rightTitle.size();
+        });
+
+        std::size_t next = 0;
+        for (std::size_t index = 0;
+             index < projected.size() && next < applications.size(); ++index) {
+            if (!reserved[index]) projected[index] = applications[next++];
+        }
+        while (next < applications.size()) projected.push_back(applications[next++]);
+    }
+    const auto& displaySlots = projected.empty() ? m_layoutSlots : projected;
+
     const int columns = std::clamp(m_config.gridColumns, 3, 8);
     const int rows = std::clamp(m_config.gridRows, 2, 5);
-    std::vector<int> coveredBy(m_layoutSlots.size(), -1);
+    std::vector<int> coveredBy(displaySlots.size(), -1);
     if (m_appLayoutMode == AppLayoutMode::Grid) {
-        for (int index = 0; index < static_cast<int>(m_layoutSlots.size()); ++index) {
-            auto found = entries.find(m_layoutSlots[static_cast<std::size_t>(index)]);
+        for (int index = 0; index < static_cast<int>(displaySlots.size()); ++index) {
+            auto found = entries.find(displaySlots[static_cast<std::size_t>(index)]);
             if (found == entries.end() ||
                 (!found->second.isWidget() && !found->second.isApplication()))
                 continue;
@@ -1593,8 +1682,8 @@ GridModel WiiUMenuApp::buildRootFolderModel() {
             for (int dy = 0; fits && dy < spanRows; ++dy) {
                 for (int dx = 0; dx < spanColumns; ++dx) {
                     const int cell = index + dy * columns + dx;
-                    if (cell >= static_cast<int>(m_layoutSlots.size()) ||
-                        (cell != index && m_layoutSlots[static_cast<std::size_t>(cell)] != 0) ||
+                    if (cell >= static_cast<int>(displaySlots.size()) ||
+                        (cell != index && displaySlots[static_cast<std::size_t>(cell)] != 0) ||
                         coveredBy[static_cast<std::size_t>(cell)] >= 0) {
                         fits = false;
                         break;
@@ -1613,8 +1702,8 @@ GridModel WiiUMenuApp::buildRootFolderModel() {
         }
     }
 
-    for (int index = 0; index < static_cast<int>(m_layoutSlots.size()); ++index) {
-        const auto storedTitleId = m_layoutSlots[static_cast<std::size_t>(index)];
+    for (int index = 0; index < static_cast<int>(displaySlots.size()); ++index) {
+        const auto storedTitleId = displaySlots[static_cast<std::size_t>(index)];
         if (switchu::widgets::isWidgetTitleId(storedTitleId)) {
             const auto* widget = m_widgetStore.find(
                 switchu::widgets::widgetIdFromTitleId(storedTitleId));
@@ -1629,7 +1718,7 @@ GridModel WiiUMenuApp::buildRootFolderModel() {
             model.addEntry(std::move(continuation));
             continue;
         }
-        const auto titleId = m_layoutSlots[static_cast<std::size_t>(index)];
+        const auto titleId = displaySlots[static_cast<std::size_t>(index)];
         auto found = entries.find(titleId);
         if (found != entries.end()) {
             model.addEntry(found->second);
@@ -2918,6 +3007,26 @@ void WiiUMenuApp::toggleAppLayoutMode() {
     setAppLayoutMode(m_appLayoutMode == AppLayoutMode::Grid ? AppLayoutMode::DynamicLine : AppLayoutMode::Grid);
 }
 
+std::string WiiUMenuApp::sortModeLabel() const {
+    auto& i18n = nxui::I18n::instance();
+    switch (m_config.sortMode) {
+        case 1: return i18n.tr("hint.sort_alpha", "A-Z");
+        case 2: return i18n.tr("hint.sort_recent", "Recent");
+        case 3: return i18n.tr("hint.sort_favorites", "Favorites");
+        default: return i18n.tr("hint.sort_custom", "My order");
+    }
+}
+
+void WiiUMenuApp::cycleSortMode() {
+    if (m_editMode || m_openFolderId != 0 ||
+        m_appLayoutMode == AppLayoutMode::DynamicLine)
+        return;
+    m_config.sortMode = (m_config.sortMode + 1) % 4;
+    m_config.save();
+    m_audio.playSfx(Sfx::Navigate);
+    reflowHomeGrid();
+}
+
 void WiiUMenuApp::configureDynamicLineNavigation() {
     const bool dynamicLine = m_appLayoutMode == AppLayoutMode::DynamicLine;
     m_sidebar.setDynamicLineLayout(dynamicLine);
@@ -3067,6 +3176,8 @@ void WiiUMenuApp::resumeSuspendedApplication(std::uint64_t titleId,
     scheduleLeaveCapture([this, titleId, launchTitle]() {
         m_audio.playSfx(Sfx::LaunchGame);
         m_launchAnim->startResume([this, titleId, launchTitle]() {
+            m_config.noteOpened(titleId);
+            m_config.save();
             m_widgetStore.recordLaunch(titleId, launchTitle,
                 static_cast<std::int64_t>(std::time(nullptr)));
             m_widgetStore.save();
@@ -3117,6 +3228,8 @@ void WiiUMenuApp::activateApplication(GlossyIcon* source, AppEntry* entry,
             m_audio.playSfx(Sfx::LaunchGame);
             m_launchAnim->start(frame, texture, radius, base, border, titleId, uid,
                 [this, launchTitle](std::uint64_t id, AccountUid selectedUid) {
+                    m_config.noteOpened(id);
+                    m_config.save();
                     m_widgetStore.recordLaunch(id, launchTitle,
                         static_cast<std::int64_t>(std::time(nullptr)));
                     m_widgetStore.save();
@@ -3372,6 +3485,7 @@ std::shared_ptr<GlossyIcon> WiiUMenuApp::makeIcon(const AppEntry& entry) {
     icon->setGameCardTexture(&m_gameCardTex);
     icon->setNotLaunchable(!entry.isLaunchable());
     icon->setGridSpan(entry.widgetColumns, entry.widgetRows);
+    icon->setFavorite(m_config.isFavorite(entry.titleId));
     if (entry.widgetColumns > 1 && entry.widgetRows == 1 &&
         m_appLayoutMode == AppLayoutMode::Grid) {
         const auto artwork = m_gameArtwork.find(entry.titleId);
@@ -4939,6 +5053,11 @@ std::vector<WiiUMenuApp::ActionHint> WiiUMenuApp::buildActionHints() {
 #else
                 add(buttonGlyph(nxui::Button::A), i18n.tr("hint.open", "Open"));
 #endif
+                if (m_openFolderId == 0 &&
+                    m_appLayoutMode != AppLayoutMode::DynamicLine)
+                    add(buttonGlyph(nxui::Button::R), sortModeLabel());
+                add(buttonGlyph(nxui::Button::RStick),
+                    i18n.tr("hint.favorite", "Favorite"));
                 if (m_openFolderId == 0)
                     add(buttonGlyph(nxui::Button::Y), i18n.tr("hint.move", "Move"));
                 else

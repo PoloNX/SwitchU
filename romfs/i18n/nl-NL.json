@@ -388,7 +388,12 @@
   },
   "hint": {
     "repeat": "Herhaal",
-    "voice": "Stem"
+    "voice": "Stem",
+    "sort_custom": "Mijn volgorde",
+    "sort_alpha": "A-Z",
+    "sort_recent": "Recent",
+    "sort_favorites": "Favorieten",
+    "favorite": "Favoriet"
   },
   "accessibility": {
     "speech": {

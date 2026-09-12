@@ -297,6 +297,8 @@ private:
     void toggleAppLayoutMode();
     void setAppLayoutMode(AppLayoutMode mode);
     void configureDynamicLineNavigation();
+    void cycleSortMode();
+    std::string sortModeLabel() const;
     AppLayoutMode appLayoutMode() const { return m_appLayoutMode; }
 
 #ifdef SWITCHU_MENU
