@@ -25,6 +25,10 @@ struct AppConfig {
     std::string steamGridDbApiKey;
 
     std::string themePreset = "Default Light";
+    // See switchu::folders::kFolderStyle*. Applies to every folder tile.
+    int folderStyle = 0;
+    // First-game icon overlay. Ignored by Classic (the mosaic is the cover).
+    bool folderShowCover = false;
 
     bool load();
 

@@ -269,6 +269,7 @@ bool appEntriesRefreshEquivalent(const AppEntry& a, const AppEntry& b) {
            a.folderId == b.folderId &&
            a.folderPreviewCount == b.folderPreviewCount &&
            a.folderColorIndex == b.folderColorIndex &&
+           a.folderCoverTitleId == b.folderCoverTitleId &&
            a.widgetId == b.widgetId &&
            a.widgetType == b.widgetType &&
            a.widgetColumns == b.widgetColumns &&
@@ -444,7 +445,7 @@ bool WiiUMenuApp::saveLeaveFrame(nxui::Renderer& ren) {
     std::vector<std::uint8_t> rgba;
     int width = 0;
     int height = 0;
-    if (!ren.downloadFramebufferRgba(rgba, width, height, true)) {
+    if (!ren.downloadFramebufferRgba(rgba, width, height, false)) {
         DebugLog::log("[leave] framebuffer download failed");
         return false;
     }
@@ -1140,6 +1141,18 @@ void WiiUMenuApp::reflowHomeGrid() {
             i < m_model.count() &&
             m_model.at(i).titleId == rebuiltModel.at(i).titleId) {
             icons.push_back(oldIcons[i]);
+            if (rebuiltModel.at(i).isFolder()) {
+                const auto& entry = rebuiltModel.at(i);
+                oldIcons[i]->setFolderPreviewCount(entry.folderPreviewCount);
+                oldIcons[i]->setFolderColorIndex(entry.folderColorIndex);
+                oldIcons[i]->setFolderCoverTitleId(entry.folderCoverTitleId);
+                oldIcons[i]->setFolderStyleIndex(m_config.folderStyle);
+                oldIcons[i]->setFolderShowCover(m_config.folderShowCover);
+                oldIcons[i]->setFolderCoverTexture(
+                    switchu::folders::folderShouldShowCover(
+                        m_config.folderStyle, m_config.folderShowCover)
+                        ? folderCoverTexture(entry.folderCoverTitleId) : nullptr);
+            }
         } else {
             auto icon = makeIcon(rebuiltModel.at(i));
             icon->setBaseColor(m_theme.iconDefault);
@@ -1343,6 +1356,7 @@ void WiiUMenuApp::composeRootPending(std::vector<PendingApp>& apps) {
         item.folderId = folder.id;
         item.folderPreviewCount = static_cast<int>(folder.titleCount());
         item.folderColorIndex = folder.colorIndex;
+        item.folderCoverTitleId = switchu::folders::firstCoverTitleId(folder);
         itemOrder.push_back(item.titleId);
         byId.emplace(item.titleId, std::move(item));
     }
@@ -1513,6 +1527,7 @@ GridModel WiiUMenuApp::buildRootFolderModel() {
         entry.folderId = folder.id;
         entry.folderPreviewCount = static_cast<int>(folder.titleCount());
         entry.folderColorIndex = folder.colorIndex;
+        entry.folderCoverTitleId = switchu::folders::firstCoverTitleId(folder);
         entries.emplace(entry.titleId, std::move(entry));
     }
     for (const auto& widget : m_widgetStore.all()) {
@@ -1827,6 +1842,10 @@ void WiiUMenuApp::applyDisplayModel(GridModel model, std::uint64_t focusId, bool
     m_widgetAssetPage = -1;
     if (animate) m_grid->startAppearAnimation();
     else for (auto& icon : m_grid->allIcons()) icon->forceVisible();
+    // Safety net for any rebuild while moving: never leave an out-of-range
+    // placement index (that pins the ghost at the origin).
+    if (m_editMode && (m_editTargetIndex < 0 || m_editTargetIndex >= m_model.count()))
+        syncEditPlacementAfterModelChange(m_openFolderId != 0);
     updateCursor();
 }
 
@@ -2997,11 +3016,16 @@ void WiiUMenuApp::openCapturedFolder() {
         m_folderHeaderLabel->setTextColor(m_theme.textPrimary);
     }
     m_grid->setRect({kGridRectX, 148.f, kGridRectW, 470.f});
+    // Don't inherit the root page number into the folder grid.
+    m_grid->setPage(0);
     applyDisplayModel(buildOpenFolderModel(m_openFolderId), m_folderOpenFocusTitleId, false);
     m_folderOpenFocusTitleId = 0;
     syncPageIndicator();
-    if (m_editMode)
+    if (m_editMode) {
+        // Always re-anchor: the previous target was a root-grid index.
+        syncEditPlacementAfterModelChange(true);
         reattachEditSourceIcon();
+    }
     if (!refocus)
         m_audio.playSfx(Sfx::ModalShow);
 }
@@ -3025,6 +3049,9 @@ void WiiUMenuApp::closeFolder(bool preserveEditMode) {
     applyDisplayModel(buildRootFolderModel(), folderTitleId(oldId), false);
     syncPageIndicator();
     if (preserveEditMode) {
+        // Focus is on the folder we just left; use that as the root placement target.
+        m_editTargetIndex = findTitleIndex(folderTitleId(oldId));
+        syncEditPlacementAfterModelChange(false);
         reattachEditSourceIcon();
         m_titlePill->setText(nxui::I18n::instance().tr("game.move_prefix", "Move: ") + m_editHeldTitle);
         m_titlePill->setVisible(true);
@@ -3147,12 +3174,51 @@ void WiiUMenuApp::activateApplication(GlossyIcon* source, AppEntry* entry,
 }
 #endif
 
+nxui::Texture* WiiUMenuApp::folderCoverTexture(std::uint64_t titleId) {
+    if (titleId == 0)
+        return nullptr;
+    auto it = m_folderCoverCache.find(titleId);
+    if (it != m_folderCoverCache.end())
+        return it->second.get();
+
+    auto tex = std::make_unique<nxui::Texture>();
+    const auto data = AppListLoader::loadIconData(titleId);
+    if (data.empty() ||
+        !tex->loadFromMemory(app().gpu(), app().renderer(), data.data(), data.size(), 192) ||
+        !tex->valid()) {
+        // Icon data can be temporarily unavailable during an application-list
+        // refresh. Do not negative-cache the failure or this folder would keep
+        // its placeholder until the menu is restarted.
+        return nullptr;
+    }
+    nxui::Texture* raw = tex.get();
+    m_folderCoverCache.emplace(titleId, std::move(tex));
+    return raw;
+}
+
+void WiiUMenuApp::applyFolderCoversToIcons() {
+    if (!m_grid)
+        return;
+    const bool wantCover = switchu::folders::folderShouldShowCover(
+        m_config.folderStyle, m_config.folderShowCover);
+    const auto& icons = m_grid->allIcons();
+    for (int i = 0; i < m_model.count() && i < static_cast<int>(icons.size()); ++i) {
+        if (!m_model.at(i).isFolder() || !icons[static_cast<std::size_t>(i)])
+            continue;
+        icons[static_cast<std::size_t>(i)]->setFolderShowCover(m_config.folderShowCover);
+        icons[static_cast<std::size_t>(i)]->setFolderCoverTexture(
+            wantCover ? folderCoverTexture(m_model.at(i).folderCoverTitleId) : nullptr);
+    }
+}
+
 std::shared_ptr<GlossyIcon> WiiUMenuApp::makeIcon(const AppEntry& entry) {
     auto icon = std::make_shared<GlossyIcon>();
     icon->setEntryKind(entry.kind);
     icon->setFolderPreviewCount(entry.folderPreviewCount);
     icon->setFolderVisualSeed(entry.folderId);
     icon->setFolderColorIndex(entry.folderColorIndex);
+    icon->setFolderStyleIndex(m_config.folderStyle);
+    icon->setThemeMode(m_theme.mode);
     if (entry.kind == GridEntryKind::WidgetContinuation) {
         icon->setTag("widget_continuation");
         icon->setFocusable(false);
@@ -3279,6 +3345,11 @@ std::shared_ptr<GlossyIcon> WiiUMenuApp::makeIcon(const AppEntry& entry) {
         icon->setOnActivate([this, folderId]() {
             requestOpenFolder(folderId);
         });
+        icon->setFolderCoverTitleId(entry.folderCoverTitleId);
+        icon->setFolderShowCover(m_config.folderShowCover);
+        if (switchu::folders::folderShouldShowCover(m_config.folderStyle,
+                                                    m_config.folderShowCover))
+            icon->setFolderCoverTexture(folderCoverTexture(entry.folderCoverTitleId));
         return icon;
     }
 

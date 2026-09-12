@@ -1,5 +1,7 @@
 #include "GlossyIcon.hpp"
 #include "FolderPalette.hpp"
+#include "FolderStyleDraw.hpp"
+#include "core/FolderStore.hpp"
 #include "BatteryDrawing.hpp"
 #include "core/DebugLog.hpp"
 #include <nxui/core/Renderer.hpp>
@@ -470,6 +472,14 @@ void GlossyIcon::setWidgetGameTextures(std::uint64_t titleId,
 
 void GlossyIcon::copyWidgetPresentationFrom(GlossyIcon& source) {
     m_entryKind = source.m_entryKind;
+    m_folderPreviewCount = source.m_folderPreviewCount;
+    m_folderVisualSeed = source.m_folderVisualSeed;
+    m_folderColorIndex = source.m_folderColorIndex;
+    m_folderStyleIndex = source.m_folderStyleIndex;
+    m_folderShowCover = source.m_folderShowCover;
+    m_folderCover = source.m_folderCover;
+    m_folderCoverTitleId = source.m_folderCoverTitleId;
+    m_themeMode = source.m_themeMode;
     m_widgetType = source.m_widgetType;
     m_widgetColumns = source.m_widgetColumns;
     m_widgetRows = source.m_widgetRows;
@@ -945,94 +955,25 @@ void GlossyIcon::onContentRender(nxui::Renderer& ren) {
     }
 
     if (m_entryKind == GridEntryKind::Folder) {
-        nxui::Color accent = switchu::folders::colorForIndex(m_folderColorIndex);
-
-        const float inset = 10.f * s;
-        const nxui::Rect shell = r.shrunk(inset);
-        const float shellRadius = std::max(12.f, rad - 2.f);
-        ren.drawRoundedRect({shell.x, shell.y + 4.f * s, shell.width, shell.height},
-                            nxui::Color(0.03f, 0.05f, 0.08f, 0.30f * m_opacity),
-                            shellRadius);
-        ren.drawRoundedRect(shell,
-                            nxui::Color(0.94f, 0.97f, 0.96f, 0.96f * m_opacity),
-                            shellRadius);
-        ren.drawRoundedRect(shell.shrunk(3.f * s),
-                            nxui::Color(0.72f, 0.78f, 0.79f, 0.28f * m_opacity),
-                            std::max(8.f, shellRadius - 3.f * s));
-        ren.drawRoundedRectOutline(shell.shrunk(1.f * s),
-                                   nxui::Color::white().withAlpha(0.92f * m_opacity),
-                                   std::max(8.f, shellRadius - 1.f * s), 2.f * s);
-
-        const bool named = m_font && !m_title.empty();
-
-        const float cell = std::min(shell.width, shell.height) * 0.185f;
-        const float gap = cell * 0.18f;
-        const float gridSize = cell * 3.f + gap * 2.f;
-        const float gridX = shell.x + (shell.width - gridSize) * 0.5f;
-        const float gridY = shell.y + (shell.height - gridSize) * 0.5f;
-        for (int i = 0; i < 9; ++i) {
-            const int col = i % 3;
-            const int row = i / 3;
-            const nxui::Rect cellRect{gridX + col * (cell + gap),
-                                      gridY + row * (cell + gap), cell, cell};
-            ren.drawRoundedRect({cellRect.x, cellRect.y + 1.8f * s,
-                                 cellRect.width, cellRect.height},
-                                nxui::Color(0.05f, 0.08f, 0.10f,
-                                            0.16f * m_opacity),
-                                cell * 0.20f);
-            const float variation = 0.92f + 0.035f * static_cast<float>((i + row) % 3);
-            nxui::Color cellColor(
-                std::min(1.f, accent.r * variation),
-                std::min(1.f, accent.g * variation),
-                std::min(1.f, accent.b * variation),
-                0.94f * m_opacity);
-            ren.drawRoundedRect(cellRect, cellColor, cell * 0.20f);
-            ren.drawRoundedRect({cellRect.x + cell * 0.10f,
-                                 cellRect.y + cell * 0.08f,
-                                 cellRect.width * 0.80f,
-                                 std::max(1.f, cellRect.height * 0.13f)},
-                                nxui::Color::white().withAlpha(0.18f * m_opacity),
-                                cell * 0.08f);
-        }
-
-        if (named) {
-            const nxui::Vec2 measured = m_font->measure(m_title);
-            const float room = std::max(8.f, shell.width - 6.f * s);
-            float textScale = 1.05f * s;
-            if (measured.x > 0.f)
-                textScale = std::min(textScale, room / measured.x);
-            textScale = std::max(0.38f * s, textScale);
-
-            const float textW = measured.x * textScale;
-            const float textH = measured.y * textScale;
-            const nxui::Vec2 textPos{shell.x + (shell.width - textW) * 0.5f,
-                                     shell.y + (shell.height - textH) * 0.5f};
-
-            const float halo = std::max(1.f, 1.5f * s);
-            const nxui::Color shadow(0.05f, 0.16f, 0.26f, 0.34f * m_opacity);
-            const nxui::Vec2 offsets[8] = {
-                {-halo, 0.f}, {halo, 0.f}, {0.f, -halo}, {0.f, halo},
-                {-halo, -halo}, {halo, -halo}, {-halo, halo}, {halo, halo}};
-            for (const nxui::Vec2& off : offsets)
-                ren.drawText(m_title, {textPos.x + off.x, textPos.y + off.y},
-                             m_font, shadow, textScale);
-
-            ren.drawText(m_title,
-                         {textPos.x, textPos.y + halo * 0.7f},
-                         m_font,
-                         nxui::Color(0.04f, 0.14f, 0.24f, 0.30f * m_opacity),
-                         textScale);
-
-            ren.drawText(m_title, textPos, m_font,
-                         nxui::Color::white().withAlpha(0.98f * m_opacity),
-                         textScale);
-        }
-
-        if (m_focused) {
-            ren.drawRoundedRectOutline(shell.expanded(2.f * s),
-                                       accent.withAlpha(0.42f * m_opacity),
-                                       shellRadius + 2.f * s, 2.f * s);
-        }
+        const int style = m_folderStyleIndex;
+        const bool mosaic = style == switchu::folders::kFolderStyleClassic;
+        const float inset = (mosaic ? 10.f : 8.f) * s;
+        switchu::folders::FolderStyleDrawArgs args;
+        args.renderer = &ren;
+        args.bounds = r.shrunk(inset);
+        args.radius = std::max(12.f, rad - 2.f);
+        args.scale = s;
+        args.opacity = m_opacity;
+        args.styleIndex = style;
+        args.accent = switchu::folders::colorForIndex(m_folderColorIndex);
+        args.themeMode = m_themeMode;
+        args.font = m_font;
+        args.title = &m_title;
+        args.cover = m_folderCover;
+        args.showCover = m_folderShowCover;
+        args.focused = m_focused;
+        args.drawName = true;
+        switchu::folders::drawFolderStyle(args);
         return;
     }
 

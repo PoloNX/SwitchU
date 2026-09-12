@@ -729,9 +729,11 @@ void WiiUMenuApp::syncSteamGridDb() {
                 m_recentWidgetIcon.reset();
             }
             if (result.kind == SteamGridDbManager::ArtworkKind::Icon && m_grid) {
+                m_folderCoverCache.erase(result.titleId);
                 m_iconStreamer.reloadTitle(result.titleId, m_grid->currentPage(),
                                            m_grid->iconsPerPage(), app().gpu(),
                                            app().renderer(), m_grid->allIcons());
+                applyFolderCoversToIcons();
             } else {
                 showFocusedSteamGridDbArtwork(true);
             }
@@ -1717,6 +1719,7 @@ void WiiUMenuApp::applyTheme() {
         icon->setHighlightColor(m_theme.panelHighlight);
         icon->setCornerRadius(m_theme.iconCornerRadius);
         icon->setLoadingColor(m_theme.cursorNormal);
+        icon->setThemeMode(m_theme.mode);
     }
     DebugLog::log("[theme-apply] widget recolor grid icons done");
 

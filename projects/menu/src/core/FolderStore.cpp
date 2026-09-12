@@ -280,11 +280,20 @@ bool FolderStore::addTitle(std::uint32_t folderId, std::uint64_t titleId) {
     const std::uint32_t previous = folderForTitle(titleId);
     if (previous == folderId)
         return true;
+    const auto hole = std::find(folder->titleIds.begin(), folder->titleIds.end(), 0ULL);
+    if (hole == folder->titleIds.end() &&
+        folder->titleIds.size() >= maxFolderSlots(folder->sizeIndex))
+        return false;
     if (previous != 0)
         removeTitle(previous, titleId);
-    auto hole = std::find(folder->titleIds.begin(), folder->titleIds.end(), 0ULL);
-    if (hole != folder->titleIds.end())
-        *hole = titleId;
+    // Removing from another folder does not invalidate this folder, but look
+    // it up again so this remains safe if the storage implementation changes.
+    folder = find(folderId);
+    if (!folder)
+        return false;
+    auto targetHole = std::find(folder->titleIds.begin(), folder->titleIds.end(), 0ULL);
+    if (targetHole != folder->titleIds.end())
+        *targetHole = titleId;
     else
         folder->titleIds.push_back(titleId);
     return true;
@@ -299,6 +308,9 @@ bool FolderStore::placeTitle(std::uint32_t folderId, std::uint64_t titleId,
         return false;
 
     const std::uint32_t previous = folderForTitle(titleId);
+    const std::size_t maximum = maxFolderSlots(target->sizeIndex);
+    if (index >= maximum)
+        return false;
 
     // Reordering inside the same folder must swap (or relocate into a hole),
     // matching the HOME menu. Zeroing the source and inserting at the target
@@ -318,6 +330,14 @@ bool FolderStore::placeTitle(std::uint32_t folderId, std::uint64_t titleId,
         return true;
     }
 
+    const auto existingHole = std::find(target->titleIds.begin(),
+                                        target->titleIds.end(), 0ULL);
+    const bool targetOccupied = index < target->titleIds.size() &&
+                                target->titleIds[index] != 0;
+    if (targetOccupied && existingHole == target->titleIds.end() &&
+        target->titleIds.size() >= maximum)
+        return false;
+
     if (previous != 0) {
         Folder* source = find(previous);
         if (source) {
@@ -335,11 +355,25 @@ bool FolderStore::placeTitle(std::uint32_t folderId, std::uint64_t titleId,
 
     if (index >= target->titleIds.size())
         target->titleIds.resize(index + 1, 0);
-    if (target->titleIds[index] == 0)
+    if (target->titleIds[index] == 0) {
         target->titleIds[index] = titleId;
-    else
+    } else if (existingHole == target->titleIds.end()) {
         target->titleIds.insert(target->titleIds.begin() + static_cast<std::ptrdiff_t>(index),
                                 titleId);
+    } else {
+        const std::size_t holeIndex = static_cast<std::size_t>(
+            existingHole - target->titleIds.begin());
+        if (holeIndex > index) {
+            std::move_backward(target->titleIds.begin() + static_cast<std::ptrdiff_t>(index),
+                               target->titleIds.begin() + static_cast<std::ptrdiff_t>(holeIndex),
+                               target->titleIds.begin() + static_cast<std::ptrdiff_t>(holeIndex + 1));
+        } else {
+            std::move(target->titleIds.begin() + static_cast<std::ptrdiff_t>(holeIndex + 1),
+                      target->titleIds.begin() + static_cast<std::ptrdiff_t>(index + 1),
+                      target->titleIds.begin() + static_cast<std::ptrdiff_t>(holeIndex));
+        }
+        target->titleIds[index] = titleId;
+    }
     return true;
 }
 
@@ -369,7 +403,10 @@ bool FolderStore::setSizeIndex(std::uint32_t folderId, int sizeIndex) {
     Folder* folder = find(folderId);
     if (!folder)
         return false;
-    folder->sizeIndex = std::clamp(sizeIndex, 0, 2);
+    const int clamped = std::clamp(sizeIndex, 0, 2);
+    if (folder->titleIds.size() > maxFolderSlots(clamped))
+        return false;
+    folder->sizeIndex = clamped;
     return true;
 }
 

@@ -11,6 +11,8 @@ public:
         int itemCount = 0;
         int colorIndex = 0;
         int sizeIndex = 1;
+        int styleIndex = 0;
+        bool showCover = false;
     };
 
     FolderOptionsScreen();
@@ -21,6 +23,8 @@ public:
     void onDelete(VoidCb cb) { m_deleteCb = std::move(cb); }
     void onColorChange(IntCb cb) { m_colorCb = std::move(cb); }
     void onSizeChange(IntCb cb) { m_sizeCb = std::move(cb); }
+    void onStyleChange(IntCb cb) { m_styleCb = std::move(cb); }
+    void onCoverChange(BoolCb cb) { m_coverCb = std::move(cb); }
 
 protected:
     void buildTabs() override;
@@ -36,4 +40,6 @@ private:
     VoidCb m_deleteCb;
     IntCb m_colorCb;
     IntCb m_sizeCb;
+    IntCb m_styleCb;
+    BoolCb m_coverCb;
 };

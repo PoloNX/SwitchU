@@ -2,6 +2,7 @@
 #include <nxui/widgets/GlassWidget.hpp>
 #include <nxui/core/Texture.hpp>
 #include <nxui/core/Animation.hpp>
+#include <nxui/Theme.hpp>
 #include "core/GridModel.hpp"
 #include "sidebar/SidebarAnimation.hpp"
 #include <string>
@@ -48,6 +49,11 @@ public:
     void setFolderPreviewCount(int count) { m_folderPreviewCount = count; }
     void setFolderVisualSeed(std::uint32_t seed) { m_folderVisualSeed = seed; }
     void setFolderColorIndex(int index) { m_folderColorIndex = index; }
+    void setFolderStyleIndex(int index) { m_folderStyleIndex = index; }
+    void setFolderShowCover(bool show) { m_folderShowCover = show; }
+    void setFolderCoverTexture(nxui::Texture* tex) { m_folderCover = tex; }
+    void setFolderCoverTitleId(std::uint64_t id) { m_folderCoverTitleId = id; }
+    void setThemeMode(nxui::ThemeMode mode) { m_themeMode = mode; }
     void setFont(nxui::Font* font) { m_font = font; }  // folder tiles carry their name
     void setWidgetData(switchu::widgets::WidgetType type, int columns, int rows,
                        std::string primary, std::string secondary,
@@ -154,6 +160,11 @@ private:
     int           m_folderPreviewCount = 0;
     std::uint32_t m_folderVisualSeed = 0;
     int           m_folderColorIndex = 0;
+    int           m_folderStyleIndex = 0;
+    bool          m_folderShowCover = false;
+    nxui::Texture* m_folderCover = nullptr;
+    std::uint64_t m_folderCoverTitleId = 0;
+    nxui::ThemeMode m_themeMode = nxui::ThemeMode::Dark;
     nxui::Font*   m_font = nullptr;
     switchu::widgets::WidgetType m_widgetType = switchu::widgets::WidgetType::Clock;
     int m_widgetColumns = 1;

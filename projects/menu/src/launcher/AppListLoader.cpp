@@ -191,6 +191,7 @@ void registerEntries(std::vector<PendingApp>& apps,
         entry.folderId = p.folderId;
         entry.folderPreviewCount = p.folderPreviewCount;
         entry.folderColorIndex = p.folderColorIndex;
+        entry.folderCoverTitleId = p.folderCoverTitleId;
         entry.widgetId = p.widgetId;
         entry.widgetType = p.widgetType;
         entry.widgetColumns = p.widgetColumns;

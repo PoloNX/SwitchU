@@ -515,6 +515,17 @@
     "size_small": "Small",
     "size_medium": "Medium",
     "size_large": "Large",
+    "style": "Folder style",
+    "style_desc": "Applies to every folder, including new ones.",
+    "style_classic": "Classic",
+    "style_simple": "Simple",
+    "style_minimal": "Minimal",
+    "style_tab": "Tab",
+    "style_ring": "Ring",
+    "style_manila": "Manila",
+    "style_label": "Label",
+    "show_cover": "Show cover",
+    "show_cover_desc": "Shows the first game on every folder. Classic keeps the mosaic instead.",
     "items": "items"
   },
   "add": {

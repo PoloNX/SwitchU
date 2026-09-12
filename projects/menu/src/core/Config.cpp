@@ -1,4 +1,5 @@
 #include "Config.hpp"
+#include "FolderStore.hpp"
 #include <fstream>
 #include <algorithm>
 #include <filesystem>
@@ -65,6 +66,9 @@ bool AppConfig::load() {
     readJsonOpt(j, "steamGridDbEnabled", steamGridDbEnabled);
     readJsonOpt(j, "steamGridDbApiKey", steamGridDbApiKey);
     readJsonOpt(j, "themePreset", themePreset);
+    readJsonOpt(j, "folderStyle", folderStyle);
+    const bool hasShowCoverKey = j.find("folderShowCover") != j.end();
+    readJsonOpt(j, "folderShowCover", folderShowCover);
 
     if (musicVolume < 0.f) musicVolume = 0.f;
     if (musicVolume > 1.f) musicVolume = 1.f;
@@ -79,6 +83,28 @@ bool AppConfig::load() {
     if (!defaultProfileEnabled) defaultProfileUid.clear();
     accessibilitySpeechRate = std::clamp(accessibilitySpeechRate, 120, 320);
     if (themePreset.empty()) themePreset = "Default Light";
+    if (!hasShowCoverKey) {
+        // Local 9-style table used while vetting Cover/Plate as separate styles.
+        switch (folderStyle) {
+            case 0: // Classic
+            case 1: // Simple
+                break;
+            case 2: // Cover → Simple + cover
+                folderStyle = switchu::folders::kFolderStyleSimple;
+                folderShowCover = true;
+                break;
+            case 3: folderStyle = switchu::folders::kFolderStyleMinimal; break;
+            case 4: folderStyle = switchu::folders::kFolderStyleTab; break;
+            case 5: folderStyle = switchu::folders::kFolderStyleRing; break;
+            case 6: folderStyle = switchu::folders::kFolderStyleManila; break;
+            case 7: folderStyle = switchu::folders::kFolderStyleClassic; break; // Plate
+            case 8: folderStyle = switchu::folders::kFolderStyleLabel; break;
+            default:
+                folderStyle = switchu::folders::kDefaultFolderStyle;
+                break;
+        }
+    }
+    folderStyle = std::clamp(folderStyle, 0, switchu::folders::kFolderStyleCount - 1);
 
     return true;
 }
@@ -111,6 +137,8 @@ bool AppConfig::save() const {
     j["steamGridDbEnabled"] = steamGridDbEnabled;
     j["steamGridDbApiKey"] = steamGridDbApiKey;
     j["themePreset"] = themePreset;
+    j["folderStyle"] = std::clamp(folderStyle, 0, switchu::folders::kFolderStyleCount - 1);
+    j["folderShowCover"] = folderShowCover;
 
     std::ofstream f(kConfigPath, std::ios::trunc);
     if (!f.is_open()) return false;
