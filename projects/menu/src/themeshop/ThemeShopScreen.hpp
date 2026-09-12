@@ -52,6 +52,8 @@ public:
     void onThemeShopDownload(StringCb cb) { m_themeShopDownloadCb = std::move(cb); }
     void onThemeShopDownloadInstall(StringCb cb) { m_themeShopDownloadInstallCb = std::move(cb); }
     void onNetConnectRequest(VoidCb cb)  { m_netConnectCb = std::move(cb); }
+    void onSearchRequest(StringCb cb) { m_searchRequestCb = std::move(cb); }
+    void setSearchQuery(std::string query);
 
     void setMusicState(bool enabled, float musicVol, float sfxVol) {
         m_musicEnabled = enabled;
@@ -206,6 +208,7 @@ private:
     StringCb m_themeShopDownloadCb;
     StringCb m_themeShopDownloadInstallCb;
     VoidCb m_netConnectCb;
+    StringCb m_searchRequestCb;
 
     bool m_musicEnabled = true;
     float m_musicVolume = 0.4f;

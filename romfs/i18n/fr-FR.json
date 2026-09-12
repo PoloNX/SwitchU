@@ -734,6 +734,16 @@
       "next": "Suiv."
     }
   },
+  "text_entry": {
+    "erase": "Effacer",
+    "full": "Longueur maximale atteinte",
+    "hint": "A : saisir   X : effacer   Y : majuscule   L/R : symboles   Plus : confirmer   B : annuler",
+    "letters": "ABC",
+    "opened": "Clavier à l'écran. Croix directionnelle pour choisir une touche, A pour saisir, X pour effacer, Plus pour confirmer, B pour annuler.",
+    "shift": "Majuscule",
+    "space": "Espace",
+    "symbols": "?12#"
+  },
   "quicksettings": {
     "title": "Paramètres rapides",
     "close_hint": "[B] Fermer",

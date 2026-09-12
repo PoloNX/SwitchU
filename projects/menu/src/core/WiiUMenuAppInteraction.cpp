@@ -914,6 +914,7 @@ void WiiUMenuApp::wireFocusCallback() {
 bool WiiUMenuApp::isCurrentFocusableWidget(nxui::Widget* w) const {
     if (!w) return false;
     if (m_steamGridDbPicker && m_steamGridDbPicker.get() == w) return w->isFocusable();
+    if (m_textEntry && m_textEntry.get() == w) return w->isFocusable();
     if (m_quickSettings && m_quickSettings.get() == w) return w->isFocusable();
     if (m_themeShop && m_themeShop.get() == w) return w->isFocusable();
     if (m_settings && m_settings.get() == w) return w->isFocusable();
@@ -995,6 +996,8 @@ void WiiUMenuApp::closeActiveOverlays() {
         m_dialog->hide();
     if (m_quickSettings && m_quickSettings->isActive())
         m_quickSettings->hide();
+    if (m_textEntry && m_textEntry->isActive())
+        m_textEntry->hide(false);
     if (m_settings && m_settings->isActive())
         m_settings->hide();
     if (m_themeShop && m_themeShop->isActive())
@@ -1018,6 +1021,7 @@ nxui::Widget* WiiUMenuApp::focusRoot() {
     if (m_launchAnim && m_launchAnim->isPlaying()) return nullptr;
     if (m_folderCaptureRequested) return nullptr;
     if (m_progressDialog && m_progressDialog->isActive()) return m_progressDialog.get();
+    if (m_textEntry && m_textEntry->isActive()) return m_textEntry.get();
     if (m_dialog && m_dialog->isActive()) return m_dialog.get();
     if (m_contextMenu && m_contextMenu->isActive()) return m_contextMenu.get();
     if (m_quickSettings && m_quickSettings->isActive()) return m_quickSettings.get();

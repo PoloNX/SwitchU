@@ -270,39 +270,15 @@ void ThemeShopScreen::applySearchFilter() {
 }
 
 bool ThemeShopScreen::promptSearchQuery() {
-    auto& i18n = nxui::I18n::instance();
+    if (m_searchRequestCb) m_searchRequestCb(m_searchQuery);
+    return true;
+}
 
-    SwkbdConfig swkbd;
-    Result rc = swkbdCreate(&swkbd, 0);
-    if (R_FAILED(rc)) {
-        requestToast(i18n.tr("themeshop.search.unavailable", "Search keyboard is unavailable."), 2.5f);
-        return true;
-    }
-
-    swkbdConfigMakePresetDefault(&swkbd);
-    swkbdConfigSetType(&swkbd, SwkbdType_All);
-    swkbdConfigSetStringLenMax(&swkbd, 64);
-
-    const std::string guide = i18n.tr("themeshop.search.guide", "Search themes");
-    swkbdConfigSetGuideText(&swkbd, guide.c_str());
-    if (!m_searchQuery.empty())
-        swkbdConfigSetInitialText(&swkbd, m_searchQuery.c_str());
-
-    std::array<char, 65> buffer{};
-    std::snprintf(buffer.data(), buffer.size(), "%s", m_searchQuery.c_str());
-
-    appletUpdateCallerAppletCaptureImage();
-    rc = swkbdShow(&swkbd, buffer.data(), buffer.size());
-    swkbdClose(&swkbd);
-
-    if (R_FAILED(rc))
-        return true;
-
-    m_searchQuery = trimWhitespace(buffer.data());
+void ThemeShopScreen::setSearchQuery(std::string query) {
+    m_searchQuery = trimWhitespace(query);
     closeDetail();
     applySearchFilter();
     ensureSelectionVisible();
-    return true;
 }
 
 bool ThemeShopScreen::pollCommunityCatalog() {

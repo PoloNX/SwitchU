@@ -520,6 +520,16 @@
       "test": "Test"
     }
   },
+  "text_entry": {
+    "erase": "Löschen",
+    "full": "Maximale Länge erreicht",
+    "hint": "A: Eingeben   X: Löschen   Y: Umschalten   L/R: Symbole   Plus: Bestätigen   B: Abbrechen",
+    "letters": "ABC",
+    "opened": "Bildschirmtastatur. Steuerkreuz zum Wählen einer Taste, A zum Eingeben, X zum Löschen, Plus zum Bestätigen, B zum Abbrechen.",
+    "shift": "Umschalten",
+    "space": "Leerzeichen",
+    "symbols": "?12#"
+  },
   "quicksettings": {
     "title": "Schnelleinstellungen",
     "close_hint": "[B] Schließen",

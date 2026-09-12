@@ -520,6 +520,16 @@
       "test": "Testar"
     }
   },
+  "text_entry": {
+    "erase": "Apagar",
+    "full": "Tamanho máximo atingido",
+    "hint": "A: digitar   X: apagar   Y: maiúscula   L/R: símbolos   Mais: confirmar   B: cancelar",
+    "letters": "ABC",
+    "opened": "Teclado na tela. Direcional para escolher uma tecla, A para digitar, X para apagar, Mais para confirmar, B para cancelar.",
+    "shift": "Maiúscula",
+    "space": "Espaço",
+    "symbols": "?12#"
+  },
   "quicksettings": {
     "title": "Configurações Rápidas",
     "close_hint": "[B] Fechar",

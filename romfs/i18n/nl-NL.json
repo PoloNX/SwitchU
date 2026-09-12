@@ -520,6 +520,16 @@
       "test": "Test"
     }
   },
+  "text_entry": {
+    "erase": "Wissen",
+    "full": "Maximale lengte bereikt",
+    "hint": "A: typen   X: wissen   Y: shift   L/R: symbolen   Plus: bevestigen   B: annuleren",
+    "letters": "ABC",
+    "opened": "Toetsenbord op scherm. Richtingstoetsen om een toets te kiezen, A om te typen, X om te wissen, Plus om te bevestigen, B om te annuleren.",
+    "shift": "Shift",
+    "space": "Spatie",
+    "symbols": "?12#"
+  },
   "quicksettings": {
     "title": "Snelle instellingen",
     "close_hint": "[B] Sluiten",

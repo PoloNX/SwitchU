@@ -520,6 +520,16 @@
       "test": "Test"
     }
   },
+  "text_entry": {
+    "erase": "Cancella",
+    "full": "Lunghezza massima raggiunta",
+    "hint": "A: digita   X: cancella   Y: maiuscole   L/R: simboli   Plus: conferma   B: annulla",
+    "letters": "ABC",
+    "opened": "Tastiera a schermo. Croce direzionale per scegliere un tasto, A per digitare, X per cancellare, Plus per confermare, B per annullare.",
+    "shift": "Maiuscole",
+    "space": "Spazio",
+    "symbols": "?12#"
+  },
   "quicksettings": {
     "title": "Impostazioni rapide",
     "close_hint": "[B] Chiudi",

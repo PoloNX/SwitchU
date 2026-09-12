@@ -31,6 +31,7 @@
 #include "settings/SteamGridDbPickerScreen.hpp"
 #include "settings/FolderOptionsScreen.hpp"
 #include "settings/ControllerTestScreen.hpp"
+#include "settings/TextEntryScreen.hpp"
 #include "themeshop/ThemeShopScreen.hpp"
 #include "core/Config.hpp"
 #include "core/FolderStore.hpp"
@@ -178,8 +179,10 @@ private:
     void renameFolder(std::uint32_t folderId);
     void showFolderContextMenu(std::uint32_t folderId);
     bool saveFoldersOrReport(const char* operation);
-    std::string promptFolderName(const std::string& initial,
-                                 const std::string& guide);
+    void createTextEntry();
+    void requestTextEntry(const std::string& title, const std::string& guide,
+                          const std::string& initial, int maxLength, bool password,
+                          std::function<void(const std::string&)> onAccept);
     void editSteamGridDbApiKey();
     void startSteamGridDbScrape();
     void openSteamGridDbPicker(GameOptionsScreen::ArtworkKind kind,
@@ -346,6 +349,7 @@ private:
     std::shared_ptr<SteamGridDbPickerScreen> m_steamGridDbPicker;
     std::shared_ptr<FolderOptionsScreen> m_folderOptions;
     std::shared_ptr<ControllerTestScreen> m_controllerTest;
+    std::shared_ptr<TextEntryScreen>      m_textEntry;
 
     nxui::Texture m_gameCardTex;
     nxui::Texture m_arrowTexLeft;

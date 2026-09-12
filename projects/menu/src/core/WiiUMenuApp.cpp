@@ -395,6 +395,7 @@ bool WiiUMenuApp::hasActiveLeaveCaptureOverlay() const {
         || (m_contextMenu && m_contextMenu->isActive())
         || (m_dialog && m_dialog->isActive())
         || (m_quickSettings && m_quickSettings->isActive())
+        || (m_textEntry && m_textEntry->isActive())
         || (m_progressDialog && m_progressDialog->isActive())
         || (m_settings && m_settings->isActive())
         || (m_themeShop && m_themeShop->isActive())
@@ -1939,36 +1940,51 @@ void WiiUMenuApp::applyDisplayModel(GridModel model, std::uint64_t focusId, bool
     updateCursor();
 }
 
-std::string WiiUMenuApp::promptFolderName(const std::string& initial,
-                                          const std::string& guide) {
-#ifdef SWITCHU_MENU
-    SwkbdConfig keyboard{};
-    char text[97]{};
-    Result rc = swkbdCreate(&keyboard, 0);
-    if (R_FAILED(rc)) {
-        DebugLog::log("[folders] keyboard create failed rc=0x%X", rc);
-        auto& i18n = nxui::I18n::instance();
-        m_dialog->show(i18n.tr("folder.error_title", "Folder error"),
-                       i18n.tr("folder.keyboard_error", "The keyboard could not be opened."),
-                       {{i18n.tr("button.ok", "OK"), {}, true}});
-        focusManager().setFocus(m_dialog.get());
-        return {};
+void WiiUMenuApp::createTextEntry() {
+    if (m_textEntry) return;
+    m_textEntry = std::make_shared<TextEntryScreen>();
+    m_textEntry->setFont(&m_fontNormal);
+    m_textEntry->setSmallFont(&m_fontSmall);
+    m_textEntry->setTheme(&m_theme);
+    m_textEntry->onKeySfx([this]() { m_audio.playSfx(Sfx::Activate); });
+    m_textEntry->onNavigateSfx([this]() { m_audio.playSfx(Sfx::Navigate); });
+    m_textEntry->onCloseSfx([this]() { m_audio.playSfx(Sfx::ModalHide); });
+    m_textEntry->onAccessibilityAnnouncement([this](const std::string& text) {
+        m_accessibility.announce(text);
+    });
+    if (m_overlayLayer) m_overlayLayer->addChild(m_textEntry);
+}
+
+void WiiUMenuApp::requestTextEntry(
+    const std::string& title, const std::string& guide,
+    const std::string& initial, int maxLength, bool password,
+    std::function<void(const std::string&)> onAccept) {
+    createTextEntry();
+    if (!m_textEntry || m_textEntry->isActive()) return;
+    if (m_overlayLayer) {
+        m_overlayLayer->removeChild(m_textEntry.get());
+        m_overlayLayer->addChild(m_textEntry);
     }
-    swkbdConfigMakePresetDefault(&keyboard);
-    swkbdConfigSetGuideText(&keyboard, guide.c_str());
-    swkbdConfigSetStringLenMax(&keyboard, 48);
-    swkbdConfigSetInitialText(&keyboard, initial.c_str());
-    rc = swkbdShow(&keyboard, text, sizeof(text));
-    swkbdClose(&keyboard);
-    if (R_FAILED(rc)) {
-        DebugLog::log("[folders] keyboard cancelled/failed rc=0x%X", rc);
-        return {};
-    }
-    return text;
-#else
-    (void)guide;
-    return initial.empty() ? "Folder" : initial;
-#endif
+    nxui::Widget* returnFocus = focusManager().current();
+    auto restoreFocus = [this, returnFocus]() {
+        nxui::Widget* target = isCurrentFocusableWidget(returnFocus)
+            ? returnFocus : (m_grid ? m_grid->focusManager().current() : nullptr);
+        if (target) {
+            m_suppressNextNavigateSfx = true;
+            focusManager().setFocus(target);
+            if (m_cursor) m_cursor->moveTo(target->focusRect().expanded(4.f), 0.f);
+        }
+    };
+    m_textEntry->onAccept([restoreFocus, onAccept = std::move(onAccept)](
+                              const std::string& value) {
+        restoreFocus();
+        if (onAccept) onAccept(value);
+    });
+    m_textEntry->onCancel(restoreFocus);
+    m_audio.playSfx(Sfx::ModalShow);
+    m_textEntry->show({title, guide, initial, std::max(1, maxLength), password});
+    focusManager().setFocus(m_textEntry.get());
+    if (m_cursor) m_cursor->setVisible(false);
 }
 
 bool WiiUMenuApp::saveFoldersOrReport(const char* operation) {
@@ -1986,21 +2002,23 @@ bool WiiUMenuApp::saveFoldersOrReport(const char* operation) {
 
 void WiiUMenuApp::createFolder(int targetSlot) {
     auto& i18n = nxui::I18n::instance();
-    const std::string name = promptFolderName(
-        "", i18n.tr("folder.name_guide", "Enter a folder name"));
-    if (name.empty())
-        return;
-    DebugLog::log("[folders] create requested slot=%d name=%s", targetSlot, name.c_str());
-    const std::uint32_t id = m_folderStore.create(name);
-    if (id == 0 || !saveFoldersOrReport("create")) return;
-    if (targetSlot >= 0 && targetSlot < static_cast<int>(m_layoutSlots.size()) &&
-        m_layoutSlots[static_cast<std::size_t>(targetSlot)] == 0) {
-        m_layoutSlots[static_cast<std::size_t>(targetSlot)] = folderTitleId(id);
-        m_layoutDirty = true;
-        saveMenuLayout();
-    }
-    m_audio.playSfx(Sfx::ConfirmPositive);
-    applyDisplayModel(buildRootFolderModel(), folderTitleId(id), true);
+    requestTextEntry(i18n.tr("folder.create", "Create folder"),
+        i18n.tr("folder.name_guide", "Enter a folder name"), "", 48, false,
+        [this, targetSlot](const std::string& typed) {
+            if (typed.empty()) return;
+            DebugLog::log("[folders] create requested slot=%d name=%s",
+                          targetSlot, typed.c_str());
+            const std::uint32_t id = m_folderStore.create(typed);
+            if (id == 0 || !saveFoldersOrReport("create")) return;
+            if (targetSlot >= 0 && targetSlot < static_cast<int>(m_layoutSlots.size()) &&
+                m_layoutSlots[static_cast<std::size_t>(targetSlot)] == 0) {
+                m_layoutSlots[static_cast<std::size_t>(targetSlot)] = folderTitleId(id);
+                m_layoutDirty = true;
+                saveMenuLayout();
+            }
+            m_audio.playSfx(Sfx::ConfirmPositive);
+            applyDisplayModel(buildRootFolderModel(), folderTitleId(id), true);
+        });
 }
 
 std::string WiiUMenuApp::widgetTypeLabel(switchu::widgets::WidgetType type) const {
@@ -2947,15 +2965,18 @@ void WiiUMenuApp::renameFolder(std::uint32_t folderId) {
     const auto* folder = m_folderStore.find(folderId);
     if (!folder) return;
     const std::string oldName = folder->name;
-    const std::string name = promptFolderName(oldName,
-        nxui::I18n::instance().tr("folder.rename_guide", "Rename folder"));
-    if (name.empty() || name == oldName) return;
-    m_folderStore.rename(folderId, name);
-    if (!saveFoldersOrReport("rename")) return;
-    if (m_openFolderId == folderId && m_folderHeaderLabel)
-        m_folderHeaderLabel->setText(name);
-    else
-        applyDisplayModel(buildRootFolderModel(), folderTitleId(folderId), false);
+    auto& i18n = nxui::I18n::instance();
+    requestTextEntry(i18n.tr("folder.rename", "Rename"),
+        i18n.tr("folder.rename_guide", "Rename folder"), oldName, 48, false,
+        [this, folderId, oldName](const std::string& name) {
+            if (name.empty() || name == oldName) return;
+            m_folderStore.rename(folderId, name);
+            if (!saveFoldersOrReport("rename")) return;
+            if (m_openFolderId == folderId && m_folderHeaderLabel)
+                m_folderHeaderLabel->setText(name);
+            else
+                applyDisplayModel(buildRootFolderModel(), folderTitleId(folderId), false);
+        });
 }
 
 void WiiUMenuApp::requestOpenFolder(std::uint32_t folderId, std::uint64_t focusTitleId) {
@@ -4390,6 +4411,7 @@ void WiiUMenuApp::onUpdate(float dt) {
     if (m_navigator.route() == switchu::navigation::Route::Home
         && !(m_dialog && m_dialog->isActive())
         && !(m_quickSettings && m_quickSettings->isActive())
+        && !(m_textEntry && m_textEntry->isActive())
         && !(m_settings && m_settings->isActive())
         && !(m_themeShop && m_themeShop->isActive())
         && !(m_gameOptions && m_gameOptions->isActive())
@@ -4766,6 +4788,7 @@ void WiiUMenuApp::onUpdate(float dt) {
         !(m_contextMenu && m_contextMenu->isActive()) &&
         !(m_dialog && m_dialog->isActive()) &&
         !(m_quickSettings && m_quickSettings->isActive()) &&
+        !(m_textEntry && m_textEntry->isActive()) &&
         !(m_settings && m_settings->isActive()) &&
         !(m_themeShop && m_themeShop->isActive()) &&
         !(m_gameOptions && m_gameOptions->isActive()) &&
@@ -4836,6 +4859,7 @@ void WiiUMenuApp::onUpdate(float dt) {
         && !(m_contextMenu && m_contextMenu->isActive())
         && !(m_dialog && m_dialog->isActive())
         && !(m_quickSettings && m_quickSettings->isActive())
+        && !(m_textEntry && m_textEntry->isActive())
         && !(m_themeShop && m_themeShop->isActive())
         && !(m_settings && m_settings->isActive())
         && !(m_gameOptions && m_gameOptions->isActive())
@@ -4847,31 +4871,40 @@ void WiiUMenuApp::onUpdate(float dt) {
     }
 
     bool dialogActiveNow = (m_dialog && m_dialog->isActive());
-    if (!debugTouchBlocked && m_contextMenu && m_contextMenu->isActive())
+    const bool textEntryActive = m_textEntry && m_textEntry->isActive();
+    if (!debugTouchBlocked && !textEntryActive &&
+        m_contextMenu && m_contextMenu->isActive())
         m_contextMenu->handleTouch(app().input());
-    if (!debugTouchBlocked && dialogActiveNow)
+    if (!debugTouchBlocked && !textEntryActive && dialogActiveNow)
         m_dialog->handleTouch(app().input());
 
-    if (!debugTouchBlocked && m_themeShop && m_themeShop->isActive())
+    if (!debugTouchBlocked && !textEntryActive &&
+        m_themeShop && m_themeShop->isActive())
         m_themeShop->handleTouch(app().input());
 
-    if (!debugTouchBlocked && m_settings && m_settings->isActive()
+    if (!debugTouchBlocked && !textEntryActive && m_settings && m_settings->isActive()
         && !(m_controllerTest && m_controllerTest->isActive())) {
         m_settings->handleTouch(app().input());
     }
 
-    if (!debugTouchBlocked && m_gameOptions && m_gameOptions->isActive()
+    if (!debugTouchBlocked && !textEntryActive && m_gameOptions && m_gameOptions->isActive()
         && !(m_steamGridDbPicker && m_steamGridDbPicker->isActive()))
         m_gameOptions->handleTouch(app().input());
 
-    if (!debugTouchBlocked && m_steamGridDbPicker && m_steamGridDbPicker->isActive())
+    if (!debugTouchBlocked && !textEntryActive &&
+        m_steamGridDbPicker && m_steamGridDbPicker->isActive())
         m_steamGridDbPicker->handleTouch(app().input());
 
-    if (!debugTouchBlocked && m_folderOptions && m_folderOptions->isActive())
+    if (!debugTouchBlocked && !textEntryActive &&
+        m_folderOptions && m_folderOptions->isActive())
         m_folderOptions->handleTouch(app().input());
 
-    if (!debugTouchBlocked && m_controllerTest && m_controllerTest->isActive())
+    if (!debugTouchBlocked && !textEntryActive &&
+        m_controllerTest && m_controllerTest->isActive())
         m_controllerTest->handleTouch(app().input());
+
+    if (!debugTouchBlocked && m_textEntry && m_textEntry->isActive())
+        m_textEntry->handleTouch(app().input());
 
     if (m_dialogWasActive && !dialogActiveNow) {
         if (isCurrentFocusableWidget(m_dialogReturnFocus)) {
@@ -4888,6 +4921,7 @@ void WiiUMenuApp::onUpdate(float dt) {
     if (!(m_userSelect && m_userSelect->isActive())
         && !(m_dialog && m_dialog->isActive())
         && !(m_quickSettings && m_quickSettings->isActive())
+        && !(m_textEntry && m_textEntry->isActive())
         && !m_launchAnim->isPlaying())
     {
         auto* cur = focusManager().current();
@@ -4971,6 +5005,9 @@ std::vector<WiiUMenuApp::ActionHint> WiiUMenuApp::buildActionHints() {
         add(buttonGlyph(nxui::Button::B), i18n.tr("hint.close", "Close"));
         return hints;
     }
+
+    if (m_textEntry && m_textEntry->isActive())
+        return hints;
 
     if (m_contextMenu && m_contextMenu->isActive()) {
         add(dpadGlyph(), i18n.tr("hint.navigate", "Navigate"));

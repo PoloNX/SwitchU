@@ -520,6 +520,16 @@
       "test": "Probar"
     }
   },
+  "text_entry": {
+    "erase": "Borrar",
+    "full": "Longitud máxima alcanzada",
+    "hint": "A: escribir   X: borrar   Y: mayúsculas   L/R: símbolos   Más: confirmar   B: cancelar",
+    "letters": "ABC",
+    "opened": "Teclado en pantalla. Cruz direccional para elegir una tecla, A para escribir, X para borrar, Más para confirmar, B para cancelar.",
+    "shift": "Mayúsculas",
+    "space": "Espacio",
+    "symbols": "?12#"
+  },
   "quicksettings": {
     "title": "Ajustes rápidos",
     "close_hint": "[B] Cerrar",

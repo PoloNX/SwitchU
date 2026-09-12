@@ -515,45 +515,21 @@ void WiiUMenuApp::createSettings() {
 }
 
 void WiiUMenuApp::editSteamGridDbApiKey() {
-#ifdef SWITCHU_MENU
-    SwkbdConfig keyboard{};
-    char text[193]{};
-    Result rc = swkbdCreate(&keyboard, 0);
-    if (R_FAILED(rc)) {
-        DebugLog::log("[steamgriddb] keyboard create failed rc=0x%X", rc);
-        if (m_settings)
-            m_settings->requestToast(nxui::I18n::instance().tr(
-                "settings.steamgriddb.keyboard_error", "The keyboard could not be opened."));
-        return;
-    }
-
-    swkbdConfigMakePresetPassword(&keyboard);
-    swkbdConfigSetGuideText(&keyboard, "SteamGridDB API key");
-    swkbdConfigSetStringLenMax(&keyboard, 192);
-    swkbdConfigSetInitialText(&keyboard, m_config.steamGridDbApiKey.c_str());
-    rc = swkbdShow(&keyboard, text, sizeof(text));
-    swkbdClose(&keyboard);
-    if (R_FAILED(rc)) {
-        DebugLog::log("[steamgriddb] keyboard cancelled rc=0x%X", rc);
-        if (m_settings) focusManager().setFocus(m_settings.get());
-        return;
-    }
-
-    m_config.steamGridDbApiKey = text;
-    m_config.save();
-    if (m_settings) {
-        m_settings->setSteamGridDbState(m_config.steamGridDbEnabled,
-                                        !m_config.steamGridDbApiKey.empty());
-        m_settings->refreshCurrentTabWidgets();
-        m_settings->requestToast(m_config.steamGridDbApiKey.empty()
-            ? nxui::I18n::instance().tr("settings.steamgriddb.key_cleared", "API key cleared.")
-            : nxui::I18n::instance().tr("settings.steamgriddb.key_saved", "API key saved."));
-        focusManager().setFocus(m_settings.get());
-    }
-#else
-    if (m_settings)
-        m_settings->requestToast("API-key input is available in the console build.");
-#endif
+    auto& i18n = nxui::I18n::instance();
+    requestTextEntry(i18n.tr("settings.steamgriddb.api_key", "SteamGridDB API key"),
+        i18n.tr("settings.steamgriddb.api_key_guide", "Enter your API key"),
+        m_config.steamGridDbApiKey, 192, true,
+        [this](const std::string& value) {
+            m_config.steamGridDbApiKey = value;
+            m_config.save();
+            if (!m_settings) return;
+            m_settings->setSteamGridDbState(m_config.steamGridDbEnabled,
+                                             !value.empty());
+            m_settings->refreshCurrentTabWidgets();
+            m_settings->requestToast(value.empty()
+                ? nxui::I18n::instance().tr("settings.steamgriddb.key_cleared", "API key cleared.")
+                : nxui::I18n::instance().tr("settings.steamgriddb.key_saved", "API key saved."));
+        });
 }
 
 void WiiUMenuApp::createQuickSettings() {
@@ -749,26 +725,16 @@ void WiiUMenuApp::openSteamGridDbPicker(GameOptionsScreen::ArtworkKind kind,
 }
 
 void WiiUMenuApp::editSteamGridDbPickerQuery() {
-#ifdef SWITCHU_MENU
     if (!m_steamGridDbPicker || !m_steamGridDbPicker->isActive()) return;
-    SwkbdConfig keyboard{};
-    char text[129]{};
-    if (R_FAILED(swkbdCreate(&keyboard, 0))) return;
-    swkbdConfigMakePresetDefault(&keyboard);
-    swkbdConfigSetGuideText(&keyboard, "SteamGridDB search name");
-    swkbdConfigSetStringLenMax(&keyboard, 128);
-    swkbdConfigSetInitialText(&keyboard, m_steamGridDbPicker->query().c_str());
-    const Result rc = swkbdShow(&keyboard, text, sizeof(text));
-    swkbdClose(&keyboard);
-    focusManager().setFocus(m_steamGridDbPicker.get());
-    if (R_FAILED(rc) || text[0] == '\0') return;
     const auto kind = m_steamGridDbPicker->artworkKind();
     const auto mappedKind = kind == SteamGridDbManager::ArtworkKind::Logo
         ? GameOptionsScreen::ArtworkKind::Logo
         : kind == SteamGridDbManager::ArtworkKind::Icon
             ? GameOptionsScreen::ArtworkKind::Icon : GameOptionsScreen::ArtworkKind::Hero;
-    openSteamGridDbPicker(mappedKind, text);
-#endif
+    requestTextEntry("SteamGridDB", "Search name", m_steamGridDbPicker->query(),
+        128, false, [this, mappedKind](const std::string& value) {
+            if (!value.empty()) openSteamGridDbPicker(mappedKind, value);
+        });
 }
 
 void WiiUMenuApp::applySteamGridDbCandidate(
@@ -1137,6 +1103,13 @@ void WiiUMenuApp::createThemeShop() {
     m_themeShop->setAccessibilityVoiceEnabled(m_config.accessibilityEnabled);
     m_themeShop->setAccessibilitySpeechPreferences(m_config.accessibilitySpeakHints,
                                                    m_config.accessibilitySpeakPosition);
+    m_themeShop->onSearchRequest([this](const std::string& current) {
+        requestTextEntry(nxui::I18n::instance().tr("hint.search", "Search"),
+            nxui::I18n::instance().tr("themeshop.search.guide", "Search themes"),
+            current, 64, false, [this](const std::string& query) {
+                if (m_themeShop) m_themeShop->setSearchQuery(query);
+            });
+    });
 
     m_themeShop->onMusicEnabledChange([this](bool enabled) {
         if (enabled) m_audio.play(); else m_audio.stop();
@@ -1923,6 +1896,8 @@ void WiiUMenuApp::applyTheme() {
         m_controllerTest->setTheme(&m_theme);
     if (m_quickSettings)
         m_quickSettings->setTheme(&m_theme);
+    if (m_textEntry)
+        m_textEntry->setTheme(&m_theme);
 
     m_sidebar.applyTheme(m_theme);
     DebugLog::log("[theme-apply] widget recolor complete");
