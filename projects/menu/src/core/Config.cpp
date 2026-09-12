@@ -6,12 +6,14 @@
 #include <algorithm>
 #include <filesystem>
 #include <nlohmann/json.hpp>
+#include <mutex>
 #include <system_error>
 
 namespace {
 
 static constexpr const char* kLegacyConfigPath = "sdmc:/config/SwitchU/config.json";
 static constexpr const char* kLegacyBackupPath = "sdmc:/config/SwitchU/config.json.bak";
+std::mutex g_configSaveMutex;
 
 template <typename T>
 void readJsonOpt(const nlohmann::json& j, const char* key, T& out) {
@@ -145,6 +147,10 @@ bool AppConfig::load() {
 }
 
 bool AppConfig::save() const {
+    // Settings closes are persisted by a worker while launch/favorite actions
+    // can save on the UI thread. Both use the same staging filename, so those
+    // writes must never overlap.
+    const std::lock_guard<std::mutex> saveLock(g_configSaveMutex);
     std::error_code ec;
     std::filesystem::create_directory("sdmc:/config", ec);
     ec.clear();
