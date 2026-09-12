@@ -744,5 +744,28 @@
       "prev": "Prev",
       "next": "Next"
     }
+  },
+  "quicksettings": {
+    "title": "Quick Settings",
+    "close_hint": "[B] Close",
+    "battery": "BATTERY",
+    "charging": "⚡ Charging",
+    "discharging": "Discharging",
+    "hardware_temp": "THERMALS",
+    "temp_optimal": "Optimal",
+    "temp_warm": "Warm",
+    "brightness": "☀ Brightness",
+    "bgm_volume": "♫ Music (BGM)",
+    "sfx_volume": "♪ Sound Effects",
+    "airplane_mode": "✈ Airplane Mode",
+    "wifi": "Wi-Fi",
+    "on": "ON",
+    "off": "OFF",
+    "power_options": "POWER OPTIONS",
+    "sleep": "Sleep",
+    "reboot": "Reboot",
+    "power_off": "Power Off",
+    "hint_adjust": "Adjust",
+    "hint_shortcut": "Quick Settings"
   }
 }

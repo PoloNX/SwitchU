@@ -914,6 +914,7 @@ void WiiUMenuApp::wireFocusCallback() {
 bool WiiUMenuApp::isCurrentFocusableWidget(nxui::Widget* w) const {
     if (!w) return false;
     if (m_steamGridDbPicker && m_steamGridDbPicker.get() == w) return w->isFocusable();
+    if (m_quickSettings && m_quickSettings.get() == w) return w->isFocusable();
     if (m_themeShop && m_themeShop.get() == w) return w->isFocusable();
     if (m_settings && m_settings.get() == w) return w->isFocusable();
     for (const auto& btn : m_sidebar.leftButtons())
@@ -992,6 +993,8 @@ void WiiUMenuApp::closeActiveOverlays() {
         m_contextMenu->hide();
     if (m_dialog && m_dialog->isActive())
         m_dialog->hide();
+    if (m_quickSettings && m_quickSettings->isActive())
+        m_quickSettings->hide();
     if (m_settings && m_settings->isActive())
         m_settings->hide();
     if (m_themeShop && m_themeShop->isActive())
@@ -1017,6 +1020,7 @@ nxui::Widget* WiiUMenuApp::focusRoot() {
     if (m_progressDialog && m_progressDialog->isActive()) return m_progressDialog.get();
     if (m_dialog && m_dialog->isActive()) return m_dialog.get();
     if (m_contextMenu && m_contextMenu->isActive()) return m_contextMenu.get();
+    if (m_quickSettings && m_quickSettings->isActive()) return m_quickSettings.get();
     if (m_userSelect && m_userSelect->isActive()) return m_userSelect.get();
     if (m_steamGridDbPicker && m_steamGridDbPicker->isActive())
         return m_steamGridDbPicker.get();
@@ -1098,6 +1102,13 @@ void WiiUMenuApp::wireGlobalActions() {
         if (m_navigator.route() == switchu::navigation::Route::ControllerTest)
             return;
         m_accessibility.repeatLastAnnouncement();
+    });
+
+    root.addAction(static_cast<uint64_t>(nxui::Button::LStick), [this]() {
+        if (m_editMode || m_navigator.route() != switchu::navigation::Route::Home ||
+            focusRoot() != &rootBox())
+            return;
+        openQuickSettings();
     });
 
     root.addAction(static_cast<uint64_t>(nxui::Button::R), [this]() {

@@ -16,6 +16,7 @@
 #include "core/AccessibilityManager.hpp"
 #include "widgets/LaunchAnimation.hpp"
 #include "widgets/OverlayDialog.hpp"
+#include "widgets/QuickSettingsOverlay.hpp"
 #include "widgets/ContextMenu.hpp"
 #include "widgets/ProgressDialog.hpp"
 #include "widgets/AppletButton.hpp"
@@ -254,6 +255,9 @@ private:
     bool isCurrentFocusableWidget(nxui::Widget* w) const;
     std::string accessibilityPositionFor(nxui::Widget* w) const;
     void createSettings();
+    void createQuickSettings();
+    void openQuickSettings();
+    void closeQuickSettings();
     void createThemeShop();
     void createGameOptions();
     void createFolderOptions();
@@ -333,6 +337,7 @@ private:
     std::shared_ptr<LaunchAnimation>   m_launchAnim;
     std::shared_ptr<OverlayDialog>     m_userSelect;
     std::shared_ptr<OverlayDialog>     m_dialog;
+    std::shared_ptr<QuickSettingsOverlay> m_quickSettings;
     std::shared_ptr<ContextMenu>       m_contextMenu;
     std::shared_ptr<ProgressDialog>    m_progressDialog;
     std::shared_ptr<SettingsScreen>    m_settings;

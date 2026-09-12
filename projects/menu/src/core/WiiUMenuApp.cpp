@@ -394,6 +394,7 @@ bool WiiUMenuApp::hasActiveLeaveCaptureOverlay() const {
     return (m_userSelect && m_userSelect->isActive())
         || (m_contextMenu && m_contextMenu->isActive())
         || (m_dialog && m_dialog->isActive())
+        || (m_quickSettings && m_quickSettings->isActive())
         || (m_progressDialog && m_progressDialog->isActive())
         || (m_settings && m_settings->isActive())
         || (m_themeShop && m_themeShop->isActive())
@@ -4388,6 +4389,7 @@ void WiiUMenuApp::onUpdate(float dt) {
     // of truth while HOME is active; showTitle() is a no-op when unchanged.
     if (m_navigator.route() == switchu::navigation::Route::Home
         && !(m_dialog && m_dialog->isActive())
+        && !(m_quickSettings && m_quickSettings->isActive())
         && !(m_settings && m_settings->isActive())
         && !(m_themeShop && m_themeShop->isActive())
         && !(m_gameOptions && m_gameOptions->isActive())
@@ -4682,6 +4684,9 @@ void WiiUMenuApp::onUpdate(float dt) {
                     m_consoleBatteryPercent = static_cast<int>(percent);
                     m_consoleBatteryCharging = charging;
                     m_battery->setBatteryStatus(percent, charging);
+                    if (m_quickSettings)
+                        m_quickSettings->setBatteryStatus(
+                            static_cast<int>(percent), charging);
                     if (m_grid) {
                         for (const auto& icon : m_grid->allIcons()) {
                             if (icon && icon->entryKind() == GridEntryKind::Widget)
@@ -4760,6 +4765,7 @@ void WiiUMenuApp::onUpdate(float dt) {
         !m_editMode &&
         !(m_contextMenu && m_contextMenu->isActive()) &&
         !(m_dialog && m_dialog->isActive()) &&
+        !(m_quickSettings && m_quickSettings->isActive()) &&
         !(m_settings && m_settings->isActive()) &&
         !(m_themeShop && m_themeShop->isActive()) &&
         !(m_gameOptions && m_gameOptions->isActive()) &&
@@ -4829,6 +4835,7 @@ void WiiUMenuApp::onUpdate(float dt) {
         && !m_launchAnim->isPlaying()
         && !(m_contextMenu && m_contextMenu->isActive())
         && !(m_dialog && m_dialog->isActive())
+        && !(m_quickSettings && m_quickSettings->isActive())
         && !(m_themeShop && m_themeShop->isActive())
         && !(m_settings && m_settings->isActive())
         && !(m_gameOptions && m_gameOptions->isActive())
@@ -4880,6 +4887,7 @@ void WiiUMenuApp::onUpdate(float dt) {
 
     if (!(m_userSelect && m_userSelect->isActive())
         && !(m_dialog && m_dialog->isActive())
+        && !(m_quickSettings && m_quickSettings->isActive())
         && !m_launchAnim->isPlaying())
     {
         auto* cur = focusManager().current();
@@ -4957,6 +4965,13 @@ std::vector<WiiUMenuApp::ActionHint> WiiUMenuApp::buildActionHints() {
     if (m_launchAnim && m_launchAnim->isPlaying())
         return hints;
 
+    if (m_quickSettings && m_quickSettings->isActive()) {
+        add(dpadGlyph(), i18n.tr("hint.navigate", "Navigate"));
+        add(buttonGlyph(nxui::Button::A), i18n.tr("hint.select", "Select"));
+        add(buttonGlyph(nxui::Button::B), i18n.tr("hint.close", "Close"));
+        return hints;
+    }
+
     if (m_contextMenu && m_contextMenu->isActive()) {
         add(dpadGlyph(), i18n.tr("hint.navigate", "Navigate"));
         add(buttonGlyph(nxui::Button::A), i18n.tr("hint.select", "Select"));
@@ -5025,6 +5040,9 @@ std::vector<WiiUMenuApp::ActionHint> WiiUMenuApp::buildActionHints() {
 
     if (m_openFolderId != 0)
         add(buttonGlyph(nxui::Button::B), i18n.tr("hint.back", "Back"));
+    else
+        add(buttonGlyph(nxui::Button::LStick),
+            i18n.tr("quicksettings.hint_shortcut", "Quick Settings"));
 
     nxui::Widget* cur = focusManager().current();
     if (cur && cur->tag() == "glossy_icon") {

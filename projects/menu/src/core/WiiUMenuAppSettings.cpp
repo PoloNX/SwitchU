@@ -556,6 +556,126 @@ void WiiUMenuApp::editSteamGridDbApiKey() {
 #endif
 }
 
+void WiiUMenuApp::createQuickSettings() {
+    if (m_quickSettings) return;
+
+    m_quickSettings = std::make_shared<QuickSettingsOverlay>();
+    m_quickSettings->setFont(&m_fontNormal);
+    m_quickSettings->setSmallFont(&m_fontSmall);
+    m_quickSettings->setIconFont(&m_fontIcons);
+    m_quickSettings->setTheme(&m_theme);
+    m_quickSettings->setInput(&app().input());
+
+    QuickSettingsOverlay::Callbacks callbacks;
+    callbacks.onBgmVolumeChanged = [this](float value) {
+        m_config.musicVolume = value;
+        m_audio.setVolume(value);
+    };
+    callbacks.onSfxVolumeChanged = [this](float value) {
+        m_config.sfxVolume = value;
+        m_audio.setSfxVolume(value);
+    };
+    callbacks.onSleepRequested = [this]() {
+        if (!m_dialog) return;
+        auto& i18n = nxui::I18n::instance();
+        m_dialogReturnFocus = m_quickSettings.get();
+        m_dialog->show(i18n.tr("power.title", "Power"),
+            i18n.tr("settings.sleep.sleep_confirm", "Put the console into sleep mode?"),
+            {{i18n.tr("button.cancel", "Cancel"), []() {}, true},
+             {i18n.tr("power.sleep", "Sleep"), [this]() {
+#ifdef SWITCHU_MENU
+                 m_launcher.enterSleep();
+#else
+                 app().requestExit();
+#endif
+             }, true}}, 1, {});
+        focusManager().setFocus(m_dialog.get());
+    };
+    callbacks.onRebootRequested = [this]() {
+        if (!m_dialog) return;
+        auto& i18n = nxui::I18n::instance();
+        m_dialogReturnFocus = m_quickSettings.get();
+        m_dialog->show(i18n.tr("power.title", "Power"),
+            i18n.tr("settings.sleep.reboot_confirm", "Restart the console?"),
+            {{i18n.tr("button.cancel", "Cancel"), []() {}, true},
+             {i18n.tr("power.reboot", "Reboot"), [this]() {
+#ifdef SWITCHU_MENU
+                 m_launcher.reboot();
+#else
+                 app().requestExit();
+#endif
+             }, true}}, 1, {});
+        focusManager().setFocus(m_dialog.get());
+    };
+    callbacks.onShutdownRequested = [this]() {
+        if (!m_dialog) return;
+        auto& i18n = nxui::I18n::instance();
+        m_dialogReturnFocus = m_quickSettings.get();
+        m_dialog->show(i18n.tr("power.title", "Power"),
+            i18n.tr("settings.sleep.shutdown_confirm", "Power off the console?"),
+            {{i18n.tr("button.cancel", "Cancel"), []() {}, true},
+             {i18n.tr("power.shutdown", "Shutdown"), [this]() {
+#ifdef SWITCHU_MENU
+                 m_launcher.shutdown();
+#else
+                 app().requestExit();
+#endif
+             }, true}}, 1, {});
+        focusManager().setFocus(m_dialog.get());
+    };
+    callbacks.onClose = [this]() { closeQuickSettings(); };
+    callbacks.onNavigateSfx = [this]() { m_audio.playSfx(Sfx::Navigate); };
+    callbacks.onActivateSfx = [this]() { m_audio.playSfx(Sfx::Activate); };
+    callbacks.onToggleOffSfx = [this]() { m_audio.playSfx(Sfx::ToggleOff); };
+    m_quickSettings->setCallbacks(callbacks);
+
+    if (m_overlayLayer) {
+        m_overlayLayer->addChild(m_quickSettings);
+        // Confirmation dialogs and transition overlays must remain above the
+        // drawer even though it is created lazily.
+        for (const auto& overlay : {std::static_pointer_cast<nxui::Widget>(m_dialog),
+                                   std::static_pointer_cast<nxui::Widget>(m_progressDialog),
+                                   std::static_pointer_cast<nxui::Widget>(m_launchAnim),
+                                   std::static_pointer_cast<nxui::Widget>(m_pointerCursor)}) {
+            if (!overlay) continue;
+            m_overlayLayer->removeChild(overlay.get());
+            m_overlayLayer->addChild(overlay);
+        }
+    }
+}
+
+void WiiUMenuApp::openQuickSettings() {
+    createQuickSettings();
+    if (!m_quickSettings || m_quickSettings->isActive() || m_editMode ||
+        (m_dialog && m_dialog->isActive()) ||
+        (m_userSelect && m_userSelect->isActive()))
+        return;
+    m_dialogReturnFocus = focusManager().current();
+    m_quickSettings->setInitialValues(0.5f, m_config.musicVolume,
+                                      m_config.sfxVolume, false, true);
+    m_quickSettings->setBatteryStatus(m_consoleBatteryPercent,
+                                      m_consoleBatteryCharging);
+    m_quickSettings->show();
+    focusManager().setFocus(m_quickSettings.get());
+    if (m_cursor) m_cursor->setVisible(false);
+    m_audio.playSfx(Sfx::ModalShow);
+}
+
+void WiiUMenuApp::closeQuickSettings() {
+    if (!m_quickSettings || !m_quickSettings->isActive()) return;
+    m_quickSettings->hide();
+    m_config.save();
+    nxui::Widget* target = m_dialogReturnFocus;
+    if (!isCurrentFocusableWidget(target) && m_grid)
+        target = m_grid->focusManager().current();
+    if (isCurrentFocusableWidget(target)) {
+        m_suppressNextNavigateSfx = true;
+        focusManager().setFocus(target);
+    }
+    m_dialogReturnFocus = nullptr;
+    m_audio.playSfx(Sfx::ModalHide);
+}
+
 void WiiUMenuApp::startSteamGridDbScrape() {
     if (m_config.steamGridDbApiKey.empty()) {
         if (m_settings)
@@ -1801,6 +1921,8 @@ void WiiUMenuApp::applyTheme() {
         m_folderOptions->setTheme(&m_theme);
     if (m_controllerTest)
         m_controllerTest->setTheme(&m_theme);
+    if (m_quickSettings)
+        m_quickSettings->setTheme(&m_theme);
 
     m_sidebar.applyTheme(m_theme);
     DebugLog::log("[theme-apply] widget recolor complete");

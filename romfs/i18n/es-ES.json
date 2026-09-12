@@ -519,5 +519,28 @@
       "skip_all": "Saltar todo",
       "test": "Probar"
     }
+  },
+  "quicksettings": {
+    "title": "Ajustes rápidos",
+    "close_hint": "[B] Cerrar",
+    "battery": "BATERÍA",
+    "charging": "⚡ Cargando",
+    "discharging": "Descargando",
+    "hardware_temp": "TÉRMICA",
+    "temp_optimal": "Óptimo",
+    "temp_warm": "Templado",
+    "brightness": "☀ Brillo de la pantalla",
+    "bgm_volume": "♫ Volumen de la música",
+    "sfx_volume": "♪ Efectos de sonido",
+    "airplane_mode": "✈ Modo avión",
+    "wifi": "Wi-Fi",
+    "on": "SÍ",
+    "off": "NO",
+    "power_options": "OPCIONES DE ENERGÍA",
+    "sleep": "Suspender",
+    "reboot": "Reiniciar",
+    "power_off": "Apagar",
+    "hint_adjust": "Ajustar",
+    "hint_shortcut": "Ajustes rápidos"
   }
 }

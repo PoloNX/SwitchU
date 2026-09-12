@@ -519,5 +519,28 @@
       "skip_all": "Alles overslaan",
       "test": "Test"
     }
+  },
+  "quicksettings": {
+    "title": "Snelle instellingen",
+    "close_hint": "[B] Sluiten",
+    "battery": "BATTERIJ",
+    "charging": "⚡ Opladen",
+    "discharging": "Ontladen",
+    "hardware_temp": "TEMPERATUUR",
+    "temp_optimal": "Optimaal",
+    "temp_warm": "Warm",
+    "brightness": "☀ Helderheid",
+    "bgm_volume": "♫ Muziekvolume",
+    "sfx_volume": "♪ Geluidseffecten",
+    "airplane_mode": "✈ Vliegtuigmodus",
+    "wifi": "Wi-Fi",
+    "on": "AAN",
+    "off": "UIT",
+    "power_options": "ENERGIE-OPTIES",
+    "sleep": "Slaapstand",
+    "reboot": "Opnieuw opstarten",
+    "power_off": "Uitschakelen",
+    "hint_adjust": "Aanpassen",
+    "hint_shortcut": "Snelle instellingen"
   }
 }
