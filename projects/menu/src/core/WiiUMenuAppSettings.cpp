@@ -231,6 +231,7 @@ void WiiUMenuApp::createSettings() {
     m_settings->setFont(&m_fontNormal);
     m_settings->setSmallFont(&m_fontSmall);
     m_settings->setTheme(&m_theme);
+    m_settings->setInstantCursorMotion(m_config.cursorMotionMode == 1);
     m_settings->setWireframeState(m_showWireframe);
     m_settings->setGridLayoutState(m_config.gridColumns, m_config.gridRows);
     m_settings->setUiLanguageOverride(m_config.uiLanguageOverride);
@@ -271,14 +272,14 @@ void WiiUMenuApp::createSettings() {
         app().renderer().setBoxWireframeEnabled(enabled);
     });
     m_settings->onGridColumnsChange([this](int cols) {
-        cols = std::clamp(cols, 3, 8);
+        cols = std::clamp(cols, 1, 8);
         if (m_config.gridColumns == cols)
             return;
         m_config.gridColumns = cols;
         reflowHomeGrid();
     });
     m_settings->onGridRowsChange([this](int rows) {
-        rows = std::clamp(rows, 2, 5);
+        rows = std::clamp(rows, 1, 5);
         if (m_config.gridRows == rows)
             return;
         m_config.gridRows = rows;
@@ -540,6 +541,7 @@ void WiiUMenuApp::createQuickSettings() {
     m_quickSettings->setSmallFont(&m_fontSmall);
     m_quickSettings->setIconFont(&m_fontIcons);
     m_quickSettings->setTheme(&m_theme);
+    m_quickSettings->setInstantCursorMotion(m_config.cursorMotionMode == 1);
     m_quickSettings->setInput(&app().input());
 
     QuickSettingsOverlay::Callbacks callbacks;
@@ -927,6 +929,7 @@ void WiiUMenuApp::createGameOptions() {
     m_gameOptions->setFont(&m_fontNormal);
     m_gameOptions->setSmallFont(&m_fontSmall);
     m_gameOptions->setTheme(&m_theme);
+    m_gameOptions->setInstantCursorMotion(m_config.cursorMotionMode == 1);
     m_gameOptions->setAccessibilityVoiceEnabled(m_config.accessibilityEnabled);
     m_gameOptions->setAccessibilitySpeechPreferences(m_config.accessibilitySpeakHints,
                                                      m_config.accessibilitySpeakPosition);
@@ -957,6 +960,7 @@ void WiiUMenuApp::createFolderOptions() {
     m_folderOptions->setFont(&m_fontNormal);
     m_folderOptions->setSmallFont(&m_fontSmall);
     m_folderOptions->setTheme(&m_theme);
+    m_folderOptions->setInstantCursorMotion(m_config.cursorMotionMode == 1);
     m_folderOptions->setAccessibilityVoiceEnabled(m_config.accessibilityEnabled);
     m_folderOptions->setAccessibilitySpeechPreferences(m_config.accessibilitySpeakHints,
                                                        m_config.accessibilitySpeakPosition);
@@ -1095,11 +1099,13 @@ void WiiUMenuApp::createThemeShop() {
     m_themeShop->setFont(&m_fontNormal);
     m_themeShop->setSmallFont(&m_fontSmall);
     m_themeShop->setTheme(&m_theme);
+    m_themeShop->setInstantCursorMotion(m_config.cursorMotionMode == 1);
     m_themeShop->setThreadPool(&m_threadPool);
     m_themeShop->setRenderContext(&app().gpu(), &app().renderer());
     m_themeShop->setMusicState(m_audio.isPlaying(), m_audio.volume(), m_audio.sfxVolume());
     m_themeShop->setGridLayoutState(m_config.gridColumns, m_config.gridRows);
     m_themeShop->setActionHintStyleState(m_config.actionHintStyle);
+    m_themeShop->setCursorMotionModeState(m_config.cursorMotionMode);
     m_themeShop->setAccessibilityVoiceEnabled(m_config.accessibilityEnabled);
     m_themeShop->setAccessibilitySpeechPreferences(m_config.accessibilitySpeakHints,
                                                    m_config.accessibilitySpeakPosition);
@@ -1124,14 +1130,14 @@ void WiiUMenuApp::createThemeShop() {
         m_config.sfxVolume = v;
     });
     m_themeShop->onGridColumnsChange([this](int cols) {
-        cols = std::clamp(cols, 3, 8);
+        cols = std::clamp(cols, 1, 8);
         if (m_config.gridColumns == cols)
             return;
         m_config.gridColumns = cols;
         reflowHomeGrid();
     });
     m_themeShop->onGridRowsChange([this](int rows) {
-        rows = std::clamp(rows, 2, 5);
+        rows = std::clamp(rows, 1, 5);
         if (m_config.gridRows == rows)
             return;
         m_config.gridRows = rows;
@@ -1139,6 +1145,19 @@ void WiiUMenuApp::createThemeShop() {
     });
     m_themeShop->onActionHintStyleChange([this](int style) {
         m_config.actionHintStyle = style == 0 ? "panel" : "capsules";
+    });
+    m_themeShop->onCursorMotionModeChange([this](int mode) {
+        m_config.cursorMotionMode = std::clamp(mode, 0, 1);
+        const bool instant = m_config.cursorMotionMode == 1;
+        if (m_cursor) m_cursor->setInstantMotion(instant);
+        if (m_settings) m_settings->setInstantCursorMotion(instant);
+        if (m_themeShop) m_themeShop->setInstantCursorMotion(instant);
+        if (m_gameOptions) m_gameOptions->setInstantCursorMotion(instant);
+        if (m_folderOptions) m_folderOptions->setInstantCursorMotion(instant);
+        if (m_quickSettings) m_quickSettings->setInstantCursorMotion(instant);
+        if (m_dialog) m_dialog->cursor().setInstantMotion(instant);
+        if (m_userSelect) m_userSelect->cursor().setInstantMotion(instant);
+        updateCursor();
     });
     m_themeShop->onNextTrack([this]() {
         m_audio.nextTrack();

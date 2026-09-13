@@ -1,6 +1,5 @@
 #pragma once
 #include "core/AppLayoutMode.hpp"
-#include <algorithm>
 #include <cstdint>
 #include <limits>
 #include <string>
@@ -15,6 +14,8 @@ struct AppConfig {
     int   gridRows     = 3;
     AppLayoutMode appLayoutMode = AppLayoutMode::Grid;
     std::string actionHintStyle = "capsules";
+    // 0 = animated translation, 1 = immediate jump.
+    int cursorMotionMode = 0;
     std::string uiLanguageOverride = "auto";
     std::string soundPreset = "wiiu";
     bool  defaultProfileEnabled = false;
@@ -34,19 +35,7 @@ struct AppConfig {
     int sortMode = 0;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> lastOpened;
     std::uint64_t lastOpenedSequence = 0;
-    std::vector<std::uint64_t> favoriteTitleIds;
 
-    bool isFavorite(std::uint64_t titleId) const {
-        return std::find(favoriteTitleIds.begin(), favoriteTitleIds.end(), titleId) !=
-               favoriteTitleIds.end();
-    }
-    void setFavorite(std::uint64_t titleId, bool favorite) {
-        auto it = std::find(favoriteTitleIds.begin(), favoriteTitleIds.end(), titleId);
-        if (favorite && it == favoriteTitleIds.end())
-            favoriteTitleIds.push_back(titleId);
-        else if (!favorite && it != favoriteTitleIds.end())
-            favoriteTitleIds.erase(it);
-    }
     std::uint64_t lastOpenedAt(std::uint64_t titleId) const {
         for (const auto& entry : lastOpened)
             if (entry.first == titleId) return entry.second;

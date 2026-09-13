@@ -58,14 +58,14 @@ ThemeShopScreen::Tab themeshop::tabs::OptionsTab::build(ThemeShopScreen& screen)
         SettingItem it;
         it.label = i18n.tr("settings.display.grid_columns", "Home Grid Columns");
         it.type = ItemType::Slider;
-        it.sliderSteps = 5;
-        int cols = std::clamp(screen.m_gridColumns, 3, 8);
-        it.floatVal = (float)(cols - 3) / 5.f;
+        it.sliderSteps = 7;
+        int cols = std::clamp(screen.m_gridColumns, 1, 8);
+        it.floatVal = (float)(cols - 1) / 7.f;
         it.anim01 = it.floatVal;
         it.infoText = std::to_string(cols);
         it.onChange = [&screen](SettingItem& self) {
-            int cols = std::clamp(3 + (int)std::round(std::clamp(self.floatVal, 0.f, 1.f) * 5.f), 3, 8);
-            self.floatVal = (float)(cols - 3) / 5.f;
+            int cols = std::clamp(1 + (int)std::round(std::clamp(self.floatVal, 0.f, 1.f) * 7.f), 1, 8);
+            self.floatVal = (float)(cols - 1) / 7.f;
             self.anim01 = self.floatVal;
             self.infoText = std::to_string(cols);
             screen.m_gridColumns = cols;
@@ -78,14 +78,14 @@ ThemeShopScreen::Tab themeshop::tabs::OptionsTab::build(ThemeShopScreen& screen)
         SettingItem it;
         it.label = i18n.tr("settings.display.grid_rows", "Home Grid Rows");
         it.type = ItemType::Slider;
-        it.sliderSteps = 3;
-        int rows = std::clamp(screen.m_gridRows, 2, 5);
-        it.floatVal = (float)(rows - 2) / 3.f;
+        it.sliderSteps = 4;
+        int rows = std::clamp(screen.m_gridRows, 1, 5);
+        it.floatVal = (float)(rows - 1) / 4.f;
         it.anim01 = it.floatVal;
         it.infoText = std::to_string(rows);
         it.onChange = [&screen](SettingItem& self) {
-            int rows = std::clamp(2 + (int)std::round(std::clamp(self.floatVal, 0.f, 1.f) * 3.f), 2, 5);
-            self.floatVal = (float)(rows - 2) / 3.f;
+            int rows = std::clamp(1 + (int)std::round(std::clamp(self.floatVal, 0.f, 1.f) * 4.f), 1, 5);
+            self.floatVal = (float)(rows - 1) / 4.f;
             self.anim01 = self.floatVal;
             self.infoText = std::to_string(rows);
             screen.m_gridRows = rows;
@@ -109,6 +109,26 @@ ThemeShopScreen::Tab themeshop::tabs::OptionsTab::build(ThemeShopScreen& screen)
             screen.m_actionHintStyle = std::clamp(self.intVal, 0, 1);
             if (screen.m_actionHintStyleCb)
                 screen.m_actionHintStyleCb(screen.m_actionHintStyle);
+        };
+        t.items.push_back(std::move(it));
+    }
+
+    {
+        SettingItem it;
+        it.label = i18n.tr("settings.display.cursor_motion", "Cursor Movement");
+        it.type = ItemType::Selector;
+        it.description = i18n.tr(
+            "settings.display.cursor_motion_desc",
+            "Choose whether the selection cursor slides or teleports with a visual pulse.");
+        it.options = {
+            i18n.tr("settings.display.cursor_translate", "Translate"),
+            i18n.tr("settings.display.cursor_teleport", "Teleport")
+        };
+        it.intVal = std::clamp(screen.m_cursorMotionMode, 0, 1);
+        it.onChange = [&screen](SettingItem& self) {
+            screen.m_cursorMotionMode = std::clamp(self.intVal, 0, 1);
+            if (screen.m_cursorMotionModeCb)
+                screen.m_cursorMotionModeCb(screen.m_cursorMotionMode);
         };
         t.items.push_back(std::move(it));
     }

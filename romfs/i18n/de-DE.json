@@ -90,6 +90,10 @@
       "album_storage_desc": "Wo Screenshots und Videos gespeichert werden.",
       "album_sd": "SD-Karte",
       "album_nand": "NAND",
+      "cursor_motion": "Cursor-Bewegung",
+      "cursor_motion_desc": "Legt fest, ob der Auswahlcursor gleitet oder sofort springt.",
+      "cursor_translate": "Gleiten",
+      "cursor_teleport": "Springen",
       "ui_wireframe": "UI-Wireframe",
       "ui_wireframe_desc": "Umrisse aller Box-Widgets zur Layout-Fehlersuche anzeigen."
     },
@@ -391,9 +395,7 @@
     "voice": "Stimme",
     "sort_custom": "Meine Reihenfolge",
     "sort_alpha": "A-Z",
-    "sort_recent": "Zuletzt",
-    "sort_favorites": "Favoriten",
-    "favorite": "Favorit"
+    "sort_recent": "Zuletzt"
   },
   "accessibility": {
     "speech": {

@@ -1,5 +1,4 @@
 #include "QuickSettingsOverlay.hpp"
-#include "settings/SettingsGlassTuning.hpp"
 #include "core/DebugLog.hpp"
 
 #include <nxui/core/Renderer.hpp>
@@ -283,8 +282,18 @@ void QuickSettingsOverlay::setupNavigationActions() {
         }
     });
 
-    // Dismissal (Button B or Click Left Stick)
+    // Dismissal (Button B, L, or Click Left Stick). L also opens the drawer,
+    // so it behaves as a proper toggle without needing a second shortcut.
     addAction(static_cast<uint64_t>(nxui::Button::B), [this]() {
+        if (!m_active) return;
+        if (m_callbacks.onClose) {
+            m_callbacks.onClose();
+        } else {
+            hide();
+        }
+    });
+
+    addAction(static_cast<uint64_t>(nxui::Button::L), [this]() {
         if (!m_active) return;
         if (m_callbacks.onClose) {
             m_callbacks.onClose();
@@ -321,7 +330,6 @@ void QuickSettingsOverlay::show() {
     m_active = true;
     m_animating = true;
     m_animProgress = 0.f;
-    m_backdropCacheValid = false;
     setVisible(true);
     setFocusable(true);
     m_selectedItem = ItemIndex::Brightness;
@@ -338,7 +346,6 @@ void QuickSettingsOverlay::hide() {
     if (!m_active) return;
     m_active = false;
     m_animating = true;
-    m_backdropCacheValid = false;
     setFocusable(false);
     DebugLog::log("[quicksettings] hiding");
 }
@@ -711,18 +718,6 @@ void QuickSettingsOverlay::render(nxui::Renderer& ren) {
     auto& i18n = nxui::I18n::instance();
     float alpha = m_animProgress;
 
-    // 1. Capture and blur scene backdrop for authentic liquid frosted glass
-    if (!m_backdropCacheValid) {
-        ren.captureToOffscreen(false);
-        const auto& tuning = settings::debug::settingsGlassTuning();
-        if (tuning.blurIterations > 0 && tuning.preBlurRadius > 0.001f) {
-            ren.applyBlur(tuning.preBlurRadius, tuning.blurIterations);
-        }
-        ren.copyOffscreen(0, 2);
-        m_backdropCacheValid = true;
-    }
-
-    // 2. Soft translucent backdrop scrim
     nxui::Rect screen = {0.f, 0.f, (float)ren.width(), (float)ren.height()};
     nxui::Color scrim = m_theme
         ? nxui::Color::lerp(m_theme->background, nxui::Color::black(),
@@ -731,60 +726,60 @@ void QuickSettingsOverlay::render(nxui::Renderer& ren) {
         : nxui::Color(0.f, 0.f, 0.f, 0.20f * alpha);
     ren.drawRect(screen, scrim);
 
-    // 3. Liquid Glass blurry slide-out panel
     nxui::Rect panel = computePanelRect();
-    const auto& tuning = settings::debug::settingsGlassTuning();
-    nxui::LiquidGlassSettings savedGlass = ren.liquidGlassSettings();
-    auto& glass = ren.liquidGlassSettings();
-    glass.refractionIntensity = std::clamp(tuning.refractionIntensity, 0.0f, 1.5f);
-    glass.blurIntensity = std::max(0.0f, tuning.shaderBlurIntensity);
-    glass.noiseIntensity = 0.0f;
-    glass.glowIntensity = std::max(0.0f, tuning.glowIntensity);
-    glass.saturation = std::max(0.0f, tuning.saturation);
-    glass.opacityMultiplier = 1.0f;
-    glass.roughness = std::max(0.0f, tuning.roughness);
-    glass.powerFactor = std::max(1.001f, tuning.powerFactor);
+    const bool lightMode = m_theme && m_theme->mode == nxui::ThemeMode::Light;
+    nxui::Color panelFill = lightMode
+        ? nxui::Color(0.96f, 0.97f, 0.99f, 0.97f * alpha)
+        : (m_theme
+            ? m_theme->panelBase.withAlpha(0.92f * alpha)
+            : nxui::Color(0.10f, 0.13f, 0.18f, 0.90f * alpha));
 
-    nxui::Color glassTint = m_theme
-        ? m_theme->panelBase.withAlpha(m_theme->mode == nxui::ThemeMode::Dark
-            ? std::clamp(tuning.tintAlphaDark, 0.0f, 1.0f)
-            : std::clamp(tuning.tintAlphaLight, 0.0f, 1.0f))
-        : nxui::Color(0.12f, 0.16f, 0.24f, 0.20f);
+    const nxui::Color primaryText = lightMode
+        ? nxui::Color(0.06f, 0.07f, 0.09f, alpha)
+        : nxui::Color(1.f, 1.f, 1.f, alpha);
+    const nxui::Color secondaryText = lightMode
+        ? nxui::Color(0.18f, 0.20f, 0.24f, 0.90f * alpha)
+        : nxui::Color(0.92f, 0.94f, 0.98f, 0.90f * alpha);
+    const nxui::Color mutedText = lightMode
+        ? nxui::Color(0.31f, 0.34f, 0.40f, alpha)
+        : nxui::Color(0.65f, 0.72f, 0.82f, alpha);
+    const nxui::Color neutralBorder = lightMode
+        ? nxui::Color(0.08f, 0.10f, 0.14f, 0.14f * alpha)
+        : nxui::Color(1.f, 1.f, 1.f, 0.14f * alpha);
 
-    ren.drawLiquidGlass(2, panel, 24.f, glassTint, alpha,
-                        std::clamp(tuning.shade, 0.0f, 1.0f));
-    ren.liquidGlassSettings() = savedGlass;
+    ren.drawRoundedRect(panel, panelFill, 24.f);
 
     nxui::Color borderColor = m_theme
-        ? m_theme->panelBorder.withAlpha(0.28f * alpha)
+        ? m_theme->panelBorder.withAlpha((lightMode ? 0.48f : 0.28f) * alpha)
         : nxui::Color(1.f, 1.f, 1.f, 0.22f * alpha);
     ren.drawRoundedRectOutline(panel, borderColor, 24.f, 1.2f);
 
     nxui::Color highlightColor = m_theme
-        ? m_theme->panelHighlight.withAlpha(0.08f * alpha)
+        ? m_theme->panelHighlight.withAlpha((lightMode ? 0.32f : 0.08f) * alpha)
         : nxui::Color(1.f, 1.f, 1.f, 0.08f * alpha);
     ren.drawRoundedRectOutline(panel.shrunk(1.f), highlightColor, 23.f, 1.0f);
 
     float cx = panel.x + 22.f;
     float cw = panel.width - 44.f;
 
-    // 3. Header
     if (m_font) {
         std::string title = i18n.tr("quicksettings.title", "Quick Settings");
-        ren.drawText(title, {cx, panel.y + 20.f}, m_font,
-                     nxui::Color(1.f, 1.f, 1.f, alpha), 0.95f);
+        ren.drawText(title, {cx, panel.y + 20.f}, m_font, primaryText, 0.95f);
     }
 
-    // 4. Hardware Status Card (Battery & Thermals)
     nxui::Rect statusCard = {cx, panel.y + 54.f, cw, 78.f};
-    ren.drawLiquidGlass(2, statusCard, 14.f,
-                        glassTint.withAlpha(0.18f), alpha, 0.08f);
-    ren.drawRoundedRectOutline(statusCard, nxui::Color(1.f, 1.f, 1.f, 0.14f * alpha), 14.f, 1.f);
+    nxui::Color cardFill = lightMode
+        ? nxui::Color(1.f, 1.f, 1.f, 0.86f * alpha)
+        : (m_theme
+            ? m_theme->panelHighlight.withAlpha(0.08f * alpha)
+            : nxui::Color(1.f, 1.f, 1.f, 0.07f * alpha));
+    ren.drawRoundedRect(statusCard, cardFill, 14.f);
+    ren.drawRoundedRectOutline(statusCard, neutralBorder, 14.f, 1.f);
 
     // Battery Column (Left)
     if (m_smallFont) {
         ren.drawText(i18n.tr("quicksettings.battery", "BATTERY"), {statusCard.x + 16.f, statusCard.y + 10.f},
-                     m_smallFont, nxui::Color(0.65f, 0.72f, 0.82f, alpha), 0.72f);
+                     m_smallFont, mutedText, 0.72f);
 
         char bBuf[32];
         if (m_batteryPercent >= 0)
@@ -793,14 +788,16 @@ void QuickSettingsOverlay::render(nxui::Renderer& ren) {
             std::snprintf(bBuf, sizeof(bBuf), "--%%");
 
         ren.drawText(bBuf, {statusCard.x + 16.f, statusCard.y + 28.f},
-                     m_font ? m_font : m_smallFont, nxui::Color(1.f, 1.f, 1.f, alpha), 0.95f);
+                     m_font ? m_font : m_smallFont, primaryText, 0.95f);
 
         std::string chgText = m_batteryCharging
             ? i18n.tr("quicksettings.charging", "⚡ Charging")
             : i18n.tr("quicksettings.discharging", "Discharging");
-        nxui::Color chgCol = m_batteryCharging
-            ? nxui::Color(0.25f, 0.90f, 0.45f, alpha)
-            : nxui::Color(0.60f, 0.68f, 0.78f, alpha);
+        nxui::Color chgCol = lightMode
+            ? secondaryText
+            : (m_batteryCharging
+                ? nxui::Color(0.25f, 0.90f, 0.45f, alpha)
+                : mutedText);
         ren.drawText(chgText, {statusCard.x + 16.f, statusCard.y + 54.f},
                      m_smallFont, chgCol, 0.72f);
     }
@@ -808,13 +805,13 @@ void QuickSettingsOverlay::render(nxui::Renderer& ren) {
     // Divider
     ren.drawLine({statusCard.x + cw * 0.5f, statusCard.y + 8.f},
                  {statusCard.x + cw * 0.5f, statusCard.y + 70.f},
-                 nxui::Color(1.f, 1.f, 1.f, 0.12f * alpha), 1.f);
+                 neutralBorder, 1.f);
 
     // Thermal Column (Right)
     float rx = statusCard.x + cw * 0.5f + 16.f;
     if (m_smallFont) {
         ren.drawText(i18n.tr("quicksettings.hardware_temp", "THERMALS"), {rx, statusCard.y + 10.f},
-                     m_smallFont, nxui::Color(0.65f, 0.72f, 0.82f, alpha), 0.72f);
+                     m_smallFont, mutedText, 0.72f);
 
         char tBuf[64];
         if (m_hasSocTemp || m_hasPcbTemp) {
@@ -829,7 +826,7 @@ void QuickSettingsOverlay::render(nxui::Renderer& ren) {
         }
 
         ren.drawText(tBuf, {rx, statusCard.y + 30.f},
-                     m_smallFont, nxui::Color(1.f, 1.f, 1.f, alpha), 0.85f);
+                     m_smallFont, primaryText, 0.85f);
 
         float maxT = std::max(m_socTemp, m_pcbTemp);
         nxui::Color badgeCol = (maxT > 70.f)
@@ -843,30 +840,31 @@ void QuickSettingsOverlay::render(nxui::Renderer& ren) {
             ? i18n.tr("quicksettings.temp_warm", "Warm")
             : i18n.tr("quicksettings.temp_optimal", "Optimal");
         ren.drawText(badgeText, {rx + 16.f, statusCard.y + 52.f},
-                     m_smallFont, badgeCol, 0.72f);
+                     m_smallFont, lightMode ? secondaryText : badgeCol, 0.72f);
     }
 
     // Helper lambda for rendering a slider
     auto drawSlider = [&](ItemIndex idx, const std::string& label, float value,
                           const nxui::Color& fillColor) {
         nxui::Rect card = computeItemRect(idx);
-        ren.drawLiquidGlass(2, card, 12.f,
-                            glassTint.withAlpha(0.14f), alpha, 0.06f);
-        ren.drawRoundedRectOutline(card, nxui::Color(1.f, 1.f, 1.f, 0.08f * alpha), 12.f, 1.f);
+        ren.drawRoundedRect(card, cardFill, 12.f);
+        ren.drawRoundedRectOutline(card, neutralBorder, 12.f, 1.f);
 
         if (m_smallFont) {
             ren.drawText(label, {card.x + 12.f, card.y + 8.f}, m_smallFont,
-                         nxui::Color(0.95f, 0.95f, 0.98f, alpha), 0.82f);
+                         primaryText, 0.82f);
 
             char pBuf[16];
             std::snprintf(pBuf, sizeof(pBuf), "%d%%", static_cast<int>(std::round(value * 100.f)));
             nxui::Vec2 psz = m_smallFont->measure(pBuf);
             ren.drawText(pBuf, {card.x + card.width - 12.f - psz.x * 0.82f, card.y + 8.f},
-                         m_smallFont, nxui::Color(0.85f, 0.88f, 0.92f, alpha), 0.82f);
+                         m_smallFont, secondaryText, 0.82f);
         }
 
         nxui::Rect track = computeSliderTrackRect(idx);
-        ren.drawRoundedRect(track, nxui::Color(0.05f, 0.08f, 0.12f, 0.75f * alpha), 7.f);
+        ren.drawRoundedRect(track, lightMode
+            ? nxui::Color(0.12f, 0.14f, 0.18f, 0.18f * alpha)
+            : nxui::Color(0.05f, 0.08f, 0.12f, 0.75f * alpha), 7.f);
 
         float fillW = std::clamp(track.width * value, 10.f, track.width);
         nxui::Rect fillRect = {track.x, track.y, fillW, track.height};
@@ -890,21 +888,20 @@ void QuickSettingsOverlay::render(nxui::Renderer& ren) {
     // Helper lambda for rendering a toggle row
     auto drawToggle = [&](ItemIndex idx, const std::string& label, bool enabled) {
         nxui::Rect card = computeItemRect(idx);
-        ren.drawLiquidGlass(2, card, 12.f,
-                            glassTint.withAlpha(0.14f), alpha, 0.06f);
-        ren.drawRoundedRectOutline(card, nxui::Color(1.f, 1.f, 1.f, 0.08f * alpha), 12.f, 1.f);
+        ren.drawRoundedRect(card, cardFill, 12.f);
+        ren.drawRoundedRectOutline(card, neutralBorder, 12.f, 1.f);
 
         float textX = card.x + 14.f;
         if (idx == ItemIndex::Wifi) {
             drawWifiIcon(ren, {card.x + 24.f, card.y + card.height * 0.5f + 3.f},
-                         nxui::Color(0.95f, 0.95f, 0.98f, alpha), 0.95f);
+                         primaryText, 0.95f);
             textX = card.x + 40.f;
         }
 
         if (m_smallFont) {
             float ty = card.y + (card.height - m_smallFont->measure(label).y * 0.82f) * 0.5f;
             ren.drawText(label, {textX, ty}, m_smallFont,
-                         nxui::Color(0.95f, 0.95f, 0.98f, alpha), 0.82f);
+                         primaryText, 0.82f);
         }
 
         // Pill Switch
@@ -928,7 +925,10 @@ void QuickSettingsOverlay::render(nxui::Renderer& ren) {
             nxui::Vec2 ssz = m_smallFont->measure(stateStr);
             float tx = enabled ? (pill.x + 8.f) : (pill.x + pill.width - ssz.x * 0.65f - 8.f);
             ren.drawText(stateStr, {tx, pill.y + (pillH - ssz.y * 0.65f) * 0.5f}, m_smallFont,
-                         nxui::Color(1.f, 1.f, 1.f, 0.95f * alpha), 0.65f);
+                         lightMode
+                            ? nxui::Color(0.04f, 0.05f, 0.07f, 0.95f * alpha)
+                            : nxui::Color(1.f, 1.f, 1.f, 0.95f * alpha),
+                         0.65f);
         }
     };
 
@@ -943,39 +943,39 @@ void QuickSettingsOverlay::render(nxui::Renderer& ren) {
     if (m_smallFont) {
         ren.drawText(i18n.tr("quicksettings.power_options", "POWER OPTIONS"),
                      {cx, panel.y + 472.f}, m_smallFont,
-                     nxui::Color(0.65f, 0.72f, 0.82f, alpha), 0.72f);
+                     mutedText, 0.72f);
     }
 
-    auto drawPowerBtn = [&](PowerAction pa, const std::string& label, const nxui::Color& tint) {
+    auto drawPowerBtn = [&](PowerAction pa, const std::string& label) {
         nxui::Rect btn = computePowerButtonRect(pa);
         bool focused = (m_selectedItem == ItemIndex::PowerActions && m_selectedPower == pa);
 
-        // Clean frosted translucent card base
-        ren.drawLiquidGlass(2, btn, 12.f,
-                            glassTint.withAlpha(0.15f), alpha, 0.06f);
-
-        // Transparent color wash
         nxui::Color fill = focused
-            ? tint.withAlpha(0.42f * alpha)
-            : tint.withAlpha(0.18f * alpha);
+            ? (lightMode
+                ? nxui::Color(0.08f, 0.10f, 0.14f, 0.08f * alpha)
+                : nxui::Color(1.f, 1.f, 1.f, 0.15f * alpha))
+            : cardFill;
         nxui::Color border = focused
-            ? tint.withAlpha(0.95f * alpha)
-            : tint.withAlpha(0.35f * alpha);
+            ? (m_theme ? m_theme->cursorNormal.withAlpha(0.95f * alpha)
+                       : nxui::Color(1.f, 1.f, 1.f, 0.90f * alpha))
+            : neutralBorder;
 
         ren.drawRoundedRect(btn, fill, 12.f);
         ren.drawRoundedRectOutline(btn, border, 12.f, focused ? 1.4f : 1.0f);
 
         // 1px top specular highlight line
         ren.drawLine({btn.x + 8.f, btn.y + 1.f}, {btn.x + btn.width - 8.f, btn.y + 1.f},
-                     nxui::Color(1.f, 1.f, 1.f, 0.16f * alpha), 1.f);
+                     lightMode
+                        ? nxui::Color(1.f, 1.f, 1.f, 0.58f * alpha)
+                        : nxui::Color(1.f, 1.f, 1.f, 0.16f * alpha), 1.f);
 
         if (m_smallFont) {
             float textScale = 0.70f;
             float iconScale = 0.78f;
             nxui::Vec2 lsz = m_smallFont->measure(label);
             nxui::Color textColor = focused
-                ? nxui::Color(1.f, 1.f, 1.f, alpha)
-                : nxui::Color(0.92f, 0.94f, 0.98f, 0.88f * alpha);
+                ? primaryText
+                : secondaryText;
 
             if (pa == PowerAction::Sleep) {
                 float iconW = 14.f;
@@ -1002,15 +1002,12 @@ void QuickSettingsOverlay::render(nxui::Renderer& ren) {
         }
     };
 
-    drawPowerBtn(PowerAction::Sleep, i18n.tr("quicksettings.sleep", "Sleep"),
-                 nxui::Color(0.20f, 0.55f, 0.95f, 1.f));
+    drawPowerBtn(PowerAction::Sleep, i18n.tr("quicksettings.sleep", "Sleep"));
 
-    drawPowerBtn(PowerAction::Reboot, i18n.tr("quicksettings.reboot", "Reboot"),
-                 nxui::Color(0.95f, 0.65f, 0.20f, 1.f));
+    drawPowerBtn(PowerAction::Reboot, i18n.tr("quicksettings.reboot", "Reboot"));
 
-    drawPowerBtn(PowerAction::Shutdown, i18n.tr("quicksettings.power_off", "Power Off"),
-                 nxui::Color(0.95f, 0.28f, 0.35f, 1.f));
+    drawPowerBtn(PowerAction::Shutdown, i18n.tr("quicksettings.power_off", "Power Off"));
 
-    // Keep focus chrome above every individual glass card.
+    // Keep focus chrome above every individual card.
     m_cursor.render(ren);
 }

@@ -90,6 +90,10 @@
       "album_storage_desc": "Waar screenshots en video's worden opgeslagen.",
       "album_sd": "SD-kaart",
       "album_nand": "NAND",
+      "cursor_motion": "Cursorbeweging",
+      "cursor_motion_desc": "Kies of de selectiecursor vloeiend of direct verplaatst.",
+      "cursor_translate": "Vloeiend",
+      "cursor_teleport": "Direct",
       "ui_wireframe": "UI-draadmodel",
       "ui_wireframe_desc": "Toont contouren van alle Box-widgets voor lay-outdebugging."
     },
@@ -391,9 +395,7 @@
     "voice": "Stem",
     "sort_custom": "Mijn volgorde",
     "sort_alpha": "A-Z",
-    "sort_recent": "Recent",
-    "sort_favorites": "Favorieten",
-    "favorite": "Favoriet"
+    "sort_recent": "Recent"
   },
   "accessibility": {
     "speech": {

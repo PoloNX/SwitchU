@@ -90,20 +90,56 @@ void TextEntryScreen::buildLayout() {
         return key;
     };
 
-    m_letters = {
-        {letter("1", "1"), letter("2", "2"), letter("3", "3"), letter("4", "4"),
-         letter("5", "5"), letter("6", "6"), letter("7", "7"), letter("8", "8"),
-         letter("9", "9"), letter("0", "0")},
-        {letter("q", "Q"), letter("w", "W"), letter("e", "E"), letter("r", "R"),
-         letter("t", "T"), letter("y", "Y"), letter("u", "U"), letter("i", "I"),
-         letter("o", "O"), letter("p", "P")},
-        {letter("a", "A"), letter("s", "S"), letter("d", "D"), letter("f", "F"),
-         letter("g", "G"), letter("h", "H"), letter("j", "J"), letter("k", "K"),
-         letter("l", "L"), letter("ç", "Ç")},
-        {letter("z", "Z"), letter("x", "X"), letter("c", "C"), letter("v", "V"),
-         letter("b", "B"), letter("n", "N"), letter("m", "M"), letter(",", ";"),
-         letter(".", ":"), letter("-", "_")},
-    };
+    const std::vector<Key> numberRow = {
+        letter("1", "1"), letter("2", "2"), letter("3", "3"), letter("4", "4"),
+        letter("5", "5"), letter("6", "6"), letter("7", "7"), letter("8", "8"),
+        letter("9", "9"), letter("0", "0")};
+    const std::string language = nxui::I18n::instance().activeLanguageTag();
+    const bool french = language.rfind("fr", 0) == 0;
+    const bool german = language.rfind("de", 0) == 0;
+    const bool russian = language.rfind("ru", 0) == 0;
+    const bool spanish = language.rfind("es", 0) == 0;
+    const bool italian = language.rfind("it", 0) == 0;
+    const bool portuguese = language.rfind("pt", 0) == 0;
+
+    m_letters.clear();
+    m_letters.push_back(numberRow);
+    if (russian) {
+        m_letters.push_back({letter("й", "Й"), letter("ц", "Ц"), letter("у", "У"), letter("к", "К"),
+                             letter("е", "Е"), letter("н", "Н"), letter("г", "Г"), letter("ш", "Ш"),
+                             letter("щ", "Щ"), letter("з", "З")});
+        m_letters.push_back({letter("ф", "Ф"), letter("ы", "Ы"), letter("в", "В"), letter("а", "А"),
+                             letter("п", "П"), letter("р", "Р"), letter("о", "О"), letter("л", "Л"),
+                             letter("д", "Д"), letter("ж", "Ж")});
+        m_letters.push_back({letter("я", "Я"), letter("ч", "Ч"), letter("с", "С"), letter("м", "М"),
+                             letter("и", "И"), letter("т", "Т"), letter("ь", "Ь"), letter("б", "Б"),
+                             letter("ю", "Ю"), letter("ё", "Ё")});
+    } else if (french) {
+        m_letters.push_back({letter("a", "A"), letter("z", "Z"), letter("e", "E"), letter("r", "R"),
+                             letter("t", "T"), letter("y", "Y"), letter("u", "U"), letter("i", "I"),
+                             letter("o", "O"), letter("p", "P")});
+        m_letters.push_back({letter("q", "Q"), letter("s", "S"), letter("d", "D"), letter("f", "F"),
+                             letter("g", "G"), letter("h", "H"), letter("j", "J"), letter("k", "K"),
+                             letter("l", "L"), letter("m", "M")});
+        m_letters.push_back({letter("w", "W"), letter("x", "X"), letter("c", "C"), letter("v", "V"),
+                             letter("b", "B"), letter("n", "N"), letter("é", "É"), letter("è", "È"),
+                             letter("à", "À"), letter("ç", "Ç")});
+    } else {
+        m_letters.push_back({letter("q", "Q"), letter("w", "W"), letter("e", "E"), letter("r", "R"),
+                             letter("t", "T"), letter(german ? "z" : "y", german ? "Z" : "Y"),
+                             letter("u", "U"), letter("i", "I"), letter("o", "O"), letter("p", "P")});
+        const char* localeLower = german ? "ü" : (spanish ? "ñ" : (italian ? "ò" : (portuguese ? "ç" : "'")));
+        const char* localeUpper = german ? "Ü" : (spanish ? "Ñ" : (italian ? "Ò" : (portuguese ? "Ç" : "\"")));
+        m_letters.push_back({letter("a", "A"), letter("s", "S"), letter("d", "D"), letter("f", "F"),
+                             letter("g", "G"), letter("h", "H"), letter("j", "J"), letter("k", "K"),
+                             letter("l", "L"), letter(localeLower, localeUpper)});
+        m_letters.push_back({letter(german ? "y" : "z", german ? "Y" : "Z"),
+                             letter("x", "X"), letter("c", "C"), letter("v", "V"),
+                             letter("b", "B"), letter("n", "N"), letter("m", "M"),
+                             letter(german ? "ö" : ",", german ? "Ö" : ";"),
+                             letter(german ? "ä" : ".", german ? "Ä" : ":"),
+                             letter(german ? "ß" : "-", german ? "ẞ" : "_")});
+    }
 
     // Accented vowels sit beside the punctuation rather than behind a third
     // page: Portuguese needs them for ordinary folder names.
@@ -117,9 +153,33 @@ void TextEntryScreen::buildLayout() {
         {letter("?", "?"), letter("<", "<"), letter(">", ">"), letter("[", "["),
          letter("]", "]"), letter("{", "{"), letter("}", "}"), letter("^", "^"),
          letter("`", "`"), letter("°", "°")},
-        {letter("á", "Á"), letter("é", "É"), letter("í", "Í"), letter("ó", "Ó"),
-         letter("ú", "Ú"), letter("ã", "Ã"), letter("õ", "Õ"), letter("â", "Â"),
-         letter("ê", "Ê"), letter("ô", "Ô")},
+        russian
+            ? std::vector<Key>{letter("ъ", "Ъ"), letter("э", "Э"), letter("ё", "Ё"), letter("№", "№"),
+                               letter(",", ";"), letter(".", ":"), letter("-", "_"), letter("!", "!"),
+                               letter("?", "?"), letter("…", "…")}
+            : french
+                ? std::vector<Key>{letter("é", "É"), letter("è", "È"), letter("à", "À"), letter("ç", "Ç"),
+                                   letter("ù", "Ù"), letter("ê", "Ê"), letter("â", "Â"), letter("î", "Î"),
+                                   letter("ô", "Ô"), letter("û", "Û")}
+            : german
+                ? std::vector<Key>{letter("ä", "Ä"), letter("ö", "Ö"), letter("ü", "Ü"), letter("ß", "ẞ"),
+                                   letter("é", "É"), letter("è", "È"), letter(",", ";"), letter(".", ":"),
+                                   letter("-", "_"), letter("?", "?")}
+            : spanish
+                ? std::vector<Key>{letter("á", "Á"), letter("é", "É"), letter("í", "Í"), letter("ó", "Ó"),
+                                   letter("ú", "Ú"), letter("ü", "Ü"), letter("ñ", "Ñ"), letter("¿", "¿"),
+                                   letter("¡", "¡"), letter("ç", "Ç")}
+            : italian
+                ? std::vector<Key>{letter("à", "À"), letter("è", "È"), letter("é", "É"), letter("ì", "Ì"),
+                                   letter("í", "Í"), letter("ò", "Ò"), letter("ó", "Ó"), letter("ù", "Ù"),
+                                   letter("ú", "Ú"), letter("ç", "Ç")}
+            : portuguese
+                ? std::vector<Key>{letter("á", "Á"), letter("é", "É"), letter("í", "Í"), letter("ó", "Ó"),
+                                   letter("ú", "Ú"), letter("ã", "Ã"), letter("õ", "Õ"), letter("â", "Â"),
+                                   letter("ê", "Ê"), letter("ô", "Ô")}
+                : std::vector<Key>{letter(",", ";"), letter(".", ":"), letter("-", "_"), letter("'", "\""),
+                                   letter("@", "@"), letter("&", "&"), letter("/", "\\"), letter("?", "?"),
+                                   letter("!", "!"), letter("€", "€")},
     };
 
     const std::vector<Key> actionRow = {
@@ -139,6 +199,8 @@ void TextEntryScreen::show(const Request& request) {
                   request.title.c_str(), m_active);
     if (m_active)
         return;
+    // The UI language can change after this screen was constructed.
+    buildLayout();
     m_request = request;
     m_text = request.initial;
     m_active = true;

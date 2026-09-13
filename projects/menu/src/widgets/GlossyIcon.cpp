@@ -16,10 +16,6 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
-#ifdef SWITCHU_MENU
-#include <switch.h>
-#endif
-
 struct WidgetGifDecodeState {
     std::vector<std::vector<std::uint8_t>> frames;
     std::vector<int> durationsMs;
@@ -38,28 +34,6 @@ bool hasGifExtension(std::string path) {
     std::transform(path.begin(), path.end(), path.begin(),
                    [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
     return path.ends_with(".gif");
-}
-
-void drawStar(nxui::Renderer& ren, const nxui::Vec2& center,
-              float outerRadius, const nxui::Color& color) {
-    constexpr int points = 5;
-    constexpr float pi = 3.14159265358979323846f;
-    const float innerRadius = outerRadius * 0.382f;
-    nxui::Vec2 outer[points];
-    nxui::Vec2 inner[points];
-    for (int i = 0; i < points; ++i) {
-        const float outerAngle = -pi * 0.5f + i * (2.f * pi / points);
-        const float innerAngle = outerAngle + pi / points;
-        outer[i] = {center.x + outerRadius * std::cos(outerAngle),
-                    center.y + outerRadius * std::sin(outerAngle)};
-        inner[i] = {center.x + innerRadius * std::cos(innerAngle),
-                    center.y + innerRadius * std::sin(innerAngle)};
-    }
-    for (int i = 0; i < points; ++i) {
-        const int previous = (i + points - 1) % points;
-        ren.drawTriangle(center, outer[i], inner[i], color);
-        ren.drawTriangle(center, inner[previous], outer[i], color);
-    }
 }
 
 nxui::Rect centeredCoverSource(const nxui::Texture& texture,
@@ -510,10 +484,7 @@ void GlossyIcon::copyWidgetPresentationFrom(GlossyIcon& source) {
     m_widgetHeader = source.m_widgetHeader;
     m_consoleBatteryPercent = source.m_consoleBatteryPercent;
     m_consoleBatteryCharging = source.m_consoleBatteryCharging;
-    m_controllerBatteries = source.m_controllerBatteries;
     m_batteryConsoleIcon = source.m_batteryConsoleIcon;
-    m_batteryJoyconLeftIcon = source.m_batteryJoyconLeftIcon;
-    m_batteryJoyconRightIcon = source.m_batteryJoyconRightIcon;
     m_widgetGameTitleId = source.m_widgetGameTitleId;
     m_widgetHero = source.m_widgetHero;
     m_widgetLogo = source.m_widgetLogo;
@@ -570,52 +541,6 @@ void GlossyIcon::onContentUpdate(float dt) {
         m_suspendPulse += dt * 2.8f;
     if (!m_motionPaused && m_entryKind == GridEntryKind::Widget && m_widgetAnimation.hasFrames())
         m_widgetAnimation.update(dt, true);
-#ifdef SWITCHU_MENU
-    if (m_entryKind == GridEntryKind::Widget &&
-        m_widgetType == switchu::widgets::WidgetType::Batteries) {
-        m_batteryRefreshTimer += dt;
-        if (m_batteryRefreshTimer >= 1.f || m_controllerBatteries.empty()) {
-            m_batteryRefreshTimer = 0.f;
-            m_controllerBatteries.clear();
-            // Attached Joy-Con are reported on the Handheld npad, not on a
-            // numbered wireless-player slot.
-            const u32 handheldStyle = hidGetNpadStyleSet(HidNpadIdType_Handheld);
-            if (handheldStyle != 0) {
-                HidPowerInfo left{}, right{};
-                hidGetNpadPowerInfoSplit(HidNpadIdType_Handheld, &left, &right);
-                m_controllerBatteries.push_back({
-                    static_cast<int>(left.battery_level) * 25,
-                    left.is_charging, "L"});
-                m_controllerBatteries.push_back({
-                    static_cast<int>(right.battery_level) * 25,
-                    right.is_charging, "R"});
-            }
-            for (int player = 0; player < 8 && m_controllerBatteries.size() < 3; ++player) {
-                const auto id = static_cast<HidNpadIdType>(HidNpadIdType_No1 + player);
-                const u32 style = hidGetNpadStyleSet(id);
-                if (style == 0 || (style & HidNpadStyleTag_NpadHandheld)) continue;
-                if (style & HidNpadStyleTag_NpadJoyDual) {
-                    HidPowerInfo left{}, right{};
-                    hidGetNpadPowerInfoSplit(id, &left, &right);
-                    if (m_controllerBatteries.size() < 3)
-                        m_controllerBatteries.push_back({
-                            static_cast<int>(left.battery_level) * 25,
-                            left.is_charging, "L"});
-                    if (m_controllerBatteries.size() < 3)
-                        m_controllerBatteries.push_back({
-                            static_cast<int>(right.battery_level) * 25,
-                            right.is_charging, "R"});
-                } else {
-                    HidPowerInfo info{};
-                    hidGetNpadPowerInfoSingle(id, &info);
-                    m_controllerBatteries.push_back({
-                        static_cast<int>(info.battery_level) * 25,
-                        info.is_charging, std::to_string(player + 1)});
-                }
-            }
-        }
-    }
-#endif
 }
 
 void GlossyIcon::onRender(nxui::Renderer& ren) {
@@ -694,25 +619,6 @@ void GlossyIcon::onRender(nxui::Renderer& ren) {
                                  badgeW - cardInset*2, badgeH - cardInset*2},
                                 nxui::Color(0.95f, 0.75f, 0.2f, 0.9f * a), 2.f * s);
         }
-    }
-
-    if (m_isFavorite && s > 0.5f) {
-        const float badgeSize = 25.f * s;
-        const float badgeX = r.x + r.width - badgeSize - 6.f * s;
-        const float badgeY = r.y + 6.f * s;
-        const nxui::Vec2 center{badgeX + badgeSize * 0.5f,
-                                badgeY + badgeSize * 0.5f};
-        // A small glass-like medallion keeps the marker legible without
-        // turning it into a flat sticker on top of the icon.
-        ren.drawCircle(center, badgeSize * 0.58f,
-                       nxui::Color(1.f, 0.80f, 0.22f, 0.18f * a), 20);
-        ren.drawCircle(center, badgeSize * 0.5f,
-                       nxui::Color(0.04f, 0.06f, 0.09f, 0.72f * a), 20);
-        ren.drawRoundedRectOutline({badgeX, badgeY, badgeSize, badgeSize},
-                                   nxui::Color(1.f, 0.86f, 0.30f, 0.58f * a),
-                                   badgeSize * 0.5f, 1.2f * s);
-        drawStar(ren, center, 7.7f * s,
-                 nxui::Color(1.f, 0.86f, 0.22f, 0.98f * a));
     }
 
     if (m_suspended && s > 0.5f) {
@@ -880,37 +786,16 @@ void GlossyIcon::onContentRender(nxui::Renderer& ren) {
             ren.drawRoundedRect(inner,
                 m_loadingColor.withAlpha(0.13f * m_opacity),
                 std::max(12.f, rad - 5.f));
-            const int capacity = m_widgetRows >= 2 ? 4 : 3;
-            const int count = std::min(capacity,
-                1 + static_cast<int>(m_controllerBatteries.size()));
-            const int columns = capacity == 4 ? 2 : 3;
-            const int rows = capacity == 4 ? 2 : 1;
-            const float cellW = inner.width / columns;
-            const float cellH = inner.height / rows;
+            const float cellW = inner.width;
+            const float cellH = inner.height;
             const float radius = std::max(24.f,
-                std::min(cellW, cellH) * (capacity == 4 ? 0.31f : 0.36f));
-            for (int i = 0; i < count; ++i) {
-                const int column = i % columns;
-                const int row = i / columns;
-                const nxui::Vec2 center{
-                    inner.x + cellW * (column + 0.5f),
-                    inner.y + cellH * (row + 0.47f)};
-                if (i == 0) {
-                    drawBatteryRing(ren, center, radius,
-                        m_consoleBatteryPercent, m_consoleBatteryCharging,
-                        true, m_batteryConsoleIcon, m_font, m_opacity);
-                } else {
-                    const auto& controller =
-                        m_controllerBatteries[static_cast<std::size_t>(i - 1)];
-                    nxui::Texture* controllerIcon = controller.label == "L"
-                        ? m_batteryJoyconLeftIcon
-                        : (controller.label == "R"
-                            ? m_batteryJoyconRightIcon : nullptr);
-                    drawBatteryRing(ren, center, radius, controller.percent,
-                        controller.charging, false, controllerIcon,
-                        m_font, m_opacity);
-                }
-            }
+                std::min(cellW, cellH) * 0.36f);
+            const nxui::Vec2 center{
+                inner.x + cellW * 0.5f,
+                inner.y + cellH * 0.47f};
+            drawBatteryRing(ren, center, radius,
+                m_consoleBatteryPercent, m_consoleBatteryCharging,
+                true, m_batteryConsoleIcon, m_font, m_opacity);
             return;
         }
 

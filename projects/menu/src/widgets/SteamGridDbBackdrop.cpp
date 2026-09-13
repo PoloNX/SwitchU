@@ -55,6 +55,14 @@ void SteamGridDbBackdrop::showTitle(std::uint64_t titleId, bool forceReload) {
     if (!m_enabled) return;
     if (!forceReload && m_requestedTitleId == titleId) return;
 
+    // A direct artwork-to-artwork change may crossfade from the current set.
+    // Once focus has visited a title without artwork, the old set is stale and
+    // must never be exposed again while the next image is decoded/uploaded.
+    m_showPreviousDuringCrossfade = titleId != 0
+        && m_sets[m_current].titleId == m_requestedTitleId
+        && (m_sets[m_current].hasHero || m_sets[m_current].hasLogo)
+        && m_artworkOpacity.value() > 0.002f;
+
     if (titleId == 0) {
         if (m_pendingDecode && m_pendingDecode->state)
             m_pendingDecode->state->cancelled.store(true);
@@ -132,8 +140,6 @@ void SteamGridDbBackdrop::showTitle(std::uint64_t titleId, bool forceReload) {
         return;
     }
 
-    m_artworkOpacity.set(1.f, 0.16f, nxui::Easing::outCubic);
-
     if (!forceReload && titleId != 0) {
         for (int i = 0; i < static_cast<int>(m_sets.size()); ++i) {
             const auto& cached = m_sets[i];
@@ -150,6 +156,10 @@ void SteamGridDbBackdrop::showTitle(std::uint64_t titleId, bool forceReload) {
             m_appliedGeneration = m_requestGeneration;
             if (i != m_current)
                 beginCrossfade(i, titleId);
+            else {
+                m_fade.setImmediate(1.f);
+                m_artworkOpacity.set(1.f, 0.18f, nxui::Easing::outCubic);
+            }
             DebugLog::log("[steamgriddb-ui] gpu cache hit title=%016llX",
                           static_cast<unsigned long long>(titleId));
             return;
@@ -174,9 +184,10 @@ void SteamGridDbBackdrop::showTitle(std::uint64_t titleId, bool forceReload) {
 
     m_requestedTitleId = titleId;
     ++m_requestGeneration;
-    // The focus animation already absorbs rapid left/right repeats. Starting
-    // immediately makes cached SD artwork appear noticeably sooner.
-    m_decodeDebounce = 0.f;
+    // Coalesce very rapid focus changes. GPU/decoded cache hits above remain
+    // immediate, while disk decoding waits until the selection has been stable
+    // briefly instead of repeatedly decoding artwork the user has passed.
+    m_decodeDebounce = forceReload ? 0.f : 0.10f;
     m_readyArtwork.reset();
     m_uploadStage = 0;
     if (m_pendingDecode && m_pendingDecode->state)
@@ -258,7 +269,7 @@ void SteamGridDbBackdrop::drawSet(nxui::Renderer& renderer,
     const nxui::Rect screen = rect();
 
     if (set.hasHero && set.hero.valid()) {
-        const float heroAlpha = m_layoutMode == AppLayoutMode::DynamicLine ? 0.56f : 0.16f;
+        const float heroAlpha = m_layoutMode == AppLayoutMode::DynamicLine ? 0.94f : 0.24f;
         renderer.pushClipRect(screen);
         renderer.drawTexture(&set.hero, fillRect(set.hero, screen),
                              nxui::Color::white().withAlpha(alpha * heroAlpha));
@@ -414,6 +425,7 @@ void SteamGridDbBackdrop::onRender(nxui::Renderer& renderer) {
     const float t = std::clamp(m_fade.value(), 0.f, 1.f);
     const float artworkOpacity = std::clamp(m_artworkOpacity.value(), 0.f, 1.f)
                                * opacity();
-    drawSet(renderer, m_sets[1 - m_current], (1.f - t) * artworkOpacity);
+    if (m_showPreviousDuringCrossfade)
+        drawSet(renderer, m_sets[1 - m_current], (1.f - t) * artworkOpacity);
     drawSet(renderer, m_sets[m_current], t * artworkOpacity);
 }

@@ -136,13 +136,13 @@ std::string resolveThemeSoundBase(const std::string& installPath) {
 static constexpr float kGridSafeSideMargin = 220.f;
 
 // Contextual action capsules, bottom-right.
-static constexpr float kHintIconScale = 0.72f;
-static constexpr float kHintTextScale = 0.62f;
-static constexpr float kHintCapH      = 28.f;
-static constexpr float kHintCapPadX   = 12.f;
-static constexpr float kHintIconGap   = 6.f;
-static constexpr float kHintCapGap    = 8.f;
-static constexpr float kHintRowGap    = 7.f;
+static constexpr float kHintIconScale = 0.67f;
+static constexpr float kHintTextScale = 0.57f;
+static constexpr float kHintCapH      = 25.f;
+static constexpr float kHintCapPadX   = 10.f;
+static constexpr float kHintIconGap   = 5.f;
+static constexpr float kHintCapGap    = 7.f;
+static constexpr float kHintRowGap    = 6.f;
 static constexpr float kHintEdgeX     = 18.f;
 static constexpr float kHintEdgeY     = 16.f;
 // Stop short of the page dots, centred and reaching x = 721 at eight pages.
@@ -1009,15 +1009,15 @@ void WiiUMenuApp::loadNextUserAvatar() {
 }
 
 WiiUMenuApp::GridLayoutMetrics WiiUMenuApp::computeGridLayoutMetrics() const {
-    const int cols = std::clamp(m_config.gridColumns, 3, 8);
-    const int rows = std::clamp(m_config.gridRows, 2, 5);
+    const int cols = std::clamp(m_config.gridColumns, 1, 8);
+    const int rows = std::clamp(m_config.gridRows, 1, 5);
     return computeGridLayoutMetrics(cols, rows);
 }
 
 WiiUMenuApp::GridLayoutMetrics WiiUMenuApp::computeGridLayoutMetrics(int cols,
                                                                       int rows) const {
-    cols = std::clamp(cols, 3, 8);
-    rows = std::clamp(rows, 2, 5);
+    cols = std::clamp(cols, 1, 8);
+    rows = std::clamp(rows, 1, 5);
 
     const float baseGridW = cols * kGridBaseCellW + (cols - 1) * kGridBasePadX;
     const float baseGridH = rows * kGridBaseCellH + (rows - 1) * kGridBasePadY;
@@ -1109,8 +1109,8 @@ void WiiUMenuApp::reflowHomeGrid() {
         placed.insert(tid);
     }
 
-    const int cols = std::clamp(m_config.gridColumns, 3, 8);
-    const int rows = std::clamp(m_config.gridRows, 2, 5);
+    const int cols = std::clamp(m_config.gridColumns, 1, 8);
+    const int rows = std::clamp(m_config.gridRows, 1, 5);
     const int perPage = std::max(1, cols * rows);
     int minSlots = std::max(perPage * kMinHomePages, (int)slots.size());
     int roundedSlots = ((minSlots + perPage - 1) / perPage) * perPage;
@@ -1310,8 +1310,8 @@ void WiiUMenuApp::applyMenuLayoutToPending(std::vector<PendingApp>& apps) {
 }
 
 void WiiUMenuApp::composeRootPending(std::vector<PendingApp>& apps) {
-    const int cols = std::clamp(m_config.gridColumns, 3, 8);
-    const int rows = std::clamp(m_config.gridRows, 2, 5);
+    const int cols = std::clamp(m_config.gridColumns, 1, 8);
+    const int rows = std::clamp(m_config.gridRows, 1, 5);
     const int perPage = std::max(1, cols * rows);
 
     m_allApps.clear();
@@ -1551,8 +1551,8 @@ GridModel WiiUMenuApp::buildRootFolderModel() {
         entries.emplace(entry.titleId, std::move(entry));
     }
 
-    const int perPage = std::max(1, std::clamp(m_config.gridColumns, 3, 8) *
-                                     std::clamp(m_config.gridRows, 2, 5));
+    const int perPage = std::max(1, std::clamp(m_config.gridColumns, 1, 8) *
+                                     std::clamp(m_config.gridRows, 1, 5));
     if (m_layoutSlots.empty()) {
         for (const auto& app : m_allApps)
             if (entries.count(app.titleId)) m_layoutSlots.push_back(app.titleId);
@@ -1581,7 +1581,7 @@ GridModel WiiUMenuApp::buildRootFolderModel() {
     // applications fill the remaining cells in the requested order.
     std::vector<std::uint64_t> projected;
     if (m_config.sortMode != 0 && m_appLayoutMode == AppLayoutMode::Grid) {
-        const int columns = std::clamp(m_config.gridColumns, 3, 8);
+        const int columns = std::clamp(m_config.gridColumns, 1, 8);
         projected.assign(m_layoutSlots.size(), 0);
         std::vector<bool> reserved(m_layoutSlots.size(), false);
 
@@ -1632,11 +1632,6 @@ GridModel WiiUMenuApp::buildRootFolderModel() {
         const int mode = m_config.sortMode;
         std::stable_sort(applications.begin(), applications.end(),
                          [&](const auto left, const auto right) {
-            if (mode == 3) {
-                const bool leftFavorite = m_config.isFavorite(left);
-                const bool rightFavorite = m_config.isFavorite(right);
-                return leftFavorite != rightFavorite && leftFavorite;
-            }
             if (mode == 2) {
                 const auto leftOpened = m_config.lastOpenedAt(left);
                 const auto rightOpened = m_config.lastOpenedAt(right);
@@ -1664,8 +1659,8 @@ GridModel WiiUMenuApp::buildRootFolderModel() {
     }
     const auto& displaySlots = projected.empty() ? m_layoutSlots : projected;
 
-    const int columns = std::clamp(m_config.gridColumns, 3, 8);
-    const int rows = std::clamp(m_config.gridRows, 2, 5);
+    const int columns = std::clamp(m_config.gridColumns, 1, 8);
+    const int rows = std::clamp(m_config.gridRows, 1, 5);
     std::vector<int> coveredBy(displaySlots.size(), -1);
     if (m_appLayoutMode == AppLayoutMode::Grid) {
         for (int index = 0; index < static_cast<int>(displaySlots.size()); ++index) {
@@ -1881,8 +1876,8 @@ void WiiUMenuApp::applyDisplayModel(GridModel model, std::uint64_t focusId, bool
         titleIds.push_back(entry.isApplication() ? entry.titleId : 0);
     }
     m_iconStreamer.reconcileTitleIds(titleIds);
-    int columns = std::clamp(m_config.gridColumns, 3, 8);
-    int rows = std::clamp(m_config.gridRows, 2, 5);
+    int columns = std::clamp(m_config.gridColumns, 1, 8);
+    int rows = std::clamp(m_config.gridRows, 1, 5);
     if (m_openFolderId != 0)
         std::tie(columns, rows) = folderGridDimensions(m_openFolderId);
     auto metrics = computeGridLayoutMetrics(columns, rows);
@@ -2346,8 +2341,8 @@ bool WiiUMenuApp::canPlaceGridItem(int targetSlot,
         return false;
     size = m_appLayoutMode == AppLayoutMode::DynamicLine
         ? switchu::widgets::WidgetSize{1, 1} : size;
-    const int columns = std::clamp(m_config.gridColumns, 3, 8);
-    const int rows = std::clamp(m_config.gridRows, 2, 5);
+    const int columns = std::clamp(m_config.gridColumns, 1, 8);
+    const int rows = std::clamp(m_config.gridRows, 1, 5);
     const int perPage = columns * rows;
     const int local = targetSlot % perPage;
     const int targetColumn = local % columns;
@@ -2400,8 +2395,8 @@ bool WiiUMenuApp::canPlaceGridItem(int targetSlot,
 
 void WiiUMenuApp::normalizeWidgetPlacements() {
     if (m_layoutSlots.empty()) return;
-    const int columns = std::clamp(m_config.gridColumns, 3, 8);
-    const int rows = std::clamp(m_config.gridRows, 2, 5);
+    const int columns = std::clamp(m_config.gridColumns, 1, 8);
+    const int rows = std::clamp(m_config.gridRows, 1, 5);
     const int perPage = std::max(1, columns * rows);
 
     struct Placement {
@@ -3034,7 +3029,6 @@ std::string WiiUMenuApp::sortModeLabel() const {
     switch (m_config.sortMode) {
         case 1: return i18n.tr("hint.sort_alpha", "A-Z");
         case 2: return i18n.tr("hint.sort_recent", "Recent");
-        case 3: return i18n.tr("hint.sort_favorites", "Favorites");
         default: return i18n.tr("hint.sort_custom", "My order");
     }
 }
@@ -3043,7 +3037,7 @@ void WiiUMenuApp::cycleSortMode() {
     if (m_editMode || m_openFolderId != 0 ||
         m_appLayoutMode == AppLayoutMode::DynamicLine)
         return;
-    m_config.sortMode = (m_config.sortMode + 1) % 4;
+    m_config.sortMode = (m_config.sortMode + 1) % 3;
     m_config.save();
     m_audio.playSfx(Sfx::Navigate);
     reflowHomeGrid();
@@ -3276,7 +3270,10 @@ void WiiUMenuApp::activateApplication(GlossyIcon* source, AppEntry* entry,
             startLaunch(emptyUid);
             return;
         }
-        if (m_config.defaultProfileEnabled) {
+        // StartupUserAccount=2 specifically requires a Nintendo Account.
+        // libnx only validates that condition through the network-aware silent
+        // selector, so do not blindly inject a configured local default UID.
+        if (m_config.defaultProfileEnabled && entry->startupUserAccount != 2) {
             AccountUid defaultUid{};
             if (hexToAccountUid(m_config.defaultProfileUid, defaultUid)) {
                 startLaunch(defaultUid);
@@ -3507,7 +3504,6 @@ std::shared_ptr<GlossyIcon> WiiUMenuApp::makeIcon(const AppEntry& entry) {
     icon->setGameCardTexture(&m_gameCardTex);
     icon->setNotLaunchable(!entry.isLaunchable());
     icon->setGridSpan(entry.widgetColumns, entry.widgetRows);
-    icon->setFavorite(m_config.isFavorite(entry.titleId));
     if (entry.widgetColumns > 1 && entry.widgetRows == 1 &&
         m_appLayoutMode == AppLayoutMode::Grid) {
         const auto artwork = m_gameArtwork.find(entry.titleId);
@@ -3579,12 +3575,13 @@ void WiiUMenuApp::buildGrid() {
     m_grid->setRect({kGridRectX, kGridRectY, kGridRectW, kGridRectH});
     m_grid->setLayoutMode(m_appLayoutMode);
     m_grid->setup(std::move(icons),
-                  std::clamp(m_config.gridColumns, 3, 8),
-                  std::clamp(m_config.gridRows, 2, 5),
+                  std::clamp(m_config.gridColumns, 1, 8),
+                  std::clamp(m_config.gridRows, 1, 5),
                   gridMetrics.cellW, gridMetrics.cellH,
                   gridMetrics.padX, gridMetrics.padY);
 
     m_cursor = std::make_shared<SelectionCursor>();
+    m_cursor->setInstantMotion(m_config.cursorMotionMode == 1);
     m_pointerCursor = std::make_shared<SelectionCursor>();
     m_pointerCursor->setVisible(false);
 
@@ -3627,6 +3624,7 @@ void WiiUMenuApp::buildGrid() {
     m_launchAnim = std::make_shared<LaunchAnimation>();
 
     m_userSelect = std::make_shared<OverlayDialog>();
+    m_userSelect->cursor().setInstantMotion(m_config.cursorMotionMode == 1);
     m_userSelect->setFont(&m_fontNormal);
     m_userSelect->setSmallFont(&m_fontSmall);
     m_userSelect->setTheme(&m_theme);
@@ -3647,6 +3645,7 @@ void WiiUMenuApp::buildGrid() {
     });
 
     m_dialog = std::make_shared<OverlayDialog>();
+    m_dialog->cursor().setInstantMotion(m_config.cursorMotionMode == 1);
     m_dialog->setFont(&m_fontNormal);
     m_dialog->setSmallFont(&m_fontSmall);
     m_dialog->setTheme(&m_theme);
@@ -4264,8 +4263,8 @@ void WiiUMenuApp::finalizeRefresh() {
     GridLayoutMetrics gridMetrics = computeGridLayoutMetrics();
 
     m_grid->setup(std::move(icons),
-                  std::clamp(m_config.gridColumns, 3, 8),
-                  std::clamp(m_config.gridRows, 2, 5),
+                  std::clamp(m_config.gridColumns, 1, 8),
+                  std::clamp(m_config.gridRows, 1, 5),
                   gridMetrics.cellW, gridMetrics.cellH,
                   gridMetrics.padX, gridMetrics.padY);
     if (m_refreshPrevPage > 0) m_grid->setPage(m_refreshPrevPage);
@@ -4991,7 +4990,7 @@ std::vector<WiiUMenuApp::ActionHint> WiiUMenuApp::buildActionHints() {
     auto addVoiceControls = [&]() {
         if (!m_config.accessibilityEnabled)
             return;
-        add(buttonGlyph(nxui::Button::L), i18n.tr("hint.repeat", "Repeat"));
+        add(buttonGlyph(nxui::Button::LStick), i18n.tr("hint.repeat", "Repeat"));
         add(buttonGlyph(nxui::Button::Plus) + buttonGlyph(nxui::Button::Minus),
             i18n.tr("hint.voice", "Voice"));
     };
@@ -5002,7 +5001,8 @@ std::vector<WiiUMenuApp::ActionHint> WiiUMenuApp::buildActionHints() {
     if (m_quickSettings && m_quickSettings->isActive()) {
         add(dpadGlyph(), i18n.tr("hint.navigate", "Navigate"));
         add(buttonGlyph(nxui::Button::A), i18n.tr("hint.select", "Select"));
-        add(buttonGlyph(nxui::Button::B), i18n.tr("hint.close", "Close"));
+        add(buttonGlyph(nxui::Button::B) + buttonGlyph(nxui::Button::L),
+            i18n.tr("hint.close", "Close"));
         return hints;
     }
 
@@ -5078,7 +5078,7 @@ std::vector<WiiUMenuApp::ActionHint> WiiUMenuApp::buildActionHints() {
     if (m_openFolderId != 0)
         add(buttonGlyph(nxui::Button::B), i18n.tr("hint.back", "Back"));
     else
-        add(buttonGlyph(nxui::Button::LStick),
+        add(buttonGlyph(nxui::Button::L),
             i18n.tr("quicksettings.hint_shortcut", "Quick Settings"));
 
     nxui::Widget* cur = focusManager().current();
@@ -5111,8 +5111,6 @@ std::vector<WiiUMenuApp::ActionHint> WiiUMenuApp::buildActionHints() {
                 if (m_openFolderId == 0 &&
                     m_appLayoutMode != AppLayoutMode::DynamicLine)
                     add(buttonGlyph(nxui::Button::R), sortModeLabel());
-                add(buttonGlyph(nxui::Button::RStick),
-                    i18n.tr("hint.favorite", "Favorite"));
                 if (m_openFolderId == 0)
                     add(buttonGlyph(nxui::Button::Y), i18n.tr("hint.move", "Move"));
                 else
@@ -5221,18 +5219,51 @@ void WiiUMenuApp::renderActionHintBar(nxui::Renderer& ren) {
     if (count <= 0)
         return;
 
+    // Find the smallest possible number of rows, then choose the contiguous
+    // split whose widest row is the narrowest. With only eight hints there are
+    // at most 128 layouts to inspect, and this avoids an awkward 5+1 split.
     std::vector<std::pair<int, int>> rows;
-    for (int i = 0; i < count;) {
-        float w = 0.f;
-        int j = i;
-        while (j < count) {
-            const float add = m_hintCapsules[(size_t)j].width + (j > i ? kHintCapGap : 0.f);
-            if (j > i && w + add > kHintRowMaxW) break;
-            w += add;
-            ++j;
+    int bestRowCount = count + 1;
+    float bestScore = std::numeric_limits<float>::max();
+    const unsigned splitLayouts = 1u << std::max(0, count - 1);
+    for (unsigned mask = 0; mask < splitLayouts; ++mask) {
+        std::vector<std::pair<int, int>> candidate;
+        int first = 0;
+        for (int i = 0; i < count; ++i) {
+            if (i == count - 1 || (mask & (1u << i))) {
+                candidate.emplace_back(first, i + 1);
+                first = i + 1;
+            }
         }
-        rows.emplace_back(i, j);
-        i = j;
+
+        const int rowCount = static_cast<int>(candidate.size());
+        if (rowCount > bestRowCount)
+            continue;
+
+        bool valid = true;
+        float widest = 0.f;
+        float narrowest = std::numeric_limits<float>::max();
+        for (const auto& [rowFirst, rowLast] : candidate) {
+            float width = 0.f;
+            for (int i = rowFirst; i < rowLast; ++i)
+                width += m_hintCapsules[(size_t)i].width
+                       + (i > rowFirst ? kHintCapGap : 0.f);
+            if (width > kHintRowMaxW && rowLast - rowFirst > 1) {
+                valid = false;
+                break;
+            }
+            widest = std::max(widest, width);
+            narrowest = std::min(narrowest, width);
+        }
+        if (!valid)
+            continue;
+
+        const float score = widest + (widest - narrowest) * 0.15f;
+        if (rowCount < bestRowCount || score < bestScore) {
+            bestRowCount = rowCount;
+            bestScore = score;
+            rows = std::move(candidate);
+        }
     }
 
     const float reveal = std::clamp(m_hintContentReveal.value(), 0.f, 1.f);
@@ -5300,13 +5331,13 @@ void WiiUMenuApp::renderActionHintPanel(nxui::Renderer& ren) {
     if (hints.empty())
         return;
 
-    constexpr float kIconScale = 0.66f;
-    constexpr float kTextScale = 0.54f;
-    constexpr float kRowH = 22.f;
+    constexpr float kIconScale = 0.62f;
+    constexpr float kTextScale = 0.50f;
+    constexpr float kRowH = 20.f;
     constexpr float kRowGap = 3.f;
-    constexpr float kPadX = 10.f;
-    constexpr float kPadY = 8.f;
-    constexpr float kIconTextGap = 6.f;
+    constexpr float kPadX = 9.f;
+    constexpr float kPadY = 7.f;
+    constexpr float kIconTextGap = 5.f;
     constexpr float kScreenMargin = 18.f;
 
     const int count = std::min((int)hints.size(), kHintMaxItems);
@@ -5324,7 +5355,7 @@ void WiiUMenuApp::renderActionHintPanel(nxui::Renderer& ren) {
         signature += '\n';
     }
 
-    float panelW = std::clamp(contentW + kPadX * 2.f, 104.f, 210.f);
+    float panelW = std::clamp(contentW + kPadX * 2.f, 98.f, 196.f);
     float panelH = kPadY * 2.f + count * kRowH + (count - 1) * kRowGap;
     if (!m_hintPanelInitialized) {
         m_hintPanelInitialized = true;
@@ -5352,7 +5383,7 @@ void WiiUMenuApp::renderActionHintPanel(nxui::Renderer& ren) {
         panelW,
         panelH
     };
-    constexpr float kRadius = 16.f;
+    constexpr float kRadius = 14.f;
     const float reveal = std::clamp(m_hintContentReveal.value(), 0.f, 1.f);
 
     ren.drawRoundedRect({panel.x, panel.y + 4.f, panel.width, panel.height},

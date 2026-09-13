@@ -63,7 +63,9 @@ private:
     std::unique_ptr<Activity> m_pendingActivity;
     bool m_running = true;
     bool m_renderEnabled = true;
-    int  m_navDebounce = 0;
+    uint64_t m_navHeldMask = 0;
+    int m_navHeldFrames = 0;
+    int m_navRepeatCountdown = 0;
 };
 
 } // namespace nxui

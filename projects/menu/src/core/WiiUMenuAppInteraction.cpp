@@ -177,12 +177,25 @@ void WiiUMenuApp::announceFocusedWidget(nxui::Widget* w) {
 }
 
 nxui::Texture* WiiUMenuApp::adoptEditGhostTexture(GlossyIcon* sourceIcon) {
-    // The streamer pins the source index for the whole edit operation, so the
-    // source texture already has the lifetime needed by the ghost. Re-decoding
-    // and uploading a second copy here forced a synchronous GPU drain both
-    // when movement started and when it stopped.
     m_editGhostTexture.reset();
-    return sourceIcon ? sourceIcon->texture() : nullptr;
+    if (!sourceIcon)
+        return nullptr;
+
+    // The held tile crosses between two unrelated streamer models when it
+    // enters or leaves a folder. A borrowed pool texture can be detached or
+    // recycled at that point, replacing the carried icon with a spinner (or,
+    // worse, another game's icon). Give the ghost one stable texture for the
+    // complete edit operation. The source bytes include custom SGDB icons.
+    const auto bytes = AppListLoader::loadIconData(sourceIcon->titleId());
+    if (!bytes.empty()) {
+        auto owned = std::make_unique<nxui::Texture>();
+        if (owned->loadFromMemory(app().gpu(), app().renderer(),
+                                  bytes.data(), bytes.size(), 192)) {
+            m_editGhostTexture = std::move(owned);
+            return m_editGhostTexture.get();
+        }
+    }
+    return sourceIcon->texture();
 }
 
 void WiiUMenuApp::startEditGhost(GlossyIcon* sourceIcon) {
@@ -201,8 +214,11 @@ void WiiUMenuApp::startEditGhost(GlossyIcon* sourceIcon) {
     ghost->setFocusable(false);
     ghost->setTitle(sourceIcon->title());
     ghost->setTitleId(sourceIcon->titleId());
-    ghost->setTexture(adoptEditGhostTexture(sourceIcon));
     ghost->copyWidgetPresentationFrom(*sourceIcon);
+    // copyWidgetPresentationFrom also copies the source's borrowed streamer
+    // pointer. Install the owned texture afterwards so leaving a folder cannot
+    // make the ghost inherit the first remaining game's recycled pool slot.
+    ghost->setTexture(adoptEditGhostTexture(sourceIcon));
     ghost->setIsGameCard(sourceIcon->isGameCard());
     ghost->setGameCardTexture(sourceIcon->gameCardTexture());
     ghost->setNotLaunchable(sourceIcon->isNotLaunchable());
@@ -1103,16 +1119,16 @@ void WiiUMenuApp::wireGlobalActions() {
     });
 
     root.addAction(static_cast<uint64_t>(nxui::Button::L), [this]() {
-        if (m_navigator.route() == switchu::navigation::Route::ControllerTest)
-            return;
-        m_accessibility.repeatLastAnnouncement();
-    });
-
-    root.addAction(static_cast<uint64_t>(nxui::Button::LStick), [this]() {
         if (m_editMode || m_navigator.route() != switchu::navigation::Route::Home ||
             focusRoot() != &rootBox())
             return;
         openQuickSettings();
+    });
+
+    root.addAction(static_cast<uint64_t>(nxui::Button::LStick), [this]() {
+        if (m_navigator.route() == switchu::navigation::Route::ControllerTest)
+            return;
+        m_accessibility.repeatLastAnnouncement();
     });
 
     root.addAction(static_cast<uint64_t>(nxui::Button::R), [this]() {
@@ -1121,25 +1137,6 @@ void WiiUMenuApp::wireGlobalActions() {
             m_appLayoutMode == AppLayoutMode::DynamicLine)
             return;
         cycleSortMode();
-    });
-
-    root.addAction(static_cast<uint64_t>(nxui::Button::RStick), [this]() {
-        if (m_navigator.route() != switchu::navigation::Route::Home ||
-            focusRoot() != &rootBox() || m_editMode)
-            return;
-        auto* current = focusManager().current();
-        if (!current || current->tag() != "glossy_icon") return;
-        auto* icon = static_cast<GlossyIcon*>(current);
-        const int index = findTitleIndex(icon->titleId());
-        if (index < 0 || !m_model.at(index).isApplication()) return;
-
-        const bool favorite = !m_config.isFavorite(icon->titleId());
-        m_config.setFavorite(icon->titleId(), favorite);
-        m_config.save();
-        icon->setFavorite(favorite);
-        m_audio.playSfx(favorite ? Sfx::Activate : Sfx::ToggleOff);
-        if (m_config.sortMode == 3 && m_openFolderId == 0)
-            reflowHomeGrid();
     });
 
     // The grid holds the open folder's model, so paging works inside a folder too.

@@ -159,9 +159,7 @@
     "search": "Rechercher",
     "sort_custom": "Mon ordre",
     "sort_alpha": "A-Z",
-    "sort_recent": "Récents",
-    "sort_favorites": "Favoris",
-    "favorite": "Favori"
+    "sort_recent": "Récents"
   },
   "settings": {
     "tabs": {
@@ -272,6 +270,10 @@
       "album_storage_desc": "Où les captures d'écran et vidéos sont sauvegardées.",
       "album_sd": "Carte SD",
       "album_nand": "NAND",
+      "cursor_motion": "Mouvement du curseur",
+      "cursor_motion_desc": "Choisissez si le curseur de sélection glisse ou se déplace instantanément.",
+      "cursor_translate": "Translation",
+      "cursor_teleport": "Téléportation",
       "ui_wireframe": "Wireframe UI",
       "ui_wireframe_desc": "Affiche le contour de toutes les Box pour le debug layout."
     },

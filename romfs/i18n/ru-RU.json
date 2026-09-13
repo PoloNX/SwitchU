@@ -90,6 +90,10 @@
       "album_storage_desc": "Где сохраняются скриншоты и видео.",
       "album_sd": "SD-карта",
       "album_nand": "NAND",
+      "cursor_motion": "Движение курсора",
+      "cursor_motion_desc": "Выберите плавное или мгновенное перемещение курсора выбора.",
+      "cursor_translate": "Плавно",
+      "cursor_teleport": "Мгновенно",
       "ui_wireframe": "Каркас интерфейса",
       "ui_wireframe_desc": "Показывает контуры всех Box для отладки макета."
     },
@@ -391,9 +395,7 @@
     "voice": "Голос",
     "sort_custom": "Мой порядок",
     "sort_alpha": "А-Я",
-    "sort_recent": "Недавние",
-    "sort_favorites": "Избранное",
-    "favorite": "Избранное"
+    "sort_recent": "Недавние"
   },
   "accessibility": {
     "speech": {

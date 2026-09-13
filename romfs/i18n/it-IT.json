@@ -90,6 +90,10 @@
       "album_storage_desc": "Dove vengono salvati screenshot e video.",
       "album_sd": "Scheda SD",
       "album_nand": "NAND",
+      "cursor_motion": "Movimento del cursore",
+      "cursor_motion_desc": "Scegli se il cursore di selezione scorre o si sposta istantaneamente.",
+      "cursor_translate": "Scorrimento",
+      "cursor_teleport": "Teletrasporto",
       "ui_wireframe": "Wireframe UI",
       "ui_wireframe_desc": "Mostra i contorni di tutti i widget Box per il debug del layout."
     },
@@ -391,9 +395,7 @@
     "voice": "Voce",
     "sort_custom": "Il mio ordine",
     "sort_alpha": "A-Z",
-    "sort_recent": "Recenti",
-    "sort_favorites": "Preferiti",
-    "favorite": "Preferito"
+    "sort_recent": "Recenti"
   },
   "accessibility": {
     "speech": {

@@ -57,6 +57,7 @@ public:
     void setSmallFont(nxui::Font* f) { m_smallFont = f; }
     void setIconFont(nxui::Font* f)  { m_iconFont = f; }
     void setTheme(const nxui::Theme* t);
+    void setInstantCursorMotion(bool instant) { m_cursor.setInstantMotion(instant); }
     void setInput(nxui::Input* input) { m_input = input; }
     void setCallbacks(const Callbacks& cb) { m_callbacks = cb; }
 
@@ -104,9 +105,6 @@ private:
     PowerAction m_selectedPower = PowerAction::Sleep;
 
     SelectionCursor m_cursor;
-
-    // Offscreen backdrop blur caching
-    bool m_backdropCacheValid = false;
 
     // Live state values
     float m_brightness = 0.5f;

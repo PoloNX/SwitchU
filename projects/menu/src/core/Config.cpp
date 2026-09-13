@@ -65,6 +65,7 @@ bool AppConfig::load() {
             appLayoutMode = AppLayoutMode::Grid;
     }
     readJsonOpt(j, "actionHintStyle", actionHintStyle);
+    readJsonOpt(j, "cursorMotionMode", cursorMotionMode);
     readJsonOpt(j, "uiLanguageOverride", uiLanguageOverride);
     readJsonOpt(j, "soundPreset", soundPreset);
     readJsonOpt(j, "defaultProfileEnabled", defaultProfileEnabled);
@@ -89,18 +90,6 @@ bool AppConfig::load() {
                 lastOpened.emplace_back(titleId, value.get<std::uint64_t>());
         }
     }
-    favoriteTitleIds.clear();
-    if (auto it = j.find("favorites"); it != j.end() && it->is_array()) {
-        for (const auto& value : *it) {
-            std::uint64_t titleId = 0;
-            if (value.is_string())
-                titleId = std::strtoull(value.get_ref<const std::string&>().c_str(), nullptr, 16);
-            else if (value.is_number_unsigned())
-                titleId = value.get<std::uint64_t>();
-            if (titleId != 0 && !isFavorite(titleId))
-                favoriteTitleIds.push_back(titleId);
-        }
-    }
     readJsonOpt(j, "themePreset", themePreset);
     readJsonOpt(j, "folderStyle", folderStyle);
     const bool hasShowCoverKey = j.find("folderShowCover") != j.end();
@@ -110,15 +99,16 @@ bool AppConfig::load() {
     if (musicVolume > 1.f) musicVolume = 1.f;
     if (sfxVolume   < 0.f) sfxVolume   = 0.f;
     if (sfxVolume   > 1.f) sfxVolume   = 1.f;
-    gridColumns = std::clamp(gridColumns, 3, 8);
-    gridRows = std::clamp(gridRows, 2, 5);
+    gridColumns = std::clamp(gridColumns, 1, 8);
+    gridRows = std::clamp(gridRows, 1, 5);
     if (actionHintStyle != "panel" && actionHintStyle != "capsules")
         actionHintStyle = "capsules";
+    cursorMotionMode = std::clamp(cursorMotionMode, 0, 1);
     if (uiLanguageOverride.empty()) uiLanguageOverride = "auto";
     if (soundPreset.empty()) soundPreset = "wiiu";
     if (!defaultProfileEnabled) defaultProfileUid.clear();
     accessibilitySpeechRate = std::clamp(accessibilitySpeechRate, 120, 320);
-    sortMode = std::clamp(sortMode, 0, 3);
+    sortMode = std::clamp(sortMode, 0, 2);
     if (themePreset.empty()) themePreset = "Default Light";
     if (!hasShowCoverKey) {
         // Local 9-style table used while vetting Cover/Plate as separate styles.
@@ -147,7 +137,7 @@ bool AppConfig::load() {
 }
 
 bool AppConfig::save() const {
-    // Settings closes are persisted by a worker while launch/favorite actions
+    // Settings closes are persisted by a worker while launch actions
     // can save on the UI thread. Both use the same staging filename, so those
     // writes must never overlap.
     const std::lock_guard<std::mutex> saveLock(g_configSaveMutex);
@@ -160,10 +150,11 @@ bool AppConfig::save() const {
     j["musicEnabled"] = musicEnabled;
     j["musicVolume"] = musicVolume;
     j["sfxVolume"] = sfxVolume;
-    j["gridColumns"] = std::clamp(gridColumns, 3, 8);
-    j["gridRows"] = std::clamp(gridRows, 2, 5);
+    j["gridColumns"] = std::clamp(gridColumns, 1, 8);
+    j["gridRows"] = std::clamp(gridRows, 1, 5);
     j["appLayoutMode"] = (appLayoutMode == AppLayoutMode::DynamicLine) ? "dynamic_line" : "grid";
     j["actionHintStyle"] = actionHintStyle == "panel" ? "panel" : "capsules";
+    j["cursorMotionMode"] = std::clamp(cursorMotionMode, 0, 1);
     j["uiLanguageOverride"] = uiLanguageOverride;
     j["soundPreset"] = soundPreset;
     j["defaultProfileEnabled"] = defaultProfileEnabled;
@@ -177,7 +168,7 @@ bool AppConfig::save() const {
     j["accessibilitySpeechRate"] = std::clamp(accessibilitySpeechRate, 120, 320);
     j["steamGridDbEnabled"] = steamGridDbEnabled;
     j["steamGridDbApiKey"] = steamGridDbApiKey;
-    j["sortMode"] = std::clamp(sortMode, 0, 3);
+    j["sortMode"] = std::clamp(sortMode, 0, 2);
     j["lastOpenedSequence"] = lastOpenedSequence;
     {
         nlohmann::json opened = nlohmann::json::object();
@@ -188,16 +179,6 @@ bool AppConfig::save() const {
             opened[key] = entry.second;
         }
         j["lastOpened"] = std::move(opened);
-    }
-    {
-        nlohmann::json favorites = nlohmann::json::array();
-        char key[17];
-        for (const auto titleId : favoriteTitleIds) {
-            std::snprintf(key, sizeof(key), "%016llX",
-                          static_cast<unsigned long long>(titleId));
-            favorites.push_back(std::string(key));
-        }
-        j["favorites"] = std::move(favorites);
     }
     j["themePreset"] = themePreset;
     j["folderStyle"] = std::clamp(folderStyle, 0, switchu::folders::kFolderStyleCount - 1);

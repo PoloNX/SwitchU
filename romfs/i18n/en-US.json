@@ -159,9 +159,7 @@
     "search": "Search",
     "sort_custom": "My order",
     "sort_alpha": "A-Z",
-    "sort_recent": "Recent",
-    "sort_favorites": "Favorites",
-    "favorite": "Favorite"
+    "sort_recent": "Recent"
   },
   "settings": {
     "tabs": {
@@ -272,6 +270,10 @@
       "album_storage_desc": "Where screenshots and videos are saved.",
       "album_sd": "SD Card",
       "album_nand": "NAND",
+      "cursor_motion": "Cursor Movement",
+      "cursor_motion_desc": "Choose whether the selection cursor slides or moves instantly.",
+      "cursor_translate": "Translate",
+      "cursor_teleport": "Teleport",
       "ui_wireframe": "UI Wireframe",
       "ui_wireframe_desc": "Show outlines of all Box widgets for layout debugging."
     },

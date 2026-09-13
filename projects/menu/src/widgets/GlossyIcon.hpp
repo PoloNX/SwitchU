@@ -35,8 +35,6 @@ public:
 
     void setSuspended(bool s)     { m_suspended = s; }
     bool isSuspended() const      { return m_suspended; }
-    void setFavorite(bool favorite) { m_isFavorite = favorite; }
-    bool isFavorite() const { return m_isFavorite; }
     void setMotionPaused(bool paused) { m_motionPaused = paused; }
     bool motionPaused() const { return m_motionPaused; }
 
@@ -97,11 +95,9 @@ public:
         m_consoleBatteryCharging = charging;
     }
     void setBatteryIconTextures(nxui::Texture* console,
-                                nxui::Texture* joyconLeft,
-                                nxui::Texture* joyconRight) {
+                                nxui::Texture*,
+                                nxui::Texture*) {
         m_batteryConsoleIcon = console;
-        m_batteryJoyconLeftIcon = joyconLeft;
-        m_batteryJoyconRightIcon = joyconRight;
     }
     void setWideGameTextures(nxui::Texture* hero, nxui::Texture* logo) {
         m_wideGameHero = hero;
@@ -133,24 +129,14 @@ private:
     bool        m_focused = false;
     bool        m_focusable = true;
     bool        m_suspended = false;
-    bool        m_isFavorite = false;
     bool        m_motionPaused = false;
     bool        m_isGameCard = false;
     bool        m_notLaunchable = false;
     nxui::Color m_loadingColor = nxui::Color::white();
     float       m_suspendPulse = 0.f;
-    float       m_batteryRefreshTimer = 0.f;
     int         m_consoleBatteryPercent = 0;
     bool        m_consoleBatteryCharging = false;
-    struct ControllerBattery {
-        int percent = 0;
-        bool charging = false;
-        std::string label;
-    };
-    std::vector<ControllerBattery> m_controllerBatteries;
     nxui::Texture* m_batteryConsoleIcon = nullptr;
-    nxui::Texture* m_batteryJoyconLeftIcon = nullptr;
-    nxui::Texture* m_batteryJoyconRightIcon = nullptr;
 
     nxui::AnimatedFloat m_animScale;
     nxui::AnimatedFloat m_appearOpacity;
