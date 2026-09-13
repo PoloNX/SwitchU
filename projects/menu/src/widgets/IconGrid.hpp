@@ -112,7 +112,6 @@ private:
     // full-library rect rebuild while the line is at rest.
     int m_lineLayoutCacheCount = -1;
     float m_lineLayoutCacheOffset = 0.f;
-    float m_lineLayoutCacheReveal = -1.f;
     nxui::Rect m_lineLayoutCacheRect{};
 
     std::vector<std::shared_ptr<GlossyIcon>> m_allIcons;

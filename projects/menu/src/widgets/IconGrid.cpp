@@ -616,16 +616,14 @@ void IconGrid::onUpdate(float dt) {
                                    nxui::Easing::outCubic);
         }
 
-        // Every rect on the line is a pure function of the scroll offset, the
-        // reveal value and the grid rect. At rest all three are constant, so
-        // recomputing them each frame produced identical values for the whole
-        // installed library. Recompute only when one of those inputs moved.
+        // Every rect on the line is a pure function of the scroll offset and
+        // the grid rect. At rest both are constant, so recomputing them each
+        // frame produced identical values for the whole installed library.
+        // Recompute only when one of those inputs moved.
         const float offsetNow = m_lineScrollOffset.value();
-        const float revealNow = m_layoutReveal.value();
         const bool layoutDirty =
             m_lineLayoutCacheCount != (int)m_allIcons.size()
             || std::abs(m_lineLayoutCacheOffset - offsetNow) > 0.0001f
-            || std::abs(m_lineLayoutCacheReveal - revealNow) > 0.0001f
             || std::abs(m_lineLayoutCacheRect.x - m_rect.x) > 0.0001f
             || std::abs(m_lineLayoutCacheRect.y - m_rect.y) > 0.0001f
             || std::abs(m_lineLayoutCacheRect.width - m_rect.width) > 0.0001f
@@ -637,7 +635,6 @@ void IconGrid::onUpdate(float dt) {
             }
             m_lineLayoutCacheCount = (int)m_allIcons.size();
             m_lineLayoutCacheOffset = offsetNow;
-            m_lineLayoutCacheReveal = revealNow;
             m_lineLayoutCacheRect = m_rect;
         }
         return;
