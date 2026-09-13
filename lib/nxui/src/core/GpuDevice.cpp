@@ -273,9 +273,29 @@ dk::UniqueMemBlock GpuDevice::allocImageMemory(uint32_t size) {
                      (unsigned long long)kDefaultImageBudget);
         return {};  // return empty MemBlock — caller should check validity
     }
+    u64 total = 0;
+    u64 used = 0;
+    if (R_SUCCEEDED(svcGetInfo(&total, InfoType_TotalMemorySize, CUR_PROCESS_HANDLE, 0)) &&
+        R_SUCCEEDED(svcGetInfo(&used, InfoType_UsedMemorySize, CUR_PROCESS_HANDLE, 0)) &&
+        total > used) {
+        constexpr u64 kAllocationHeadroom = 24ull * 1024ull * 1024ull;
+        const u64 freeMemory = total - used;
+        if (freeMemory < static_cast<u64>(size) + kAllocationHeadroom) {
+            GpuDevice::logGpu(
+                "[GpuDevice] refusing %u image bytes: free=%llu headroom=%llu\n",
+                size,
+                static_cast<unsigned long long>(freeMemory),
+                static_cast<unsigned long long>(kAllocationHeadroom));
+            return {};
+        }
+    }
     auto blk = dk::MemBlockMaker{m_dev, size}
         .setFlags(DkMemBlockFlags_GpuCached | DkMemBlockFlags_Image)
         .create();
+    if (!blk) {
+        GpuDevice::logGpu("[GpuDevice] image allocation failed (%u bytes)\n", size);
+        return {};
+    }
     m_imageMemUsed += size;
     return blk;
 }
@@ -321,6 +341,11 @@ GpuDevice::ImageAlloc GpuDevice::allocImageFromPool(uint32_t size, uint32_t alig
     auto blk = dk::MemBlockMaker{m_dev, chunkSize}
         .setFlags(DkMemBlockFlags_GpuCached | DkMemBlockFlags_Image)
         .create();
+    if (!blk) {
+        GpuDevice::logGpu("[GpuDevice] pooled image allocation failed (%u bytes)\n",
+                          chunkSize);
+        return {};
+    }
     m_imageChunks.push_back({std::move(blk), chunkSize, size});
     m_imageMemUsed += size;
     m_poolMemUsed  += size;
@@ -340,6 +365,25 @@ void GpuDevice::resetImagePool() {
 bool GpuDevice::uploadTexture(dk::Image& dst, const void* pixels, uint32_t size,
                               uint32_t w, uint32_t h)
 {
+    // deko3d does not report a bad upload, it calls svcBreak: a crash report
+    // resolving to dk::detail::RaiseError under ImageLayout::calcLevelOffset is
+    // what that looks like, and one arrived from a 1TB card where the menu had
+    // uploaded a great many icons. Nothing here checked the arguments first, so
+    // a zero-sized or mismatched upload took the process with it instead of
+    // failing. These are the cases that can be caught without asking deko3d.
+    if (!pixels || size == 0 || w == 0 || h == 0) {
+        std::fprintf(stderr,
+                     "[GpuDevice] refusing texture upload %ux%u size=%u pixels=%p\n",
+                     w, h, size, pixels);
+        return false;
+    }
+    if (size < (uint64_t)w * h * 4) {
+        std::fprintf(stderr,
+                     "[GpuDevice] refusing texture upload %ux%u: %u bytes is short of %llu\n",
+                     w, h, size, (unsigned long long)((uint64_t)w * h * 4));
+        return false;
+    }
+
     if (m_uploadBatchActive) {
         const uint32_t stagingOffset = m_stagingPool.alloc(size, 256);
         if (stagingOffset == UINT32_MAX) {

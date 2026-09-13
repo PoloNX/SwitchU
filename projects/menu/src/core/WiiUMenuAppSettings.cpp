@@ -231,6 +231,7 @@ void WiiUMenuApp::createSettings() {
     m_settings->setFont(&m_fontNormal);
     m_settings->setSmallFont(&m_fontSmall);
     m_settings->setTheme(&m_theme);
+    m_settings->setInstantCursorMotion(m_config.cursorMotionMode == 1);
     m_settings->setWireframeState(m_showWireframe);
     m_settings->setGridLayoutState(m_config.gridColumns, m_config.gridRows);
     m_settings->setUiLanguageOverride(m_config.uiLanguageOverride);
@@ -271,14 +272,14 @@ void WiiUMenuApp::createSettings() {
         app().renderer().setBoxWireframeEnabled(enabled);
     });
     m_settings->onGridColumnsChange([this](int cols) {
-        cols = std::clamp(cols, 3, 8);
+        cols = std::clamp(cols, 1, 8);
         if (m_config.gridColumns == cols)
             return;
         m_config.gridColumns = cols;
         reflowHomeGrid();
     });
     m_settings->onGridRowsChange([this](int rows) {
-        rows = std::clamp(rows, 2, 5);
+        rows = std::clamp(rows, 1, 5);
         if (m_config.gridRows == rows)
             return;
         m_config.gridRows = rows;
@@ -515,45 +516,142 @@ void WiiUMenuApp::createSettings() {
 }
 
 void WiiUMenuApp::editSteamGridDbApiKey() {
+    auto& i18n = nxui::I18n::instance();
+    requestTextEntry(i18n.tr("settings.steamgriddb.api_key", "SteamGridDB API key"),
+        i18n.tr("settings.steamgriddb.api_key_guide", "Enter your API key"),
+        m_config.steamGridDbApiKey, 192, true,
+        [this](const std::string& value) {
+            m_config.steamGridDbApiKey = value;
+            m_config.save();
+            if (!m_settings) return;
+            m_settings->setSteamGridDbState(m_config.steamGridDbEnabled,
+                                             !value.empty());
+            m_settings->refreshCurrentTabWidgets();
+            m_settings->requestToast(value.empty()
+                ? nxui::I18n::instance().tr("settings.steamgriddb.key_cleared", "API key cleared.")
+                : nxui::I18n::instance().tr("settings.steamgriddb.key_saved", "API key saved."));
+        });
+}
+
+void WiiUMenuApp::createQuickSettings() {
+    if (m_quickSettings) return;
+
+    m_quickSettings = std::make_shared<QuickSettingsOverlay>();
+    m_quickSettings->setFont(&m_fontNormal);
+    m_quickSettings->setSmallFont(&m_fontSmall);
+    m_quickSettings->setIconFont(&m_fontIcons);
+    m_quickSettings->setTheme(&m_theme);
+    m_quickSettings->setInstantCursorMotion(m_config.cursorMotionMode == 1);
+    m_quickSettings->setInput(&app().input());
+
+    QuickSettingsOverlay::Callbacks callbacks;
+    callbacks.onBgmVolumeChanged = [this](float value) {
+        m_config.musicVolume = value;
+        m_audio.setVolume(value);
+    };
+    callbacks.onSfxVolumeChanged = [this](float value) {
+        m_config.sfxVolume = value;
+        m_audio.setSfxVolume(value);
+    };
+    callbacks.onSleepRequested = [this]() {
+        if (!m_dialog) return;
+        auto& i18n = nxui::I18n::instance();
+        m_dialogReturnFocus = m_quickSettings.get();
+        m_dialog->show(i18n.tr("power.title", "Power"),
+            i18n.tr("settings.sleep.sleep_confirm", "Put the console into sleep mode?"),
+            {{i18n.tr("button.cancel", "Cancel"), []() {}, true},
+             {i18n.tr("power.sleep", "Sleep"), [this]() {
 #ifdef SWITCHU_MENU
-    SwkbdConfig keyboard{};
-    char text[193]{};
-    Result rc = swkbdCreate(&keyboard, 0);
-    if (R_FAILED(rc)) {
-        DebugLog::log("[steamgriddb] keyboard create failed rc=0x%X", rc);
-        if (m_settings)
-            m_settings->requestToast(nxui::I18n::instance().tr(
-                "settings.steamgriddb.keyboard_error", "The keyboard could not be opened."));
-        return;
-    }
-
-    swkbdConfigMakePresetPassword(&keyboard);
-    swkbdConfigSetGuideText(&keyboard, "SteamGridDB API key");
-    swkbdConfigSetStringLenMax(&keyboard, 192);
-    swkbdConfigSetInitialText(&keyboard, m_config.steamGridDbApiKey.c_str());
-    rc = swkbdShow(&keyboard, text, sizeof(text));
-    swkbdClose(&keyboard);
-    if (R_FAILED(rc)) {
-        DebugLog::log("[steamgriddb] keyboard cancelled rc=0x%X", rc);
-        if (m_settings) focusManager().setFocus(m_settings.get());
-        return;
-    }
-
-    m_config.steamGridDbApiKey = text;
-    m_config.save();
-    if (m_settings) {
-        m_settings->setSteamGridDbState(m_config.steamGridDbEnabled,
-                                        !m_config.steamGridDbApiKey.empty());
-        m_settings->refreshCurrentTabWidgets();
-        m_settings->requestToast(m_config.steamGridDbApiKey.empty()
-            ? nxui::I18n::instance().tr("settings.steamgriddb.key_cleared", "API key cleared.")
-            : nxui::I18n::instance().tr("settings.steamgriddb.key_saved", "API key saved."));
-        focusManager().setFocus(m_settings.get());
-    }
+                 m_launcher.enterSleep();
 #else
-    if (m_settings)
-        m_settings->requestToast("API-key input is available in the console build.");
+                 app().requestExit();
 #endif
+             }, true}}, 1, {});
+        focusManager().setFocus(m_dialog.get());
+    };
+    callbacks.onRebootRequested = [this]() {
+        if (!m_dialog) return;
+        auto& i18n = nxui::I18n::instance();
+        m_dialogReturnFocus = m_quickSettings.get();
+        m_dialog->show(i18n.tr("power.title", "Power"),
+            i18n.tr("settings.sleep.reboot_confirm", "Restart the console?"),
+            {{i18n.tr("button.cancel", "Cancel"), []() {}, true},
+             {i18n.tr("power.reboot", "Reboot"), [this]() {
+#ifdef SWITCHU_MENU
+                 m_launcher.reboot();
+#else
+                 app().requestExit();
+#endif
+             }, true}}, 1, {});
+        focusManager().setFocus(m_dialog.get());
+    };
+    callbacks.onShutdownRequested = [this]() {
+        if (!m_dialog) return;
+        auto& i18n = nxui::I18n::instance();
+        m_dialogReturnFocus = m_quickSettings.get();
+        m_dialog->show(i18n.tr("power.title", "Power"),
+            i18n.tr("settings.sleep.shutdown_confirm", "Power off the console?"),
+            {{i18n.tr("button.cancel", "Cancel"), []() {}, true},
+             {i18n.tr("power.shutdown", "Shutdown"), [this]() {
+#ifdef SWITCHU_MENU
+                 m_launcher.shutdown();
+#else
+                 app().requestExit();
+#endif
+             }, true}}, 1, {});
+        focusManager().setFocus(m_dialog.get());
+    };
+    callbacks.onClose = [this]() { closeQuickSettings(); };
+    callbacks.onNavigateSfx = [this]() { m_audio.playSfx(Sfx::Navigate); };
+    callbacks.onActivateSfx = [this]() { m_audio.playSfx(Sfx::Activate); };
+    callbacks.onToggleOffSfx = [this]() { m_audio.playSfx(Sfx::ToggleOff); };
+    m_quickSettings->setCallbacks(callbacks);
+
+    if (m_overlayLayer) {
+        m_overlayLayer->addChild(m_quickSettings);
+        // Confirmation dialogs and transition overlays must remain above the
+        // drawer even though it is created lazily.
+        for (const auto& overlay : {std::static_pointer_cast<nxui::Widget>(m_dialog),
+                                   std::static_pointer_cast<nxui::Widget>(m_progressDialog),
+                                   std::static_pointer_cast<nxui::Widget>(m_launchAnim),
+                                   std::static_pointer_cast<nxui::Widget>(m_pointerCursor)}) {
+            if (!overlay) continue;
+            m_overlayLayer->removeChild(overlay.get());
+            m_overlayLayer->addChild(overlay);
+        }
+    }
+}
+
+void WiiUMenuApp::openQuickSettings() {
+    createQuickSettings();
+    if (!m_quickSettings || m_quickSettings->isActive() || m_editMode ||
+        (m_dialog && m_dialog->isActive()) ||
+        (m_userSelect && m_userSelect->isActive()))
+        return;
+    m_dialogReturnFocus = focusManager().current();
+    m_quickSettings->setInitialValues(0.5f, m_config.musicVolume,
+                                      m_config.sfxVolume, false, true);
+    m_quickSettings->setBatteryStatus(m_consoleBatteryPercent,
+                                      m_consoleBatteryCharging);
+    m_quickSettings->show();
+    focusManager().setFocus(m_quickSettings.get());
+    if (m_cursor) m_cursor->setVisible(false);
+    m_audio.playSfx(Sfx::ModalShow);
+}
+
+void WiiUMenuApp::closeQuickSettings() {
+    if (!m_quickSettings || !m_quickSettings->isActive()) return;
+    m_quickSettings->hide();
+    m_config.save();
+    nxui::Widget* target = m_dialogReturnFocus;
+    if (!isCurrentFocusableWidget(target) && m_grid)
+        target = m_grid->focusManager().current();
+    if (isCurrentFocusableWidget(target)) {
+        m_suppressNextNavigateSfx = true;
+        focusManager().setFocus(target);
+    }
+    m_dialogReturnFocus = nullptr;
+    m_audio.playSfx(Sfx::ModalHide);
 }
 
 void WiiUMenuApp::startSteamGridDbScrape() {
@@ -629,26 +727,16 @@ void WiiUMenuApp::openSteamGridDbPicker(GameOptionsScreen::ArtworkKind kind,
 }
 
 void WiiUMenuApp::editSteamGridDbPickerQuery() {
-#ifdef SWITCHU_MENU
     if (!m_steamGridDbPicker || !m_steamGridDbPicker->isActive()) return;
-    SwkbdConfig keyboard{};
-    char text[129]{};
-    if (R_FAILED(swkbdCreate(&keyboard, 0))) return;
-    swkbdConfigMakePresetDefault(&keyboard);
-    swkbdConfigSetGuideText(&keyboard, "SteamGridDB search name");
-    swkbdConfigSetStringLenMax(&keyboard, 128);
-    swkbdConfigSetInitialText(&keyboard, m_steamGridDbPicker->query().c_str());
-    const Result rc = swkbdShow(&keyboard, text, sizeof(text));
-    swkbdClose(&keyboard);
-    focusManager().setFocus(m_steamGridDbPicker.get());
-    if (R_FAILED(rc) || text[0] == '\0') return;
     const auto kind = m_steamGridDbPicker->artworkKind();
     const auto mappedKind = kind == SteamGridDbManager::ArtworkKind::Logo
         ? GameOptionsScreen::ArtworkKind::Logo
         : kind == SteamGridDbManager::ArtworkKind::Icon
             ? GameOptionsScreen::ArtworkKind::Icon : GameOptionsScreen::ArtworkKind::Hero;
-    openSteamGridDbPicker(mappedKind, text);
-#endif
+    requestTextEntry("SteamGridDB", "Search name", m_steamGridDbPicker->query(),
+        128, false, [this, mappedKind](const std::string& value) {
+            if (!value.empty()) openSteamGridDbPicker(mappedKind, value);
+        });
 }
 
 void WiiUMenuApp::applySteamGridDbCandidate(
@@ -841,6 +929,7 @@ void WiiUMenuApp::createGameOptions() {
     m_gameOptions->setFont(&m_fontNormal);
     m_gameOptions->setSmallFont(&m_fontSmall);
     m_gameOptions->setTheme(&m_theme);
+    m_gameOptions->setInstantCursorMotion(m_config.cursorMotionMode == 1);
     m_gameOptions->setAccessibilityVoiceEnabled(m_config.accessibilityEnabled);
     m_gameOptions->setAccessibilitySpeechPreferences(m_config.accessibilitySpeakHints,
                                                      m_config.accessibilitySpeakPosition);
@@ -871,6 +960,7 @@ void WiiUMenuApp::createFolderOptions() {
     m_folderOptions->setFont(&m_fontNormal);
     m_folderOptions->setSmallFont(&m_fontSmall);
     m_folderOptions->setTheme(&m_theme);
+    m_folderOptions->setInstantCursorMotion(m_config.cursorMotionMode == 1);
     m_folderOptions->setAccessibilityVoiceEnabled(m_config.accessibilityEnabled);
     m_folderOptions->setAccessibilitySpeechPreferences(m_config.accessibilitySpeakHints,
                                                        m_config.accessibilitySpeakPosition);
@@ -1009,14 +1099,23 @@ void WiiUMenuApp::createThemeShop() {
     m_themeShop->setFont(&m_fontNormal);
     m_themeShop->setSmallFont(&m_fontSmall);
     m_themeShop->setTheme(&m_theme);
+    m_themeShop->setInstantCursorMotion(m_config.cursorMotionMode == 1);
     m_themeShop->setThreadPool(&m_threadPool);
     m_themeShop->setRenderContext(&app().gpu(), &app().renderer());
     m_themeShop->setMusicState(m_audio.isPlaying(), m_audio.volume(), m_audio.sfxVolume());
     m_themeShop->setGridLayoutState(m_config.gridColumns, m_config.gridRows);
     m_themeShop->setActionHintStyleState(m_config.actionHintStyle);
+    m_themeShop->setCursorMotionModeState(m_config.cursorMotionMode);
     m_themeShop->setAccessibilityVoiceEnabled(m_config.accessibilityEnabled);
     m_themeShop->setAccessibilitySpeechPreferences(m_config.accessibilitySpeakHints,
                                                    m_config.accessibilitySpeakPosition);
+    m_themeShop->onSearchRequest([this](const std::string& current) {
+        requestTextEntry(nxui::I18n::instance().tr("hint.search", "Search"),
+            nxui::I18n::instance().tr("themeshop.search.guide", "Search themes"),
+            current, 64, false, [this](const std::string& query) {
+                if (m_themeShop) m_themeShop->setSearchQuery(query);
+            });
+    });
 
     m_themeShop->onMusicEnabledChange([this](bool enabled) {
         if (enabled) m_audio.play(); else m_audio.stop();
@@ -1031,14 +1130,14 @@ void WiiUMenuApp::createThemeShop() {
         m_config.sfxVolume = v;
     });
     m_themeShop->onGridColumnsChange([this](int cols) {
-        cols = std::clamp(cols, 3, 8);
+        cols = std::clamp(cols, 1, 8);
         if (m_config.gridColumns == cols)
             return;
         m_config.gridColumns = cols;
         reflowHomeGrid();
     });
     m_themeShop->onGridRowsChange([this](int rows) {
-        rows = std::clamp(rows, 2, 5);
+        rows = std::clamp(rows, 1, 5);
         if (m_config.gridRows == rows)
             return;
         m_config.gridRows = rows;
@@ -1046,6 +1145,19 @@ void WiiUMenuApp::createThemeShop() {
     });
     m_themeShop->onActionHintStyleChange([this](int style) {
         m_config.actionHintStyle = style == 0 ? "panel" : "capsules";
+    });
+    m_themeShop->onCursorMotionModeChange([this](int mode) {
+        m_config.cursorMotionMode = std::clamp(mode, 0, 1);
+        const bool instant = m_config.cursorMotionMode == 1;
+        if (m_cursor) m_cursor->setInstantMotion(instant);
+        if (m_settings) m_settings->setInstantCursorMotion(instant);
+        if (m_themeShop) m_themeShop->setInstantCursorMotion(instant);
+        if (m_gameOptions) m_gameOptions->setInstantCursorMotion(instant);
+        if (m_folderOptions) m_folderOptions->setInstantCursorMotion(instant);
+        if (m_quickSettings) m_quickSettings->setInstantCursorMotion(instant);
+        if (m_dialog) m_dialog->cursor().setInstantMotion(instant);
+        if (m_userSelect) m_userSelect->cursor().setInstantMotion(instant);
+        updateCursor();
     });
     m_themeShop->onNextTrack([this]() {
         m_audio.nextTrack();
@@ -1801,6 +1913,10 @@ void WiiUMenuApp::applyTheme() {
         m_folderOptions->setTheme(&m_theme);
     if (m_controllerTest)
         m_controllerTest->setTheme(&m_theme);
+    if (m_quickSettings)
+        m_quickSettings->setTheme(&m_theme);
+    if (m_textEntry)
+        m_textEntry->setTheme(&m_theme);
 
     m_sidebar.applyTheme(m_theme);
     DebugLog::log("[theme-apply] widget recolor complete");

@@ -90,6 +90,10 @@
       "album_storage_desc": "Dove vengono salvati screenshot e video.",
       "album_sd": "Scheda SD",
       "album_nand": "NAND",
+      "cursor_motion": "Movimento del cursore",
+      "cursor_motion_desc": "Scegli se il cursore di selezione scorre o si sposta istantaneamente.",
+      "cursor_translate": "Scorrimento",
+      "cursor_teleport": "Teletrasporto",
       "ui_wireframe": "Wireframe UI",
       "ui_wireframe_desc": "Mostra i contorni di tutti i widget Box per il debug del layout."
     },
@@ -388,7 +392,10 @@
   },
   "hint": {
     "repeat": "Ripeti",
-    "voice": "Voce"
+    "voice": "Voce",
+    "sort_custom": "Il mio ordine",
+    "sort_alpha": "A-Z",
+    "sort_recent": "Recenti"
   },
   "accessibility": {
     "speech": {
@@ -514,5 +521,38 @@
       "skip_all": "Salta tutto",
       "test": "Test"
     }
+  },
+  "text_entry": {
+    "erase": "Cancella",
+    "full": "Lunghezza massima raggiunta",
+    "hint": "A: digita   X: cancella   Y: maiuscole   L/R: simboli   Plus: conferma   B: annulla",
+    "letters": "ABC",
+    "opened": "Tastiera a schermo. Croce direzionale per scegliere un tasto, A per digitare, X per cancellare, Plus per confermare, B per annullare.",
+    "shift": "Maiuscole",
+    "space": "Spazio",
+    "symbols": "?12#"
+  },
+  "quicksettings": {
+    "title": "Impostazioni rapide",
+    "close_hint": "[B] Chiudi",
+    "battery": "BATTERIA",
+    "charging": "⚡ In carica",
+    "discharging": "Scaricamento",
+    "hardware_temp": "TEMPERATURA",
+    "temp_optimal": "Ottimale",
+    "temp_warm": "Caldo",
+    "brightness": "☀ Luminosità",
+    "bgm_volume": "♫ Volume musica",
+    "sfx_volume": "♪ Effetti sonori",
+    "airplane_mode": "✈ Modalità aereo",
+    "wifi": "Wi-Fi",
+    "on": "ON",
+    "off": "OFF",
+    "power_options": "OPZIONI DI ENERGIA",
+    "sleep": "Sospendi",
+    "reboot": "Riavvia",
+    "power_off": "Spegni",
+    "hint_adjust": "Regola",
+    "hint_shortcut": "Impostazioni rapide"
   }
 }

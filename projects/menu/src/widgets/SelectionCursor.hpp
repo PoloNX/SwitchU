@@ -15,6 +15,8 @@ public:
     void setBorderWidth(float w)   { m_borderWidth = w; }
     void setMotionPaused(bool paused) { m_motionPaused = paused; }
     bool motionPaused() const { return m_motionPaused; }
+    void setInstantMotion(bool instant);
+    bool instantMotion() const { return m_instantMotion; }
 
 protected:
     void onUpdate(float dt) override;
@@ -31,5 +33,6 @@ private:
     float m_waveSpeed = 3.5f;
     bool  m_initialized = false;
     bool  m_motionPaused = false;
+    bool  m_instantMotion = false;
+    float m_teleportPulse = 0.f;
 };
-

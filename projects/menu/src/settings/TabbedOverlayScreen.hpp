@@ -41,6 +41,7 @@ public:
     void setFont(nxui::Font* f)      { m_font = f; }
     void setSmallFont(nxui::Font* f)  { m_smallFont = f; }
     void setTheme(const nxui::Theme* t);
+    void setInstantCursorMotion(bool instant) { m_focusCursor.setInstantMotion(instant); }
 
     void show();
     void hide();

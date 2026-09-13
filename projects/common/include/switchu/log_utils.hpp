@@ -5,7 +5,9 @@
 #include <cstring>
 #include <ctime>
 #include <filesystem>
+#include <fstream>
 #include <string>
+#include <string_view>
 #include <sys/time.h>
 #include <system_error>
 #include <vector>
@@ -128,6 +130,64 @@ inline void prune_archived_logs(const char* log_dir, const char* base_name, cons
         std::filesystem::remove(path, ec);
     }
 }
+
+// Batches log lines before touching the SD card.
+//
+// Every line used to force an fflush. Menu startup emits ~50 lines back to
+// back, so that was ~50 blocking SD writes on the critical path before the
+// first frame, plus a stall whenever anything logged mid-frame. Lines are now
+// accumulated and written once the buffer fills or the sink is closed.
+class buffered_sink {
+public:
+    static constexpr size_t flush_threshold_bytes = 4096;
+
+    bool is_open() const { return m_file.is_open(); }
+
+    void open(const char* path, bool truncate) {
+        m_file.open(path, truncate ? std::ios::out | std::ios::trunc
+                                   : std::ios::out | std::ios::app);
+    }
+
+    void append(std::string_view line) {
+        if (!m_file.is_open())
+            return;
+        if (m_pending.empty())
+            m_pending_since = std::time(nullptr);
+        m_pending.append(line);
+        m_pending.push_back('\n');
+        if (m_pending.size() >= flush_threshold_bytes)
+            flush();
+    }
+
+    // For long-lived processes that never close the sink (the daemon), so a
+    // handful of buffered lines don't sit unwritten indefinitely.
+    void flush_if_stale(std::time_t max_age_seconds) {
+        if (m_pending.empty())
+            return;
+        if (std::time(nullptr) - m_pending_since >= max_age_seconds)
+            flush();
+    }
+
+    void flush() {
+        if (!m_file.is_open() || m_pending.empty())
+            return;
+        m_file.write(m_pending.data(), static_cast<std::streamsize>(m_pending.size()));
+        m_file.flush();
+        m_pending.clear();
+    }
+
+    void close() {
+        if (!m_file.is_open())
+            return;
+        flush();
+        m_file.close();
+    }
+
+private:
+    std::ofstream m_file;
+    std::string m_pending;
+    std::time_t m_pending_since = 0;
+};
 
 inline bool rotate_current_log(const char* log_dir, const char* base_name, const char* extension, size_t keep_count) {
     char current_path[256];

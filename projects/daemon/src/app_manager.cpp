@@ -10,7 +10,7 @@ constexpr std::uint64_t kGracefulExitTimeoutNs = 15'000'000'000ULL;
 constexpr std::uint64_t kShutdownExitTimeoutNs = 5'000'000'000ULL;
 
 bool startupUserRequiresInteractiveSelection(std::uint8_t account, std::uint8_t option) {
-    return account == 1 && option == 0;
+    return account == 2 || (account == 1 && option == 0);
 }
 
 void ensureSaveData(std::uint64_t applicationId,
@@ -238,6 +238,11 @@ Result ApplicationSession::launch(std::uint64_t titleId, AccountUid uid) {
         switchu::FileLog::log("[app] nsTouchApplication non-fatal rc=0x%X", touchRc);
 
     const LaunchMetadata metadata = ensureApplicationSaveData(titleId, uid);
+    switchu::FileLog::log(
+        "[app] launch metadata startup_user=%u option=%u accepts_user=%d needs_user=%d",
+        static_cast<unsigned>(metadata.startupUserAccount),
+        static_cast<unsigned>(metadata.startupUserAccountOption),
+        metadata.acceptsUser ? 1 : 0, metadata.needsUser ? 1 : 0);
     Result rc = appletCreateApplication(&m_application, titleId);
     if (R_FAILED(rc))
         return failTransition(rc, "create", false);

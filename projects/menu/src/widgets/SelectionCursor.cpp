@@ -9,6 +9,21 @@ SelectionCursor::SelectionCursor() {
     m_cornerRadius.setImmediate(18.f);
 }
 
+void SelectionCursor::setInstantMotion(bool instant) {
+    m_instantMotion = instant;
+    if (!instant || !m_initialized)
+        return;
+
+    // Switching modes while the cursor is already travelling should take
+    // effect immediately, rather than waiting for the next focus change.
+    m_x.setImmediate(m_x.target());
+    m_y.setImmediate(m_y.target());
+    m_w.setImmediate(m_w.target());
+    m_h.setImmediate(m_h.target());
+    m_cornerRadius.setImmediate(m_cornerRadius.target());
+    m_teleportPulse = 1.f;
+}
+
 float SelectionCursor::computeAdaptiveDuration(const nxui::Rect& target,
                                                float targetCornerRadius,
                                                float baseDuration) const {
@@ -65,6 +80,14 @@ void SelectionCursor::moveTo(const nxui::Rect& target, float duration) {
         std::abs(m_w.target() - target.width) < eps &&
         std::abs(m_h.target() - target.height) < eps)
         return;
+    if (m_instantMotion) {
+        m_x.setImmediate(target.x);
+        m_y.setImmediate(target.y);
+        m_w.setImmediate(target.width);
+        m_h.setImmediate(target.height);
+        m_teleportPulse = 1.f;
+        return;
+    }
     float adaptiveDuration = computeAdaptiveDuration(target, m_cornerRadius.value(), duration);
     m_x.set(target.x, adaptiveDuration, nxui::Easing::outCubic);
     m_y.set(target.y, adaptiveDuration, nxui::Easing::outCubic);
@@ -89,6 +112,15 @@ void SelectionCursor::moveTo(const nxui::Rect& target, float cornerRadius, float
         std::abs(m_h.target() - target.height) < eps &&
         std::abs(m_cornerRadius.target() - cornerRadius) < eps)
         return;
+    if (m_instantMotion) {
+        m_x.setImmediate(target.x);
+        m_y.setImmediate(target.y);
+        m_w.setImmediate(target.width);
+        m_h.setImmediate(target.height);
+        m_cornerRadius.setImmediate(cornerRadius);
+        m_teleportPulse = 1.f;
+        return;
+    }
     float adaptiveDuration = computeAdaptiveDuration(target, cornerRadius, duration);
     m_x.set(target.x, adaptiveDuration, nxui::Easing::outCubic);
     m_y.set(target.y, adaptiveDuration, nxui::Easing::outCubic);
@@ -110,6 +142,7 @@ void SelectionCursor::onUpdate(float dt) {
     if (m_motionPaused)
         return;
     m_time += dt;
+    m_teleportPulse = std::max(0.f, m_teleportPulse - dt / 0.18f);
 }
 
 void SelectionCursor::onRender(nxui::Renderer& ren) {
@@ -119,8 +152,9 @@ void SelectionCursor::onRender(nxui::Renderer& ren) {
     float w = m_w.value(), h = m_h.value();
     if (w < 1.f || h < 1.f) return;
 
-    nxui::Rect r = {x, y, w, h};
-    float cr = m_cornerRadius.value();
+    const float arrival = m_teleportPulse * (2.f - m_teleportPulse);
+    nxui::Rect r = nxui::Rect{x, y, w, h}.expanded(4.f * arrival);
+    float cr = m_cornerRadius.value() + 4.f * arrival;
 
     float wave = std::sin(m_time * m_waveSpeed) * 0.5f + 0.5f;
 
@@ -134,6 +168,14 @@ void SelectionCursor::onRender(nxui::Renderer& ren) {
         nxui::Color gc = m_color.withAlpha(a);
         ren.drawRoundedRect(glowRect, gc, cr + expand + 2.f);
 }
+    if (arrival > 0.01f) {
+        // A short bloom ring gives the snap an arrival impulse while the
+        // cursor itself still teleports directly to its destination.
+        ren.drawRoundedRectOutline(
+            r.expanded(7.f * arrival),
+            m_color.withAlpha(0.30f * arrival * m_opacity),
+            cr + 7.f * arrival, 2.f);
+    }
     nxui::Color mainC = m_color.withAlpha(m_opacity);
     ren.drawRoundedRectOutline(r, mainC, cr, m_borderWidth);
 

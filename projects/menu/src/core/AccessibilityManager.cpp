@@ -67,6 +67,15 @@ void AccessibilityManager::configure(bool enabled, const std::string& voice) {
     m_speechRate = clampSpeechRate(m_speechRate);
     m_lastAnnouncement.clear();
     m_lastFocusContext.clear();
+    m_engineFailed = false;
+}
+
+bool AccessibilityManager::ensureEngine() {
+    if (m_initialized.load(std::memory_order_acquire))
+        return true;
+    if (m_engineFailed)
+        return false;
+    return initializeConfigured(m_dataRoot, m_voice, m_speechRate);
 }
 
 bool AccessibilityManager::initializeConfigured(const std::string& dataRoot,
@@ -74,22 +83,22 @@ bool AccessibilityManager::initializeConfigured(const std::string& dataRoot,
                                                  int speechRate) {
     if (m_initialized.load(std::memory_order_acquire))
         return true;
-
-
+    m_dataRoot = dataRoot;
     if (!m_enabled) {
-        DebugLog::log("[accessibility] disabled by configuration; espeak init skipped");
-        return false;
+        DebugLog::log("[accessibility] speech disabled, espeak-ng startup deferred");
+        return true;
     }
+    if (m_engineFailed)
+        return false;
 
     std::string configuredVoice = voiceForLanguageTag(voice);
     const int configuredRate = clampSpeechRate(speechRate);
-
     s_activeSynthTarget = this;
     espeak_SetSynthCallback(&AccessibilityManager::synthCallback);
 
     std::vector<std::string> dataRoots;
-    if (!dataRoot.empty())
-        dataRoots.push_back(dataRoot);
+    if (!m_dataRoot.empty())
+        dataRoots.push_back(m_dataRoot);
     dataRoots.push_back("sdmc:/switch/SwitchU");
     dataRoots.push_back("romfs:");
 
@@ -111,6 +120,8 @@ bool AccessibilityManager::initializeConfigured(const std::string& dataRoot,
         if (s_activeSynthTarget == this)
             s_activeSynthTarget = nullptr;
         m_initialized.store(false, std::memory_order_release);
+        // Don't retry on every announce; a missing data root won't fix itself.
+        m_engineFailed = true;
         return false;
     }
     m_sampleRate = sampleRate;
@@ -132,8 +143,10 @@ bool AccessibilityManager::initializeConfigured(const std::string& dataRoot,
 }
 
 void AccessibilityManager::shutdown() {
-    if (!m_initialized.load(std::memory_order_acquire))
+    if (!m_initialized.load(std::memory_order_acquire)) {
+        m_engineFailed = false;
         return;
+    }
 
     releaseCurrentSpeech();
     espeak_Cancel();
@@ -141,6 +154,7 @@ void AccessibilityManager::shutdown() {
     if (s_activeSynthTarget == this)
         s_activeSynthTarget = nullptr;
     m_initialized.store(false, std::memory_order_release);
+    m_engineFailed = false;
     m_lastAnnouncement.clear();
     m_lastFocusContext.clear();
 }
@@ -151,8 +165,13 @@ void AccessibilityManager::setEnabled(bool enabled) {
     m_enabled = enabled;
     if (!m_enabled) {
         releaseCurrentSpeech();
-        espeak_Cancel();
+        if (m_initialized)
+            espeak_Cancel();
+        return;
     }
+    // First time speech is switched on we pay the engine startup here rather
+    // than during menu boot.
+    ensureEngine();
 }
 
 void AccessibilityManager::setSpeechRate(int wordsPerMinute) {
@@ -234,7 +253,9 @@ std::string AccessibilityManager::voiceForLanguageTag(const std::string& languag
 }
 
 void AccessibilityManager::announce(const std::string& text, bool interrupt, bool allowRepeat) {
-    if (!m_initialized.load(std::memory_order_acquire) || !m_enabled)
+    if (!m_enabled)
+        return;
+    if (!ensureEngine())
         return;
 
     std::string spoken = trimSpaces(text);
@@ -263,7 +284,7 @@ void AccessibilityManager::announce(const std::string& text, bool interrupt, boo
 }
 
 void AccessibilityManager::announceAndDisable(const std::string& text) {
-    if (!m_initialized.load(std::memory_order_acquire))
+    if (!ensureEngine())
         return;
     m_enabled = true;
     announce(text, true, true);

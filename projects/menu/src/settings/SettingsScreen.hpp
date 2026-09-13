@@ -48,8 +48,8 @@ public:
 
     void setWireframeState(bool enabled) { m_wireframeEnabled = enabled; }
     void setGridLayoutState(int columns, int rows) {
-        m_gridColumns = std::clamp(columns, 3, 8);
-        m_gridRows = std::clamp(rows, 2, 5);
+        m_gridColumns = std::clamp(columns, 1, 8);
+        m_gridRows = std::clamp(rows, 1, 5);
     }
     void setUiLanguageOverride(const std::string& tag) {
         m_uiLanguageOverride = tag.empty() ? "auto" : tag;

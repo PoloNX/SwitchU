@@ -82,6 +82,26 @@ private:
                                float* outDistance = nullptr) const;
     float pageStride() const;
 
+    // Carousel render scratch. Reused across frames so drawing the line does
+    // not allocate every frame, and each survivor keeps the rect that was
+    // already computed for it instead of recomputing an identical one.
+    struct RenderCandidate {
+        int index;
+        float absD;
+        float d;
+        float s;
+        float a;
+        nxui::Rect rect;
+    };
+    mutable std::vector<RenderCandidate> m_lineRenderScratch;
+
+    // Inputs the carousel layout was last computed against. Used to skip the
+    // full-library rect rebuild while the line is at rest.
+    int m_lineLayoutCacheCount = -1;
+    float m_lineLayoutCacheOffset = 0.f;
+    float m_lineLayoutCacheReveal = -1.f;
+    nxui::Rect m_lineLayoutCacheRect{};
+
     std::vector<std::shared_ptr<GlossyIcon>> m_allIcons;
     nxui::FocusManager m_focus;
 

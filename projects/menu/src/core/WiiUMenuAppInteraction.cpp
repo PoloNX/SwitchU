@@ -177,12 +177,25 @@ void WiiUMenuApp::announceFocusedWidget(nxui::Widget* w) {
 }
 
 nxui::Texture* WiiUMenuApp::adoptEditGhostTexture(GlossyIcon* sourceIcon) {
-    // The streamer pins the source index for the whole edit operation, so the
-    // source texture already has the lifetime needed by the ghost. Re-decoding
-    // and uploading a second copy here forced a synchronous GPU drain both
-    // when movement started and when it stopped.
     m_editGhostTexture.reset();
-    return sourceIcon ? sourceIcon->texture() : nullptr;
+    if (!sourceIcon)
+        return nullptr;
+
+    // The held tile crosses between two unrelated streamer models when it
+    // enters or leaves a folder. A borrowed pool texture can be detached or
+    // recycled at that point, replacing the carried icon with a spinner (or,
+    // worse, another game's icon). Give the ghost one stable texture for the
+    // complete edit operation. The source bytes include custom SGDB icons.
+    const auto bytes = AppListLoader::loadIconData(sourceIcon->titleId());
+    if (!bytes.empty()) {
+        auto owned = std::make_unique<nxui::Texture>();
+        if (owned->loadFromMemory(app().gpu(), app().renderer(),
+                                  bytes.data(), bytes.size(), 192)) {
+            m_editGhostTexture = std::move(owned);
+            return m_editGhostTexture.get();
+        }
+    }
+    return sourceIcon->texture();
 }
 
 void WiiUMenuApp::startEditGhost(GlossyIcon* sourceIcon) {
@@ -201,8 +214,11 @@ void WiiUMenuApp::startEditGhost(GlossyIcon* sourceIcon) {
     ghost->setFocusable(false);
     ghost->setTitle(sourceIcon->title());
     ghost->setTitleId(sourceIcon->titleId());
-    ghost->setTexture(adoptEditGhostTexture(sourceIcon));
     ghost->copyWidgetPresentationFrom(*sourceIcon);
+    // copyWidgetPresentationFrom also copies the source's borrowed streamer
+    // pointer. Install the owned texture afterwards so leaving a folder cannot
+    // make the ghost inherit the first remaining game's recycled pool slot.
+    ghost->setTexture(adoptEditGhostTexture(sourceIcon));
     ghost->setIsGameCard(sourceIcon->isGameCard());
     ghost->setGameCardTexture(sourceIcon->gameCardTexture());
     ghost->setNotLaunchable(sourceIcon->isNotLaunchable());
@@ -914,6 +930,8 @@ void WiiUMenuApp::wireFocusCallback() {
 bool WiiUMenuApp::isCurrentFocusableWidget(nxui::Widget* w) const {
     if (!w) return false;
     if (m_steamGridDbPicker && m_steamGridDbPicker.get() == w) return w->isFocusable();
+    if (m_textEntry && m_textEntry.get() == w) return w->isFocusable();
+    if (m_quickSettings && m_quickSettings.get() == w) return w->isFocusable();
     if (m_themeShop && m_themeShop.get() == w) return w->isFocusable();
     if (m_settings && m_settings.get() == w) return w->isFocusable();
     for (const auto& btn : m_sidebar.leftButtons())
@@ -992,6 +1010,10 @@ void WiiUMenuApp::closeActiveOverlays() {
         m_contextMenu->hide();
     if (m_dialog && m_dialog->isActive())
         m_dialog->hide();
+    if (m_quickSettings && m_quickSettings->isActive())
+        m_quickSettings->hide();
+    if (m_textEntry && m_textEntry->isActive())
+        m_textEntry->hide(false);
     if (m_settings && m_settings->isActive())
         m_settings->hide();
     if (m_themeShop && m_themeShop->isActive())
@@ -1015,8 +1037,10 @@ nxui::Widget* WiiUMenuApp::focusRoot() {
     if (m_launchAnim && m_launchAnim->isPlaying()) return nullptr;
     if (m_folderCaptureRequested) return nullptr;
     if (m_progressDialog && m_progressDialog->isActive()) return m_progressDialog.get();
+    if (m_textEntry && m_textEntry->isActive()) return m_textEntry.get();
     if (m_dialog && m_dialog->isActive()) return m_dialog.get();
     if (m_contextMenu && m_contextMenu->isActive()) return m_contextMenu.get();
+    if (m_quickSettings && m_quickSettings->isActive()) return m_quickSettings.get();
     if (m_userSelect && m_userSelect->isActive()) return m_userSelect.get();
     if (m_steamGridDbPicker && m_steamGridDbPicker->isActive())
         return m_steamGridDbPicker.get();
@@ -1095,9 +1119,24 @@ void WiiUMenuApp::wireGlobalActions() {
     });
 
     root.addAction(static_cast<uint64_t>(nxui::Button::L), [this]() {
+        if (m_editMode || m_navigator.route() != switchu::navigation::Route::Home ||
+            focusRoot() != &rootBox())
+            return;
+        openQuickSettings();
+    });
+
+    root.addAction(static_cast<uint64_t>(nxui::Button::LStick), [this]() {
         if (m_navigator.route() == switchu::navigation::Route::ControllerTest)
             return;
         m_accessibility.repeatLastAnnouncement();
+    });
+
+    root.addAction(static_cast<uint64_t>(nxui::Button::R), [this]() {
+        if (m_navigator.route() != switchu::navigation::Route::Home ||
+            focusRoot() != &rootBox() || m_openFolderId != 0 || m_editMode ||
+            m_appLayoutMode == AppLayoutMode::DynamicLine)
+            return;
+        cycleSortMode();
     });
 
     // The grid holds the open folder's model, so paging works inside a folder too.

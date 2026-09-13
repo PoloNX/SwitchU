@@ -163,10 +163,16 @@ inline Result getAppList(std::vector<AppEntry>& outList, bool waitForDaemon = tr
 
     outList.clear();
     std::ifstream file;
-    const int retries = waitForDaemon ? 20 : 1;
+    // The daemon swaps the catalog in by rename. If we land inside that window
+    // the previous copy is still on disk under .bak, so check it before
+    // sleeping — sleeping is only for the case where the daemon hasn't
+    // published a catalog yet at all.
+    const int retries = waitForDaemon ? 10 : 1;
     for (int retry = 0; retry < retries && !file.is_open(); ++retry) {
-        file.open("sdmc:/config/SwitchU/applist.bin", std::ios::binary);
-        if (!file.is_open() && waitForDaemon) svcSleepThread(50'000'000ULL);
+        file.open(smi::kAppCatalogPath, std::ios::binary);
+        if (!file.is_open())
+            file.open(smi::kAppCatalogBakPath, std::ios::binary);
+        if (!file.is_open() && waitForDaemon) svcSleepThread(20'000'000ULL);
     }
     if (!file.is_open()) return MAKERESULT(Module_Libnx, 0xFE);
 

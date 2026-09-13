@@ -46,6 +46,42 @@ extern "C" {
 #endif
 }
 
+#ifndef SWITCHU_HOMEBREW
+namespace {
+constexpr size_t kHeapLadder[] = {
+    416u * 1024u * 1024u,
+    400u * 1024u * 1024u,
+    384u * 1024u * 1024u,
+    368u * 1024u * 1024u,
+    352u * 1024u * 1024u,
+    320u * 1024u * 1024u,
+    288u * 1024u * 1024u,
+    256u * 1024u * 1024u,
+    kMenuAppletHeapSize,
+};
+}
+
+extern "C" size_t g_switchuHeapSize = 0;
+
+extern "C" void __libnx_initheap(void) {
+    extern char* fake_heap_start;
+    extern char* fake_heap_end;
+
+    void* address = nullptr;
+    size_t granted = 0;
+    for (size_t requested : kHeapLadder) {
+        if (R_SUCCEEDED(svcSetHeapSize(&address, requested))) {
+            granted = requested;
+            break;
+        }
+    }
+
+    g_switchuHeapSize = granted;
+    fake_heap_start = static_cast<char*>(address);
+    fake_heap_end = static_cast<char*>(address) + granted;
+}
+#endif
+
 #ifdef SWITCHU_HOMEBREW
 extern "C" void userAppInit(void) {
     timeInitialize();

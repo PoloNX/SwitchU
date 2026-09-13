@@ -75,6 +75,12 @@ public:
 
 private:
 #ifdef NXUI_BACKEND_DEKO3D
+    // Gives the descriptor slot and the image memory back, but only once the
+    // GPU has finished with them. Every path that stops owning a live texture
+    // goes through here.
+    void retireGpuResources();
+#endif
+#ifdef NXUI_BACKEND_DEKO3D
     dk::Image          m_image;
     dk::UniqueMemBlock m_mem;
     uint32_t m_allocSize = 0;

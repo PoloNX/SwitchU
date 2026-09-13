@@ -156,7 +156,10 @@
     "voice": "Voix",
     "options": "Options",
     "switch_layout": "Changer de vue",
-    "search": "Rechercher"
+    "search": "Rechercher",
+    "sort_custom": "Mon ordre",
+    "sort_alpha": "A-Z",
+    "sort_recent": "Récents"
   },
   "settings": {
     "tabs": {
@@ -267,6 +270,10 @@
       "album_storage_desc": "Où les captures d'écran et vidéos sont sauvegardées.",
       "album_sd": "Carte SD",
       "album_nand": "NAND",
+      "cursor_motion": "Mouvement du curseur",
+      "cursor_motion_desc": "Choisissez si le curseur de sélection glisse ou se déplace instantanément.",
+      "cursor_translate": "Translation",
+      "cursor_teleport": "Téléportation",
       "ui_wireframe": "Wireframe UI",
       "ui_wireframe_desc": "Affiche le contour de toutes les Box pour le debug layout."
     },
@@ -728,5 +735,38 @@
       "prev": "Préc.",
       "next": "Suiv."
     }
+  },
+  "text_entry": {
+    "erase": "Effacer",
+    "full": "Longueur maximale atteinte",
+    "hint": "A : saisir   X : effacer   Y : majuscule   L/R : symboles   Plus : confirmer   B : annuler",
+    "letters": "ABC",
+    "opened": "Clavier à l'écran. Croix directionnelle pour choisir une touche, A pour saisir, X pour effacer, Plus pour confirmer, B pour annuler.",
+    "shift": "Majuscule",
+    "space": "Espace",
+    "symbols": "?12#"
+  },
+  "quicksettings": {
+    "title": "Paramètres rapides",
+    "close_hint": "[B] Fermer",
+    "battery": "BATTERIE",
+    "charging": "⚡ En charge",
+    "discharging": "Sur batterie",
+    "hardware_temp": "TEMPÉRATURE",
+    "temp_optimal": "Optimal",
+    "temp_warm": "Chaud",
+    "brightness": "☀ Luminosité",
+    "bgm_volume": "♫ Volume de la musique",
+    "sfx_volume": "♪ Effets sonores",
+    "airplane_mode": "✈ Mode avion",
+    "wifi": "Wi-Fi",
+    "on": "OUI",
+    "off": "NON",
+    "power_options": "OPTIONS D'ALIMENTATION",
+    "sleep": "Veille",
+    "reboot": "Redémarrer",
+    "power_off": "Éteindre",
+    "hint_adjust": "Ajuster",
+    "hint_shortcut": "Paramètres rapides"
   }
 }

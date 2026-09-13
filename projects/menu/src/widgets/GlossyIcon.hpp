@@ -95,11 +95,9 @@ public:
         m_consoleBatteryCharging = charging;
     }
     void setBatteryIconTextures(nxui::Texture* console,
-                                nxui::Texture* joyconLeft,
-                                nxui::Texture* joyconRight) {
+                                nxui::Texture*,
+                                nxui::Texture*) {
         m_batteryConsoleIcon = console;
-        m_batteryJoyconLeftIcon = joyconLeft;
-        m_batteryJoyconRightIcon = joyconRight;
     }
     void setWideGameTextures(nxui::Texture* hero, nxui::Texture* logo) {
         m_wideGameHero = hero;
@@ -136,18 +134,9 @@ private:
     bool        m_notLaunchable = false;
     nxui::Color m_loadingColor = nxui::Color::white();
     float       m_suspendPulse = 0.f;
-    float       m_batteryRefreshTimer = 0.f;
     int         m_consoleBatteryPercent = 0;
     bool        m_consoleBatteryCharging = false;
-    struct ControllerBattery {
-        int percent = 0;
-        bool charging = false;
-        std::string label;
-    };
-    std::vector<ControllerBattery> m_controllerBatteries;
     nxui::Texture* m_batteryConsoleIcon = nullptr;
-    nxui::Texture* m_batteryJoyconLeftIcon = nullptr;
-    nxui::Texture* m_batteryJoyconRightIcon = nullptr;
 
     nxui::AnimatedFloat m_animScale;
     nxui::AnimatedFloat m_appearOpacity;

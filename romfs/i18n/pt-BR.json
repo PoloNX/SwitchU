@@ -90,6 +90,10 @@
       "album_storage_desc": "Onde as capturas de tela e vídeos são salvos.",
       "album_sd": "Cartão SD",
       "album_nand": "NAND",
+      "cursor_motion": "Movimento do cursor",
+      "cursor_motion_desc": "Escolha se o cursor de seleção desliza ou se move instantaneamente.",
+      "cursor_translate": "Deslizar",
+      "cursor_teleport": "Teletransportar",
       "ui_wireframe": "Wireframe da UI",
       "ui_wireframe_desc": "Mostra os contornos de todos os widgets de caixa para depuração de layout."
     },
@@ -388,7 +392,10 @@
   },
   "hint": {
     "repeat": "Repetir",
-    "voice": "Voz"
+    "voice": "Voz",
+    "sort_custom": "Minha ordem",
+    "sort_alpha": "A-Z",
+    "sort_recent": "Recentes"
   },
   "accessibility": {
     "speech": {
@@ -514,5 +521,38 @@
       "skip_all": "Pular tudo",
       "test": "Testar"
     }
+  },
+  "text_entry": {
+    "erase": "Apagar",
+    "full": "Tamanho máximo atingido",
+    "hint": "A: digitar   X: apagar   Y: maiúscula   L/R: símbolos   Mais: confirmar   B: cancelar",
+    "letters": "ABC",
+    "opened": "Teclado na tela. Direcional para escolher uma tecla, A para digitar, X para apagar, Mais para confirmar, B para cancelar.",
+    "shift": "Maiúscula",
+    "space": "Espaço",
+    "symbols": "?12#"
+  },
+  "quicksettings": {
+    "title": "Configurações Rápidas",
+    "close_hint": "[B] Fechar",
+    "battery": "BATERIA",
+    "charging": "⚡ Carregando",
+    "discharging": "Descarregando",
+    "hardware_temp": "TEMPERATURA",
+    "temp_optimal": "Ideal",
+    "temp_warm": "Morno",
+    "brightness": "☀ Brilho da tela",
+    "bgm_volume": "♫ Volume da música",
+    "sfx_volume": "♪ Efeitos sonoros",
+    "airplane_mode": "✈ Modo avião",
+    "wifi": "Wi-Fi",
+    "on": "LIG",
+    "off": "DES",
+    "power_options": "OPÇÕES DE ENERGIA",
+    "sleep": "Suspender",
+    "reboot": "Reiniciar",
+    "power_off": "Desligar",
+    "hint_adjust": "Ajustar",
+    "hint_shortcut": "Config. Rápidas"
   }
 }

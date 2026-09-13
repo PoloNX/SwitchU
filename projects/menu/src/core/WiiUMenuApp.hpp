@@ -16,6 +16,7 @@
 #include "core/AccessibilityManager.hpp"
 #include "widgets/LaunchAnimation.hpp"
 #include "widgets/OverlayDialog.hpp"
+#include "widgets/QuickSettingsOverlay.hpp"
 #include "widgets/ContextMenu.hpp"
 #include "widgets/ProgressDialog.hpp"
 #include "widgets/AppletButton.hpp"
@@ -30,6 +31,7 @@
 #include "settings/SteamGridDbPickerScreen.hpp"
 #include "settings/FolderOptionsScreen.hpp"
 #include "settings/ControllerTestScreen.hpp"
+#include "settings/TextEntryScreen.hpp"
 #include "themeshop/ThemeShopScreen.hpp"
 #include "core/Config.hpp"
 #include "core/FolderStore.hpp"
@@ -177,8 +179,10 @@ private:
     void renameFolder(std::uint32_t folderId);
     void showFolderContextMenu(std::uint32_t folderId);
     bool saveFoldersOrReport(const char* operation);
-    std::string promptFolderName(const std::string& initial,
-                                 const std::string& guide);
+    void createTextEntry();
+    void requestTextEntry(const std::string& title, const std::string& guide,
+                          const std::string& initial, int maxLength, bool password,
+                          std::function<void(const std::string&)> onAccept);
     void editSteamGridDbApiKey();
     void startSteamGridDbScrape();
     void openSteamGridDbPicker(GameOptionsScreen::ArtworkKind kind,
@@ -254,6 +258,9 @@ private:
     bool isCurrentFocusableWidget(nxui::Widget* w) const;
     std::string accessibilityPositionFor(nxui::Widget* w) const;
     void createSettings();
+    void createQuickSettings();
+    void openQuickSettings();
+    void closeQuickSettings();
     void createThemeShop();
     void createGameOptions();
     void createFolderOptions();
@@ -297,6 +304,8 @@ private:
     void toggleAppLayoutMode();
     void setAppLayoutMode(AppLayoutMode mode);
     void configureDynamicLineNavigation();
+    void cycleSortMode();
+    std::string sortModeLabel() const;
     AppLayoutMode appLayoutMode() const { return m_appLayoutMode; }
 
 #ifdef SWITCHU_MENU
@@ -331,6 +340,7 @@ private:
     std::shared_ptr<LaunchAnimation>   m_launchAnim;
     std::shared_ptr<OverlayDialog>     m_userSelect;
     std::shared_ptr<OverlayDialog>     m_dialog;
+    std::shared_ptr<QuickSettingsOverlay> m_quickSettings;
     std::shared_ptr<ContextMenu>       m_contextMenu;
     std::shared_ptr<ProgressDialog>    m_progressDialog;
     std::shared_ptr<SettingsScreen>    m_settings;
@@ -339,6 +349,7 @@ private:
     std::shared_ptr<SteamGridDbPickerScreen> m_steamGridDbPicker;
     std::shared_ptr<FolderOptionsScreen> m_folderOptions;
     std::shared_ptr<ControllerTestScreen> m_controllerTest;
+    std::shared_ptr<TextEntryScreen>      m_textEntry;
 
     nxui::Texture m_gameCardTex;
     nxui::Texture m_arrowTexLeft;
