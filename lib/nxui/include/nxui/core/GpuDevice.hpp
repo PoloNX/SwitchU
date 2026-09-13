@@ -74,6 +74,14 @@ public:
     void endFrame();
     void waitIdle();
 
+    /// Copy the most recently presented framebuffer into tightly-packed RGBA8.
+    /// When halfRes is true, downsamples to FB_WIDTH/2 x FB_HEIGHT/2 via the
+    /// existing offscreen target. Must be called outside beginFrame/endFrame
+    /// (e.g. from Activity::onAfterPresent).
+    bool downloadFramebufferRgba(std::vector<uint8_t>& outRgba,
+                                 int& outW, int& outH,
+                                 bool halfRes = true);
+
     int  width()  const { return FB_WIDTH; }
     int  height() const { return FB_HEIGHT; }
 

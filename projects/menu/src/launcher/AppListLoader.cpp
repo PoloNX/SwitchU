@@ -16,7 +16,11 @@
 namespace {
 
 bool requiresInteractiveUserSelection(uint8_t account, uint8_t option) {
-    return account == 1 && option == 0;
+    // 2 is RequiredWithNetworkServiceAccountAvailable. It still requires a
+    // concrete account even though the ordinary optional-user flag is not set.
+    // Launching those titles with an empty UID makes Nintendo Switch Online
+    // applications exit back to HOME immediately.
+    return account == 2 || (account == 1 && option == 0);
 }
 
 bool isTitleIdFallback(const std::string& title, uint64_t titleId) {
@@ -191,6 +195,7 @@ void registerEntries(std::vector<PendingApp>& apps,
         entry.folderId = p.folderId;
         entry.folderPreviewCount = p.folderPreviewCount;
         entry.folderColorIndex = p.folderColorIndex;
+        entry.folderCoverTitleId = p.folderCoverTitleId;
         entry.widgetId = p.widgetId;
         entry.widgetType = p.widgetType;
         entry.widgetColumns = p.widgetColumns;

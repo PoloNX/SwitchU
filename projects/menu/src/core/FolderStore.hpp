@@ -7,6 +7,37 @@
 
 namespace switchu::folders {
 
+inline constexpr int kFolderStyleClassic = 0;
+inline constexpr int kFolderStyleSimple = 1;
+inline constexpr int kFolderStyleMinimal = 2;
+inline constexpr int kFolderStyleTab = 3;
+inline constexpr int kFolderStyleRing = 4;
+inline constexpr int kFolderStyleManila = 5;
+inline constexpr int kFolderStyleLabel = 6;
+inline constexpr int kFolderStyleCount = 7;
+inline constexpr int kDefaultFolderStyle = kFolderStyleClassic;
+inline constexpr int kMaxFolderPages = 8;
+
+inline constexpr std::size_t folderSlotsPerPage(int sizeIndex) {
+    switch (sizeIndex) {
+        case 0: return 4u * 2u;
+        case 2: return 6u * 4u;
+        default: return 5u * 3u;
+    }
+}
+
+inline constexpr std::size_t maxFolderSlots(int sizeIndex) {
+    return folderSlotsPerPage(sizeIndex) * static_cast<std::size_t>(kMaxFolderPages);
+}
+
+inline bool folderStyleSupportsCover(int styleIndex) {
+    return styleIndex != kFolderStyleClassic;
+}
+
+inline bool folderShouldShowCover(int styleIndex, bool showCover) {
+    return showCover && folderStyleSupportsCover(styleIndex);
+}
+
 struct Folder {
     std::uint32_t id = 0;
     std::string name;
@@ -18,7 +49,13 @@ struct Folder {
     std::size_t titleCount() const;
 };
 
-inline constexpr int kMaxFolderPages = 8;
+inline std::uint64_t firstCoverTitleId(const Folder& folder) {
+    for (const std::uint64_t titleId : folder.titleIds) {
+        if (titleId != 0)
+            return titleId;
+    }
+    return 0;
+}
 
 class FolderStore final {
 public:

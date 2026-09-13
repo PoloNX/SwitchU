@@ -156,7 +156,10 @@
     "voice": "Voice",
     "options": "Options",
     "switch_layout": "Switch view",
-    "search": "Search"
+    "search": "Search",
+    "sort_custom": "My order",
+    "sort_alpha": "A-Z",
+    "sort_recent": "Recent"
   },
   "settings": {
     "tabs": {
@@ -267,6 +270,10 @@
       "album_storage_desc": "Where screenshots and videos are saved.",
       "album_sd": "SD Card",
       "album_nand": "NAND",
+      "cursor_motion": "Cursor Movement",
+      "cursor_motion_desc": "Choose whether the selection cursor slides or moves instantly.",
+      "cursor_translate": "Translate",
+      "cursor_teleport": "Teleport",
       "ui_wireframe": "UI Wireframe",
       "ui_wireframe_desc": "Show outlines of all Box widgets for layout debugging."
     },
@@ -515,6 +522,17 @@
     "size_small": "Small",
     "size_medium": "Medium",
     "size_large": "Large",
+    "style": "Folder style",
+    "style_desc": "Applies to every folder, including new ones.",
+    "style_classic": "Classic",
+    "style_simple": "Simple",
+    "style_minimal": "Minimal",
+    "style_tab": "Tab",
+    "style_ring": "Ring",
+    "style_manila": "Manila",
+    "style_label": "Label",
+    "show_cover": "Show cover",
+    "show_cover_desc": "Shows the first game on every folder. Classic keeps the mosaic instead.",
     "items": "items"
   },
   "add": {
@@ -728,5 +746,38 @@
       "prev": "Prev",
       "next": "Next"
     }
+  },
+  "text_entry": {
+    "erase": "Erase",
+    "full": "Maximum length reached",
+    "hint": "A: type   X: erase   Y: shift   L/R: symbols   Plus: confirm   B: cancel",
+    "letters": "ABC",
+    "opened": "On-screen keyboard. Directional pad to choose a key, A to type, X to erase, Plus to confirm, B to cancel.",
+    "shift": "Shift",
+    "space": "Space",
+    "symbols": "?12#"
+  },
+  "quicksettings": {
+    "title": "Quick Settings",
+    "close_hint": "[B] Close",
+    "battery": "BATTERY",
+    "charging": "⚡ Charging",
+    "discharging": "Discharging",
+    "hardware_temp": "THERMALS",
+    "temp_optimal": "Optimal",
+    "temp_warm": "Warm",
+    "brightness": "☀ Brightness",
+    "bgm_volume": "♫ Music (BGM)",
+    "sfx_volume": "♪ Sound Effects",
+    "airplane_mode": "✈ Airplane Mode",
+    "wifi": "Wi-Fi",
+    "on": "ON",
+    "off": "OFF",
+    "power_options": "POWER OPTIONS",
+    "sleep": "Sleep",
+    "reboot": "Reboot",
+    "power_off": "Power Off",
+    "hint_adjust": "Adjust",
+    "hint_shortcut": "Quick Settings"
   }
 }

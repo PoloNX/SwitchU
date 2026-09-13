@@ -200,6 +200,11 @@ static std::atomic<Result> g_eventGcMountRc{0};
 static bool g_initialEventSkipped = false;
 static int  g_eventPollCountdown  = 0;
 static int  g_eventPollsRemaining = 0;
+// Polling application views touches enough NS state to stutter the menu. Keep
+// the settling window, but spread a small number of probes over twelve seconds
+// instead of hammering it fifty times in ten seconds.
+static constexpr int kViewPollIntervalTicks = 200;
+static constexpr int kViewPollAttempts = 6;
 static int  g_menuRelaunchCooldown = 0;
 static int  g_menuFastExitCount = 0;
 static s32      g_lastRecordCount = 0;
@@ -450,7 +455,6 @@ static bool writeAppCatalogFile() {
 
     fsEc.clear();
     std::filesystem::remove(kAppCatalogBackupPath, fsEc);
-
     return true;
 }
 
@@ -458,15 +462,18 @@ static bool rebuildAppCatalog(const char* reason, bool* outChanged = nullptr) {
     std::vector<switchu::ns::ExtApplicationRecord> records;
     if (!listApplicationRecords(records, "catalog"))
         return false;
+    enqueueControlCacheRecords(records);
 
     std::vector<switchu::ns::ExtApplicationView> views;
     queryApplicationViews(records, views, "catalog");
-    enqueueControlCacheRecords(records);
 
     const s32 count = static_cast<s32>(records.size());
     g_appCatalog.clear();
     g_appCatalog.reserve(count);
 
+    // Resolve display name and startup-user policy here, on the daemon, so the
+    // menu can build its grid straight from applist.bin. Otherwise every menu
+    // cold start reopens one .meta file per installed title.
     for (s32 i = 0; i < count; ++i) {
         const uint64_t tid = records[i].id;
         DaemonAppCatalogEntry ent;
@@ -1661,7 +1668,7 @@ static void mainLoop() {
     bool didWork = false;
 
     if (g_eventRefreshPending.load() && shouldDeferViewPolling()) {
-        g_eventPollCountdown = 20;
+        g_eventPollCountdown = kViewPollIntervalTicks;
         g_eventPollsRemaining = 1;
     } else if (g_eventRefreshPending.exchange(false)) {
         if (!g_initialEventSkipped) {
@@ -1671,8 +1678,8 @@ static void mainLoop() {
             switchu::FileLog::log("[views] skipping initial catch-up event");
         } else {
             switchu::FileLog::log("[views] app record event — starting poll");
-            g_eventPollCountdown  = 10;
-            g_eventPollsRemaining = 50;
+            g_eventPollCountdown  = kViewPollIntervalTicks;
+            g_eventPollsRemaining = kViewPollAttempts;
         }
     }
 
@@ -1701,7 +1708,7 @@ static void mainLoop() {
         didWork = true;
     }
     if (g_eventPollsRemaining > 0 && shouldDeferViewPolling()) {
-        g_eventPollCountdown = 20;
+        g_eventPollCountdown = kViewPollIntervalTicks;
     } else if (g_eventPollsRemaining > 0 && --g_eventPollCountdown == 0) {
         bool needFullReload = sendViewFlagsUpdates();
         if (needFullReload) {
@@ -1713,7 +1720,7 @@ static void mainLoop() {
         } else {
             --g_eventPollsRemaining;
             if (g_eventPollsRemaining > 0)
-                g_eventPollCountdown = 20;
+                g_eventPollCountdown = kViewPollIntervalTicks;
         }
     }
     if (g_eventGcMountFailure.exchange(false)) {
@@ -1984,6 +1991,13 @@ static void controlCacheThreadFunc(void* arg) {
     switchu::control_cache::ensureDirectory();
 
     while (g_controlCacheRunning.load()) {
+        // Control-data reads also write icon/meta files. Defer them while a
+        // game owns the foreground so they cannot contend with LayeredFS I/O.
+        if (shouldDeferViewPolling()) {
+            svcSleepThread(500'000'000ULL);
+            continue;
+        }
+
         uint64_t titleId = 0;
         if (!popControlCacheTitle(titleId)) {
             waitSingle(waiterForUEvent(&g_controlCacheWakeEvent), UINT64_MAX);

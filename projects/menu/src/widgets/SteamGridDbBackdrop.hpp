@@ -89,6 +89,7 @@ private:
     int m_uploadStage = 0;
     bool m_waitForGpuBeforeUpload = false;
     AppLayoutMode m_layoutMode = AppLayoutMode::Grid;
+    bool m_showPreviousDuringCrossfade = false;
     nxui::AnimatedFloat m_fade{1.f};
     nxui::AnimatedFloat m_artworkOpacity{1.f};
     static constexpr std::size_t kDecodedCacheLimit = 2;

@@ -48,4 +48,14 @@ void GpuDevice::waitIdle() {
     // No-op for SDL2 — rendering is synchronous
 }
 
+bool GpuDevice::downloadFramebufferRgba(std::vector<uint8_t>& outRgba,
+                                        int& outW, int& outH,
+                                        bool halfRes) {
+    (void)outRgba;
+    (void)outW;
+    (void)outH;
+    (void)halfRes;
+    return false;
+}
+
 } // namespace nxui

@@ -12,6 +12,9 @@ public:
     AccessibilityManager() = default;
     ~AccessibilityManager();
 
+    // Records the configuration but only spins up espeak-ng when speech is
+    // actually enabled. Engine startup scans espeak-ng-data off the SD card and
+    // costs a few hundred milliseconds, so users with speech off never pay it.
     bool initialize(bool enabled, const std::string& voice = "fr",
                     const std::string& dataRoot = {});
     void configure(bool enabled, const std::string& voice);
@@ -49,6 +52,7 @@ private:
                                        const std::string& position,
                                        const std::string& summary,
                                        bool forceContext = false);
+    bool ensureEngine();
     static int synthCallback(short* wav, int numsamples, espeak_EVENT* events);
     void appendSynthSamples(short* wav, int numsamples);
     void playSynthBuffer();
@@ -62,6 +66,8 @@ private:
     static AccessibilityManager* s_activeSynthTarget;
 
     std::atomic<bool> m_initialized{false};
+    bool m_engineFailed = false;
+    std::string m_dataRoot;
     bool m_enabled = true;
     bool m_speakHints = true;
     bool m_speakContextEveryFocus = false;

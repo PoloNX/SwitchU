@@ -33,7 +33,9 @@ bool Application::applyPendingActivity() {
         m_activity->onDestroy();
 
     m_activity = std::move(m_pendingActivity);
-    m_navDebounce = 0;
+    m_navHeldMask = 0;
+    m_navHeldFrames = 0;
+    m_navRepeatCountdown = 0;
 
     if (m_activity) {
         m_activity->m_rootBox->setRect({0, 0, (float)m_gpu.width(), (float)m_gpu.height()});
@@ -52,8 +54,11 @@ bool Application::initialize() {
 
     // Present one clean frame immediately so that stale framebuffer
     // content from a previous process is never visible on screen.
+    // Activities may replace the default black with a leave-frame splash.
     m_gpu.beginFrame();
     m_renderer->beginFrame();
+    if (m_activity)
+        m_activity->presentInitialFrame(*m_renderer);
     m_renderer->endFrame();
     m_gpu.endFrame();
 
@@ -101,24 +106,54 @@ void Application::dispatchInput() {
     // Debounced D-pad and stick navigation.
     // For each direction: if the focused widget has an action for that
     // D-pad/stick button, fire it (consumed). Otherwise navigate spatially.
-    bool anyDpad =
-        m_input.isDown(Button::DLeft)   || m_input.isDown(Button::DRight)  ||
-        m_input.isDown(Button::DUp)     || m_input.isDown(Button::DDown)   ||
-        m_input.isDown(Button::LStickL) || m_input.isDown(Button::LStickR) ||
-        m_input.isDown(Button::LStickU) || m_input.isDown(Button::LStickD) ||
-        m_input.isDown(Button::RStickL) || m_input.isDown(Button::RStickR) ||
-        m_input.isDown(Button::RStickU) || m_input.isDown(Button::RStickD);
+    constexpr uint64_t kNavMask =
+        static_cast<uint64_t>(Button::DLeft)   | static_cast<uint64_t>(Button::DRight)  |
+        static_cast<uint64_t>(Button::DUp)     | static_cast<uint64_t>(Button::DDown)   |
+        static_cast<uint64_t>(Button::LStickL) | static_cast<uint64_t>(Button::LStickR) |
+        static_cast<uint64_t>(Button::LStickU) | static_cast<uint64_t>(Button::LStickD) |
+        static_cast<uint64_t>(Button::RStickL) | static_cast<uint64_t>(Button::RStickR) |
+        static_cast<uint64_t>(Button::RStickU) | static_cast<uint64_t>(Button::RStickD);
+    uint64_t heldMask = 0;
+    uint64_t pressedMask = 0;
+    for (Button button : {Button::DLeft, Button::DRight, Button::DUp, Button::DDown,
+                          Button::LStickL, Button::LStickR, Button::LStickU, Button::LStickD,
+                          Button::RStickL, Button::RStickR, Button::RStickU, Button::RStickD}) {
+        const uint64_t bit = static_cast<uint64_t>(button);
+        if (m_input.isHeld(button)) heldMask |= bit;
+        if (m_input.isDown(button)) pressedMask |= bit;
+    }
 
-    if (m_navDebounce > 0) {
-        --m_navDebounce;
-    } else if (anyDpad) {
-        m_navDebounce = 6;  // ~100 ms at 60 fps
+    bool dispatchNavigation = false;
+    if (heldMask == 0) {
+        m_navHeldMask = 0;
+        m_navHeldFrames = 0;
+        m_navRepeatCountdown = 0;
+    } else if (pressedMask != 0 || heldMask != m_navHeldMask) {
+        // The first step is immediate, followed by a deliberate pause. This
+        // keeps a normal press precise and makes the start of a hold calmer.
+        m_navHeldMask = heldMask;
+        m_navHeldFrames = 0;
+        m_navRepeatCountdown = 28;
+        dispatchNavigation = true;
+    } else {
+        ++m_navHeldFrames;
+        if (m_navRepeatCountdown > 0)
+            --m_navRepeatCountdown;
+        if (m_navRepeatCountdown == 0) {
+            dispatchNavigation = true;
+            // Accelerate one step per second from ~5 moves/s to ~10 moves/s.
+            // The cap leaves enough time for artwork streaming to catch up.
+            m_navRepeatCountdown = std::clamp(12 - m_navHeldFrames / 60, 6, 12);
+        }
+    }
+
+    if (dispatchNavigation) {
 
         Widget* cur = fm.current();
         auto tryDir = [&](Button dpad, Button leftStick, Button rightStick, FocusDirection dir) {
-            bool dpadDown  = m_input.isDown(dpad);
-            bool leftStickDown = m_input.isDown(leftStick);
-            bool rightStickDown = m_input.isDown(rightStick);
+            bool dpadDown  = m_input.isHeld(dpad);
+            bool leftStickDown = m_input.isHeld(leftStick);
+            bool rightStickDown = m_input.isHeld(rightStick);
             if (!dpadDown && !leftStickDown && !rightStickDown) return;
 
             // Focused widget's action takes priority (no bubbling for D-pad)
@@ -138,17 +173,9 @@ void Application::dispatchInput() {
 
     // Dispatch non-D-pad actions with parent bubbling.
     // Exclude D-pad buttons so they aren't fired a second time.
-    constexpr uint64_t kDpadMask =
-        static_cast<uint64_t>(Button::DLeft)   | static_cast<uint64_t>(Button::DRight)  |
-        static_cast<uint64_t>(Button::DUp)     | static_cast<uint64_t>(Button::DDown)   |
-        static_cast<uint64_t>(Button::LStickL) | static_cast<uint64_t>(Button::LStickR) |
-        static_cast<uint64_t>(Button::LStickU) | static_cast<uint64_t>(Button::LStickD) |
-        static_cast<uint64_t>(Button::RStickL) | static_cast<uint64_t>(Button::RStickR) |
-        static_cast<uint64_t>(Button::RStickU) | static_cast<uint64_t>(Button::RStickD);
-
     constexpr uint64_t kA = static_cast<uint64_t>(Button::A);
     bool pointerConsumesA = m_input.pointerConsumesButton(Button::A);
-    uint64_t actionExcludeMask = kDpadMask;
+    uint64_t actionExcludeMask = kNavMask;
     if (pointerConsumesA)
         actionExcludeMask |= kA;
 
@@ -220,6 +247,7 @@ void Application::run() {
                 m_activity->onRender(*m_renderer);
                 m_renderer->endFrame();
                 m_gpu.endFrame();
+                m_activity->onAfterPresent(*m_renderer);
             } else {
                 // Yield CPU while another app owns the foreground.
                 svcSleepThread(100000000LL); // 100 ms

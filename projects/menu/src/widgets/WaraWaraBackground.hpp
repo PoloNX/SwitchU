@@ -61,6 +61,9 @@ public:
     bool loadImage(nxui::GpuDevice& gpu, nxui::Renderer& ren, const std::string& path);
     void clearImage();
 
+    void setMotionPaused(bool paused) { m_motionPaused = paused; }
+    bool motionPaused() const { return m_motionPaused; }
+
     void regenerate(int count = 50) override;
 
 protected:
@@ -93,5 +96,6 @@ private:
     std::vector<Shape> m_shapes;
     nxui::Texture m_backgroundImage;
     float m_time = 0.f;
+    bool m_motionPaused = false;
 };
 

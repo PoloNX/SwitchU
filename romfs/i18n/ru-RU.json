@@ -90,6 +90,10 @@
       "album_storage_desc": "Где сохраняются скриншоты и видео.",
       "album_sd": "SD-карта",
       "album_nand": "NAND",
+      "cursor_motion": "Движение курсора",
+      "cursor_motion_desc": "Выберите плавное или мгновенное перемещение курсора выбора.",
+      "cursor_translate": "Плавно",
+      "cursor_teleport": "Мгновенно",
       "ui_wireframe": "Каркас интерфейса",
       "ui_wireframe_desc": "Показывает контуры всех Box для отладки макета."
     },
@@ -388,7 +392,10 @@
   },
   "hint": {
     "repeat": "Повтор",
-    "voice": "Голос"
+    "voice": "Голос",
+    "sort_custom": "Мой порядок",
+    "sort_alpha": "А-Я",
+    "sort_recent": "Недавние"
   },
   "accessibility": {
     "speech": {
@@ -514,5 +521,38 @@
       "skip_all": "Пропустить всё",
       "test": "Тест"
     }
+  },
+  "text_entry": {
+    "erase": "Стереть",
+    "full": "Достигнута максимальная длина",
+    "hint": "A: ввод   X: стереть   Y: регистр   L/R: символы   Plus: подтвердить   B: отмена",
+    "letters": "АБВ",
+    "opened": "Экранная клавиатура. Крестовина для выбора символа, A — ввести, X — стереть, Plus — подтвердить, B — отмена.",
+    "shift": "Регистр",
+    "space": "Пробел",
+    "symbols": "?12#"
+  },
+  "quicksettings": {
+    "title": "Быстрые настройки",
+    "close_hint": "[B] Закрыть",
+    "battery": "БАТАРЕЯ",
+    "charging": "⚡ Зарядка",
+    "discharging": "Разрядка",
+    "hardware_temp": "ТЕМПЕРАТУРА",
+    "temp_optimal": "Норма",
+    "temp_warm": "Нагрев",
+    "brightness": "☀ Яркость экрана",
+    "bgm_volume": "♫ Громкость музыки",
+    "sfx_volume": "♪ Звуковые эффекты",
+    "airplane_mode": "✈ Режим полёта",
+    "wifi": "Wi-Fi",
+    "on": "ВКЛ",
+    "off": "ВЫКЛ",
+    "power_options": "ПИТАНИЕ",
+    "sleep": "Сон",
+    "reboot": "Перезагрузить",
+    "power_off": "Выключить",
+    "hint_adjust": "Настроить",
+    "hint_shortcut": "Быстрые настройки"
   }
 }

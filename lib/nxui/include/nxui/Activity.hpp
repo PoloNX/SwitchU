@@ -26,6 +26,11 @@ class Activity {
 public:
     virtual ~Activity() = default;
 
+    /// Optional first paint before onCreate(). Return true if this drew
+    /// something meaningful (e.g. a leave-frame splash) so Application can
+    /// skip the default black clear frame.
+    virtual bool presentInitialFrame(Renderer& /*ren*/) { return false; }
+
     /// Called once after GPU / Renderer / Input are ready.
     virtual bool onCreate() { return true; }
 
@@ -39,6 +44,10 @@ public:
     /// The rootBox is rendered before this, so anything drawn here
     /// appears on top of the widget tree (useful for overlays).
     virtual void onRender(Renderer& ren) {}
+
+    /// Called after a frame has been submitted/presented. Safe place for
+    /// GPU→CPU framebuffer readback without interrupting the render pass.
+    virtual void onAfterPresent(Renderer& /*ren*/) {}
 
     /// Access the parent Application (set by Application::setActivity).
     Application& app() { return *m_app; }

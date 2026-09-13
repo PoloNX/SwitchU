@@ -111,6 +111,11 @@ public:
                                float radius, const Color& tint = Color::white());
     void drawText(const std::string& text, const Vec2& pos, Font* font, const Color& color, float scale = 1.f);
 
+    /// GPU→CPU readback of the last presented framebuffer. See GpuDevice.
+    bool downloadFramebufferRgba(std::vector<uint8_t>& outRgba,
+                                 int& outW, int& outH,
+                                 bool halfRes = true);
+
     // Post-processing
     void captureToOffscreen(bool reuseIfValid = false);
     void copyOffscreen(int srcTarget, int dstTarget);

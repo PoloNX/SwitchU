@@ -181,12 +181,25 @@ void WiiUMenuApp::announceFocusedWidget(nxui::Widget* w) {
 }
 
 nxui::Texture* WiiUMenuApp::adoptEditGhostTexture(GlossyIcon* sourceIcon) {
-    // The streamer pins the source index for the whole edit operation, so the
-    // source texture already has the lifetime needed by the ghost. Re-decoding
-    // and uploading a second copy here forced a synchronous GPU drain both
-    // when movement started and when it stopped.
     m_editGhostTexture.reset();
-    return sourceIcon ? sourceIcon->texture() : nullptr;
+    if (!sourceIcon)
+        return nullptr;
+
+    // The held tile crosses between two unrelated streamer models when it
+    // enters or leaves a folder. A borrowed pool texture can be detached or
+    // recycled at that point, replacing the carried icon with a spinner (or,
+    // worse, another game's icon). Give the ghost one stable texture for the
+    // complete edit operation. The source bytes include custom SGDB icons.
+    const auto bytes = AppListLoader::loadIconData(sourceIcon->titleId());
+    if (!bytes.empty()) {
+        auto owned = std::make_unique<nxui::Texture>();
+        if (owned->loadFromMemory(app().gpu(), app().renderer(),
+                                  bytes.data(), bytes.size(), 192)) {
+            m_editGhostTexture = std::move(owned);
+            return m_editGhostTexture.get();
+        }
+    }
+    return sourceIcon->texture();
 }
 
 void WiiUMenuApp::startEditGhost(GlossyIcon* sourceIcon) {
@@ -205,8 +218,11 @@ void WiiUMenuApp::startEditGhost(GlossyIcon* sourceIcon) {
     ghost->setFocusable(false);
     ghost->setTitle(sourceIcon->title());
     ghost->setTitleId(sourceIcon->titleId());
-    ghost->setTexture(adoptEditGhostTexture(sourceIcon));
     ghost->copyWidgetPresentationFrom(*sourceIcon);
+    // copyWidgetPresentationFrom also copies the source's borrowed streamer
+    // pointer. Install the owned texture afterwards so leaving a folder cannot
+    // make the ghost inherit the first remaining game's recycled pool slot.
+    ghost->setTexture(adoptEditGhostTexture(sourceIcon));
     ghost->setIsGameCard(sourceIcon->isGameCard());
     ghost->setGameCardTexture(sourceIcon->gameCardTexture());
     ghost->setNotLaunchable(sourceIcon->isNotLaunchable());
@@ -286,6 +302,55 @@ void WiiUMenuApp::reattachEditSourceIcon() {
     m_iconStreamer.setPinnedIndex(index);
     if (m_editGhostIcon && !m_editGhostTexture)
         m_editGhostIcon->setTexture(m_editSourceIcon->texture());
+}
+
+void WiiUMenuApp::syncEditPlacementAfterModelChange(bool preferEmptySlot) {
+    if (!m_editMode || !m_grid || m_model.count() <= 0)
+        return;
+
+    const int count = m_model.count();
+    int target = m_editTargetIndex;
+    const bool stale = target < 0 || target >= count;
+
+    if (preferEmptySlot || stale) {
+        target = 0;
+        if (preferEmptySlot) {
+            for (int i = 0; i < count; ++i) {
+                const auto& entry = m_model.at(i);
+                if (entry.kind == GridEntryKind::Empty ||
+                    (entry.titleId == 0 &&
+                     entry.kind != GridEntryKind::WidgetContinuation)) {
+                    target = i;
+                    break;
+                }
+            }
+        } else {
+            const int focused = m_grid->focusedGlobalIndex();
+            if (focused >= 0 && focused < count)
+                target = focused;
+        }
+    }
+
+    m_editTargetIndex = std::clamp(target, 0, count - 1);
+    if (m_grid->focusGlobalIndex(m_editTargetIndex)) {
+        if (auto* focused = m_grid->focusManager().current()) {
+            focusManager().setFocus(focused);
+            if (focused->tag() == "glossy_icon")
+                bindEditActions(static_cast<GlossyIcon*>(focused));
+        }
+    }
+
+    const int spanColumns = m_editGhostIcon
+        ? std::max(1, m_editGhostIcon->gridSpanColumns()) : 1;
+    const int spanRows = m_editGhostIcon
+        ? std::max(1, m_editGhostIcon->gridSpanRows()) : 1;
+    m_editGhostTargetRect = m_grid->gridSpanRect(
+        m_editTargetIndex, spanColumns, spanRows);
+    if (m_editGhostIcon)
+        m_editGhostIcon->setRect(m_editGhostTargetRect);
+    updateCursor();
+    DebugLog::log("[edit] sync placement target=%d preferEmpty=%d stale=%d",
+                  m_editTargetIndex, preferEmptySlot ? 1 : 0, stale ? 1 : 0);
 }
 
 void WiiUMenuApp::updateEditGhost(float dt) {
@@ -664,6 +729,10 @@ bool WiiUMenuApp::activateEditModeTarget() {
     const AppEntry targetEntry = m_model.at(target);
     if (m_openFolderId == 0 && targetEntry.isFolder() &&
         m_editHeldTitleId < kFolderTitleIdPrefix) {
+        // Drop the root-grid index before the folder model loads. Leaving it
+        // intact made page-2+ folders keep an out-of-range target, which pinned
+        // the edit ghost at (0,0) and blocked further movement (#95).
+        m_editTargetIndex = -1;
         detachEditSourceIcon();
         unbindEditActions();
         requestOpenFolder(targetEntry.folderId);
@@ -671,6 +740,8 @@ bool WiiUMenuApp::activateEditModeTarget() {
     }
 
     if (m_openFolderId != 0 && m_editHeldTitleId < kFolderTitleIdPrefix) {
+        // Folder order lives in folders.json, not the HOME layoutSlots swap.
+        // Same-folder drops swap in place; inbound drops still insert.
         const std::uint32_t targetFolderId = m_openFolderId;
         if (!m_folderStore.placeTitle(targetFolderId, m_editHeldTitleId,
                                       static_cast<std::size_t>(target)) ||
@@ -905,6 +976,8 @@ void WiiUMenuApp::wireFocusCallback() {
 bool WiiUMenuApp::isCurrentFocusableWidget(nxui::Widget* w) const {
     if (!w) return false;
     if (m_steamGridDbPicker && m_steamGridDbPicker.get() == w) return w->isFocusable();
+    if (m_textEntry && m_textEntry.get() == w) return w->isFocusable();
+    if (m_quickSettings && m_quickSettings.get() == w) return w->isFocusable();
     if (m_themeShop && m_themeShop.get() == w) return w->isFocusable();
     if (m_settings && m_settings.get() == w) return w->isFocusable();
     for (const auto& btn : m_sidebar.leftButtons())
@@ -961,20 +1034,13 @@ bool WiiUMenuApp::focusTitle(uint64_t titleId) {
 }
 
 void WiiUMenuApp::markSuspendedIcon(uint64_t titleId) {
-    if (!m_grid)
-        return;
-    for (auto& icon : m_grid->allIcons())
-        icon->setSuspended(titleId != 0 && icon->titleId() == titleId);
+    setSuspendedIconVisuals(titleId);
     if (titleId != 0)
         focusTitle(titleId);
 
-    if (auto* cur = m_grid->focusManager().current()) {
+    if (auto* cur = m_grid ? m_grid->focusManager().current() : nullptr) {
         auto* icon = static_cast<GlossyIcon*>(cur);
-        if (m_launcher.isAppSuspended(icon->titleId())) {
-            m_titlePill->setText(icon->title());
-        } else {
-            m_titlePill->setText(icon->title());
-        }
+        m_titlePill->setText(icon->title());
     }
 }
 
@@ -990,6 +1056,10 @@ void WiiUMenuApp::closeActiveOverlays() {
         m_contextMenu->hide();
     if (m_dialog && m_dialog->isActive())
         m_dialog->hide();
+    if (m_quickSettings && m_quickSettings->isActive())
+        m_quickSettings->hide();
+    if (m_textEntry && m_textEntry->isActive())
+        m_textEntry->hide(false);
     if (m_settings && m_settings->isActive())
         m_settings->hide();
     if (m_themeShop && m_themeShop->isActive())
@@ -1007,11 +1077,16 @@ void WiiUMenuApp::closeActiveOverlays() {
 }
 
 nxui::Widget* WiiUMenuApp::focusRoot() {
+    if (m_leaveCaptureDeferred) return nullptr;
+    if (m_leaveCapturePending) return nullptr;
+    if (leaveSplashActive()) return nullptr;
     if (m_launchAnim && m_launchAnim->isPlaying()) return nullptr;
     if (m_folderCaptureRequested) return nullptr;
     if (m_progressDialog && m_progressDialog->isActive()) return m_progressDialog.get();
+    if (m_textEntry && m_textEntry->isActive()) return m_textEntry.get();
     if (m_dialog && m_dialog->isActive()) return m_dialog.get();
     if (m_contextMenu && m_contextMenu->isActive()) return m_contextMenu.get();
+    if (m_quickSettings && m_quickSettings->isActive()) return m_quickSettings.get();
     if (m_userSelect && m_userSelect->isActive()) return m_userSelect.get();
     if (m_steamGridDbPicker && m_steamGridDbPicker->isActive())
         return m_steamGridDbPicker.get();
@@ -1092,9 +1167,24 @@ void WiiUMenuApp::wireGlobalActions() {
     });
 
     root.addAction(static_cast<uint64_t>(nxui::Button::L), [this]() {
+        if (m_editMode || m_navigator.route() != switchu::navigation::Route::Home ||
+            focusRoot() != &rootBox())
+            return;
+        openQuickSettings();
+    });
+
+    root.addAction(static_cast<uint64_t>(nxui::Button::LStick), [this]() {
         if (m_navigator.route() == switchu::navigation::Route::ControllerTest)
             return;
         m_accessibility.repeatLastAnnouncement();
+    });
+
+    root.addAction(static_cast<uint64_t>(nxui::Button::R), [this]() {
+        if (m_navigator.route() != switchu::navigation::Route::Home ||
+            focusRoot() != &rootBox() || m_openFolderId != 0 || m_editMode ||
+            m_appLayoutMode == AppLayoutMode::DynamicLine)
+            return;
+        cycleSortMode();
     });
 
     // The grid holds the open folder's model, so paging works inside a folder too.
@@ -1281,6 +1371,8 @@ void WiiUMenuApp::showFolderContextMenu(std::uint32_t folderId) {
     info.itemCount = static_cast<int>(folder->titleCount());
     info.colorIndex = folder->colorIndex;
     info.sizeIndex = folder->sizeIndex;
+    info.styleIndex = m_config.folderStyle;
+    info.showCover = m_config.folderShowCover;
     m_folderOptions->setFolder(info);
     m_folderOptions->onOpen([this, folderId]() {
         if (m_folderOptions) m_folderOptions->hide();
@@ -1311,6 +1403,37 @@ void WiiUMenuApp::showFolderContextMenu(std::uint32_t folderId) {
         if (!m_folderStore.setSizeIndex(folderId, sizeIndex))
             return;
         saveFoldersOrReport("folder_size");
+    });
+    m_folderOptions->onStyleChange([this](int styleIndex) {
+        const int clamped = std::clamp(styleIndex, 0, switchu::folders::kFolderStyleCount - 1);
+        if (m_config.folderStyle == clamped)
+            return;
+        m_config.folderStyle = clamped;
+        if (m_configSaveFuture.valid())
+            m_configSaveFuture.wait();
+        m_configSaveFuture = m_threadPool.submit([config = m_config]() {
+            config.save();
+        });
+        if (!m_grid)
+            return;
+        const auto& icons = m_grid->allIcons();
+        for (int i = 0; i < m_model.count() && i < static_cast<int>(icons.size()); ++i) {
+            if (!m_model.at(i).isFolder() || !icons[static_cast<std::size_t>(i)])
+                continue;
+            icons[static_cast<std::size_t>(i)]->setFolderStyleIndex(clamped);
+        }
+        applyFolderCoversToIcons();
+    });
+    m_folderOptions->onCoverChange([this](bool showCover) {
+        if (m_config.folderShowCover == showCover)
+            return;
+        m_config.folderShowCover = showCover;
+        if (m_configSaveFuture.valid())
+            m_configSaveFuture.wait();
+        m_configSaveFuture = m_threadPool.submit([config = m_config]() {
+            config.save();
+        });
+        applyFolderCoversToIcons();
     });
     m_folderOptions->onDelete([this, folderId, name]() {
         auto& local = nxui::I18n::instance();
@@ -1498,8 +1621,17 @@ void WiiUMenuApp::handleTouch() {
 
         float dx = input.touchDeltaX();
         float dy = input.touchDeltaY();
-        if (std::abs(dx) > kSwipeThreshold && std::abs(dx) > std::abs(dy) * 1.5f)
+        if (std::abs(dx) > kSwipeThreshold && std::abs(dx) > std::abs(dy) * 1.5f) {
             flipPage(dx < 0 ? 1 : -1);
+        } else if (m_openFolderId != 0
+                   && m_touchHitIndex < 0
+                   && std::abs(dx) < 20.f && std::abs(dy) < 20.f
+                   && m_grid
+                   && m_grid->hitTest(input.touchX(), input.touchY()) < 0) {
+            // Tap anywhere that isn't an icon (dimmed margins left/right/above/below,
+            // and empty gaps) to leave — mirrors B, including edit-mode keep-move.
+            closeFolder(m_editMode);
+        }
         m_touchHitIndex = -1;
         m_touchEditDragActive = false;
     }

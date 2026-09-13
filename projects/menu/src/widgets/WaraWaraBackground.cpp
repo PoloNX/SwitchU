@@ -231,6 +231,8 @@ void WaraWaraBackground::regenerate(int count) {
 }
 
 void WaraWaraBackground::onUpdate(float dt) {
+    if (m_motionPaused)
+        return;
     m_time += dt;
     for (auto& s : m_shapes) {
         if (m_config.layout == Layout::Floating) {

@@ -13,6 +13,10 @@ public:
     void setColor(const nxui::Color& c) { m_color = c; }
     void setCornerRadius(float r)  { m_cornerRadius.setImmediate(r); }
     void setBorderWidth(float w)   { m_borderWidth = w; }
+    void setMotionPaused(bool paused) { m_motionPaused = paused; }
+    bool motionPaused() const { return m_motionPaused; }
+    void setInstantMotion(bool instant);
+    bool instantMotion() const { return m_instantMotion; }
 
 protected:
     void onUpdate(float dt) override;
@@ -28,5 +32,7 @@ private:
     float m_time = 0.f;
     float m_waveSpeed = 3.5f;
     bool  m_initialized = false;
+    bool  m_motionPaused = false;
+    bool  m_instantMotion = false;
+    float m_teleportPulse = 0.f;
 };
-

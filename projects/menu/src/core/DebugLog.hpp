@@ -39,12 +39,12 @@ public:
         const bool canTruncate = switchu::log_detail::rotate_current_log(LOG_DIR, LOG_BASE_NAME, LOG_EXTENSION, MAX_ARCHIVED_LOGS);
         char path[256];
         switchu::log_detail::build_current_log_path(path, sizeof(path), LOG_DIR, LOG_BASE_NAME, LOG_EXTENSION);
-        self.m_file.open(path, canTruncate ? std::ios::out | std::ios::trunc : std::ios::out | std::ios::app);
-        if (self.m_file.is_open()) {
+        self.m_sink.open(path, canTruncate);
+        if (self.m_sink.is_open()) {
             char timestamp[32];
             switchu::log_detail::format_line_timestamp(timestamp, sizeof(timestamp));
-            self.m_file << '[' << timestamp << "] === SwitchU log start ===\n";
-            self.m_file.flush();
+            self.m_sink.append(std::string("[") + timestamp + "] === SwitchU log start ===");
+            self.m_sink.flush();
         }
 #endif
     }
@@ -76,11 +76,7 @@ public:
 #ifdef SWITCHU_MENU
         switchu::FileLog::log("%s", buf);
 #else
-        if (self.m_file.is_open()) {
-            self.m_file << line << '\n';
-            self.m_file.flush();
-        }
-
+        self.m_sink.append(line);
         std::fprintf(stderr, "%s\n", line.c_str());
 #endif
     }
@@ -109,16 +105,16 @@ private:
     }
 
     static void closeCurrentFile(DebugLog& self) {
-        if (!self.m_file.is_open())
+        if (!self.m_sink.is_open())
             return;
 
         char timestamp[32];
         switchu::log_detail::format_line_timestamp(timestamp, sizeof(timestamp));
-        self.m_file << '[' << timestamp << "] === SwitchU log end ===\n";
-        self.m_file.close();
+        self.m_sink.append(std::string("[") + timestamp + "] === SwitchU log end ===");
+        self.m_sink.close();
     }
 
     std::mutex m_mutex;
     std::vector<std::string> m_lines;
-    std::ofstream m_file;
+    switchu::log_detail::buffered_sink m_sink;
 };

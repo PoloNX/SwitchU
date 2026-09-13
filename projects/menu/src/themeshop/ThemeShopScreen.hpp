@@ -47,12 +47,15 @@ public:
     void onGridRowsChange(IntCb cb)      { m_gridRowsCb = std::move(cb); }
     void onActionHintStyleChange(IntCb cb) { m_actionHintStyleCb = std::move(cb); }
     void onAutoThemeOpen(VoidCb cb) { m_autoThemeOpenCb = std::move(cb); }
+    void onCursorMotionModeChange(IntCb cb) { m_cursorMotionModeCb = std::move(cb); }
     void onNextTrack(VoidCb cb)          { m_nextTrackCb = std::move(cb); }
     void onThemeShopApply(StringCb cb)   { m_themeShopApplyCb = std::move(cb); }
     void onThemeShopDelete(StringCb cb)  { m_themeShopDeleteCb = std::move(cb); }
     void onThemeShopDownload(StringCb cb) { m_themeShopDownloadCb = std::move(cb); }
     void onThemeShopDownloadInstall(StringCb cb) { m_themeShopDownloadInstallCb = std::move(cb); }
     void onNetConnectRequest(VoidCb cb)  { m_netConnectCb = std::move(cb); }
+    void onSearchRequest(StringCb cb) { m_searchRequestCb = std::move(cb); }
+    void setSearchQuery(std::string query);
 
     void setMusicState(bool enabled, float musicVol, float sfxVol) {
         m_musicEnabled = enabled;
@@ -60,14 +63,17 @@ public:
         m_sfxVolume = sfxVol;
     }
     void setGridLayoutState(int columns, int rows) {
-        m_gridColumns = std::clamp(columns, 3, 8);
-        m_gridRows = std::clamp(rows, 2, 5);
+        m_gridColumns = std::clamp(columns, 1, 8);
+        m_gridRows = std::clamp(rows, 1, 5);
     }
     void setActionHintStyleState(const std::string& style) {
         m_actionHintStyle = style == "panel" ? 0 : 1;
     }
     void setAutoThemeSummary(std::string summary) {
         m_autoThemeSummary = std::move(summary);
+    }
+    void setCursorMotionModeState(int mode) {
+        m_cursorMotionMode = std::clamp(mode, 0, 1);
     }
 
     void setThreadPool(nxui::ThreadPool* pool);
@@ -205,12 +211,14 @@ private:
     IntCb m_gridRowsCb;
     IntCb m_actionHintStyleCb;
     VoidCb m_autoThemeOpenCb;
+    IntCb m_cursorMotionModeCb;
     VoidCb m_nextTrackCb;
     StringCb m_themeShopApplyCb;
     StringCb m_themeShopDeleteCb;
     StringCb m_themeShopDownloadCb;
     StringCb m_themeShopDownloadInstallCb;
     VoidCb m_netConnectCb;
+    StringCb m_searchRequestCb;
 
     bool m_musicEnabled = true;
     float m_musicVolume = 0.4f;
@@ -219,6 +227,7 @@ private:
     int m_gridRows = 3;
     int m_actionHintStyle = 1;
     std::string m_autoThemeSummary;
+    int m_cursorMotionMode = 0;
     std::string m_searchQuery;
     std::vector<ThemeShopEntry> m_allThemeShopEntries;
     std::vector<ThemeShopEntry> m_themeShopEntries;

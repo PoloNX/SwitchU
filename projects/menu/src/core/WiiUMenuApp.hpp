@@ -16,6 +16,7 @@
 #include "core/AccessibilityManager.hpp"
 #include "widgets/LaunchAnimation.hpp"
 #include "widgets/OverlayDialog.hpp"
+#include "widgets/QuickSettingsOverlay.hpp"
 #include "widgets/ContextMenu.hpp"
 #include "widgets/ProgressDialog.hpp"
 #include "widgets/AppletButton.hpp"
@@ -32,11 +33,13 @@
 #include "settings/FolderOptionsScreen.hpp"
 #include "settings/AutoThemeScreen.hpp"
 #include "settings/ControllerTestScreen.hpp"
+#include "settings/TextEntryScreen.hpp"
 #include "themeshop/ThemeShopScreen.hpp"
 #include "core/Config.hpp"
 #include "core/FolderStore.hpp"
 #include "core/WidgetStore.hpp"
 #include "core/ThemePreset.hpp"
+#include "core/LeaveFrameCache.hpp"
 #include "sidebar/SidebarManager.hpp"
 #include "launcher/AppletLauncher.hpp"
 #include "launcher/AppListLoader.hpp"
@@ -59,6 +62,7 @@
 #include <atomic>
 #include <future>
 #include <utility>
+#include <functional>
 #include <unordered_map>
 #include <switch.h>
 #ifdef SWITCHU_MENU
@@ -87,6 +91,8 @@ public:
     void onDestroy() override;
     void onUpdate(float dt) override;
     void onRender(nxui::Renderer& ren) override;
+    bool presentInitialFrame(nxui::Renderer& ren) override;
+    void onAfterPresent(nxui::Renderer& ren) override;
 
     nxui::Widget* focusRoot() override;
 
@@ -162,12 +168,28 @@ private:
     void activateApplication(GlossyIcon* source, AppEntry* entry,
                              std::uint64_t titleId,
                              const std::string& launchTitle);
+    void resumeSuspendedApplication(std::uint64_t titleId,
+                                    const std::string& launchTitle);
 #endif
+    void scheduleLeaveCapture(std::function<void()> afterCapture,
+                              std::uint64_t previewSuspendedTitleId = 0);
+    bool hasActiveLeaveCaptureOverlay() const;
+    void pollDeferredLeaveCapture();
+    /// Visual-only suspended outline for leave-frame capture (no focus move).
+    void setSuspendedIconVisuals(std::uint64_t titleId);
+    LeaveFrameSession captureLeaveSession() const;
+    bool saveLeaveFrame(nxui::Renderer& ren);
+    void restoreLeaveSession();
+    void setLeaveMotionFrozen(bool frozen);
+    void updateLeaveSplashHandoff(float dt);
+    bool leaveSplashActive() const;
     void renameFolder(std::uint32_t folderId);
     void showFolderContextMenu(std::uint32_t folderId);
     bool saveFoldersOrReport(const char* operation);
-    std::string promptFolderName(const std::string& initial,
-                                 const std::string& guide);
+    void createTextEntry();
+    void requestTextEntry(const std::string& title, const std::string& guide,
+                          const std::string& initial, int maxLength, bool password,
+                          std::function<void(const std::string&)> onAccept);
     void editSteamGridDbApiKey();
     void startSteamGridDbScrape();
     void openSteamGridDbPicker(GameOptionsScreen::ArtworkKind kind,
@@ -234,6 +256,8 @@ private:
     void closeActiveOverlays();
     void handleTouch();
     std::shared_ptr<GlossyIcon> makeIcon(const AppEntry& entry);
+    nxui::Texture* folderCoverTexture(std::uint64_t titleId);
+    void applyFolderCoversToIcons();
     void wireFocusCallback();
     void wireGlobalActions();
     void toggleAccessibilitySpeech();
@@ -241,6 +265,9 @@ private:
     bool isCurrentFocusableWidget(nxui::Widget* w) const;
     std::string accessibilityPositionFor(nxui::Widget* w) const;
     void createSettings();
+    void createQuickSettings();
+    void openQuickSettings();
+    void closeQuickSettings();
     void createThemeShop();
     void createGameOptions();
     void createFolderOptions();
@@ -273,6 +300,10 @@ private:
     void reattachEditSourceIcon();
     void stopEditGhost();
     void updateEditGhost(float dt);
+    // Re-anchor move-mode placement after the grid model changes (folder
+    // open/close, rebuild). preferEmptySlot is used when dropping into a
+    // folder so the cursor starts on a free cell instead of a stale root index.
+    void syncEditPlacementAfterModelChange(bool preferEmptySlot);
     bool commitEditModePlacement();
     bool activateEditModeTarget();
     bool moveFocusedIcon(nxui::FocusDirection dir);
@@ -288,6 +319,8 @@ private:
     void toggleAppLayoutMode();
     void setAppLayoutMode(AppLayoutMode mode);
     void configureDynamicLineNavigation();
+    void cycleSortMode();
+    std::string sortModeLabel() const;
     AppLayoutMode appLayoutMode() const { return m_appLayoutMode; }
 
 #ifdef SWITCHU_MENU
@@ -334,6 +367,7 @@ private:
     std::shared_ptr<LaunchAnimation>   m_launchAnim;
     std::shared_ptr<OverlayDialog>     m_userSelect;
     std::shared_ptr<OverlayDialog>     m_dialog;
+    std::shared_ptr<QuickSettingsOverlay> m_quickSettings;
     std::shared_ptr<ContextMenu>       m_contextMenu;
     std::shared_ptr<ProgressDialog>    m_progressDialog;
     std::shared_ptr<SettingsScreen>    m_settings;
@@ -343,6 +377,7 @@ private:
     std::shared_ptr<FolderOptionsScreen> m_folderOptions;
     std::shared_ptr<AutoThemeScreen>   m_autoThemeScreen;
     std::shared_ptr<ControllerTestScreen> m_controllerTest;
+    std::shared_ptr<TextEntryScreen>      m_textEntry;
 
     nxui::Texture m_gameCardTex;
     nxui::Texture m_arrowTexLeft;
@@ -428,6 +463,7 @@ private:
     std::vector<uint64_t> m_layoutSlots;
     std::unordered_map<std::uint64_t, switchu::widgets::WidgetSize> m_gameSizes;
     bool m_layoutDirty = false;
+    std::unordered_map<std::uint64_t, std::unique_ptr<nxui::Texture>> m_folderCoverCache;
     switchu::folders::FolderStore m_folderStore;
     switchu::widgets::WidgetStore m_widgetStore;
     std::uint64_t m_recentWidgetAssetTitleId = 0;
@@ -537,6 +573,23 @@ private:
     std::future<void> m_accessibilityFuture;
     bool m_accessibilityReady = false;
     std::uint64_t m_fastReturnStartupTick = 0;
+
+    bool m_leaveCapturePending = false;
+    std::function<void()> m_leaveCaptureAfter;
+    bool m_leaveCaptureDeferred = false;
+    std::function<void()> m_leaveCaptureDeferredAfter;
+    std::uint64_t m_leaveCaptureDeferredSuspendedTitleId = 0;
+    LeaveFrameSession m_leaveSession;
+    nxui::Texture m_leaveSplashTex;
+    enum class LeaveSplashPhase { None, Hold, Fade };
+    LeaveSplashPhase m_leaveSplashPhase = LeaveSplashPhase::None;
+    float m_leaveSplashHoldRemaining = 0.f;
+    float m_leaveSplashFade = 0.f;
+    bool m_leaveSplashDrawn = false;
+    bool m_leaveMotionFrozen = false;
+    bool m_leaveMotionFreezePending = false;
+    static constexpr float kLeaveSplashHoldDur = 0.06f;
+    static constexpr float kLeaveSplashFadeDur = 0.25f;
 
     bool  m_audioInitPending = false;
     bool  m_audioHeldLogged  = false;

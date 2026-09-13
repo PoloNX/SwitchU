@@ -18,6 +18,7 @@ void LaunchAnimation::start(const nxui::Rect& from, const nxui::Texture* tex, fl
     m_onDone       = std::move(onDone);
     m_timer        = 0.f;
     m_playing      = true;
+    m_resume       = false;
     m_launched     = false;
     m_doneCalled   = false;
     m_postLaunchHold = false;
@@ -26,9 +27,41 @@ void LaunchAnimation::start(const nxui::Rect& from, const nxui::Texture* tex, fl
     m_target = {(1280 - side) * 0.5f, (720 - side) * 0.5f, side, side};
 }
 
+void LaunchAnimation::startResume(nxui::VoidCallback onDone) {
+    m_from = {};
+    m_target = {};
+    m_tex = nullptr;
+    m_titleId = 0;
+    m_uid = {};
+    m_onLaunch = {};
+    m_onDone = std::move(onDone);
+    m_timer = 0.f;
+    m_playing = true;
+    m_resume = true;
+    m_launched = false;
+    m_doneCalled = false;
+    m_postLaunchHold = false;
+}
+
 void LaunchAnimation::onUpdate(float dt) {
     if (!m_playing) return;
     m_timer += dt;
+
+    if (m_resume) {
+        if (m_timer >= kResumeTotalDur) {
+            if (!m_doneCalled) {
+                m_doneCalled = true;
+                if (m_onDone)
+                    m_onDone();
+                m_postLaunchHold = true;
+            }
+            // Keep black briefly after the resume command so the menu does not
+            // flash back while the applet is handing off.
+            if (!m_postLaunchHold || m_timer >= kResumeTotalDur + 0.08f)
+                m_playing = false;
+        }
+        return;
+    }
 
     if (m_timer >= kTotalDur) {
         if (!m_launched) {
@@ -53,6 +86,14 @@ void LaunchAnimation::onUpdate(float dt) {
 
 void LaunchAnimation::onRender(nxui::Renderer& ren) {
     if (!m_playing) return;
+
+    if (m_resume) {
+        float alpha = 1.f;
+        if (m_timer < kResumeFadeDur)
+            alpha = nxui::Easing::outCubic(std::min(m_timer / kResumeFadeDur, 1.f));
+        ren.drawRect({0, 0, 1280, 720}, nxui::Color(0, 0, 0, alpha));
+        return;
+    }
 
     float t = m_timer;
     constexpr float kIconEnd = kZoomDur + kHoldDur + kFadeDur;

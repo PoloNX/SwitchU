@@ -90,6 +90,10 @@
       "album_storage_desc": "Wo Screenshots und Videos gespeichert werden.",
       "album_sd": "SD-Karte",
       "album_nand": "NAND",
+      "cursor_motion": "Cursor-Bewegung",
+      "cursor_motion_desc": "Legt fest, ob der Auswahlcursor gleitet oder sofort springt.",
+      "cursor_translate": "Gleiten",
+      "cursor_teleport": "Springen",
       "ui_wireframe": "UI-Wireframe",
       "ui_wireframe_desc": "Umrisse aller Box-Widgets zur Layout-Fehlersuche anzeigen."
     },
@@ -388,7 +392,10 @@
   },
   "hint": {
     "repeat": "Wiederholen",
-    "voice": "Stimme"
+    "voice": "Stimme",
+    "sort_custom": "Meine Reihenfolge",
+    "sort_alpha": "A-Z",
+    "sort_recent": "Zuletzt"
   },
   "accessibility": {
     "speech": {
@@ -514,5 +521,38 @@
       "skip_all": "Alles überspringen",
       "test": "Test"
     }
+  },
+  "text_entry": {
+    "erase": "Löschen",
+    "full": "Maximale Länge erreicht",
+    "hint": "A: Eingeben   X: Löschen   Y: Umschalten   L/R: Symbole   Plus: Bestätigen   B: Abbrechen",
+    "letters": "ABC",
+    "opened": "Bildschirmtastatur. Steuerkreuz zum Wählen einer Taste, A zum Eingeben, X zum Löschen, Plus zum Bestätigen, B zum Abbrechen.",
+    "shift": "Umschalten",
+    "space": "Leerzeichen",
+    "symbols": "?12#"
+  },
+  "quicksettings": {
+    "title": "Schnelleinstellungen",
+    "close_hint": "[B] Schließen",
+    "battery": "BATTERIE",
+    "charging": "⚡ Lädt",
+    "discharging": "Entladen",
+    "hardware_temp": "TEMPERATUR",
+    "temp_optimal": "Optimal",
+    "temp_warm": "Warm",
+    "brightness": "☀ Helligkeit",
+    "bgm_volume": "♫ Musiklautstärke",
+    "sfx_volume": "♪ Toneffekte",
+    "airplane_mode": "✈ Flugzeugmodus",
+    "wifi": "Wi-Fi",
+    "on": "EIN",
+    "off": "AUS",
+    "power_options": "ENERGIEOPTIONEN",
+    "sleep": "Standby",
+    "reboot": "Neustart",
+    "power_off": "Ausschalten",
+    "hint_adjust": "Einstellen",
+    "hint_shortcut": "Schnelleinstellungen"
   }
 }

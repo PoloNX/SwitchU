@@ -28,6 +28,7 @@ struct PendingApp {
     std::uint32_t        folderId = 0;
     int                  folderPreviewCount = 0;
     int                  folderColorIndex = 0;
+    std::uint64_t        folderCoverTitleId = 0;
     std::uint32_t        widgetId = 0;
     switchu::widgets::WidgetType widgetType = switchu::widgets::WidgetType::Clock;
     int                  widgetColumns = 1;

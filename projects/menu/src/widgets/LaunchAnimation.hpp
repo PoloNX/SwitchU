@@ -14,16 +14,22 @@ class LaunchAnimation : public nxui::Widget {
 public:
     LaunchAnimation() = default;
 
+    // Cold launch: zoom to center, hold, fade, then black, then launch.
     void start(const nxui::Rect& from, const nxui::Texture* tex, float cornerRadius,
                const nxui::Color& panelColor, const nxui::Color& borderColor,
                uint64_t titleId, AccountUid uid,
                LaunchCallback onLaunch = {}, nxui::VoidCallback onDone = {});
 
+    // Resume an already-open title: brief fade to black, then onDone.
+    void startResume(nxui::VoidCallback onDone);
+
     bool isPlaying() const { return m_playing; }
-    void stop() { m_playing = false; m_tex = nullptr; }
+    void stop() { m_playing = false; m_tex = nullptr; m_resume = false; }
 
     float musicFadeProgress() const { // between 0 and 1, where 0 is the initial state
-        return m_playing ? std::min(m_timer / kMusicFadeDur, 1.f) : 1.f;
+        if (!m_playing) return 1.f;
+        const float duration = m_resume ? kResumeTotalDur : kMusicFadeDur;
+        return std::min(m_timer / duration, 1.f);
     }
 
 protected:
@@ -32,6 +38,7 @@ protected:
 
 private:
     bool  m_playing  = false;
+    bool  m_resume   = false;
     float m_timer    = 0.f;
 
     static constexpr float kZoomDur   = 0.45f;
@@ -43,6 +50,11 @@ private:
     static constexpr float kTotalDur  = kZoomDur + kHoldDur + kFadeDur
                                       + kBlackDur + kBlackHold;
     static constexpr float kMusicFadeDur = kZoomDur + kHoldDur + kFadeDur + kBlackDur;
+
+    // Resume: soft blackout only — no zoom or icon flare.
+    static constexpr float kResumeFadeDur = 0.16f;
+    static constexpr float kResumeHoldDur = 0.06f;
+    static constexpr float kResumeTotalDur = kResumeFadeDur + kResumeHoldDur;
 
     nxui::Rect     m_from;
     nxui::Rect     m_target;

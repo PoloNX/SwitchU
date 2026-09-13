@@ -1,5 +1,7 @@
 #include "GlossyIcon.hpp"
 #include "FolderPalette.hpp"
+#include "FolderStyleDraw.hpp"
+#include "core/FolderStore.hpp"
 #include "BatteryDrawing.hpp"
 #include "core/DebugLog.hpp"
 #include <nxui/core/Renderer.hpp>
@@ -14,10 +16,6 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
-#ifdef SWITCHU_MENU
-#include <switch.h>
-#endif
-
 struct WidgetGifDecodeState {
     std::vector<std::vector<std::uint8_t>> frames;
     std::vector<int> durationsMs;
@@ -471,9 +469,14 @@ void GlossyIcon::setWidgetGameTextures(std::uint64_t titleId,
 
 void GlossyIcon::copyWidgetPresentationFrom(GlossyIcon& source) {
     m_entryKind = source.m_entryKind;
-    m_folderColorIndex = source.m_folderColorIndex;
     m_folderPreviewCount = source.m_folderPreviewCount;
     m_folderVisualSeed = source.m_folderVisualSeed;
+    m_folderColorIndex = source.m_folderColorIndex;
+    m_folderStyleIndex = source.m_folderStyleIndex;
+    m_folderShowCover = source.m_folderShowCover;
+    m_folderCover = source.m_folderCover;
+    m_folderCoverTitleId = source.m_folderCoverTitleId;
+    m_themeMode = source.m_themeMode;
     m_widgetType = source.m_widgetType;
     m_widgetColumns = source.m_widgetColumns;
     m_widgetRows = source.m_widgetRows;
@@ -482,10 +485,7 @@ void GlossyIcon::copyWidgetPresentationFrom(GlossyIcon& source) {
     m_widgetHeader = source.m_widgetHeader;
     m_consoleBatteryPercent = source.m_consoleBatteryPercent;
     m_consoleBatteryCharging = source.m_consoleBatteryCharging;
-    m_controllerBatteries = source.m_controllerBatteries;
     m_batteryConsoleIcon = source.m_batteryConsoleIcon;
-    m_batteryJoyconLeftIcon = source.m_batteryJoyconLeftIcon;
-    m_batteryJoyconRightIcon = source.m_batteryJoyconRightIcon;
     m_widgetGameTitleId = source.m_widgetGameTitleId;
     m_widgetHero = source.m_widgetHero;
     m_widgetLogo = source.m_widgetLogo;
@@ -547,56 +547,11 @@ void GlossyIcon::onContentUpdate(float dt) {
             m_appearOpacity.set(1.f, 0.3f, nxui::Easing::outExpo);
         }
     }
-    m_suspendPulse += dt * 2.2f;
-    if (m_entryKind == GridEntryKind::Widget && m_widgetAnimation.hasFrames())
+    if (!m_motionPaused)
+        m_suspendPulse += dt * 2.8f;
+    if (!m_motionPaused && m_entryKind == GridEntryKind::Widget && m_widgetAnimation.hasFrames())
         m_widgetAnimation.update(dt, true);
-#ifdef SWITCHU_MENU
-    if (m_entryKind == GridEntryKind::Widget &&
-        m_widgetType == switchu::widgets::WidgetType::Batteries) {
-        m_batteryRefreshTimer += dt;
-        if (m_batteryRefreshTimer >= 1.f || m_controllerBatteries.empty()) {
-            m_batteryRefreshTimer = 0.f;
-            m_controllerBatteries.clear();
-            // Attached Joy-Con are reported on the Handheld npad, not on a
-            // numbered wireless-player slot.
-            const u32 handheldStyle = hidGetNpadStyleSet(HidNpadIdType_Handheld);
-            if (handheldStyle != 0) {
-                HidPowerInfo left{}, right{};
-                hidGetNpadPowerInfoSplit(HidNpadIdType_Handheld, &left, &right);
-                m_controllerBatteries.push_back({
-                    static_cast<int>(left.battery_level) * 25,
-                    left.is_charging, "L"});
-                m_controllerBatteries.push_back({
-                    static_cast<int>(right.battery_level) * 25,
-                    right.is_charging, "R"});
-            }
-            for (int player = 0; player < 8 && m_controllerBatteries.size() < 3; ++player) {
-                const auto id = static_cast<HidNpadIdType>(HidNpadIdType_No1 + player);
-                const u32 style = hidGetNpadStyleSet(id);
-                if (style == 0 || (style & HidNpadStyleTag_NpadHandheld)) continue;
-                if (style & HidNpadStyleTag_NpadJoyDual) {
-                    HidPowerInfo left{}, right{};
-                    hidGetNpadPowerInfoSplit(id, &left, &right);
-                    if (m_controllerBatteries.size() < 3)
-                        m_controllerBatteries.push_back({
-                            static_cast<int>(left.battery_level) * 25,
-                            left.is_charging, "L"});
-                    if (m_controllerBatteries.size() < 3)
-                        m_controllerBatteries.push_back({
-                            static_cast<int>(right.battery_level) * 25,
-                            right.is_charging, "R"});
-                } else {
-                    HidPowerInfo info{};
-                    hidGetNpadPowerInfoSingle(id, &info);
-                    m_controllerBatteries.push_back({
-                        static_cast<int>(info.battery_level) * 25,
-                        info.is_charging, std::to_string(player + 1)});
-                }
-            }
-        }
-    }
-#endif
-    if (m_jiggle || m_jiggleAmount.value() > 0.001f)
+    if (!m_motionPaused && (m_jiggle || m_jiggleAmount.value() > 0.001f))
         m_jigglePhase += dt;
 }
 
@@ -708,26 +663,35 @@ void GlossyIcon::onRender(nxui::Renderer& ren) {
     }
 
     if (m_suspended && s > 0.5f) {
-        float pulse = 0.5f + 0.5f * std::sin(m_suspendPulse);
-        float glowAlpha = 0.35f + 0.25f * pulse;
+        // Soft breathe so an open title reads clearly without looking like focus.
+        const float pulse = 0.5f + 0.5f * std::sin(m_suspendPulse);
+        const float outerAlpha = (0.28f + 0.42f * pulse) * a;
+        const float innerAlpha = (0.55f + 0.35f * pulse) * a;
+        const nxui::Color glow(0.20f, 0.92f, 0.50f, 1.f);
 
-        nxui::Color glow(0.18f, 0.85f, 0.45f, glowAlpha * a);
-        ren.drawRoundedRectOutline(r.expanded(2.f), glow, rad + 2.f, 2.5f);
+        ren.drawRoundedRectOutline(r.expanded(5.f * s),
+                                   glow.withAlpha(outerAlpha * 0.55f),
+                                   rad + 5.f * s, 4.5f * s);
+        ren.drawRoundedRectOutline(r.expanded(2.f * s),
+                                   glow.withAlpha(innerAlpha),
+                                   rad + 2.f * s, 3.2f * s);
 
-        float badgeSize = 26.f * s;
+        float badgeSize = 28.f * s;
         float badgeX = r.x + r.width  - badgeSize - 4.f * s;
         float badgeY = r.y + r.height - badgeSize - 4.f * s;
 
         nxui::Vec2 badgeCenter = { badgeX + badgeSize * 0.5f, badgeY + badgeSize * 0.5f };
+        ren.drawCircle(badgeCenter, badgeSize * 0.58f,
+                       glow.withAlpha((0.20f + 0.25f * pulse) * a), 20);
         ren.drawCircle(badgeCenter, badgeSize * 0.5f,
-                       nxui::Color(0.1f, 0.1f, 0.1f, 0.85f * a), 16);
+                       nxui::Color(0.06f, 0.10f, 0.08f, 0.90f * a), 16);
 
         float triH = badgeSize * 0.45f;
         float triW = triH * 0.85f;
         nxui::Vec2 p1 = { badgeCenter.x - triW * 0.35f, badgeCenter.y - triH * 0.5f };
         nxui::Vec2 p2 = { badgeCenter.x - triW * 0.35f, badgeCenter.y + triH * 0.5f };
         nxui::Vec2 p3 = { badgeCenter.x + triW * 0.65f, badgeCenter.y };
-        ren.drawTriangle(p1, p2, p3, nxui::Color(0.18f, 0.85f, 0.45f, 0.95f * a));
+        ren.drawTriangle(p1, p2, p3, glow.withAlpha(0.98f * a));
     }
 }
 
@@ -863,37 +827,16 @@ void GlossyIcon::onContentRender(nxui::Renderer& ren) {
             ren.drawRoundedRect(inner,
                 m_loadingColor.withAlpha(0.13f * m_opacity),
                 std::max(12.f, rad - 5.f));
-            const int capacity = m_widgetRows >= 2 ? 4 : 3;
-            const int count = std::min(capacity,
-                1 + static_cast<int>(m_controllerBatteries.size()));
-            const int columns = capacity == 4 ? 2 : 3;
-            const int rows = capacity == 4 ? 2 : 1;
-            const float cellW = inner.width / columns;
-            const float cellH = inner.height / rows;
+            const float cellW = inner.width;
+            const float cellH = inner.height;
             const float radius = std::max(24.f,
-                std::min(cellW, cellH) * (capacity == 4 ? 0.31f : 0.36f));
-            for (int i = 0; i < count; ++i) {
-                const int column = i % columns;
-                const int row = i / columns;
-                const nxui::Vec2 center{
-                    inner.x + cellW * (column + 0.5f),
-                    inner.y + cellH * (row + 0.47f)};
-                if (i == 0) {
-                    drawBatteryRing(ren, center, radius,
-                        m_consoleBatteryPercent, m_consoleBatteryCharging,
-                        true, m_batteryConsoleIcon, m_font, m_opacity);
-                } else {
-                    const auto& controller =
-                        m_controllerBatteries[static_cast<std::size_t>(i - 1)];
-                    nxui::Texture* controllerIcon = controller.label == "L"
-                        ? m_batteryJoyconLeftIcon
-                        : (controller.label == "R"
-                            ? m_batteryJoyconRightIcon : nullptr);
-                    drawBatteryRing(ren, center, radius, controller.percent,
-                        controller.charging, false, controllerIcon,
-                        m_font, m_opacity);
-                }
-            }
+                std::min(cellW, cellH) * 0.36f);
+            const nxui::Vec2 center{
+                inner.x + cellW * 0.5f,
+                inner.y + cellH * 0.47f};
+            drawBatteryRing(ren, center, radius,
+                m_consoleBatteryPercent, m_consoleBatteryCharging,
+                true, m_batteryConsoleIcon, m_font, m_opacity);
             return;
         }
 
@@ -979,94 +922,25 @@ void GlossyIcon::onContentRender(nxui::Renderer& ren) {
     }
 
     if (m_entryKind == GridEntryKind::Folder) {
-        nxui::Color accent = switchu::folders::colorForIndex(m_folderColorIndex);
-
-        const float inset = 10.f * s;
-        const nxui::Rect shell = r.shrunk(inset);
-        const float shellRadius = std::max(12.f, rad - 2.f);
-        ren.drawRoundedRect({shell.x, shell.y + 4.f * s, shell.width, shell.height},
-                            nxui::Color(0.03f, 0.05f, 0.08f, 0.30f * m_opacity),
-                            shellRadius);
-        ren.drawRoundedRect(shell,
-                            nxui::Color(0.94f, 0.97f, 0.96f, 0.96f * m_opacity),
-                            shellRadius);
-        ren.drawRoundedRect(shell.shrunk(3.f * s),
-                            nxui::Color(0.72f, 0.78f, 0.79f, 0.28f * m_opacity),
-                            std::max(8.f, shellRadius - 3.f * s));
-        ren.drawRoundedRectOutline(shell.shrunk(1.f * s),
-                                   nxui::Color::white().withAlpha(0.92f * m_opacity),
-                                   std::max(8.f, shellRadius - 1.f * s), 2.f * s);
-
-        const bool named = m_font && !m_title.empty();
-
-        const float cell = std::min(shell.width, shell.height) * 0.185f;
-        const float gap = cell * 0.18f;
-        const float gridSize = cell * 3.f + gap * 2.f;
-        const float gridX = shell.x + (shell.width - gridSize) * 0.5f;
-        const float gridY = shell.y + (shell.height - gridSize) * 0.5f;
-        for (int i = 0; i < 9; ++i) {
-            const int col = i % 3;
-            const int row = i / 3;
-            const nxui::Rect cellRect{gridX + col * (cell + gap),
-                                      gridY + row * (cell + gap), cell, cell};
-            ren.drawRoundedRect({cellRect.x, cellRect.y + 1.8f * s,
-                                 cellRect.width, cellRect.height},
-                                nxui::Color(0.05f, 0.08f, 0.10f,
-                                            0.16f * m_opacity),
-                                cell * 0.20f);
-            const float variation = 0.92f + 0.035f * static_cast<float>((i + row) % 3);
-            nxui::Color cellColor(
-                std::min(1.f, accent.r * variation),
-                std::min(1.f, accent.g * variation),
-                std::min(1.f, accent.b * variation),
-                0.94f * m_opacity);
-            ren.drawRoundedRect(cellRect, cellColor, cell * 0.20f);
-            ren.drawRoundedRect({cellRect.x + cell * 0.10f,
-                                 cellRect.y + cell * 0.08f,
-                                 cellRect.width * 0.80f,
-                                 std::max(1.f, cellRect.height * 0.13f)},
-                                nxui::Color::white().withAlpha(0.18f * m_opacity),
-                                cell * 0.08f);
-        }
-
-        if (named) {
-            const nxui::Vec2 measured = m_font->measure(m_title);
-            const float room = std::max(8.f, shell.width - 6.f * s);
-            float textScale = 1.05f * s;
-            if (measured.x > 0.f)
-                textScale = std::min(textScale, room / measured.x);
-            textScale = std::max(0.38f * s, textScale);
-
-            const float textW = measured.x * textScale;
-            const float textH = measured.y * textScale;
-            const nxui::Vec2 textPos{shell.x + (shell.width - textW) * 0.5f,
-                                     shell.y + (shell.height - textH) * 0.5f};
-
-            const float halo = std::max(1.f, 1.5f * s);
-            const nxui::Color shadow(0.05f, 0.16f, 0.26f, 0.34f * m_opacity);
-            const nxui::Vec2 offsets[8] = {
-                {-halo, 0.f}, {halo, 0.f}, {0.f, -halo}, {0.f, halo},
-                {-halo, -halo}, {halo, -halo}, {-halo, halo}, {halo, halo}};
-            for (const nxui::Vec2& off : offsets)
-                ren.drawText(m_title, {textPos.x + off.x, textPos.y + off.y},
-                             m_font, shadow, textScale);
-
-            ren.drawText(m_title,
-                         {textPos.x, textPos.y + halo * 0.7f},
-                         m_font,
-                         nxui::Color(0.04f, 0.14f, 0.24f, 0.30f * m_opacity),
-                         textScale);
-
-            ren.drawText(m_title, textPos, m_font,
-                         nxui::Color::white().withAlpha(0.98f * m_opacity),
-                         textScale);
-        }
-
-        if (m_focused) {
-            ren.drawRoundedRectOutline(shell.expanded(2.f * s),
-                                       accent.withAlpha(0.42f * m_opacity),
-                                       shellRadius + 2.f * s, 2.f * s);
-        }
+        const int style = m_folderStyleIndex;
+        const bool mosaic = style == switchu::folders::kFolderStyleClassic;
+        const float inset = (mosaic ? 10.f : 8.f) * s;
+        switchu::folders::FolderStyleDrawArgs args;
+        args.renderer = &ren;
+        args.bounds = r.shrunk(inset);
+        args.radius = std::max(12.f, rad - 2.f);
+        args.scale = s;
+        args.opacity = m_opacity;
+        args.styleIndex = style;
+        args.accent = switchu::folders::colorForIndex(m_folderColorIndex);
+        args.themeMode = m_themeMode;
+        args.font = m_font;
+        args.title = &m_title;
+        args.cover = m_folderCover;
+        args.showCover = m_folderShowCover;
+        args.focused = m_focused;
+        args.drawName = true;
+        switchu::folders::drawFolderStyle(args);
         return;
     }
 

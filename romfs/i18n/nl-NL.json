@@ -90,6 +90,10 @@
       "album_storage_desc": "Waar screenshots en video's worden opgeslagen.",
       "album_sd": "SD-kaart",
       "album_nand": "NAND",
+      "cursor_motion": "Cursorbeweging",
+      "cursor_motion_desc": "Kies of de selectiecursor vloeiend of direct verplaatst.",
+      "cursor_translate": "Vloeiend",
+      "cursor_teleport": "Direct",
       "ui_wireframe": "UI-draadmodel",
       "ui_wireframe_desc": "Toont contouren van alle Box-widgets voor lay-outdebugging."
     },
@@ -388,7 +392,10 @@
   },
   "hint": {
     "repeat": "Herhaal",
-    "voice": "Stem"
+    "voice": "Stem",
+    "sort_custom": "Mijn volgorde",
+    "sort_alpha": "A-Z",
+    "sort_recent": "Recent"
   },
   "accessibility": {
     "speech": {
@@ -514,5 +521,38 @@
       "skip_all": "Alles overslaan",
       "test": "Test"
     }
+  },
+  "text_entry": {
+    "erase": "Wissen",
+    "full": "Maximale lengte bereikt",
+    "hint": "A: typen   X: wissen   Y: shift   L/R: symbolen   Plus: bevestigen   B: annuleren",
+    "letters": "ABC",
+    "opened": "Toetsenbord op scherm. Richtingstoetsen om een toets te kiezen, A om te typen, X om te wissen, Plus om te bevestigen, B om te annuleren.",
+    "shift": "Shift",
+    "space": "Spatie",
+    "symbols": "?12#"
+  },
+  "quicksettings": {
+    "title": "Snelle instellingen",
+    "close_hint": "[B] Sluiten",
+    "battery": "BATTERIJ",
+    "charging": "⚡ Opladen",
+    "discharging": "Ontladen",
+    "hardware_temp": "TEMPERATUUR",
+    "temp_optimal": "Optimaal",
+    "temp_warm": "Warm",
+    "brightness": "☀ Helderheid",
+    "bgm_volume": "♫ Muziekvolume",
+    "sfx_volume": "♪ Geluidseffecten",
+    "airplane_mode": "✈ Vliegtuigmodus",
+    "wifi": "Wi-Fi",
+    "on": "AAN",
+    "off": "UIT",
+    "power_options": "ENERGIE-OPTIES",
+    "sleep": "Slaapstand",
+    "reboot": "Opnieuw opstarten",
+    "power_off": "Uitschakelen",
+    "hint_adjust": "Aanpassen",
+    "hint_shortcut": "Snelle instellingen"
   }
 }

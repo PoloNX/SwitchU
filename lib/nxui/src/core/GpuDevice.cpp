@@ -168,6 +168,99 @@ void GpuDevice::endFrame() {
     m_queue.presentImage(m_swapchain, m_slot);
 }
 
+bool GpuDevice::downloadFramebufferRgba(std::vector<uint8_t>& outRgba,
+                                        int& outW, int& outH,
+                                        bool halfRes) {
+    if (m_slot < 0 || !m_queue)
+        return false;
+
+    waitForTextureUploads();
+    waitIdle();
+
+    const int fullW = FB_WIDTH;
+    const int fullH = FB_HEIGHT;
+    const bool useHalf = halfRes && m_offscreenReady;
+    outW = useHalf ? fullW / 2 : fullW;
+    outH = useHalf ? fullH / 2 : fullH;
+    if (outW <= 0 || outH <= 0)
+        return false;
+
+    const uint32_t byteSize = static_cast<uint32_t>(outW) * static_cast<uint32_t>(outH) * 4u;
+    const uint32_t stagingSize = (byteSize + kGpuAlign - 1) & ~(kGpuAlign - 1);
+    auto staging = dk::MemBlockMaker{m_dev, stagingSize}
+        .setFlags(DkMemBlockFlags_CpuUncached | DkMemBlockFlags_GpuCached)
+        .create();
+    if (!staging || !staging.getCpuAddr())
+        return false;
+
+    // Full-res path needs an uncompressed blit target: swapchain images use
+    // HwCompression, and copyImageToBuffer from those is unreliable / soft.
+    dk::Image tempImage;
+    dk::UniqueMemBlock tempImageMem;
+    if (!useHalf) {
+        dk::ImageLayout layout;
+        dk::ImageLayoutMaker{m_dev}
+            .setFlags(DkImageFlags_UsageRender | DkImageFlags_Usage2DEngine)
+            .setFormat(DkImageFormat_RGBA8_Unorm)
+            .setDimensions(static_cast<uint32_t>(fullW), static_cast<uint32_t>(fullH))
+            .initialize(layout);
+        const uint32_t imgSize =
+            (static_cast<uint32_t>(layout.getSize()) + kGpuAlign - 1) & ~(kGpuAlign - 1);
+        tempImageMem = dk::MemBlockMaker{m_dev, imgSize}
+            .setFlags(DkMemBlockFlags_GpuCached | DkMemBlockFlags_Image)
+            .create();
+        if (!tempImageMem)
+            return false;
+        tempImage.initialize(layout, tempImageMem, 0);
+    }
+
+    m_uploadCmdbuf.clear();
+    m_uploadCmdbuf.addMemory(m_uploadCmdPool.block, 0, 64 * 1024);
+
+    dk::ImageView srcView{m_fbImages[m_slot]};
+    m_uploadCmdbuf.barrier(DkBarrier_Full, DkInvalidateFlags_Image);
+    if (useHalf) {
+        dk::ImageView dstView{m_offImages[0]};
+        const DkImageRect srcRect{0, 0, 0,
+                                  static_cast<uint32_t>(fullW),
+                                  static_cast<uint32_t>(fullH), 1};
+        const DkImageRect dstRect{0, 0, 0,
+                                  static_cast<uint32_t>(outW),
+                                  static_cast<uint32_t>(outH), 1};
+        m_uploadCmdbuf.blitImage(srcView, srcRect, dstView, dstRect, 0);
+        m_uploadCmdbuf.barrier(DkBarrier_Full, DkInvalidateFlags_Image);
+        srcView = dk::ImageView{m_offImages[0]};
+    } else {
+        dk::ImageView dstView{tempImage};
+        const DkImageRect rect{0, 0, 0,
+                               static_cast<uint32_t>(fullW),
+                               static_cast<uint32_t>(fullH), 1};
+        m_uploadCmdbuf.blitImage(srcView, rect, dstView, rect, 0);
+        m_uploadCmdbuf.barrier(DkBarrier_Full, DkInvalidateFlags_Image);
+        srcView = dstView;
+    }
+
+    const DkImageRect copyRect{0, 0, 0,
+                               static_cast<uint32_t>(outW),
+                               static_cast<uint32_t>(outH), 1};
+    m_uploadCmdbuf.copyImageToBuffer(
+        srcView, copyRect,
+        DkCopyBuf{staging.getGpuAddr(), 0, 0});
+
+    // Force a 3D-engine sync so the copy finishes before CPU reads.
+    // See deko3d notes on copyImageToBuffer + L2 invalidation.
+    const uint32_t threedNop = 0x80000040u;
+    m_uploadCmdbuf.replayCmds({threedNop});
+    m_uploadCmdbuf.barrier(DkBarrier_None, DkInvalidateFlags_L2Cache);
+
+    m_queue.submitCommands(m_uploadCmdbuf.finishList());
+    m_queue.waitIdle();
+
+    outRgba.resize(byteSize);
+    std::memcpy(outRgba.data(), staging.getCpuAddr(), byteSize);
+    return true;
+}
+
 void GpuDevice::waitIdle() {
     if (m_queue) m_queue.waitIdle();
 }
@@ -180,9 +273,29 @@ dk::UniqueMemBlock GpuDevice::allocImageMemory(uint32_t size) {
                      (unsigned long long)kDefaultImageBudget);
         return {};  // return empty MemBlock — caller should check validity
     }
+    u64 total = 0;
+    u64 used = 0;
+    if (R_SUCCEEDED(svcGetInfo(&total, InfoType_TotalMemorySize, CUR_PROCESS_HANDLE, 0)) &&
+        R_SUCCEEDED(svcGetInfo(&used, InfoType_UsedMemorySize, CUR_PROCESS_HANDLE, 0)) &&
+        total > used) {
+        constexpr u64 kAllocationHeadroom = 24ull * 1024ull * 1024ull;
+        const u64 freeMemory = total - used;
+        if (freeMemory < static_cast<u64>(size) + kAllocationHeadroom) {
+            GpuDevice::logGpu(
+                "[GpuDevice] refusing %u image bytes: free=%llu headroom=%llu\n",
+                size,
+                static_cast<unsigned long long>(freeMemory),
+                static_cast<unsigned long long>(kAllocationHeadroom));
+            return {};
+        }
+    }
     auto blk = dk::MemBlockMaker{m_dev, size}
         .setFlags(DkMemBlockFlags_GpuCached | DkMemBlockFlags_Image)
         .create();
+    if (!blk) {
+        GpuDevice::logGpu("[GpuDevice] image allocation failed (%u bytes)\n", size);
+        return {};
+    }
     m_imageMemUsed += size;
     return blk;
 }
@@ -228,6 +341,11 @@ GpuDevice::ImageAlloc GpuDevice::allocImageFromPool(uint32_t size, uint32_t alig
     auto blk = dk::MemBlockMaker{m_dev, chunkSize}
         .setFlags(DkMemBlockFlags_GpuCached | DkMemBlockFlags_Image)
         .create();
+    if (!blk) {
+        GpuDevice::logGpu("[GpuDevice] pooled image allocation failed (%u bytes)\n",
+                          chunkSize);
+        return {};
+    }
     m_imageChunks.push_back({std::move(blk), chunkSize, size});
     m_imageMemUsed += size;
     m_poolMemUsed  += size;
@@ -247,6 +365,25 @@ void GpuDevice::resetImagePool() {
 bool GpuDevice::uploadTexture(dk::Image& dst, const void* pixels, uint32_t size,
                               uint32_t w, uint32_t h)
 {
+    // deko3d does not report a bad upload, it calls svcBreak: a crash report
+    // resolving to dk::detail::RaiseError under ImageLayout::calcLevelOffset is
+    // what that looks like, and one arrived from a 1TB card where the menu had
+    // uploaded a great many icons. Nothing here checked the arguments first, so
+    // a zero-sized or mismatched upload took the process with it instead of
+    // failing. These are the cases that can be caught without asking deko3d.
+    if (!pixels || size == 0 || w == 0 || h == 0) {
+        std::fprintf(stderr,
+                     "[GpuDevice] refusing texture upload %ux%u size=%u pixels=%p\n",
+                     w, h, size, pixels);
+        return false;
+    }
+    if (size < (uint64_t)w * h * 4) {
+        std::fprintf(stderr,
+                     "[GpuDevice] refusing texture upload %ux%u: %u bytes is short of %llu\n",
+                     w, h, size, (unsigned long long)((uint64_t)w * h * 4));
+        return false;
+    }
+
     if (m_uploadBatchActive) {
         const uint32_t stagingOffset = m_stagingPool.alloc(size, 256);
         if (stagingOffset == UINT32_MAX) {
