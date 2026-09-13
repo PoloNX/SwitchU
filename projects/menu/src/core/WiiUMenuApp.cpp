@@ -59,6 +59,9 @@ static constexpr float kGridRectY = 90.f;
 static constexpr float kGridRectW = 1280.f;
 static constexpr float kGridRectH = 540.f;
 
+static constexpr float kFolderZoomCascadeDelay   = 0.06f;
+static constexpr float kFolderZoomCascadeStagger = 0.18f;
+
 static constexpr float kGridBaseCellW = 150.f;
 static constexpr float kGridBaseCellH = 150.f;
 static constexpr float kGridBasePadX  = 20.f;
@@ -1804,7 +1807,8 @@ GridModel WiiUMenuApp::buildOpenFolderModel(std::uint32_t folderId) const {
     return model;
 }
 
-void WiiUMenuApp::applyDisplayModel(GridModel model, std::uint64_t focusId, bool animate) {
+void WiiUMenuApp::applyDisplayModel(GridModel model, std::uint64_t focusId, bool animate,
+                                    const IconAppearOptions& appear) {
     if (!m_grid)
         return;
     const auto isImageAssetWidget = [](switchu::widgets::WidgetType type) {
@@ -1894,7 +1898,7 @@ void WiiUMenuApp::applyDisplayModel(GridModel model, std::uint64_t focusId, bool
     // the edge columns are free to flip the page instead.
     const bool inFolder = (m_openFolderId != 0);
     m_grid->setEdgePaging(inFolder);
-    m_grid->setSlideTransition(inFolder);
+    m_grid->setSlideTransition(true);
     m_grid->setLayoutMode(m_appLayoutMode);
     m_grid->setup(std::move(icons), columns, rows, metrics.cellW, metrics.cellH,
                   metrics.padX, metrics.padY);
@@ -1926,12 +1930,13 @@ void WiiUMenuApp::applyDisplayModel(GridModel model, std::uint64_t focusId, bool
     m_iconStreamer.onPageChanged(m_grid->currentPage(), m_grid->iconsPerPage(),
                                  app().gpu(), app().renderer(), m_grid->allIcons());
     m_widgetAssetPage = -1;
-    if (animate) m_grid->startAppearAnimation();
+    if (animate) m_grid->startAppearAnimation(appear);
     else for (auto& icon : m_grid->allIcons()) icon->forceVisible();
     // Safety net for any rebuild while moving: never leave an out-of-range
     // placement index (that pins the ghost at the origin).
     if (m_editMode && (m_editTargetIndex < 0 || m_editTargetIndex >= m_model.count()))
         syncEditPlacementAfterModelChange(m_openFolderId != 0);
+    syncEditJiggle();
     updateCursor();
 }
 
@@ -2980,6 +2985,7 @@ void WiiUMenuApp::requestOpenFolder(std::uint32_t folderId, std::uint64_t focusT
     m_folderOpenFocusTitleId = focusTitleId;
     m_folderCaptureRequested = true;
     m_folderCaptureReady = false;
+    m_folderZoomOriginRect = folderTileRect(folderId);
     if (m_cursor) m_cursor->setVisible(false);
 }
 
@@ -2987,8 +2993,10 @@ void WiiUMenuApp::flipPageFromEdge(int dir) {
     if (!m_grid || m_grid->isTransitioning())
         return;
     const int target = m_grid->currentPage() + dir;
-    if (target < 0 || target >= m_grid->totalPages())
+    if (target < 0 || target >= m_grid->totalPages()) {
+        m_grid->bumpEdge(dir);
         return;
+    }
 
     const int cols = std::max(1, m_grid->columns());
     const int perPage = std::max(1, m_grid->iconsPerPage());
@@ -3005,6 +3013,28 @@ void WiiUMenuApp::flipPageFromEdge(int dir) {
             focusManager().setFocus(focused);
     }
     m_audio.playSfx(Sfx::PageChange);
+}
+
+void WiiUMenuApp::snapCursorToFocus() {
+    if (m_cursor && focusManager().current())
+        m_cursor->moveTo(focusManager().current()->focusRect().expanded(4.f), 0.01f);
+    updateCursor();
+}
+
+nxui::Rect WiiUMenuApp::folderTileRect(std::uint32_t folderId) const {
+    if (!m_grid)
+        return {};
+    const std::uint64_t tid = folderTitleId(folderId);
+    const int perPage = m_grid->iconsPerPage();
+    const int start   = m_grid->currentPage() * perPage;
+    const int end     = std::min(start + perPage,
+                                 static_cast<int>(m_grid->allIcons().size()));
+    for (int i = start; i < end; ++i) {
+        const auto& icon = m_grid->allIcons()[static_cast<std::size_t>(i)];
+        if (icon && icon->titleId() == tid)
+            return icon->focusRect();
+    }
+    return {};
 }
 
 void WiiUMenuApp::syncPageIndicator() {
@@ -3106,7 +3136,12 @@ void WiiUMenuApp::setAppLayoutMode(AppLayoutMode mode) {
         if (auto* current = m_grid->focusManager().current();
             current && current->tag() == "glossy_icon")
             focused = static_cast<GlossyIcon*>(current)->titleId();
+        const bool editing = m_editMode;
+        if (editing)
+            detachEditSourceIcon();
         applyDisplayModel(buildRootFolderModel(), focused, false);
+        if (editing)
+            reattachEditSourceIcon();
     }
     configureDynamicLineNavigation();
 
@@ -3140,10 +3175,23 @@ void WiiUMenuApp::openCapturedFolder() {
         m_folderHeaderLabel->setText(folder->name);
         m_folderHeaderLabel->setTextColor(m_theme.textPrimary);
     }
-    m_grid->setRect({kGridRectX, 148.f, kGridRectW, 470.f});
+    const nxui::Rect folderGridRect{kGridRectX, 148.f, kGridRectW, 470.f};
+    m_grid->setRect(folderGridRect);
     // Don't inherit the root page number into the folder grid.
     m_grid->setPage(0);
-    applyDisplayModel(buildOpenFolderModel(m_openFolderId), m_folderOpenFocusTitleId, false);
+    const bool zoom = !refocus && m_folderZoom && m_folderZoomOriginRect.width > 0.f;
+    IconAppearOptions appear;
+    if (zoom) {
+        m_folderZoom->open(m_folderZoomOriginRect, folderGridRect,
+                           switchu::folders::colorForIndex(folder->colorIndex),
+                           [this]() { snapCursorToFocus(); });
+        appear.baseDelay = kFolderZoomCascadeDelay;
+        appear.stagger   = kFolderZoomCascadeStagger;
+        appear.fromTile  = true;
+        appear.origin    = m_folderZoomOriginRect;
+    }
+    applyDisplayModel(buildOpenFolderModel(m_openFolderId), m_folderOpenFocusTitleId,
+                      zoom, appear);
     m_folderOpenFocusTitleId = 0;
     syncPageIndicator();
     if (m_editMode) {
@@ -3170,9 +3218,21 @@ void WiiUMenuApp::closeFolder(bool preserveEditMode) {
     if (m_rightSidebar) m_rightSidebar->setVisible(true);
     if (m_pageIndicator)
         m_pageIndicator->clearActiveColor();
+    const nxui::Rect folderGridRect{kGridRectX, 148.f, kGridRectW, 470.f};
     m_grid->setRect({kGridRectX, kGridRectY, kGridRectW, kGridRectH});
     applyDisplayModel(buildRootFolderModel(), folderTitleId(oldId), false);
     syncPageIndicator();
+    if (m_folderZoom) {
+        const nxui::Rect tile = folderTileRect(oldId);
+        if (tile.width > 0.f) {
+            m_folderZoomOriginRect = tile;
+            const auto* old = m_folderStore.find(oldId);
+            if (m_cursor) m_cursor->setVisible(false);
+            m_folderZoom->close(folderGridRect, tile,
+                                switchu::folders::colorForIndex(old ? old->colorIndex : 0),
+                                [this]() { snapCursorToFocus(); });
+        }
+    }
     if (preserveEditMode) {
         // Focus is on the folder we just left; use that as the root placement target.
         m_editTargetIndex = findTitleIndex(folderTitleId(oldId));
@@ -3535,8 +3595,24 @@ std::shared_ptr<GlossyIcon> WiiUMenuApp::makeIcon(const AppEntry& entry) {
 
 void WiiUMenuApp::buildGrid() {
     reloadThemePresets();
+    applyAutoThemeConfig();
 
     m_activePresetName = m_config.themePreset;
+
+    // If automatic day/night switching is enabled, let it pick the startup
+    // preset before any widget is built, so the correct theme is applied in one
+    // pass instead of rebuilding after the fact. evaluate() consumes the current
+    // phase, so onUpdate won't re-trigger until the phase actually changes.
+    {
+        const auto snapshot = m_clockService.refresh();
+        if (auto desired = m_autoTheme.evaluate(snapshot)) {
+            if (findPresetPtr(*desired)) {
+                m_activePresetName = *desired;
+                m_config.themePreset = *desired;
+            }
+        }
+    }
+
     ThemePreset* preset = findPresetPtr(m_activePresetName);
     if (!preset) {
         m_activePresetName = "builtin:Default Light";
@@ -3622,6 +3698,9 @@ void WiiUMenuApp::buildGrid() {
     m_pageIndicator->setBlurEnabled(false);
 
     m_launchAnim = std::make_shared<LaunchAnimation>();
+
+    m_folderZoom = std::make_shared<FolderZoom>();
+    m_folderZoom->setRect({0, 0, 1280, 720});
 
     m_userSelect = std::make_shared<OverlayDialog>();
     m_userSelect->cursor().setInstantMotion(m_config.cursorMotionMode == 1);
@@ -3923,6 +4002,7 @@ void WiiUMenuApp::buildGrid() {
     // Keep live SteamGridDB artwork above the folder's frozen transition
     // snapshot, while still placing it behind every interactive HOME widget.
     m_contentLayer->addChild(m_steamGridDbBackdrop);
+    m_contentLayer->addChild(m_folderZoom);
     m_contentLayer->addChild(m_grid);
     m_contentLayer->addChild(m_folderHeader);
     m_contentLayer->addChild(m_leftSidebar);
@@ -4422,6 +4502,18 @@ void WiiUMenuApp::onUpdate(float dt) {
     if (m_folderCaptureReady)
         openCapturedFolder();
 
+    // Periodically re-check whether the automatic day/night theme should switch.
+    // Cheap: ClockService::refresh() is cached and shared with the clock widget.
+    if (m_autoTheme.mode() != switchu::services::AutoThemeMode::Off) {
+        pollGeoLocationFetch();
+        maybeFetchGeoLocation();
+        m_autoThemeCheckTimer += dt;
+        if (m_autoThemeCheckTimer >= 30.f) {
+            m_autoThemeCheckTimer = 0.f;
+            evaluateAutoTheme(false);
+        }
+    }
+
     if (m_config.actionHintStyle != "panel")
         syncHintCapsules(dt);
 
@@ -4474,9 +4566,7 @@ void WiiUMenuApp::onUpdate(float dt) {
         if (sliding) {
             if (m_cursor) m_cursor->setVisible(false);
         } else {
-            if (m_cursor && focusManager().current())
-                m_cursor->moveTo(focusManager().current()->focusRect().expanded(4.f), 0.01f);
-            updateCursor();
+            snapCursorToFocus();
         }
     }
 #ifdef SWITCHU_DEBUG_UI
@@ -4722,6 +4812,10 @@ void WiiUMenuApp::onUpdate(float dt) {
                 break;
             case switchu::smi::MenuMessage::WakeUp:
                 m_clockService.invalidate();
+                // Time may have jumped across the day/night boundary while
+                // asleep; force an immediate re-evaluation on the next check.
+                m_autoThemeCheckTimer = 30.f;
+                evaluateAutoTheme(true);
                 break;
             case switchu::smi::MenuMessage::OperationFailed:
                 if (m_dialog) {
@@ -4964,10 +5058,10 @@ void WiiUMenuApp::onUpdate(float dt) {
 
     nxui::AnimationManager::instance().update(motionDt);
 
-    // In dynamic-line mode the focused widget itself is moving. Sample its
-    // interpolated display rectangle every frame so the focus ring remains
-    // attached to the app throughout the carousel transition.
-    if (m_grid && m_grid->isDynamicLine()) {
+    // In dynamic-line mode, and while a layout morph is in flight, the focused
+    // widget itself is moving. Sample its interpolated display rectangle every
+    // frame so the focus ring remains attached to the app throughout.
+    if (m_grid && (m_grid->isDynamicLine() || m_grid->isLayoutMorphing())) {
         auto* focused = focusManager().current();
         if (focused && focused->tag() == "glossy_icon")
             updateCursor();
@@ -5647,8 +5741,13 @@ void WiiUMenuApp::onRender(nxui::Renderer& ren) {
     }
 
     // Final topmost pass for move-mode ghost.
-    if (m_editMode && m_editGhostIcon)
+    if (m_editMode && m_editGhostIcon) {
+        const nxui::Rect gr = m_editGhostIcon->rect();
+        ren.drawRoundedRect({gr.x + 2.f, gr.y + 12.f, gr.width, gr.height},
+                            nxui::Color(0.02f, 0.04f, 0.06f, 0.32f),
+                            m_editGhostIcon->cornerRadius() + 2.f);
         m_editGhostIcon->render(ren);
+    }
 
     renderPageArrows(ren);
     if (m_config.actionHintStyle == "panel")

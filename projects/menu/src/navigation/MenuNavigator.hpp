@@ -11,6 +11,7 @@ enum class Route : std::uint8_t {
     GameOptions,
     FolderOptions,
     ControllerTest,
+    AutoTheme,
 };
 
 // Authoritative owner of primary-screen input. Visual exit animations may

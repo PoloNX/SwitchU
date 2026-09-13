@@ -24,12 +24,14 @@
 #include "widgets/UserAvatarButton.hpp"
 #include "widgets/FolderBackdrop.hpp"
 #include "widgets/SteamGridDbBackdrop.hpp"
+#include "widgets/FolderZoom.hpp"
 #include "steamgriddb/SteamGridDbManager.hpp"
 #include "steamgriddb/ArtworkCache.hpp"
 #include "settings/SettingsScreen.hpp"
 #include "settings/GameOptionsScreen.hpp"
 #include "settings/SteamGridDbPickerScreen.hpp"
 #include "settings/FolderOptionsScreen.hpp"
+#include "settings/AutoThemeScreen.hpp"
 #include "settings/ControllerTestScreen.hpp"
 #include "settings/TextEntryScreen.hpp"
 #include "themeshop/ThemeShopScreen.hpp"
@@ -45,6 +47,7 @@
 #include "core/SystemMessages.hpp"
 #include "navigation/MenuNavigator.hpp"
 #include "services/ClockService.hpp"
+#include "services/AutoThemeService.hpp"
 #ifdef SWITCHU_DEBUG_UI
 #include "debug/DebugImGuiOverlay.hpp"
 #endif
@@ -115,7 +118,11 @@ private:
     void composeRootPending(std::vector<PendingApp>& apps);
     GridModel buildRootFolderModel();
     GridModel buildOpenFolderModel(std::uint32_t folderId) const;
-    void applyDisplayModel(GridModel model, std::uint64_t focusId, bool animate);
+    void applyDisplayModel(GridModel model, std::uint64_t focusId, bool animate,
+                           const IconAppearOptions& appear = {});
+    nxui::Rect folderTileRect(std::uint32_t folderId) const;
+    void snapCursorToFocus();
+    void syncEditJiggle();
     void syncPageIndicator();
     void flipPageFromEdge(int dir);
     void requestOpenFolder(std::uint32_t folderId, std::uint64_t focusTitleId = 0);
@@ -264,6 +271,10 @@ private:
     void createThemeShop();
     void createGameOptions();
     void createFolderOptions();
+    void createAutoThemeScreen();
+    void openAutoThemeSettings();
+    void refreshAutoThemeSummary();
+    void pushGeoDisplayToScreen();
     void createControllerTest();
     void reloadThemePresets();
     void refreshThemeShopState();
@@ -271,6 +282,10 @@ private:
     void startThemePackageTransfer(const ThemeCatalogClient::Entry& entry, bool installMode);
     void syncThemePackageTransfer();
     void activateThemePreset(ThemePreset* preset, bool applyBundledSound);
+    void applyAutoThemeConfig();
+    void evaluateAutoTheme(bool force);
+    void maybeFetchGeoLocation();
+    void pollGeoLocationFetch();
     std::string resolveSoundPresetId(const std::string& preset) const;
     void loadSoundPreset(const std::string& preset);
     void changeSoundPreset(const std::string& preset);
@@ -322,6 +337,18 @@ private:
     GridModel    m_model;
     nxui::Theme  m_theme;
     switchu::services::ClockService m_clockService;
+    switchu::services::AutoThemeService m_autoTheme;
+    float                    m_autoThemeCheckTimer = 0.f;
+
+    struct GeoFetchResult {
+        bool ok = false;
+        double lat = 0.0;
+        double lon = 0.0;
+        std::string city;
+    };
+    std::future<void>        m_geoFetchFuture;
+    std::shared_ptr<GeoFetchResult> m_geoFetchResult;
+    bool                     m_geoFetchInFlight = false;
 
     std::string              m_activePresetName = "Default Light";
     ThemeColorSet            m_activeColors;
@@ -348,6 +375,7 @@ private:
     std::shared_ptr<GameOptionsScreen> m_gameOptions;
     std::shared_ptr<SteamGridDbPickerScreen> m_steamGridDbPicker;
     std::shared_ptr<FolderOptionsScreen> m_folderOptions;
+    std::shared_ptr<AutoThemeScreen>   m_autoThemeScreen;
     std::shared_ptr<ControllerTestScreen> m_controllerTest;
     std::shared_ptr<TextEntryScreen>      m_textEntry;
 
@@ -369,6 +397,8 @@ private:
     std::shared_ptr<nxui::Box> m_userAvatarBar;
     std::shared_ptr<FolderBackdrop> m_folderBackdrop;
     std::shared_ptr<SteamGridDbBackdrop> m_steamGridDbBackdrop;
+    std::shared_ptr<FolderZoom>     m_folderZoom;
+    nxui::Rect                      m_folderZoomOriginRect{};
     std::shared_ptr<nxui::GlassPanel> m_folderHeader;
     std::shared_ptr<nxui::Label> m_folderHeaderLabel;
     std::vector<std::shared_ptr<UserAvatarButton>> m_userAvatarButtons;
@@ -427,6 +457,8 @@ private:
     std::shared_ptr<GlossyIcon> m_editGhostIcon;
     std::unique_ptr<nxui::Texture> m_editGhostTexture;
     nxui::Rect m_editGhostTargetRect {0.f, 0.f, 0.f, 0.f};
+    nxui::AnimatedRect m_editGhostRect;
+    bool m_editGhostRectInit = false;
     float m_editGhostPulse = 0.f;
     std::vector<uint64_t> m_layoutSlots;
     std::unordered_map<std::uint64_t, switchu::widgets::WidgetSize> m_gameSizes;

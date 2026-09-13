@@ -109,6 +109,13 @@ public:
     void startAppear(float delay);
     void forceVisible();
 
+    void setAppearOrigin(const nxui::Rect& origin) {
+        m_appearOrigin = origin; m_hasAppearOrigin = true;
+    }
+
+    void setJiggle(bool on, float phaseSeed = 0.f);
+    bool isJiggling() const { return m_jiggle; }
+
     void setFocusable(bool f) { m_focusable = f; }
     bool isFocusable() const override { return m_focusable; }
     void onFocusGained() override;
@@ -142,9 +149,15 @@ private:
     nxui::AnimatedFloat m_appearOpacity;
     nxui::AnimatedFloat m_focusScale;
     nxui::AnimatedFloat m_focusGlow;
+    nxui::AnimatedFloat m_jiggleAmount;
+    bool          m_jiggle      = false;
+    float         m_jigglePhase = 0.f;
+    float         m_jiggleSeed  = 0.f;
     float         m_appearDelay = 0.f;
     float         m_appearTimer = 0.f;
     bool          m_appearing   = false;
+    nxui::Rect    m_appearOrigin{};
+    bool          m_hasAppearOrigin = false;
     GridEntryKind m_entryKind = GridEntryKind::Application;
     int           m_folderPreviewCount = 0;
     std::uint32_t m_folderVisualSeed = 0;
