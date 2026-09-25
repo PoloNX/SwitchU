@@ -565,6 +565,7 @@ private:
     std::future<void> m_themePackageTransferFuture;
     std::future<void> m_softwareDeleteFuture;
     Result m_softwareDeleteResult = 0;
+    std::uint64_t m_softwareDeleteTitleId = 0;
     std::string m_softwareDeleteTitle;
     bool m_softwareDeleteClosesGameOptions = false;
     std::shared_ptr<ThemePackageTransferShared> m_themePackageTransfer;

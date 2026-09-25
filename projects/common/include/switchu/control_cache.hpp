@@ -299,4 +299,18 @@ inline bool writeFromControlData(uint64_t titleId, const NsApplicationControlDat
     return metaOk && iconOk;
 }
 
+/// Drop cached NACP/icon for a title (e.g. after uninstall) so a reinstall
+/// with a new icon is not stuck on the previous .jpg/.meta pair.
+inline bool remove(uint64_t titleId) {
+    if (titleId == 0)
+        return false;
+
+    std::error_code ec;
+    bool removed = false;
+    removed = std::filesystem::remove(metaPath(titleId), ec) || removed;
+    ec.clear();
+    removed = std::filesystem::remove(iconPath(titleId), ec) || removed;
+    return removed;
+}
+
 }

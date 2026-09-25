@@ -4,6 +4,7 @@
 #include "DebugLog.hpp"
 
 #include <nxui/core/I18n.hpp>
+#include <switchu/control_cache.hpp>
 
 #include <algorithm>
 #include <cctype>
@@ -2026,6 +2027,7 @@ void WiiUMenuApp::startSoftwareDeletion(uint64_t titleId, const std::string& tit
     }
 
     auto& i18n = nxui::I18n::instance();
+    m_softwareDeleteTitleId = titleId;
     m_softwareDeleteTitle = title;
     m_softwareDeleteClosesGameOptions = closeGameOptionsOnSuccess;
     m_dialogReturnFocus = closeGameOptionsOnSuccess
@@ -2070,6 +2072,10 @@ void WiiUMenuApp::syncSoftwareDeletion() {
     auto& i18n = nxui::I18n::instance();
     if (R_SUCCEEDED(rc)) {
         DebugLog::log("[software-delete] complete: %s", m_softwareDeleteTitle.c_str());
+        // Drop NACP/icon cache so a reinstall with a new icon is not stuck
+        // on the previous control_cache entry.
+        if (m_softwareDeleteTitleId != 0)
+            switchu::control_cache::remove(m_softwareDeleteTitleId);
         m_audio.playSfx(Sfx::ConfirmPositive);
         if (m_softwareDeleteClosesGameOptions && m_gameOptions) {
             m_gameOptions->hide();
@@ -2097,6 +2103,7 @@ void WiiUMenuApp::syncSoftwareDeletion() {
         }
     }
 
+    m_softwareDeleteTitleId = 0;
     m_softwareDeleteTitle.clear();
     m_softwareDeleteClosesGameOptions = false;
 }
