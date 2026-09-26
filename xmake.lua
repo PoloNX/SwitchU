@@ -149,7 +149,17 @@ target("atmosphere-stratosphere")
     if not is_plat("cross") then return end
 
     on_build(function (target)
+        import("scripts.stamp")
+        local source_dir = path.join(os.projectdir(), "lib/Atmosphere-libs")
+        local library = path.join(source_dir,
+            "libstratosphere/lib/nintendo_nx_arm64_armv8a/release/libstratosphere.a")
+        local revision = stamp.revision(source_dir)
+        if os.isfile(library) and stamp.matches("libstratosphere", revision) then
+            cprint("${color.build.target}cached${clear} libstratosphere")
+            return
+        end
         os.execv("make", {"-C", "lib/Atmosphere-libs/libstratosphere", "nx_release"})
+        stamp.write("libstratosphere", revision)
     end)
 target_end()
 
@@ -200,6 +210,15 @@ target("SwitchU")
             raise("eSpeak NG submodule is missing: " .. source_dir)
         end
 
+        import("scripts.stamp")
+        local revision = stamp.revision(source_dir)
+        if os.isfile(path.join(data_dir, "phondata")) and
+           os.isfile(path.join(data_dir, "fr_dict")) and
+           stamp.matches("espeak-ng-data", revision) then
+            cprint("${color.build.target}cached${clear} eSpeak NG data")
+            return
+        end
+
         cprint("${color.build.target}generating${clear} eSpeak NG data")
         os.vrunv("cmake", {
             "-S", source_dir,
@@ -218,6 +237,7 @@ target("SwitchU")
            not os.isfile(path.join(data_dir, "fr_dict")) then
             raise("eSpeak NG data generation did not produce required runtime files")
         end
+        stamp.write("espeak-ng-data", revision)
     end)
 
     if has_config("homebrew") then
