@@ -59,8 +59,21 @@ static constexpr float kGridRectY = 90.f;
 static constexpr float kGridRectW = 1280.f;
 static constexpr float kGridRectH = 540.f;
 
-static constexpr float kFolderZoomCascadeDelay   = 0.06f;
-static constexpr float kFolderZoomCascadeStagger = 0.18f;
+static const nxui::Rect kFolderGridRect{kGridRectX, 148.f, kGridRectW, 470.f};
+static constexpr float kFolderPanelPadX = 22.f;
+static constexpr float kFolderPanelPadY = 16.f;
+// The title pill sits at y=630 below the folder grid.
+static constexpr float kFolderPanelMaxBottom = 622.f;
+// The folder title floats just above the panel; the top HUD is hidden then.
+static constexpr float kFolderHeaderGap  = 10.f;
+static constexpr float kFolderHeaderMinY = 14.f;
+static constexpr float kFolderHeaderSlide = 14.f;
+
+// Icons start once the panel has taken shape, and on close they are all back
+// inside the tile by the time the panel has shrunk into it.
+static constexpr float kFolderZoomCascadeDelay   = 0.12f;
+static constexpr float kFolderZoomCascadeStagger = 0.20f;
+static constexpr float kFolderCloseStagger       = 0.10f;
 
 static constexpr float kGridBaseCellW = 150.f;
 static constexpr float kGridBaseCellH = 150.f;
@@ -1932,6 +1945,11 @@ void WiiUMenuApp::applyDisplayModel(GridModel model, std::uint64_t focusId, bool
     m_widgetAssetPage = -1;
     if (animate) m_grid->startAppearAnimation(appear);
     else for (auto& icon : m_grid->allIcons()) icon->forceVisible();
+    if (m_openFolderId != 0) {
+        const nxui::Rect panel = folderPanelRect();
+        if (m_folderZoom) m_folderZoom->retarget(panel);
+        placeFolderHeader(panel);
+    }
     // Safety net for any rebuild while moving: never leave an out-of-range
     // placement index (that pins the ghost at the origin).
     if (m_editMode && (m_editTargetIndex < 0 || m_editTargetIndex >= m_model.count()))
@@ -3164,8 +3182,6 @@ void WiiUMenuApp::openCapturedFolder() {
     m_requestedFolderId = 0;
     m_folderCaptureReady = false;
     const bool refocus = (m_folderOpenFocusTitleId != 0);
-    if (m_folderBackdrop) m_folderBackdrop->show(refocus);
-    if (m_folderHeader) m_folderHeader->setVisible(true);
     if (m_topHud) m_topHud->setVisible(false);
     if (m_leftSidebar) m_leftSidebar->setVisible(false);
     if (m_rightSidebar) m_rightSidebar->setVisible(false);
@@ -3175,16 +3191,17 @@ void WiiUMenuApp::openCapturedFolder() {
         m_folderHeaderLabel->setText(folder->name);
         m_folderHeaderLabel->setTextColor(m_theme.textPrimary);
     }
-    const nxui::Rect folderGridRect{kGridRectX, 148.f, kGridRectW, 470.f};
-    m_grid->setRect(folderGridRect);
+    m_grid->setRect(kFolderGridRect);
     // Don't inherit the root page number into the folder grid.
     m_grid->setPage(0);
     const bool zoom = !refocus && m_folderZoom && m_folderZoomOriginRect.width > 0.f;
+    // A folder opened mid-move may reflow the root grid underneath it, so the
+    // tile it grew from is no longer a safe target to fly back into.
+    m_folderOriginStale = m_editMode;
+    if (m_folderBackdrop)
+        m_folderBackdrop->show(refocus, m_folderZoomOriginRect, FolderZoom::kOpenDur);
     IconAppearOptions appear;
     if (zoom) {
-        m_folderZoom->open(m_folderZoomOriginRect, folderGridRect,
-                           switchu::folders::colorForIndex(folder->colorIndex),
-                           [this]() { snapCursorToFocus(); });
         appear.baseDelay = kFolderZoomCascadeDelay;
         appear.stagger   = kFolderZoomCascadeStagger;
         appear.fromTile  = true;
@@ -3193,6 +3210,25 @@ void WiiUMenuApp::openCapturedFolder() {
     applyDisplayModel(buildOpenFolderModel(m_openFolderId), m_folderOpenFocusTitleId,
                       zoom, appear);
     m_folderOpenFocusTitleId = 0;
+    // The panel is sized from the laid-out folder grid, so place it afterwards.
+    if (m_folderZoom) {
+        const nxui::Color tint = switchu::folders::colorForIndex(folder->colorIndex);
+        if (zoom) {
+            m_folderZoom->open(m_folderZoomOriginRect, folderPanelRect(), tint,
+                               [this]() { snapCursorToFocus(); });
+            if (m_cursor) m_cursor->setVisible(false);
+        } else
+            m_folderZoom->showStatic(folderPanelRect(), tint);
+    }
+    // The title lands just after the panel has reached its top edge.
+    placeFolderHeader(folderPanelRect());
+    if (zoom) {
+        m_folderHeaderAnim.setImmediate(0.f);
+        m_folderHeaderAnim.set(1.f, 0.30f, nxui::Easing::outCubic, 0.16f);
+    } else {
+        m_folderHeaderAnim.setImmediate(1.f);
+    }
+    syncFolderHeader();
     syncPageIndicator();
     if (m_editMode) {
         // Always re-anchor: the previous target was a root-grid index.
@@ -3203,36 +3239,120 @@ void WiiUMenuApp::openCapturedFolder() {
         m_audio.playSfx(Sfx::ModalShow);
 }
 
-void WiiUMenuApp::closeFolder(bool preserveEditMode) {
+nxui::Rect WiiUMenuApp::folderPanelRect() const {
+    if (!m_grid)
+        return kFolderGridRect;
+    const nxui::Rect content = m_grid->contentRect();
+    // Tighten the vertical margin (evenly) when the tallest folder grid would
+    // push the panel into the title pill.
+    const float padY = std::clamp(kFolderPanelMaxBottom - content.bottom(),
+                                  4.f, kFolderPanelPadY);
+    return {content.x - kFolderPanelPadX, content.y - padY,
+            content.width + kFolderPanelPadX * 2.f, content.height + padY * 2.f};
+}
+
+void WiiUMenuApp::placeFolderHeader(const nxui::Rect& panel) {
+    // Anchored to the panel rather than the screen, so the largest folder
+    // grid pushes the title up instead of sliding the panel under it.
+    m_folderHeaderRest.y = std::max(kFolderHeaderMinY,
+        panel.y - kFolderHeaderGap - m_folderHeaderRest.height);
+    syncFolderHeader();
+}
+
+void WiiUMenuApp::syncFolderHeader() {
+    if (!m_folderHeader || !m_folderHeaderLabel)
+        return;
+    const float t = std::clamp(m_folderHeaderAnim.value(), 0.f, 1.f);
+    const bool shown = t > 0.005f || m_folderHeaderAnim.target() > 0.f;
+    m_folderHeader->setVisible(shown);
+    if (!shown)
+        return;
+
+    // Rises out of the panel's top edge while fading and growing in.
+    const nxui::Rect& rest = m_folderHeaderRest;
+    const float s = 0.92f + 0.08f * t;
+    const float w = rest.width * s, h = rest.height * s;
+    const nxui::Rect r{rest.x + (rest.width - w) * 0.5f,
+                       rest.y + (rest.height - h) * 0.5f + (1.f - t) * kFolderHeaderSlide,
+                       w, h};
+    m_folderHeader->setRect(r);
+    m_folderHeader->setOpacity(t);
+    m_folderHeaderLabel->setRect({r.x + 18.f * s, r.y + 6.f * s,
+                                  r.width - 36.f * s, r.height - 12.f * s});
+    m_folderHeaderLabel->setOpacity(t);
+}
+
+void WiiUMenuApp::closeFolder(bool preserveEditMode, bool animated) {
     if (m_openFolderId == 0) return;
     const std::uint32_t oldId = m_openFolderId;
+    const auto* old = m_folderStore.find(oldId);
+    const nxui::Color tint = switchu::folders::colorForIndex(old ? old->colorIndex : 0);
+
+    if (m_folderClosing) {
+        // A second B/tap waits for the running close; anything else needs the
+        // root grid back right now.
+        if (animated) return;
+        m_folderClosing = false;
+        if (m_folderZoom) m_folderZoom->hide();
+        m_folderHeaderAnim.setImmediate(0.f);
+        finishCloseFolder(oldId, false);
+        snapCursorToFocus();
+        return;
+    }
+
+    if (m_folderBackdrop) m_folderBackdrop->hide(FolderZoom::kCloseDur);
+
+    // Mirror of the open: the folder's icons fly back into its tile while the
+    // panel shrinks into it, and only then is the root grid rebuilt.
+    if (animated && !preserveEditMode && !m_folderOriginStale && m_grid &&
+        m_folderZoom && m_folderZoomOriginRect.width > 0.f) {
+        m_folderClosing = true;
+        m_folderHeaderAnim.set(0.f, 0.16f, nxui::Easing::inCubic);
+        if (m_cursor) m_cursor->setVisible(false);
+        IconAppearOptions back;
+        back.stagger = kFolderCloseStagger;
+        back.origin  = m_folderZoomOriginRect;
+        m_grid->startDisappearAnimation(back, FolderZoom::kCloseDur - kFolderCloseStagger);
+        m_folderZoom->close(m_folderZoomOriginRect, tint, [this, oldId]() {
+            m_folderClosing = false;
+            finishCloseFolder(oldId, false);
+            snapCursorToFocus();
+        });
+        m_audio.playSfx(Sfx::ModalHide);
+        return;
+    }
+
+    finishCloseFolder(oldId, preserveEditMode);
+    if (m_folderZoom) {
+        const nxui::Rect tile = folderTileRect(oldId);
+        if (tile.width > 0.f) {
+            m_folderZoomOriginRect = tile;
+            if (m_cursor) m_cursor->setVisible(false);
+            m_folderZoom->close(tile, tint, [this]() { snapCursorToFocus(); });
+        } else {
+            m_folderZoom->hide();
+        }
+    }
+    m_audio.playSfx(Sfx::ModalHide);
+}
+
+void WiiUMenuApp::finishCloseFolder(std::uint32_t oldId, bool preserveEditMode) {
     if (preserveEditMode) {
         detachEditSourceIcon();
         unbindEditActions();
     }
     m_openFolderId = 0;
-    if (m_folderBackdrop) m_folderBackdrop->hide();
-    if (m_folderHeader) m_folderHeader->setVisible(false);
+    // Sink back into the panel as it shrinks away.
+    if (m_folderHeaderAnim.target() > 0.f)
+        m_folderHeaderAnim.set(0.f, 0.16f, nxui::Easing::inCubic);
     if (m_topHud) m_topHud->setVisible(true);
     if (m_leftSidebar) m_leftSidebar->setVisible(true);
     if (m_rightSidebar) m_rightSidebar->setVisible(true);
     if (m_pageIndicator)
         m_pageIndicator->clearActiveColor();
-    const nxui::Rect folderGridRect{kGridRectX, 148.f, kGridRectW, 470.f};
     m_grid->setRect({kGridRectX, kGridRectY, kGridRectW, kGridRectH});
     applyDisplayModel(buildRootFolderModel(), folderTitleId(oldId), false);
     syncPageIndicator();
-    if (m_folderZoom) {
-        const nxui::Rect tile = folderTileRect(oldId);
-        if (tile.width > 0.f) {
-            m_folderZoomOriginRect = tile;
-            const auto* old = m_folderStore.find(oldId);
-            if (m_cursor) m_cursor->setVisible(false);
-            m_folderZoom->close(folderGridRect, tile,
-                                switchu::folders::colorForIndex(old ? old->colorIndex : 0),
-                                [this]() { snapCursorToFocus(); });
-        }
-    }
     if (preserveEditMode) {
         // Focus is on the folder we just left; use that as the root placement target.
         m_editTargetIndex = findTitleIndex(folderTitleId(oldId));
@@ -3241,7 +3361,6 @@ void WiiUMenuApp::closeFolder(bool preserveEditMode) {
         m_titlePill->setText(nxui::I18n::instance().tr("game.move_prefix", "Move: ") + m_editHeldTitle);
         m_titlePill->setVisible(true);
     }
-    m_audio.playSfx(Sfx::ModalHide);
 }
 
 #ifdef SWITCHU_MENU
@@ -4408,6 +4527,7 @@ void WiiUMenuApp::onUpdate(float dt) {
     // widget texture to the GPU per frame so returning HOME remains smooth.
     pollRecentWidgetAssets();
     pollGameArtworkAssets();
+    syncFolderHeader();
 
 #ifdef NXUI_BACKEND_DEKO3D
     // Text is cached as GPU textures. Keep a reserved image-memory margin for
@@ -4949,6 +5069,7 @@ void WiiUMenuApp::onUpdate(float dt) {
 
     if (!debugTouchBlocked
         && !m_launchAnim->isPlaying()
+        && !m_folderClosing
         && !(m_contextMenu && m_contextMenu->isActive())
         && !(m_dialog && m_dialog->isActive())
         && !(m_quickSettings && m_quickSettings->isActive())

@@ -53,6 +53,8 @@ public:
     int hitTest(float screenX, float screenY) const;
     nxui::Rect focusedDisplayRect() const;
     nxui::Rect gridSpanRect(int globalIndex, int columns, int rows) const;
+    // Bounds of the laid-out cell block (not the whole widget rect).
+    nxui::Rect contentRect() const;
     void setGridSideTargets(std::vector<nxui::Widget*> left,
                             std::vector<nxui::Widget*> right);
 
@@ -61,6 +63,8 @@ public:
     bool swapSlots(int a, int b);
 
     void startAppearAnimation(const IconAppearOptions& opt = IconAppearOptions{});
+    // Mirror of a fromTile appear: icons fly back into opt.origin, last in, first out.
+    void startDisappearAnimation(const IconAppearOptions& opt, float dur);
 
     void startPageTransition(int targetPage);
     bool isTransitioning() const { return m_sliding; }

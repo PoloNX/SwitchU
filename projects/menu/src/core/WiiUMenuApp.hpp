@@ -127,7 +127,13 @@ private:
     void flipPageFromEdge(int dir);
     void requestOpenFolder(std::uint32_t folderId, std::uint64_t focusTitleId = 0);
     void openCapturedFolder();
-    void closeFolder(bool preserveEditMode = false);
+    // `animated` plays the mirrored close (icons fly back into the tile, then
+    // the root grid is rebuilt); otherwise the root grid is rebuilt right away.
+    void closeFolder(bool preserveEditMode = false, bool animated = false);
+    void finishCloseFolder(std::uint32_t oldId, bool preserveEditMode);
+    nxui::Rect folderPanelRect() const;
+    void placeFolderHeader(const nxui::Rect& panel);
+    void syncFolderHeader();
     void createFolder(int targetSlot = -1);
     void showAddContextMenu(int targetSlot, const nxui::Rect& anchor);
     void showWidgetTypeMenu(int targetSlot, const nxui::Rect& anchor);
@@ -401,6 +407,8 @@ private:
     nxui::Rect                      m_folderZoomOriginRect{};
     std::shared_ptr<nxui::GlassPanel> m_folderHeader;
     std::shared_ptr<nxui::Label> m_folderHeaderLabel;
+    nxui::AnimatedFloat m_folderHeaderAnim{0.f};
+    nxui::Rect m_folderHeaderRest{410.f, 78.f, 460.f, 58.f};
     std::vector<std::shared_ptr<UserAvatarButton>> m_userAvatarButtons;
 
     AudioManager m_audio;
@@ -519,6 +527,8 @@ private:
     std::uint64_t m_folderOpenFocusTitleId = 0;  
     bool m_folderCaptureRequested = false;
     bool m_folderCaptureReady = false;
+    bool m_folderClosing = false;
+    bool m_folderOriginStale = false;
     bool m_gridSliding = false;
 
     int  m_touchHitIndex     = -1;

@@ -1081,7 +1081,7 @@ nxui::Widget* WiiUMenuApp::focusRoot() {
     if (m_leaveCapturePending) return nullptr;
     if (leaveSplashActive()) return nullptr;
     if (m_launchAnim && m_launchAnim->isPlaying()) return nullptr;
-    if (m_folderCaptureRequested) return nullptr;
+    if (m_folderCaptureRequested || m_folderClosing) return nullptr;
     if (m_progressDialog && m_progressDialog->isActive()) return m_progressDialog.get();
     if (m_textEntry && m_textEntry->isActive()) return m_textEntry.get();
     if (m_dialog && m_dialog->isActive()) return m_dialog.get();
@@ -1163,7 +1163,7 @@ void WiiUMenuApp::wireGlobalActions() {
             (m_userSelect && m_userSelect->isActive()))
             return;
         if (m_openFolderId != 0 && !(m_dialog && m_dialog->isActive()))
-            closeFolder();
+            closeFolder(false, true);
     });
 
     root.addAction(static_cast<uint64_t>(nxui::Button::L), [this]() {
@@ -1630,7 +1630,7 @@ void WiiUMenuApp::handleTouch() {
                    && m_grid->hitTest(input.touchX(), input.touchY()) < 0) {
             // Tap anywhere that isn't an icon (dimmed margins left/right/above/below,
             // and empty gaps) to leave — mirrors B, including edit-mode keep-move.
-            closeFolder(m_editMode);
+            closeFolder(m_editMode, true);
         }
         m_touchHitIndex = -1;
         m_touchEditDragActive = false;

@@ -101,6 +101,14 @@ void IconGrid::reconfigureLayout(int cols, int rows,
         setPage(m_page);
 }
 
+nxui::Rect IconGrid::contentRect() const {
+    if (m_layoutMode == AppLayoutMode::DynamicLine)
+        return m_rect.shrunk(40.f);
+    const float gridW = m_cols * m_cellW + (m_cols - 1) * m_padX;
+    const float gridH = m_rows * m_cellH + (m_rows - 1) * m_padY;
+    return {m_originX, m_originY, gridW, gridH};
+}
+
 void IconGrid::setPage(int page) {
     m_page = std::clamp(page, 0, m_totalPages - 1);
     layoutPage();
@@ -516,6 +524,24 @@ void IconGrid::startAppearAnimation(const IconAppearOptions& opt) {
         if (opt.fromTile)
             m_allIcons[i]->setAppearOrigin(opt.origin);
         m_allIcons[i]->startAppear(opt.baseDelay + t * opt.stagger);
+    }
+}
+
+void IconGrid::startDisappearAnimation(const IconAppearOptions& opt, float dur) {
+    if (m_layoutMode == AppLayoutMode::DynamicLine) {
+        for (auto& icon : m_allIcons)
+            icon->startDisappear(opt.origin, opt.baseDelay, dur);
+        return;
+    }
+    int start = m_page * iconsPerPage();
+    int end   = std::min(start + iconsPerPage(), (int)m_allIcons.size());
+    int maxDist = (m_cols - 1) + (m_rows - 1);
+    for (int i = start; i < end; ++i) {
+        int local = i - start;
+        int col   = local % m_cols;
+        int row   = local / m_cols;
+        float t   = maxDist > 0 ? (float)(col + row) / maxDist : 0.f;
+        m_allIcons[i]->startDisappear(opt.origin, opt.baseDelay + (1.f - t) * opt.stagger, dur);
     }
 }
 

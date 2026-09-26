@@ -5,8 +5,10 @@
 
 class FolderBackdrop final : public nxui::Widget {
 public:
-    void show(bool instant = false);
-    void hide();
+    // `anchor` is the folder tile: the blurred HOME snapshot pushes in
+    // slightly towards it, in step with the folder panel growing out of it.
+    void show(bool instant = false, const nxui::Rect& anchor = {}, float dur = 0.28f);
+    void hide(float dur = 0.24f);
     bool active() const { return isVisible() || m_opacity.value() > 0.01f; }
 
 protected:
@@ -15,4 +17,5 @@ protected:
 
 private:
     nxui::AnimatedFloat m_opacity;
+    nxui::Vec2          m_anchor{640.f, 360.f};
 };

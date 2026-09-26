@@ -107,6 +107,8 @@ public:
     int gridSpanRows() const { return m_widgetRows; }
 
     void startAppear(float delay);
+    // Reverse of a tile appear: fly back into `target` while shrinking out.
+    void startDisappear(const nxui::Rect& target, float delay, float dur);
     void forceVisible();
 
     void setAppearOrigin(const nxui::Rect& origin) {
@@ -158,6 +160,7 @@ private:
     bool          m_appearing   = false;
     nxui::Rect    m_appearOrigin{};
     bool          m_hasAppearOrigin = false;
+    bool          m_disappearing = false;
     GridEntryKind m_entryKind = GridEntryKind::Application;
     int           m_folderPreviewCount = 0;
     std::uint32_t m_folderVisualSeed = 0;

@@ -517,12 +517,23 @@ void GlossyIcon::startAppear(float delay) {
     m_appearDelay = delay;
     m_appearTimer = 0.f;
     m_appearing   = true;
+    m_disappearing = false;
     m_animScale.setImmediate(0.f);
     m_appearOpacity.setImmediate(0.f);
 }
 
+void GlossyIcon::startDisappear(const nxui::Rect& target, float delay, float dur) {
+    m_appearing = false;
+    m_disappearing = true;
+    m_appearOrigin = target;
+    m_hasAppearOrigin = true;
+    m_animScale.set(0.f, dur, nxui::Easing::inCubic, delay);
+    m_appearOpacity.set(0.f, dur, nxui::Easing::inCubic, delay);
+}
+
 void GlossyIcon::forceVisible() {
     m_appearing = false;
+    m_disappearing = false;
     m_hasAppearOrigin = false;
     m_appearDelay = 0.f;
     m_appearTimer = 0.f;
@@ -565,7 +576,7 @@ void GlossyIcon::onRender(nxui::Renderer& ren) {
     nxui::Rect base = savedRect;
     float s;
     if (m_hasAppearOrigin) {
-        if (appear >= 0.999f)
+        if (appear >= 0.999f && !m_disappearing)
             m_hasAppearOrigin = false;
         base = nxui::Rect::lerp(m_appearOrigin, savedRect, appear);
         s = externalScale * focusS;
