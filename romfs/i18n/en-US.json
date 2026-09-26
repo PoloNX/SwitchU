@@ -209,9 +209,6 @@
       "usb30_desc": "Enable USB 3.0 for faster transfer speeds.",
       "battery_lot": "Battery Lot",
       "ui_language": "UI Language",
-      "default_profile": "Default Profile",
-      "default_profile_desc": "Launch games with this profile when possible.",
-      "default_profile_ask": "Ask each time",
       "console_language": "Console Language",
       "region": "Region",
       "region_japan": "Japan",
@@ -439,6 +436,20 @@
     "add_user": "Add user",
     "add_user_hint": "A to create a new user.",
     "title": "Who's playing?"
+  },
+  "profilelock": {
+    "title": "Default profile",
+    "none": "Ask each time",
+    "pill_locked": "Playing as",
+    "pill_unlocked": "Ask who's playing",
+    "button_hint": "A to change.",
+    "opened_hint": "Left and right to browse. X sets the default profile.",
+    "default_badge": "Default",
+    "choose": "Change profile",
+    "open_profile": "View profile",
+    "create_user": "Create",
+    "always_ask": "Always ask",
+    "set_default": "Set as default"
   },
   "game": {
     "tile_size": "Tile size",

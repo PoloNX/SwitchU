@@ -37,8 +37,7 @@ public:
     void setDynamicLineLayout(bool enabled);
     void setDynamicLineDownAction(std::function<void()> action);
     void setDynamicLineUpTarget(nxui::Widget* target);
-    void setDynamicLineProfileTargets(nxui::Widget* firstProfile,
-                                      nxui::Widget* lastProfile);
+    void setDynamicLineProfileTarget(nxui::Widget* profile);
 
     void applyTheme(const nxui::Theme& theme);
 

@@ -53,9 +53,6 @@
       "region_south_korea": "Corea del Sud",
       "auto_update": "Aggiornamento automatico",
       "error_reporting": "Segnalazione errori",
-      "default_profile": "Default Profile",
-      "default_profile_desc": "Launch games with this profile when possible.",
-      "default_profile_ask": "Ask each time",
       "clock_12h": "Orologio 12 ore",
       "clock_12h_desc": "Mostra l’ora in formato 12 ore."
     },

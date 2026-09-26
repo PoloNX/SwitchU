@@ -58,6 +58,7 @@ static constexpr float kGridRectX = 0.f;
 static constexpr float kGridRectY = 90.f;
 static constexpr float kGridRectW = 1280.f;
 static constexpr float kGridRectH = 540.f;
+static constexpr float kProfileLockSize = 104.f;
 
 static constexpr float kGridBaseCellW = 150.f;
 static constexpr float kGridBaseCellH = 150.f;
@@ -209,6 +210,14 @@ bool hexToAccountUid(const std::string& s, AccountUid& out) {
         return false;
     out = uid;
     return true;
+}
+
+std::string accountUidToHex(const AccountUid& uid) {
+    char buf[33] = {};
+    std::snprintf(buf, sizeof(buf), "%016llX%016llX",
+                  (unsigned long long)uid.uid[0],
+                  (unsigned long long)uid.uid[1]);
+    return std::string(buf);
 }
 
 const char* safeTag(const nxui::Widget* widget) {
@@ -402,6 +411,7 @@ bool WiiUMenuApp::hasActiveLeaveCaptureOverlay() const {
         || (m_gameOptions && m_gameOptions->isActive())
         || (m_folderOptions && m_folderOptions->isActive())
         || (m_controllerTest && m_controllerTest->isActive())
+        || (m_profileCarousel && m_profileCarousel->isActive())
         || (m_steamGridDbPicker && m_steamGridDbPicker->isActive());
 }
 
@@ -820,22 +830,9 @@ void WiiUMenuApp::loadStaticTextures() {
                                          std::string(SD_ASSETS) + "/icons/widget_battery_joycon_right.png");
 }
 
-void WiiUMenuApp::buildUserAvatarBar(bool loadImmediately) {
-    m_userAvatarButtons.clear();
-
-    if (!m_userAvatarBar) {
-        m_userAvatarBar = std::make_shared<nxui::Box>(nxui::Axis::ROW);
-        m_userAvatarBar->setMarginTop(17.f);
-        m_userAvatarBar->setGap(10.f);
-        m_userAvatarBar->setShrink(0.f);
-        m_userAvatarBar->setSize(0.f, 56.f);
-        m_userAvatarBar->setTag("userAvatarBar");
-        m_userAvatarBar->setWireframeEnabled(false);
-    } else {
-        m_userAvatarBar->clearChildren();
-        m_userAvatarBar->setSize(0.f, 56.f);
-    }
-
+void WiiUMenuApp::loadProfiles(bool loadImmediately) {
+    m_profiles.clear();
+    m_profilesComplete = false;
     m_pendingProfileUids.clear();
     m_pendingProfileIndex = 0;
     if (!loadImmediately && m_fastReturnRequested) {
@@ -861,151 +858,138 @@ void WiiUMenuApp::buildUserAvatarBar(bool loadImmediately) {
 
     if (loadImmediately) {
         while (m_pendingProfileIndex < m_pendingProfileUids.size())
-            loadNextUserAvatar();
-        appendAddUserButton();
+            loadNextProfile();
+        finishProfileLoading();
     } else if (!m_pendingProfileUids.empty()) {
         m_deferredProfileFrames = 1;
         DebugLog::log("[profiles] %d avatars deferred until after first frame", count);
     } else {
-        appendAddUserButton();
+        finishProfileLoading();
     }
 }
 
-void WiiUMenuApp::appendAddUserButton() {
-    if (!m_userAvatarBar || m_pendingProfileUids.size() >= 8)
-        return;
-    if (!m_userAvatarButtons.empty() && m_userAvatarButtons.back()->addUserMode())
-        return;
-
-    auto add = std::make_shared<UserAvatarButton>();
-    add->setSize(56.f, 56.f);
-    add->setMinWidth(56.f);
-    add->setMinHeight(56.f);
-    add->setShrink(0.f);
-    add->setCornerRadius(28.f);
-    add->setChromeEnabled(true);
-    add->setTheme(&m_theme);
-    add->setAddUserMode(true);
-    add->setFocusable(true);
-    add->setOnActivate([this]() {
-        m_audio.playSfx(Sfx::Activate);
-#ifdef SWITCHU_MENU
-        scheduleLeaveCapture([this]() { m_launcher.launchUserCreator(); });
-#endif
-    });
-    m_userAvatarButtons.push_back(add);
-    m_userAvatarBar->addChild(add);
-
-    const float countF = static_cast<float>(m_userAvatarButtons.size());
-    m_userAvatarBar->setSize(countF * 56.f + (countF - 1.f) * 10.f, 56.f);
-    wireUserAvatarNavigation();
-    if (m_topHud)
-        m_topHud->layout();
-    DebugLog::log("[profiles] add-user tile appended count=%d",
-                  static_cast<int>(m_pendingProfileUids.size()));
+void WiiUMenuApp::finishProfileLoading() {
+    m_profilesComplete = true;
+    refreshProfileLockButton();
+    DebugLog::log("[profiles] loaded count=%d", static_cast<int>(m_profiles.size()));
 }
 
-void WiiUMenuApp::wireUserAvatarNavigation() {
+void WiiUMenuApp::refreshProfileLockButton() {
+    std::optional<AccountUid> locked;
+    AccountUid lockedUid{};
+    if (m_config.defaultProfileEnabled &&
+        hexToAccountUid(m_config.defaultProfileUid, lockedUid))
+        locked = lockedUid;
+
+    if (m_profileLock) {
+        const HomeProfile* match = nullptr;
+        if (locked) {
+            for (const auto& profile : m_profiles) {
+                if (profile.uid.uid[0] == locked->uid[0] &&
+                    profile.uid.uid[1] == locked->uid[1]) {
+                    match = &profile;
+                    break;
+                }
+            }
+        }
+        // A locked profile that was deleted from System Settings falls back
+        // to the "ask" state without rewriting the user's config.
+        if (match)
+            m_profileLock->setLockedProfile(match->avatar, match->nickname);
+        else
+            m_profileLock->clearLockedProfile();
+    }
+
+    if (m_profileCarousel) {
+        m_profileCarousel->setProfiles(m_profiles,
+                                       m_profilesComplete && m_profiles.size() < 8);
+        m_profileCarousel->setLockedUid(locked);
+    }
+}
+
+void WiiUMenuApp::setLockedProfile(std::optional<AccountUid> uid) {
+    m_config.defaultProfileEnabled = uid.has_value();
+    m_config.defaultProfileUid = uid ? accountUidToHex(*uid) : std::string();
+    m_config.save();
+    refreshProfileLockButton();
+    DebugLog::log("[profiles] launch profile %s", uid ? "locked" : "cleared");
+}
+
+void WiiUMenuApp::wireProfileLockNavigation() {
+    if (!m_profileLock)
+        return;
+    auto* lock = m_profileLock.get();
     const bool dynamicLine = m_appLayoutMode == AppLayoutMode::DynamicLine;
-    auto returnToRow = [this]() {
-        if (!m_grid || m_appLayoutMode != AppLayoutMode::DynamicLine
-            || m_navigator.route() != switchu::navigation::Route::Home)
-            return;
-        if (auto* target = m_grid->focusManager().current())
-            focusManager().setFocus(target);
-    };
-    for (std::size_t i = 0; i < m_userAvatarButtons.size(); ++i) {
-        auto* current = m_userAvatarButtons[i].get();
-        nxui::Widget* left = current;
-        if (i > 0)
-            left = m_userAvatarButtons[i - 1].get();
-        else if (dynamicLine && !m_sidebar.leftButtons().empty())
-            left = m_sidebar.leftButtons().back().get();
-        nxui::Widget* right = current;
-        if (i + 1 < m_userAvatarButtons.size())
-            right = m_userAvatarButtons[i + 1].get();
-        else if (dynamicLine && !m_sidebar.rightButtons().empty())
-            right = m_sidebar.rightButtons().front().get();
-        current->setCustomNavigation(nxui::FocusDirection::LEFT, left);
-        current->setCustomNavigation(nxui::FocusDirection::RIGHT, right);
-        current->setCustomNavigation(nxui::FocusDirection::DOWN, nullptr);
-        current->removeAction(static_cast<uint64_t>(nxui::Button::DDown));
-        current->removeAction(static_cast<uint64_t>(nxui::Button::LStickD));
-        current->removeAction(static_cast<uint64_t>(nxui::Button::RStickD));
-        if (dynamicLine)
-            current->addDirectionAction(nxui::FocusDirection::DOWN, returnToRow);
-    }
-    if (dynamicLine && !m_userAvatarButtons.empty()) {
+    const auto& leftButtons = m_sidebar.leftButtons();
+
+    lock->setCustomNavigation(nxui::FocusDirection::LEFT, lock);
+    lock->setCustomNavigation(nxui::FocusDirection::UP, lock);
+    lock->setCustomNavigation(nxui::FocusDirection::DOWN, nullptr);
+    lock->removeAction(static_cast<uint64_t>(nxui::Button::DDown));
+    lock->removeAction(static_cast<uint64_t>(nxui::Button::LStickD));
+    lock->removeAction(static_cast<uint64_t>(nxui::Button::RStickD));
+
+    if (dynamicLine) {
+        // The tile heads the top strip: [profile] [left applets] [right applets].
+        nxui::Widget* first = leftButtons.empty() ? nullptr : leftButtons.front().get();
+        lock->setCustomNavigation(nxui::FocusDirection::RIGHT, first ? first : lock);
+        m_sidebar.setDynamicLineProfileTarget(lock);
+        lock->addDirectionAction(nxui::FocusDirection::DOWN, [this]() {
+            if (!m_grid || m_appLayoutMode != AppLayoutMode::DynamicLine
+                || m_navigator.route() != switchu::navigation::Route::Home)
+                return;
+            if (auto* target = m_grid->focusManager().current())
+                focusManager().setFocus(target);
+        });
         if (m_grid)
-            m_grid->setDynamicLineUpTarget(
-                m_userAvatarButtons[m_userAvatarButtons.size() / 2].get());
-        m_sidebar.setDynamicLineUpTarget(
-            m_userAvatarButtons[m_userAvatarButtons.size() / 2].get());
-        m_sidebar.setDynamicLineProfileTargets(m_userAvatarButtons.front().get(),
-                                               m_userAvatarButtons.back().get());
+            m_grid->setDynamicLineUpTarget(lock);
+        m_sidebar.setDynamicLineUpTarget(nullptr);
     } else {
-        m_sidebar.setDynamicLineProfileTargets(nullptr, nullptr);
+        lock->setCustomNavigation(nxui::FocusDirection::RIGHT, nullptr);
+        m_sidebar.setDynamicLineProfileTarget(nullptr);
+        // Grid mode: the tile sits right above the left applet column.
+        if (!leftButtons.empty()) {
+            lock->setCustomNavigation(nxui::FocusDirection::DOWN, leftButtons.front().get());
+            leftButtons.front()->setCustomNavigation(nxui::FocusDirection::UP, lock);
+        }
     }
 }
 
-void WiiUMenuApp::loadNextUserAvatar() {
-    if (!m_userAvatarBar || m_pendingProfileIndex >= m_pendingProfileUids.size())
+void WiiUMenuApp::loadNextProfile() {
+    if (m_pendingProfileIndex >= m_pendingProfileUids.size())
         return;
 
     const AccountUid uid = m_pendingProfileUids[m_pendingProfileIndex++];
     AccountProfile profile{};
-    Result rc = accountGetProfile(&profile, uid);
-    if (R_FAILED(rc))
-        return;
+    if (R_SUCCEEDED(accountGetProfile(&profile, uid))) {
+        HomeProfile entry;
+        entry.uid = uid;
 
-    auto avatar = std::make_shared<UserAvatarButton>();
-    avatar->setSize(56.f, 56.f);
-    avatar->setMinWidth(56.f);
-    avatar->setMinHeight(56.f);
-    avatar->setShrink(0.f);
-    avatar->setCornerRadius(28.f);
-    avatar->setChromeEnabled(true);
-    avatar->setTheme(&m_theme);
-    avatar->setUid(uid);
-    avatar->setFocusable(true);
+        AccountProfileBase base{};
+        AccountUserData userData{};
+        if (R_SUCCEEDED(accountProfileGet(&profile, &userData, &base)))
+            entry.nickname = base.nickname;
 
-    AccountProfileBase base{};
-    AccountUserData userData{};
-    if (R_SUCCEEDED(accountProfileGet(&profile, &userData, &base)))
-        avatar->setNickname(base.nickname);
-
-    u32 imgSize = 0;
-    if (R_SUCCEEDED(accountProfileGetImageSize(&profile, &imgSize)) && imgSize > 0) {
-        std::vector<uint8_t> imgBuf(imgSize);
-        u32 realSize = 0;
-        if (R_SUCCEEDED(accountProfileLoadImage(&profile, imgBuf.data(), imgSize, &realSize))
-                && realSize > 0) {
-            avatar->loadAvatar(app().gpu(), app().renderer(), imgBuf.data(), realSize);
+        u32 imgSize = 0;
+        if (R_SUCCEEDED(accountProfileGetImageSize(&profile, &imgSize)) && imgSize > 0) {
+            std::vector<uint8_t> imgBuf(imgSize);
+            u32 realSize = 0;
+            if (R_SUCCEEDED(accountProfileLoadImage(&profile, imgBuf.data(), imgSize, &realSize))
+                    && realSize > 0) {
+                auto avatar = std::make_shared<nxui::Texture>();
+                if (avatar->loadFromMemory(app().gpu(), app().renderer(),
+                                           imgBuf.data(), realSize, 256))
+                    entry.avatar = std::move(avatar);
+            }
         }
+
+        accountProfileClose(&profile);
+        m_profiles.push_back(std::move(entry));
+        refreshProfileLockButton();
     }
-
-    avatar->setOnActivate([this, uid]() {
-        m_audio.playSfx(Sfx::Activate);
-#ifdef SWITCHU_MENU
-        scheduleLeaveCapture([this, uid]() { m_launcher.launchUserPage(uid); });
-#endif
-    });
-
-    accountProfileClose(&profile);
-    m_userAvatarButtons.push_back(avatar);
-    m_userAvatarBar->addChild(avatar);
-
-    if (!m_userAvatarButtons.empty()) {
-        const float countF = static_cast<float>(m_userAvatarButtons.size());
-        m_userAvatarBar->setSize(countF * 56.f + (countF - 1.f) * 10.f, 56.f);
-        wireUserAvatarNavigation();
-    }
-
-    if (m_topHud)
-        m_topHud->layout();
 
     if (m_pendingProfileIndex >= m_pendingProfileUids.size())
-        appendAddUserButton();
+        finishProfileLoading();
 }
 
 WiiUMenuApp::GridLayoutMetrics WiiUMenuApp::computeGridLayoutMetrics() const {
@@ -3057,19 +3041,17 @@ void WiiUMenuApp::configureDynamicLineNavigation() {
         for (const auto& button : m_sidebar.rightButtons())
             rightTargets.push_back(button.get());
         m_grid->setGridSideTargets(std::move(leftTargets), std::move(rightTargets));
-        nxui::Widget* profileTarget = dynamicLine && !m_userAvatarButtons.empty()
-            ? m_userAvatarButtons[m_userAvatarButtons.size() / 2].get() : nullptr;
-        m_grid->setDynamicLineUpTarget(profileTarget);
+        m_grid->setDynamicLineUpTarget(dynamicLine ? m_profileLock.get() : nullptr);
         m_grid->setDynamicLineDownTarget(nullptr);
     }
 
     if (!dynamicLine) {
         m_sidebar.setDynamicLineDownAction({});
-        wireUserAvatarNavigation();
+        wireProfileLockNavigation();
         return;
     }
 
-    wireUserAvatarNavigation();
+    wireProfileLockNavigation();
 
     // Resolve the app when DOWN is pressed. A persistent raw pointer here can
     // outlive icons rebuilt by a move or catalogue refresh.
@@ -3588,7 +3570,6 @@ void WiiUMenuApp::buildGrid() {
     m_clock = std::make_shared<DateTimeWidget>();
     m_clock->setSize(150, 62);
     m_clock->setMarginTop(14.f);
-    m_clock->setMarginLeft(24.f);
     m_clock->setFont(&m_fontNormal);
     m_clock->setSmallFont(&m_fontSmall);
     m_clock->setClockService(&m_clockService);
@@ -3606,7 +3587,23 @@ void WiiUMenuApp::buildGrid() {
     m_battery->setForceLiquidGlass(true);
     m_battery->setBlurEnabled(false);
 
-    buildUserAvatarBar(!m_fastReturnRequested);
+    m_profileLock = std::make_shared<ProfileLockButton>();
+    m_profileLock->setSize(kProfileLockSize, kProfileLockSize);
+    m_profileLock->setMinWidth(kProfileLockSize);
+    m_profileLock->setMinHeight(kProfileLockSize);
+    m_profileLock->setShrink(0.f);
+    m_profileLock->setMarginTop(12.f);
+    m_profileLock->setMarginLeft(24.f);
+    // The HUD row spreads its items evenly; balance the tile against the
+    // battery widget so the clock lands on the screen's centre line.
+    m_profileLock->setMarginRight((150.f + 24.f) - (kProfileLockSize + 24.f));
+    m_profileLock->setTheme(&m_theme);
+    m_profileLock->setOnActivate([this]() {
+        m_audio.playSfx(Sfx::Activate);
+        openProfileCarousel();
+    });
+
+    loadProfiles(!m_fastReturnRequested);
 
     m_titlePill = std::make_shared<TitlePillWidget>();
     m_titlePill->setPosition(0, 630.f);
@@ -3901,9 +3898,8 @@ void WiiUMenuApp::buildGrid() {
     m_topHud->setWireframeEnabled(false);
     m_topHud->setJustifyContent(nxui::JustifyContent::SPACE_BETWEEN);
     m_topHud->setAlignItems(nxui::AlignItems::FLEX_START);
+    m_topHud->addChild(m_profileLock);
     m_topHud->addChild(m_clock);
-    if (m_userAvatarBar)
-        m_topHud->addChild(m_userAvatarBar);
     m_topHud->addChild(m_battery);
     m_topHud->layout();
 
@@ -4525,14 +4521,14 @@ void WiiUMenuApp::onUpdate(float dt) {
                               m_deferredProfileList->result,
                               static_cast<int>(m_pendingProfileUids.size()));
                 if (m_pendingProfileUids.empty())
-                    appendAddUserButton();
+                    finishProfileLoading();
             }
         } catch (const std::exception& ex) {
             DebugLog::log("[profiles] deferred enumeration failed: %s", ex.what());
-            appendAddUserButton();
+            finishProfileLoading();
         } catch (...) {
             DebugLog::log("[profiles] deferred enumeration failed: unknown exception");
-            appendAddUserButton();
+            finishProfileLoading();
         }
         m_deferredProfileList.reset();
     }
@@ -4543,7 +4539,7 @@ void WiiUMenuApp::onUpdate(float dt) {
         const bool visibleIconsBusy = m_grid && m_iconStreamer.needsVisibleLoads(
             streamPage, streamPageSize);
         if (!visibleIconsBusy)
-            loadNextUserAvatar();
+            loadNextProfile();
     }
 
     if (m_returnFadeTimer > 0.f)
@@ -4793,6 +4789,7 @@ void WiiUMenuApp::onUpdate(float dt) {
         !(m_gameOptions && m_gameOptions->isActive()) &&
         !(m_folderOptions && m_folderOptions->isActive()) &&
         !(m_controllerTest && m_controllerTest->isActive()) &&
+        !(m_profileCarousel && m_profileCarousel->isActive()) &&
         !(m_userSelect && m_userSelect->isActive())) {
         auto* current = focusManager().current();
         if (current && current->tag() == "glossy_icon" && m_grid) {
@@ -4837,6 +4834,7 @@ void WiiUMenuApp::onUpdate(float dt) {
         !(m_gameOptions && m_gameOptions->isActive()) &&
         !(m_folderOptions && m_folderOptions->isActive()) &&
         !(m_controllerTest && m_controllerTest->isActive()) &&
+        !(m_profileCarousel && m_profileCarousel->isActive()) &&
         !(m_userSelect && m_userSelect->isActive())) {
         toggleAppLayoutMode();
     }
@@ -4864,6 +4862,7 @@ void WiiUMenuApp::onUpdate(float dt) {
         && !(m_gameOptions && m_gameOptions->isActive())
         && !(m_folderOptions && m_folderOptions->isActive())
         && !(m_controllerTest && m_controllerTest->isActive())
+        && !(m_profileCarousel && m_profileCarousel->isActive())
         && !(m_userSelect && m_userSelect->isActive()))
     {
         handleTouch();
@@ -4902,6 +4901,10 @@ void WiiUMenuApp::onUpdate(float dt) {
         m_controllerTest && m_controllerTest->isActive())
         m_controllerTest->handleTouch(app().input());
 
+    if (!debugTouchBlocked && !textEntryActive &&
+        m_profileCarousel && m_profileCarousel->isActive())
+        m_profileCarousel->handleTouch(app().input());
+
     if (!debugTouchBlocked && m_textEntry && m_textEntry->isActive())
         m_textEntry->handleTouch(app().input());
 
@@ -4929,6 +4932,8 @@ void WiiUMenuApp::onUpdate(float dt) {
                 focusManager().setFocus(m_themeShop.get());
             } else if (m_controllerTest && m_controllerTest->isActive()) {
                 focusManager().setFocus(m_controllerTest.get());
+            } else if (m_profileCarousel && m_profileCarousel->isOpen()) {
+                focusManager().setFocus(m_profileCarousel.get());
             } else if (m_gameOptions && m_gameOptions->isActive()) {
                 focusManager().setFocus(m_gameOptions.get());
             } else if (m_folderOptions && m_folderOptions->isActive()) {
@@ -5051,6 +5056,23 @@ std::vector<WiiUMenuApp::ActionHint> WiiUMenuApp::buildActionHints() {
     if (m_controllerTest && m_controllerTest->isActive())
         return hints;
 
+    if (m_profileCarousel && m_profileCarousel->isActive()) {
+        using Kind = ProfileCarouselScreen::CardKind;
+        const Kind kind = m_profileCarousel->selectedKind();
+        add(dpadGlyph(), i18n.tr("hint.navigate", "Navigate"));
+        if (kind == Kind::Profile)
+            add(buttonGlyph(nxui::Button::A), i18n.tr("profilelock.open_profile", "View profile"));
+        else if (kind == Kind::AddUser)
+            add(buttonGlyph(nxui::Button::A), i18n.tr("profilelock.create_user", "Create"));
+        if (kind != Kind::AddUser && !m_profileCarousel->selectedIsLocked())
+            add(buttonGlyph(nxui::Button::X), kind == Kind::Nobody
+                ? i18n.tr("profilelock.always_ask", "Always ask")
+                : i18n.tr("profilelock.set_default", "Set as default"));
+        add(buttonGlyph(nxui::Button::B), i18n.tr("hint.back", "Back"));
+        addVoiceControls();
+        return hints;
+    }
+
     if (m_gameOptions && m_gameOptions->isActive())
         return hints;
 
@@ -5134,12 +5156,8 @@ std::vector<WiiUMenuApp::ActionHint> WiiUMenuApp::buildActionHints() {
                 break;
             }
         }
-        for (const auto& avatar : m_userAvatarButtons) {
-            if (avatar.get() == cur) {
-                add(buttonGlyph(nxui::Button::A), i18n.tr("hint.profile", "Profile"));
-                break;
-            }
-        }
+        if (m_profileLock && m_profileLock.get() == cur)
+            add(buttonGlyph(nxui::Button::A), i18n.tr("profilelock.choose", "Change profile"));
     }
 
     if (m_navigator.route() == switchu::navigation::Route::Home && !m_editMode) {

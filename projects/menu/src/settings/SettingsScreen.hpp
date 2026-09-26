@@ -26,7 +26,6 @@ public:
     void onGridColumnsChange(IntCb cb)  { m_gridColumnsCb = std::move(cb); }
     void onGridRowsChange(IntCb cb)     { m_gridRowsCb = std::move(cb); }
     void onUiLanguageChange(StringCb cb) { m_uiLanguageCb = std::move(cb); }
-    void onDefaultProfileChange(StringCb cb) { m_defaultProfileCb = std::move(cb); }
     void onClockUse12HourChange(BoolCb cb) { m_clockUse12HourCb = std::move(cb); }
     void onAccessibilityEnabledChange(BoolCb cb) { m_accessibilityEnabledCb = std::move(cb); }
     void onAccessibilitySpeakHintsChange(BoolCb cb) { m_accessibilitySpeakHintsCb = std::move(cb); }
@@ -53,9 +52,6 @@ public:
     }
     void setUiLanguageOverride(const std::string& tag) {
         m_uiLanguageOverride = tag.empty() ? "auto" : tag;
-    }
-    void setDefaultProfileState(bool enabled, const std::string& uidHex) {
-        m_defaultProfileUid = enabled ? uidHex : std::string();
     }
     void setClockUse12HourState(bool enabled) {
         m_clockUse12Hour = enabled;
@@ -111,7 +107,6 @@ private:
     IntCb m_gridColumnsCb;
     IntCb m_gridRowsCb;
     StringCb m_uiLanguageCb;
-    StringCb m_defaultProfileCb;
     BoolCb m_clockUse12HourCb;
     BoolCb m_accessibilityEnabledCb;
     BoolCb m_accessibilitySpeakHintsCb;
@@ -134,7 +129,6 @@ private:
     int m_gridColumns = 5;
     int m_gridRows = 3;
     std::string m_uiLanguageOverride = "auto";
-    std::string m_defaultProfileUid;
     bool m_clockUse12Hour = false;
     bool m_accessibilityEnabled = true;
     bool m_accessibilitySpeakHints = true;

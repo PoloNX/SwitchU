@@ -219,10 +219,7 @@
       "region_taiwan": "Taïwan",
       "region_south_korea": "Corée du Sud",
       "auto_update": "Mise à jour automatique",
-      "error_reporting": "Rapports d'erreurs",
-      "default_profile": "Default Profile",
-      "default_profile_desc": "Launch games with this profile when possible.",
-      "default_profile_ask": "Ask each time"
+      "error_reporting": "Rapports d'erreurs"
     },
     "accessibility": {
       "voice": "Lecture vocale",
@@ -439,6 +436,20 @@
     "add_user": "Ajouter un utilisateur",
     "add_user_hint": "A pour créer un nouvel utilisateur.",
     "title": "Qui joue ?"
+  },
+  "profilelock": {
+    "title": "Profil par défaut",
+    "none": "Demander à chaque fois",
+    "pill_locked": "Profil :",
+    "pill_unlocked": "Demander qui joue",
+    "button_hint": "A pour changer.",
+    "opened_hint": "Gauche et droite pour parcourir. X définit le profil par défaut.",
+    "default_badge": "Par défaut",
+    "choose": "Changer de profil",
+    "open_profile": "Voir le profil",
+    "create_user": "Créer",
+    "always_ask": "Toujours demander",
+    "set_default": "Définir par défaut"
   },
   "game": {
     "tile_size": "Taille de la tuile",

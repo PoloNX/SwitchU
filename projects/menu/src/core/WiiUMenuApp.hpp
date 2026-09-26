@@ -21,7 +21,8 @@
 #include "widgets/ProgressDialog.hpp"
 #include "widgets/AppletButton.hpp"
 #include "widgets/PageIndicator.hpp"
-#include "widgets/UserAvatarButton.hpp"
+#include "widgets/ProfileCarouselScreen.hpp"
+#include "widgets/ProfileLockButton.hpp"
 #include "widgets/FolderBackdrop.hpp"
 #include "widgets/SteamGridDbBackdrop.hpp"
 #include "steamgriddb/SteamGridDbManager.hpp"
@@ -108,10 +109,14 @@ private:
     std::pair<int, int> folderGridDimensions(std::uint32_t folderId) const;
     void reflowHomeGrid();
     void buildGrid();
-    void buildUserAvatarBar(bool loadImmediately = true);
-    void loadNextUserAvatar();
-    void appendAddUserButton();
-    void wireUserAvatarNavigation();
+    void loadProfiles(bool loadImmediately = true);
+    void loadNextProfile();
+    void finishProfileLoading();
+    void refreshProfileLockButton();
+    void wireProfileLockNavigation();
+    void createProfileCarousel();
+    void openProfileCarousel();
+    void setLockedProfile(std::optional<AccountUid> uid);
     void composeRootPending(std::vector<PendingApp>& apps);
     GridModel buildRootFolderModel();
     GridModel buildOpenFolderModel(std::uint32_t folderId) const;
@@ -349,6 +354,7 @@ private:
     std::shared_ptr<SteamGridDbPickerScreen> m_steamGridDbPicker;
     std::shared_ptr<FolderOptionsScreen> m_folderOptions;
     std::shared_ptr<ControllerTestScreen> m_controllerTest;
+    std::shared_ptr<ProfileCarouselScreen> m_profileCarousel;
     std::shared_ptr<TextEntryScreen>      m_textEntry;
 
     nxui::Texture m_gameCardTex;
@@ -366,12 +372,13 @@ private:
     std::shared_ptr<nxui::Box> m_topHud;
     std::shared_ptr<nxui::Box> m_leftSidebar;
     std::shared_ptr<nxui::Box> m_rightSidebar;
-    std::shared_ptr<nxui::Box> m_userAvatarBar;
+    std::shared_ptr<ProfileLockButton> m_profileLock;
     std::shared_ptr<FolderBackdrop> m_folderBackdrop;
     std::shared_ptr<SteamGridDbBackdrop> m_steamGridDbBackdrop;
     std::shared_ptr<nxui::GlassPanel> m_folderHeader;
     std::shared_ptr<nxui::Label> m_folderHeaderLabel;
-    std::vector<std::shared_ptr<UserAvatarButton>> m_userAvatarButtons;
+    std::vector<HomeProfile> m_profiles;
+    bool m_profilesComplete = false;
 
     AudioManager m_audio;
     AccessibilityManager m_accessibility;
@@ -492,8 +499,8 @@ private:
     int  m_touchHitIndex     = -1;
     bool m_touchOnFocused    = false;
     bool m_touchEditDragActive = false;
-    UserAvatarButton* m_touchAvatarTarget = nullptr;
-    bool m_touchAvatarWasFocused = false;
+    bool m_touchProfileLock = false;
+    bool m_touchProfileLockWasFocused = false;
     int  m_deferredRefreshFrames = 0;
     bool m_refreshQueued         = false;
     int  m_refreshCooldownFrames = 0;
