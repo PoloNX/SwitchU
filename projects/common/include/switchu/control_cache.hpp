@@ -6,15 +6,32 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <string>
 #include <system_error>
 #include <vector>
+#include <zlib.h>
 
 namespace switchu::control_cache {
 
 inline constexpr const char* kCacheDir = "sdmc:/config/SwitchU/control_cache";
 inline constexpr uint32_t kMetaMagic = 0x53554343;
-inline constexpr uint32_t kMetaVersion = 5;
+// Version 6: names from compressed (TitlesDataFormat 1) NACPs were garbage
+// before; bumping forces those metas to be rebuilt.
+inline constexpr uint32_t kMetaVersion = 6;
+
+// HOS 21.0.0+ titles may store their names DEFLATE-compressed
+// (TitlesDataFormat 1): a u16 size, then raw DEFLATE data that expands to
+// NacpLanguageEntry[32]. libnx's nacpGetLanguageEntry does not decompress it
+// and hands back entries that point into the compressed bytes. The title block
+// is addressed by raw offset because newer libnx renamed NacpStruct::lang to
+// lang_data, and the released libnx that CI builds against still has lang.
+inline constexpr size_t kNacpTitleEntryCount = 16;
+inline constexpr size_t kNacpDecompressedTitleEntryCount = 32;
+inline constexpr size_t kNacpTitlesDataFormatOffset = 0x3215;
+inline constexpr size_t kNacpCompressedTitlesCapacity = 0x2FFE;
+static_assert(sizeof(NacpStruct) == 0x4000);
+static_assert(sizeof(NacpLanguageEntry) == 0x300);
 
 struct Meta {
     uint32_t magic = kMetaMagic;
@@ -200,6 +217,68 @@ inline void copyString(char* dst, size_t dstSize, const char* src, size_t srcSiz
     dst[len] = '\0';
 }
 
+inline NacpLanguageEntry* titleEntries(NacpStruct& nacp) {
+    return reinterpret_cast<NacpLanguageEntry*>(&nacp);
+}
+
+// Rewrites a compressed title block into the legacy 16-entry form so the
+// libnx helpers and the slot scans below read real names. A block that fails
+// to decompress is cleared rather than left for those readers to misparse.
+inline void normalizeNacpTitles(NacpStruct& nacp) {
+    auto* bytes = reinterpret_cast<uint8_t*>(&nacp);
+    if (bytes[kNacpTitlesDataFormatOffset] != 1)
+        return;
+
+    std::vector<NacpLanguageEntry> decompressed(kNacpDecompressedTitleEntryCount);
+    uint16_t compressedSize = 0;
+    std::memcpy(&compressedSize, bytes, sizeof(compressedSize));
+    bool ok = false;
+    if (compressedSize != 0 && compressedSize <= kNacpCompressedTitlesCapacity) {
+        z_stream zs{};
+        if (inflateInit2(&zs, -15) == Z_OK) {
+            zs.next_in = bytes + sizeof(compressedSize);
+            zs.avail_in = compressedSize;
+            zs.next_out = reinterpret_cast<Bytef*>(decompressed.data());
+            zs.avail_out = sizeof(NacpLanguageEntry) * kNacpDecompressedTitleEntryCount;
+            const int zr = inflate(&zs, Z_FINISH);
+            inflateEnd(&zs);
+            ok = zr == Z_STREAM_END || zr == Z_OK;
+        }
+    }
+
+    std::memset(bytes, 0, sizeof(NacpLanguageEntry) * kNacpTitleEntryCount);
+    bytes[kNacpTitlesDataFormatOffset] = 0;
+    if (!ok)
+        return;
+
+    auto* entries = titleEntries(nacp);
+    std::memcpy(entries, decompressed.data(), sizeof(NacpLanguageEntry) * kNacpTitleEntryCount);
+
+    // Slots 16+ (e.g. Polish, Thai) have no legacy slot; surface one only when
+    // it is the sole name the title carries.
+    for (size_t i = 0; i < kNacpTitleEntryCount; ++i) {
+        if (entries[i].name[0] != '\0')
+            return;
+    }
+    for (size_t i = kNacpTitleEntryCount; i < kNacpDecompressedTitleEntryCount; ++i) {
+        if (decompressed[i].name[0] != '\0') {
+            entries[0] = decompressed[i];
+            return;
+        }
+    }
+}
+
+inline bool hasTitleName(const NsApplicationControlData& controlData) {
+    auto nacp = std::make_unique<NacpStruct>(controlData.nacp);
+    normalizeNacpTitles(*nacp);
+    const auto* entries = titleEntries(*nacp);
+    for (size_t i = 0; i < kNacpTitleEntryCount; ++i) {
+        if (entries[i].name[0] != '\0' && isValidUtf8(entries[i].name, sizeof(entries[i].name)))
+            return true;
+    }
+    return false;
+}
+
 inline bool fillMetaFromControlData(uint64_t titleId, const NsApplicationControlData& controlData,
                                     Meta& out) {
     Meta meta{};
@@ -219,17 +298,20 @@ inline bool fillMetaFromControlData(uint64_t titleId, const NsApplicationControl
                controlData.nacp.display_version,
                sizeof(controlData.nacp.display_version));
 
+    auto nacp = std::make_unique<NacpStruct>(controlData.nacp);
+    normalizeNacpTitles(*nacp);
+    const auto* entries = titleEntries(*nacp);
+
     NacpLanguageEntry* langEntry = nullptr;
     NacpLanguageEntry* preferred = nullptr;
-    if (R_SUCCEEDED(nacpGetLanguageEntry(
-            const_cast<NacpStruct*>(&controlData.nacp), &preferred))
+    if (R_SUCCEEDED(nacpGetLanguageEntry(nacp.get(), &preferred))
         && preferred && preferred->name[0] != '\0'
         && isValidUtf8(preferred->name, sizeof(preferred->name))) {
         langEntry = preferred;
     }
     if (!langEntry) {
-        for (int i = 0; i < 16; ++i) {
-            auto* candidate = const_cast<NacpLanguageEntry*>(&controlData.nacp.lang[i]);
+        for (size_t i = 0; i < kNacpTitleEntryCount; ++i) {
+            auto* candidate = const_cast<NacpLanguageEntry*>(&entries[i]);
             if (candidate->name[0] != '\0'
                 && isValidUtf8(candidate->name, sizeof(candidate->name))) {
                 langEntry = candidate;
@@ -250,7 +332,7 @@ inline bool fillMetaFromControlData(uint64_t titleId, const NsApplicationControl
     // search title independent from the console's display language.
     const NacpLanguageEntry* englishEntry = nullptr;
     for (int languageIndex : {0, 1}) {
-        const auto* candidate = &controlData.nacp.lang[languageIndex];
+        const auto* candidate = &entries[languageIndex];
         if (candidate->name[0] != '\0'
             && isValidUtf8(candidate->name, sizeof(candidate->name))) {
             englishEntry = candidate;

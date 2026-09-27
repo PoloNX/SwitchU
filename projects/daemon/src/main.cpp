@@ -2021,6 +2021,35 @@ static void controlCacheThreadFunc(void* arg) {
                                                 controlData,
                                                 sizeof(*controlData),
                                                 &controlSize);
+        // Switch 2 Edition titles can leave the legacy control slot without a
+        // name; theirs sits in ACD slots 1..3, reachable only through
+        // ControlData2. Keep the legacy data if no slot has a name either.
+        if (R_FAILED(rc) || controlSize < sizeof(NacpStruct)
+            || !switchu::control_cache::hasTitleName(*controlData)) {
+            auto* alternate = new NsApplicationControlData();
+            for (u8 acdIndex = 1; alternate && acdIndex <= 3; ++acdIndex) {
+                u64 alternateSize = 0;
+                u32 unk = 0;
+                Result alternateRc = nsGetApplicationControlData2(NsApplicationControlSource_Storage,
+                                                                  titleId,
+                                                                  alternate,
+                                                                  sizeof(*alternate),
+                                                                  0,
+                                                                  acdIndex,
+                                                                  &alternateSize,
+                                                                  &unk);
+                if (R_SUCCEEDED(alternateRc) && alternateSize >= sizeof(NacpStruct)
+                    && switchu::control_cache::hasTitleName(*alternate)) {
+                    std::swap(controlData, alternate);
+                    controlSize = alternateSize;
+                    rc = alternateRc;
+                    switchu::FileLog::log("[control-cache] 0x%016lX name from acd slot %u",
+                                          titleId, acdIndex);
+                    break;
+                }
+            }
+            delete alternate;
+        }
         const uint64_t elapsedMs = armTicksToNs(armGetSystemTick() - startTick) / 1'000'000ULL;
         if (R_SUCCEEDED(rc) && controlSize >= sizeof(NacpStruct)) {
             const bool ok = switchu::control_cache::writeFromControlData(
