@@ -46,6 +46,7 @@ public:
     void onGridColumnsChange(IntCb cb)   { m_gridColumnsCb = std::move(cb); }
     void onGridRowsChange(IntCb cb)      { m_gridRowsCb = std::move(cb); }
     void onActionHintStyleChange(IntCb cb) { m_actionHintStyleCb = std::move(cb); }
+    void onAutoThemeOpen(VoidCb cb) { m_autoThemeOpenCb = std::move(cb); }
     void onCursorMotionModeChange(IntCb cb) { m_cursorMotionModeCb = std::move(cb); }
     void onNextTrack(VoidCb cb)          { m_nextTrackCb = std::move(cb); }
     void onThemeShopApply(StringCb cb)   { m_themeShopApplyCb = std::move(cb); }
@@ -67,6 +68,9 @@ public:
     }
     void setActionHintStyleState(const std::string& style) {
         m_actionHintStyle = style == "panel" ? 0 : 1;
+    }
+    void setAutoThemeSummary(std::string summary) {
+        m_autoThemeSummary = std::move(summary);
     }
     void setCursorMotionModeState(int mode) {
         m_cursorMotionMode = std::clamp(mode, 0, 1);
@@ -206,6 +210,7 @@ private:
     IntCb m_gridColumnsCb;
     IntCb m_gridRowsCb;
     IntCb m_actionHintStyleCb;
+    VoidCb m_autoThemeOpenCb;
     IntCb m_cursorMotionModeCb;
     VoidCb m_nextTrackCb;
     StringCb m_themeShopApplyCb;
@@ -221,6 +226,7 @@ private:
     int m_gridColumns = 5;
     int m_gridRows = 3;
     int m_actionHintStyle = 1;
+    std::string m_autoThemeSummary;
     int m_cursorMotionMode = 0;
     std::string m_searchQuery;
     std::vector<ThemeShopEntry> m_allThemeShopEntries;

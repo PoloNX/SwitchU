@@ -1,5 +1,6 @@
 #include "WiiUMenuApp.hpp"
 #include "themeshop/ThemePackageInstaller.hpp"
+#include "themeshop/ThemeHttp.hpp"
 #include "widgets/GlossyIcon.hpp"
 #include "DebugLog.hpp"
 
@@ -8,6 +9,7 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <cmath>
 #include <filesystem>
 #include <fmt/format.h>
 #include <fstream>
@@ -985,6 +987,117 @@ void WiiUMenuApp::createFolderOptions() {
     });
 }
 
+void WiiUMenuApp::createAutoThemeScreen() {
+    if (m_autoThemeScreen) return;
+    m_autoThemeScreen = std::make_shared<AutoThemeScreen>();
+    if (m_overlayLayer) m_overlayLayer->addChild(m_autoThemeScreen);
+    m_autoThemeScreen->setFont(&m_fontNormal);
+    m_autoThemeScreen->setSmallFont(&m_fontSmall);
+    m_autoThemeScreen->setTheme(&m_theme);
+    m_autoThemeScreen->setAccessibilityVoiceEnabled(m_config.accessibilityEnabled);
+    m_autoThemeScreen->setAccessibilitySpeechPreferences(m_config.accessibilitySpeakHints,
+                                                         m_config.accessibilitySpeakPosition);
+    m_autoThemeScreen->onNavigateSfx([this]() { m_audio.playSfx(Sfx::Navigate); });
+    m_autoThemeScreen->onActivateSfx([this]() { m_audio.playSfx(Sfx::Activate); });
+    m_autoThemeScreen->onCloseSfx([this]() { m_audio.playSfx(Sfx::ModalHide); });
+    m_autoThemeScreen->onToggleSfx([this](bool on) {
+        m_audio.playSfx(on ? Sfx::ThemeToggle : Sfx::ToggleOff);
+    });
+    m_autoThemeScreen->onSliderSfx([this](bool up) {
+        m_audio.playSfx(up ? Sfx::SliderUp : Sfx::SliderDown);
+    });
+    m_autoThemeScreen->onAccessibilityAnnouncement([this](const std::string& text) {
+        m_accessibility.announce(text);
+    });
+    m_autoThemeScreen->onAccessibilityStructuredAnnouncement(
+        [this](const std::string& context, const std::string& position,
+               const std::string& summary, bool forceRepeat, bool forceContext) {
+            m_accessibility.announceStructuredFocus(context, position, summary,
+                                                    forceRepeat, forceContext);
+        });
+    m_autoThemeScreen->onChanged([this](const AutoThemeScreen::State& st) {
+        m_config.autoThemeMode = st.mode == 1 ? "manual"
+                               : (st.mode == 2 ? "geo" : "off");
+        m_config.autoThemeDayPreset = st.dayPreset;
+        m_config.autoThemeNightPreset = st.nightPreset;
+        m_config.autoThemeDayStartHour = std::clamp(st.dayStartHour, 0, 23);
+        m_config.autoThemeNightStartHour = std::clamp(st.nightStartHour, 0, 23);
+        applyAutoThemeConfig();
+        maybeFetchGeoLocation();
+        evaluateAutoTheme(true);
+        refreshAutoThemeSummary();
+        pushGeoDisplayToScreen();
+    });
+    m_autoThemeScreen->onClosed([this]() {
+        if (m_configSaveFuture.valid())
+            m_configSaveFuture.wait();
+        m_configSaveFuture = m_threadPool.submit([cfg = m_config]() { cfg.save(); });
+        DebugLog::log("[config] save queued");
+        // Return to the Theme Shop it was opened from.
+        if (m_themeShop && m_themeShop->isActive()) {
+            m_navigator.navigate(switchu::navigation::Route::ThemeShop);
+            m_themeShop->rebuildCurrentTab();
+            focusManager().setFocus(m_themeShop.get());
+        } else {
+            m_navigator.routeDidClose(switchu::navigation::Route::AutoTheme);
+        }
+    });
+}
+
+void WiiUMenuApp::openAutoThemeSettings() {
+    createAutoThemeScreen();
+    if (!m_autoThemeScreen) return;
+
+    std::vector<AutoThemeScreen::PresetOption> presets;
+    presets.reserve(m_allPresets.size());
+    for (const auto& p : m_allPresets) {
+        AutoThemeScreen::PresetOption opt;
+        opt.id = p.id.empty() ? p.name : p.id;
+        opt.name = p.name;
+        presets.push_back(std::move(opt));
+    }
+
+    AutoThemeScreen::State st;
+    st.mode = m_config.autoThemeMode == "manual" ? 1
+            : (m_config.autoThemeMode == "geo" ? 2 : 0);
+    st.dayPreset = m_config.autoThemeDayPreset;
+    st.nightPreset = m_config.autoThemeNightPreset;
+    st.dayStartHour = m_config.autoThemeDayStartHour;
+    st.nightStartHour = m_config.autoThemeNightStartHour;
+    st.geoResolved = m_config.autoThemeGeoResolved;
+    st.geoCity = m_config.autoThemeGeoResolved
+        ? (m_config.autoThemeGeoCity.empty()
+               ? fmt::format("{:.2f}, {:.2f}", m_config.autoThemeGeoLat, m_config.autoThemeGeoLon)
+               : m_config.autoThemeGeoCity)
+        : std::string();
+
+    m_autoThemeScreen->setTheme(&m_theme);
+    m_autoThemeScreen->configure(st, std::move(presets));
+    pushGeoDisplayToScreen(); // fill in computed sunrise/sunset
+
+    m_navigator.navigate(switchu::navigation::Route::AutoTheme);
+    m_autoThemeScreen->show();
+    focusManager().setFocus(m_autoThemeScreen.get());
+    m_audio.playSfx(Sfx::ModalShow);
+}
+
+void WiiUMenuApp::refreshAutoThemeSummary() {
+    if (!m_themeShop) return;
+    auto& i18n = nxui::I18n::instance();
+    std::string summary;
+    if (m_config.autoThemeMode == "manual") {
+        summary = fmt::format("{} ({:02d}:00 / {:02d}:00)",
+                              i18n.tr("autotheme.summary.manual", "Manual hours"),
+                              std::clamp(m_config.autoThemeDayStartHour, 0, 23),
+                              std::clamp(m_config.autoThemeNightStartHour, 0, 23));
+    } else if (m_config.autoThemeMode == "geo") {
+        summary = i18n.tr("autotheme.summary.geo", "Geolocation (IP)");
+    } else {
+        summary = i18n.tr("autotheme.summary.off", "Off");
+    }
+    m_themeShop->setAutoThemeSummary(summary);
+}
+
 void WiiUMenuApp::createControllerTest() {
     if (m_controllerTest) return;
     m_controllerTest = std::make_shared<ControllerTestScreen>();
@@ -1105,6 +1218,7 @@ void WiiUMenuApp::createThemeShop() {
     m_themeShop->setMusicState(m_audio.isPlaying(), m_audio.volume(), m_audio.sfxVolume());
     m_themeShop->setGridLayoutState(m_config.gridColumns, m_config.gridRows);
     m_themeShop->setActionHintStyleState(m_config.actionHintStyle);
+    refreshAutoThemeSummary();
     m_themeShop->setCursorMotionModeState(m_config.cursorMotionMode);
     m_themeShop->setAccessibilityVoiceEnabled(m_config.accessibilityEnabled);
     m_themeShop->setAccessibilitySpeechPreferences(m_config.accessibilitySpeakHints,
@@ -1146,6 +1260,7 @@ void WiiUMenuApp::createThemeShop() {
     m_themeShop->onActionHintStyleChange([this](int style) {
         m_config.actionHintStyle = style == 0 ? "panel" : "capsules";
     });
+    m_themeShop->onAutoThemeOpen([this]() { openAutoThemeSettings(); });
     m_themeShop->onCursorMotionModeChange([this](int mode) {
         m_config.cursorMotionMode = std::clamp(mode, 0, 1);
         const bool instant = m_config.cursorMotionMode == 1;
@@ -1540,6 +1655,172 @@ void WiiUMenuApp::activateThemePreset(ThemePreset* preset, bool applyBundledSoun
         m_themeShop->requestRenderDiagnostics(6);
     m_audio.playSfx(Sfx::ThemeToggle);
     DebugLog::log("[theme-apply] complete preset=%s", presetRef.c_str());
+}
+
+void WiiUMenuApp::applyAutoThemeConfig() {
+    using switchu::services::AutoThemeMode;
+    using switchu::services::AutoThemeSettings;
+
+    AutoThemeSettings settings;
+    if (m_config.autoThemeMode == "manual")
+        settings.mode = AutoThemeMode::ManualHours;
+    else if (m_config.autoThemeMode == "geo")
+        settings.mode = AutoThemeMode::Geolocation;
+    else
+        settings.mode = AutoThemeMode::Off;
+
+    settings.dayPreset = m_config.autoThemeDayPreset;
+    settings.nightPreset = m_config.autoThemeNightPreset;
+    settings.dayStartHour = m_config.autoThemeDayStartHour;
+    settings.nightStartHour = m_config.autoThemeNightStartHour;
+
+    m_autoTheme.configure(settings);
+
+    // Seed the geolocation provider with the cached position, if any.
+    if (m_config.autoThemeGeoResolved)
+        m_autoTheme.setGeoLocation(switchu::services::GeoLocation{
+            m_config.autoThemeGeoLat, m_config.autoThemeGeoLon});
+    else
+        m_autoTheme.setGeoLocation(std::nullopt);
+
+    DebugLog::log("[auto-theme] configured: mode=%s day=%s night=%s dayStart=%d nightStart=%d",
+                  m_config.autoThemeMode.c_str(),
+                  safeLogPath(settings.dayPreset),
+                  safeLogPath(settings.nightPreset),
+                  settings.dayStartHour,
+                  settings.nightStartHour);
+}
+
+void WiiUMenuApp::evaluateAutoTheme(bool force) {
+    if (force)
+        m_autoTheme.reset();
+
+    const auto snapshot = m_clockService.refresh();
+    auto desired = m_autoTheme.evaluate(snapshot);
+    if (!desired)
+        return;
+
+    if (*desired == m_activePresetName)
+        return;
+
+    ThemePreset* preset = findPresetPtr(*desired);
+    if (!preset) {
+        DebugLog::log("[auto-theme] target preset not found: %s", desired->c_str());
+        return;
+    }
+
+    DebugLog::log("[auto-theme] switching to preset=%s (hour=%u)",
+                  desired->c_str(),
+                  static_cast<unsigned>(snapshot.calendar.hour));
+    // Auto switching keeps the current sound preset (applyBundledSound=false).
+    activateThemePreset(preset, false);
+}
+
+void WiiUMenuApp::maybeFetchGeoLocation() {
+    if (!m_autoTheme.needsGeoLocation() || m_geoFetchInFlight)
+        return;
+
+    m_geoFetchInFlight = true;
+    m_geoFetchResult = std::make_shared<GeoFetchResult>();
+    DebugLog::log("[auto-theme][geo] starting IP geolocation lookup");
+    auto result = m_geoFetchResult;
+    m_geoFetchFuture = m_threadPool.submit([result]() {
+        try {
+            // The Switch has no GPS; approximate the position from the public IP.
+            const std::string body = themeshop::http::getText(
+                "http://ip-api.com/json/?fields=status,message,lat,lon,city");
+            const auto j = nlohmann::json::parse(body);
+            if (j.value("status", std::string()) == "success") {
+                result->lat = j.value("lat", 0.0);
+                result->lon = j.value("lon", 0.0);
+                result->city = j.value("city", std::string());
+                result->ok = true;
+            } else {
+                DebugLog::log("[auto-theme][geo] api status not success: %s",
+                              j.value("message", std::string("?")).c_str());
+            }
+        } catch (const std::exception& ex) {
+            DebugLog::log("[auto-theme][geo] lookup failed: %s", ex.what());
+        } catch (...) {
+            DebugLog::log("[auto-theme][geo] lookup failed: unknown error");
+        }
+    });
+}
+
+void WiiUMenuApp::pollGeoLocationFetch() {
+    if (!m_geoFetchInFlight || !m_geoFetchFuture.valid())
+        return;
+    if (m_geoFetchFuture.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
+        return;
+
+    m_geoFetchFuture.get();
+    const GeoFetchResult r = m_geoFetchResult ? *m_geoFetchResult : GeoFetchResult{};
+    m_geoFetchResult.reset();
+    m_geoFetchInFlight = false;
+
+    if (!r.ok) {
+        DebugLog::log("[auto-theme][geo] no location resolved (offline or API error)");
+        return;
+    }
+
+    DebugLog::log("[auto-theme][geo] resolved lat=%.4f lon=%.4f city=%s",
+                  r.lat, r.lon, r.city.c_str());
+
+    m_config.autoThemeGeoResolved = true;
+    m_config.autoThemeGeoLat = r.lat;
+    m_config.autoThemeGeoLon = r.lon;
+    m_config.autoThemeGeoCity = r.city;
+    m_autoTheme.setGeoLocation(switchu::services::GeoLocation{r.lat, r.lon});
+
+    // Persist the resolved location so future launches skip the network request.
+    if (m_configSaveFuture.valid())
+        m_configSaveFuture.wait();
+    m_configSaveFuture = m_threadPool.submit([cfg = m_config]() { cfg.save(); });
+
+    evaluateAutoTheme(true);
+    pushGeoDisplayToScreen();
+}
+
+void WiiUMenuApp::pushGeoDisplayToScreen() {
+    if (!m_autoThemeScreen)
+        return;
+
+    const bool resolved = m_config.autoThemeGeoResolved;
+    std::string city, sunrise, sunset;
+
+    if (resolved) {
+        city = m_config.autoThemeGeoCity.empty()
+            ? fmt::format("{:.2f}, {:.2f}", m_config.autoThemeGeoLat, m_config.autoThemeGeoLon)
+            : m_config.autoThemeGeoCity;
+
+        auto& i18n = nxui::I18n::instance();
+        const auto snap = m_clockService.refresh();
+        const auto sun = m_autoTheme.geoSunTimes(snap);
+        if (sun.valid) {
+            if (sun.polarDay) {
+                sunrise = sunset = i18n.tr("autotheme.geo_midnight_sun", "Midnight sun");
+            } else if (sun.polarNight) {
+                sunrise = sunset = i18n.tr("autotheme.geo_polar_night", "Polar night");
+            } else {
+                auto fmtHour = [this](double h) {
+                    int hh = static_cast<int>(std::floor(h));
+                    int mm = static_cast<int>(std::llround((h - hh) * 60.0));
+                    if (mm >= 60) { mm -= 60; ++hh; }
+                    hh = ((hh % 24) + 24) % 24;
+                    if (m_config.clockUse12Hour) {
+                        int h12 = hh % 12;
+                        if (h12 == 0) h12 = 12;
+                        return fmt::format("{}:{:02d} {}", h12, mm, hh >= 12 ? "PM" : "AM");
+                    }
+                    return fmt::format("{:02d}:{:02d}", hh, mm);
+                };
+                sunrise = fmtHour(sun.sunriseLocalHours);
+                sunset = fmtHour(sun.sunsetLocalHours);
+            }
+        }
+    }
+
+    m_autoThemeScreen->updateGeoDisplay(resolved, city, sunrise, sunset);
 }
 
 void WiiUMenuApp::applyUiLanguage() {

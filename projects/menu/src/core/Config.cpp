@@ -91,6 +91,15 @@ bool AppConfig::load() {
         }
     }
     readJsonOpt(j, "themePreset", themePreset);
+    readJsonOpt(j, "autoThemeMode", autoThemeMode);
+    readJsonOpt(j, "autoThemeDayPreset", autoThemeDayPreset);
+    readJsonOpt(j, "autoThemeNightPreset", autoThemeNightPreset);
+    readJsonOpt(j, "autoThemeDayStartHour", autoThemeDayStartHour);
+    readJsonOpt(j, "autoThemeNightStartHour", autoThemeNightStartHour);
+    readJsonOpt(j, "autoThemeGeoResolved", autoThemeGeoResolved);
+    readJsonOpt(j, "autoThemeGeoLat", autoThemeGeoLat);
+    readJsonOpt(j, "autoThemeGeoLon", autoThemeGeoLon);
+    readJsonOpt(j, "autoThemeGeoCity", autoThemeGeoCity);
     readJsonOpt(j, "folderStyle", folderStyle);
     const bool hasShowCoverKey = j.find("folderShowCover") != j.end();
     readJsonOpt(j, "folderShowCover", folderShowCover);
@@ -132,6 +141,18 @@ bool AppConfig::load() {
         }
     }
     folderStyle = std::clamp(folderStyle, 0, switchu::folders::kFolderStyleCount - 1);
+
+    if (autoThemeMode != "off" && autoThemeMode != "manual" && autoThemeMode != "geo")
+        autoThemeMode = "off";
+    autoThemeDayStartHour = std::clamp(autoThemeDayStartHour, 0, 23);
+    autoThemeNightStartHour = std::clamp(autoThemeNightStartHour, 0, 23);
+    if (autoThemeGeoLat < -90.0 || autoThemeGeoLat > 90.0
+        || autoThemeGeoLon < -180.0 || autoThemeGeoLon > 180.0) {
+        autoThemeGeoResolved = false;
+        autoThemeGeoLat = 0.0;
+        autoThemeGeoLon = 0.0;
+        autoThemeGeoCity.clear();
+    }
 
     return true;
 }
@@ -181,6 +202,15 @@ bool AppConfig::save() const {
         j["lastOpened"] = std::move(opened);
     }
     j["themePreset"] = themePreset;
+    j["autoThemeMode"] = (autoThemeMode == "manual" || autoThemeMode == "geo") ? autoThemeMode : "off";
+    j["autoThemeDayPreset"] = autoThemeDayPreset;
+    j["autoThemeNightPreset"] = autoThemeNightPreset;
+    j["autoThemeDayStartHour"] = std::clamp(autoThemeDayStartHour, 0, 23);
+    j["autoThemeNightStartHour"] = std::clamp(autoThemeNightStartHour, 0, 23);
+    j["autoThemeGeoResolved"] = autoThemeGeoResolved;
+    j["autoThemeGeoLat"] = autoThemeGeoLat;
+    j["autoThemeGeoLon"] = autoThemeGeoLon;
+    j["autoThemeGeoCity"] = autoThemeGeoCity;
     j["folderStyle"] = std::clamp(folderStyle, 0, switchu::folders::kFolderStyleCount - 1);
     j["folderShowCover"] = folderShowCover;
 

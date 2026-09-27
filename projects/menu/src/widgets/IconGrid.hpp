@@ -11,6 +11,13 @@
 
 class GlossyIcon;
 
+struct IconAppearOptions {
+    float baseDelay = 0.f;
+    float stagger   = 0.40f;
+    bool  fromTile  = false;
+    nxui::Rect origin{};
+};
+
 class IconGrid : public nxui::Widget {
 public:
     IconGrid();
@@ -27,6 +34,7 @@ public:
     AppLayoutMode layoutMode() const { return m_layoutMode; }
     bool isDynamicLine() const { return m_layoutMode == AppLayoutMode::DynamicLine; }
     bool isDynamicLineScrolling() const;
+    bool isLayoutMorphing() const { return m_layoutMorphing; }
     void setDynamicLineUpTarget(nxui::Widget* target);
     void setDynamicLineDownTarget(nxui::Widget* target);
 
@@ -45,6 +53,8 @@ public:
     int hitTest(float screenX, float screenY) const;
     nxui::Rect focusedDisplayRect() const;
     nxui::Rect gridSpanRect(int globalIndex, int columns, int rows) const;
+    // Bounds of the laid-out cell block (not the whole widget rect).
+    nxui::Rect contentRect() const;
     void setGridSideTargets(std::vector<nxui::Widget*> left,
                             std::vector<nxui::Widget*> right);
 
@@ -52,10 +62,14 @@ public:
     bool focusGlobalIndex(int idx);
     bool swapSlots(int a, int b);
 
-    void startAppearAnimation();
+    void startAppearAnimation(const IconAppearOptions& opt = IconAppearOptions{});
+    // Mirror of a fromTile appear: icons fly back into opt.origin, last in, first out.
+    void startDisappearAnimation(const IconAppearOptions& opt, float dur);
 
     void startPageTransition(int targetPage);
     bool isTransitioning() const { return m_sliding; }
+
+    void bumpEdge(int dir);
 
     void setSlideTransition(bool enabled) { m_slideTransition = enabled; }
     void setEdgePaging(bool enabled) { m_edgePaging = enabled; }
@@ -75,6 +89,9 @@ private:
     void positionPage(int page, float dx);
     void renderPageAt(nxui::Renderer& ren, int page, float dx);
     void renderDynamicLine(nxui::Renderer& ren);
+    void renderLayoutMorph(nxui::Renderer& ren);
+    nxui::Rect gridSlotRect(int globalIndex) const;
+    nxui::Rect morphBlend(int globalIndex, const nxui::Rect& gridRect) const;
     void bindEdgeActions(int start, int end);
     void bindGridNavigation(int start, int end);
     nxui::Rect dynamicIconRect(int index, float* outScale = nullptr,
@@ -99,7 +116,6 @@ private:
     // full-library rect rebuild while the line is at rest.
     int m_lineLayoutCacheCount = -1;
     float m_lineLayoutCacheOffset = 0.f;
-    float m_lineLayoutCacheReveal = -1.f;
     nxui::Rect m_lineLayoutCacheRect{};
 
     std::vector<std::shared_ptr<GlossyIcon>> m_allIcons;
@@ -107,7 +123,11 @@ private:
 
     AppLayoutMode m_layoutMode = AppLayoutMode::Grid;
     nxui::AnimatedFloat m_lineScrollOffset{0.f};
-    nxui::AnimatedFloat m_layoutReveal{1.f};
+    // 0 = grid geometry (usual), 1 = carousel geometry (single row)
+    nxui::AnimatedFloat m_layoutMorph{0.f};
+    bool m_layoutMorphing = false;
+    int  m_layoutMorphPage = 0;
+    static constexpr float kLayoutMorphDuration = 0.40f;
     nxui::Widget* m_lineUpTarget = nullptr;
     nxui::Widget* m_lineDownTarget = nullptr;
     std::vector<nxui::Widget*> m_gridLeftTargets;
@@ -128,7 +148,11 @@ private:
     float m_slideT          = 0.f;
     float m_slideInDx       = 0.f;
     float m_slideOutDx      = 0.f;
-    static constexpr float kSlideDuration = 0.30f;
+    static constexpr float kSlideDuration = 0.34f;
+
+    nxui::AnimatedFloat m_edgeBump;
+    bool  m_bumping = false;
+    static constexpr float kEdgeBumpDistance = 26.f;
 
     std::function<void()> m_onPageSwitched;
     std::function<void(int)> m_onEdgePage;
