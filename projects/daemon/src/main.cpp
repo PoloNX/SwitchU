@@ -458,10 +458,41 @@ static bool writeAppCatalogFile() {
     return true;
 }
 
+static void purgeRemovedControlCache(
+    const std::vector<switchu::ns::ExtApplicationRecord>& records) {
+    if (g_lastRecordCount <= 0)
+        return;
+
+    int purged = 0;
+    for (s32 i = 0; i < g_lastRecordCount && i < kMaxTrackedApplicationRecords; ++i) {
+        const uint64_t tid = g_lastRecordTids[i];
+        if (tid == 0)
+            continue;
+
+        bool stillInstalled = false;
+        for (const auto& record : records) {
+            if (record.id == tid) {
+                stillInstalled = true;
+                break;
+            }
+        }
+        if (stillInstalled)
+            continue;
+
+        if (switchu::control_cache::remove(tid))
+            ++purged;
+    }
+
+    if (purged > 0)
+        switchu::FileLog::log("[control-cache] purged %d stale title(s) after uninstall",
+                              purged);
+}
+
 static bool rebuildAppCatalog(const char* reason, bool* outChanged = nullptr) {
     std::vector<switchu::ns::ExtApplicationRecord> records;
     if (!listApplicationRecords(records, "catalog"))
         return false;
+    purgeRemovedControlCache(records);
     enqueueControlCacheRecords(records);
 
     std::vector<switchu::ns::ExtApplicationView> views;
