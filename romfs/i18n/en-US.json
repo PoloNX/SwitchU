@@ -748,13 +748,19 @@
     }
   },
   "text_entry": {
+    "backspace": "←",
+    "caps": "CAPS",
     "erase": "Erase",
     "full": "Maximum length reached",
-    "hint": "A: type   X: erase   Y: shift   L/R: symbols   Plus: confirm   B: cancel",
+    "hint": "A type · X erase · Y shift · L/R symbols · − size · ZR style · + OK · B cancel",
+    "layout_compact": "Compact",
+    "layout_full": "Full",
     "letters": "ABC",
-    "opened": "On-screen keyboard. Directional pad to choose a key, A to type, X to erase, Plus to confirm, B to cancel.",
+    "opened": "On-screen keyboard. Directional pad to choose a key, A to type, X to erase, Plus to confirm, B to cancel. Minus switches size. ZR switches glass or flat style.",
     "shift": "Shift",
     "space": "Space",
+    "style_flat": "Flat",
+    "style_glass": "Glass",
     "symbols": "?12#"
   },
   "quicksettings": {

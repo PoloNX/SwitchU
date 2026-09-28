@@ -60,6 +60,10 @@ struct AppConfig {
     int folderStyle = 0;
     // First-game icon overlay. Ignored by Classic (the mosaic is the cover).
     bool folderShowCover = false;
+    // On-screen keyboard: true = near-fullscreen (easier on handheld).
+    bool textEntryFullLayout = true;
+    // On-screen keyboard chrome: true = frosted liquid glass (default).
+    bool textEntryGlassStyle = true;
 
     // Automatic day/night theme switching.
     std::string autoThemeMode = "off";       // "off" | "manual" | "geo"
