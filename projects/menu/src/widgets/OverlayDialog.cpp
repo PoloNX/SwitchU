@@ -85,10 +85,31 @@ void OverlayDialog::buildWidgetTree() {
         msgH = probe.measureWrappedText(contentW).y;
     }
 
+    int  btnCount = std::max(1, (int)m_buttons.size());
+    constexpr float kLabelScale = 0.94f;
+    constexpr float kLabelMinScale = 0.85f;
+    float rowBtnW = (contentW - kButtonGap * (btnCount - 1)) / (float)btnCount;
+    bool stackButtons = false;
+    if (bodyFont && btnCount > 1) {
+        for (int i = 0; i < btnCount; ++i) {
+            const float textW = bodyFont->measure(m_buttons[i].label).x;
+            if (textW <= 0.f)
+                continue;
+            const float needed = (rowBtnW - 16.f) / textW;
+            if (needed < kLabelMinScale) {
+                stackButtons = true;
+                break;
+            }
+        }
+    }
+
+    const float buttonStackH = stackButtons
+        ? (kButtonH * btnCount + kButtonGap * (btnCount - 1))
+        : kButtonH;
     m_panelH = kPanelPadY
              + (titleH > 0.f ? titleH + kTitleMsgGap : 0.f)
              + (msgH   > 0.f ? msgH   + kMsgBtnGap   : 0.f)
-             + kButtonH
+             + buttonStackH
              + kPanelPadY;
 
     setAxis(nxui::Axis::COLUMN);
@@ -133,11 +154,11 @@ void OverlayDialog::buildWidgetTree() {
         addChild(m_messageLabel);
     }
 
-    int  btnCount = std::max(1, (int)m_buttons.size());
-    float btnW    = (contentW - kButtonGap * (btnCount - 1)) / (float)btnCount;
+    const float btnW = stackButtons ? contentW : rowBtnW;
 
-    m_buttonRow = std::make_shared<nxui::Box>(nxui::Axis::ROW);
-    m_buttonRow->setRect({0, 0, contentW, kButtonH});
+    m_buttonRow = std::make_shared<nxui::Box>(
+        stackButtons ? nxui::Axis::COLUMN : nxui::Axis::ROW);
+    m_buttonRow->setRect({0, 0, contentW, buttonStackH});
     m_buttonRow->setGap(kButtonGap);
     m_buttonRow->setAlignItems(nxui::AlignItems::STRETCH);
     m_buttonRow->setWireframeEnabled(false);
@@ -154,11 +175,11 @@ void OverlayDialog::buildWidgetTree() {
         auto lbl = std::make_shared<nxui::Label>(m_buttons[i].label);
         lbl->setFont(bodyFont ? bodyFont : titleFont);
         lbl->setTextColor(textPrimary);
-        float labelScale = 0.94f;
-        if (bodyFont && bodyFont->measure(m_buttons[i].label).x > 0.f)
+        float labelScale = kLabelScale;
+        if (!stackButtons && bodyFont && bodyFont->measure(m_buttons[i].label).x > 0.f)
             labelScale = std::clamp((btnW - 16.f) /
                                     bodyFont->measure(m_buttons[i].label).x,
-                                    0.58f, labelScale);
+                                    kLabelMinScale, kLabelScale);
         lbl->setScale(labelScale);
         lbl->setHAlign(nxui::Label::HAlign::Center);
         lbl->setVAlign(nxui::Label::VAlign::Center);
@@ -551,23 +572,27 @@ void OverlayDialog::hide() {
 void OverlayDialog::setupActions() {
     clearActions();
 
-    addDirectionAction(nxui::FocusDirection::LEFT, [this]() {
+    auto selectPrev = [this]() {
         if (!m_active || m_animatingOut || m_buttons.empty()) return;
         int n = (int)m_buttons.size();
         m_selected = (m_selected + n - 1) % n;
         animateButtonFocus(0.16f, nxui::Easing::outCubic);
         if (m_navSfxCb) m_navSfxCb();
         announceCurrentSelection();
-    });
-
-    addDirectionAction(nxui::FocusDirection::RIGHT, [this]() {
+    };
+    auto selectNext = [this]() {
         if (!m_active || m_animatingOut || m_buttons.empty()) return;
         int n = (int)m_buttons.size();
         m_selected = (m_selected + 1) % n;
         animateButtonFocus(0.16f, nxui::Easing::outCubic);
         if (m_navSfxCb) m_navSfxCb();
         announceCurrentSelection();
-    });
+    };
+
+    addDirectionAction(nxui::FocusDirection::LEFT, selectPrev);
+    addDirectionAction(nxui::FocusDirection::UP, selectPrev);
+    addDirectionAction(nxui::FocusDirection::RIGHT, selectNext);
+    addDirectionAction(nxui::FocusDirection::DOWN, selectNext);
 
     addAction(static_cast<uint64_t>(nxui::Button::A), [this]() {
         if (!m_active || m_animatingOut) return;
