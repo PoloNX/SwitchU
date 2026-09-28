@@ -58,8 +58,8 @@ std::string WiiUMenuApp::accessibilityContextFor(nxui::Widget* w) const {
         if (btn.get() == w) return i18n.tr("accessibility.context.left_sidebar", "Left sidebar");
     for (const auto& btn : m_sidebar.rightButtons())
         if (btn.get() == w) return i18n.tr("accessibility.context.right_sidebar", "Right sidebar");
-    for (const auto& avatar : m_userAvatarButtons)
-        if (avatar.get() == w) return i18n.tr("accessibility.context.user_profiles", "User profiles");
+    if (m_profileLock && m_profileLock.get() == w)
+        return i18n.tr("accessibility.context.user_profiles", "User profiles");
     return {};
 }
 
@@ -142,14 +142,6 @@ std::string WiiUMenuApp::accessibilityPositionFor(nxui::Widget* w) const {
         return text;
     if (auto text = describeLinear(m_sidebar.rightButtons()); !text.empty())
         return text;
-
-    for (int i = 0; i < (int)m_userAvatarButtons.size(); ++i) {
-        if (m_userAvatarButtons[(size_t)i].get() == w) {
-            return std::to_string(i + 1) + " "
-                 + i18n.tr("accessibility.context.of", "of") + " "
-                 + std::to_string((int)m_userAvatarButtons.size());
-        }
-    }
 
     return {};
 }
@@ -951,12 +943,10 @@ void WiiUMenuApp::wireFocusCallback() {
             for (auto& btn : m_sidebar.rightButtons()) {
                 if (btn.get() == cur) { m_titlePill->setText(btn->label()); m_titlePill->setVisible(true); return; }
             }
-            for (auto& avatar : m_userAvatarButtons) {
-                if (avatar.get() == cur) {
-                    m_titlePill->setText(avatar->nickname());
-                    m_titlePill->setVisible(!avatar->nickname().empty());
-                    return;
-                }
+            if (m_profileLock && m_profileLock.get() == cur) {
+                m_titlePill->setText(m_profileLock->statusText());
+                m_titlePill->setVisible(true);
+                return;
             }
             m_titlePill->hideAnimated();
         } else {
@@ -984,8 +974,7 @@ bool WiiUMenuApp::isCurrentFocusableWidget(nxui::Widget* w) const {
         if (btn.get() == w) return w->isFocusable();
     for (const auto& btn : m_sidebar.rightButtons())
         if (btn.get() == w) return w->isFocusable();
-    for (const auto& avatar : m_userAvatarButtons)
-        if (avatar.get() == w) return w->isFocusable();
+    if (m_profileLock && m_profileLock.get() == w) return w->isFocusable();
     if (m_grid)
         for (const auto& icon : m_grid->allIcons())
             if (icon.get() == w) return w->isFocusable();
@@ -1070,6 +1059,8 @@ void WiiUMenuApp::closeActiveOverlays() {
         m_folderOptions->hide();
     if (m_controllerTest && m_controllerTest->isActive())
         m_controllerTest->hide();
+    if (m_profileCarousel && m_profileCarousel->isActive())
+        m_profileCarousel->hide();
     if (m_steamGridDbPicker && m_steamGridDbPicker->isActive())
         m_steamGridDbPicker->hide();
     if (m_openFolderId != 0)
@@ -1101,6 +1092,8 @@ nxui::Widget* WiiUMenuApp::focusRoot() {
             return m_folderOptions ? m_folderOptions.get() : &rootBox();
         case switchu::navigation::Route::ControllerTest:
             return m_controllerTest ? m_controllerTest.get() : &rootBox();
+        case switchu::navigation::Route::ProfileSelect:
+            return m_profileCarousel ? m_profileCarousel.get() : &rootBox();
         case switchu::navigation::Route::AutoTheme:
             return m_autoThemeScreen ? m_autoThemeScreen.get() : &rootBox();
         case switchu::navigation::Route::Home:
@@ -1160,6 +1153,7 @@ void WiiUMenuApp::wireGlobalActions() {
             (m_gameOptions && m_gameOptions->isActive()) ||
             (m_folderOptions && m_folderOptions->isActive()) ||
             (m_controllerTest && m_controllerTest->isActive()) ||
+            (m_profileCarousel && m_profileCarousel->isActive()) ||
             (m_userSelect && m_userSelect->isActive()))
             return;
         if (m_openFolderId != 0 && !(m_dialog && m_dialog->isActive()))
@@ -1206,6 +1200,7 @@ void WiiUMenuApp::wireGlobalActions() {
             (m_gameOptions && m_gameOptions->isActive()) ||
             (m_folderOptions && m_folderOptions->isActive()) ||
             (m_controllerTest && m_controllerTest->isActive()) ||
+            (m_profileCarousel && m_profileCarousel->isActive()) ||
             (m_userSelect && m_userSelect->isActive())) {
             return;
         }
@@ -1472,12 +1467,8 @@ void WiiUMenuApp::handleTouch() {
 
     auto& input = app().input();
 
-    auto hitAvatar = [this](float x, float y) -> UserAvatarButton* {
-        for (auto& avatar : m_userAvatarButtons) {
-            if (avatar && avatar->isVisible() && avatar->hitTest(x, y))
-                return avatar.get();
-        }
-        return nullptr;
+    auto hitProfileLock = [this](float x, float y) {
+        return m_profileLock && m_profileLock->isVisible() && m_profileLock->hitTest(x, y);
     };
 
     auto focusTouchedIcon = [this](int localHit) -> GlossyIcon* {
@@ -1529,9 +1520,10 @@ void WiiUMenuApp::handleTouch() {
             return;
         }
 
-        m_touchAvatarTarget = hitAvatar(tx, ty);
-        m_touchAvatarWasFocused = m_touchAvatarTarget && (focusManager().current() == m_touchAvatarTarget);
-        if (m_touchAvatarTarget) {
+        m_touchProfileLock = hitProfileLock(tx, ty);
+        m_touchProfileLockWasFocused = m_touchProfileLock &&
+            focusManager().current() == m_profileLock.get();
+        if (m_touchProfileLock) {
             m_touchHitIndex = -1;
             m_touchOnFocused = false;
             m_touchEditDragActive = false;
@@ -1595,19 +1587,18 @@ void WiiUMenuApp::handleTouch() {
             return;
         }
 
-        if (m_touchAvatarTarget) {
+        if (m_touchProfileLock) {
             float dx = input.touchDeltaX();
             float dy = input.touchDeltaY();
-            UserAvatarButton* avatar = m_touchAvatarTarget;
-            m_touchAvatarTarget = nullptr;
+            m_touchProfileLock = false;
             if (std::abs(dx) < 20.f && std::abs(dy) < 20.f &&
-                hitAvatar(input.touchX(), input.touchY()) == avatar)
+                hitProfileLock(input.touchX(), input.touchY()))
             {
-                focusManager().setFocus(avatar);
-                if (!m_touchAvatarWasFocused)
-                    avatar->activate();
+                focusManager().setFocus(m_profileLock.get());
+                if (!m_touchProfileLockWasFocused)
+                    m_profileLock->activate();
             }
-            m_touchAvatarWasFocused = false;
+            m_touchProfileLockWasFocused = false;
             return;
         }
 

@@ -193,14 +193,11 @@ void SidebarManager::setDynamicLineUpTarget(nxui::Widget* target) {
         button->setCustomNavigation(nxui::FocusDirection::UP, target);
 }
 
-void SidebarManager::setDynamicLineProfileTargets(nxui::Widget* firstProfile,
-                                                   nxui::Widget* lastProfile) {
-    if (!m_leftButtons.empty())
-        m_leftButtons.back()->setCustomNavigation(nxui::FocusDirection::RIGHT,
-                                                  firstProfile);
-    if (!m_rightButtons.empty())
-        m_rightButtons.front()->setCustomNavigation(nxui::FocusDirection::LEFT,
-                                                    lastProfile);
+void SidebarManager::setDynamicLineProfileTarget(nxui::Widget* profile) {
+    if (m_leftButtons.empty())
+        return;
+    // The HOME profile tile sits left of the dynamic-line applet strip.
+    m_leftButtons.front()->setCustomNavigation(nxui::FocusDirection::LEFT, profile);
 }
 
 void SidebarManager::reloadAssets(nxui::GpuDevice& gpu, nxui::Renderer& ren,

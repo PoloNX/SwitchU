@@ -10,55 +10,6 @@
 
 namespace {
 
-std::string uidToHex(const AccountUid& uid) {
-    char buf[33] = {};
-    std::snprintf(buf, sizeof(buf), "%016llX%016llX",
-                  (unsigned long long)uid.uid[0],
-                  (unsigned long long)uid.uid[1]);
-    return std::string(buf);
-}
-
-struct ProfileOption {
-    AccountUid uid{};
-    std::string uidHex;
-    std::string name;
-};
-
-std::vector<ProfileOption> listProfileOptions() {
-    std::vector<ProfileOption> out;
-    AccountUid uids[8] = {};
-    s32 count = 0;
-    if (R_FAILED(accountListAllUsers(uids, 8, &count)) || count <= 0)
-        return out;
-
-    out.reserve((size_t)count);
-    for (int i = 0; i < count; ++i) {
-        AccountProfile profile{};
-        if (R_FAILED(accountGetProfile(&profile, uids[i])))
-            continue;
-
-        AccountProfileBase base{};
-        AccountUserData userData{};
-        std::string name;
-        if (R_SUCCEEDED(accountProfileGet(&profile, &userData, &base)))
-            name = base.nickname;
-        accountProfileClose(&profile);
-
-        if (name.empty()) {
-            char fallback[32] = {};
-            std::snprintf(fallback, sizeof(fallback), "User %d", i + 1);
-            name = fallback;
-        }
-
-        ProfileOption option;
-        option.uid = uids[i];
-        option.uidHex = uidToHex(uids[i]);
-        option.name = std::move(name);
-        out.push_back(std::move(option));
-    }
-    return out;
-}
-
 bool currentDateTimeValue(TabbedOverlayScreen::DateTimeEditorValue& value) {
     u64 timestamp = 0;
     TimeCalendarTime calendar{};
@@ -301,37 +252,6 @@ SettingsScreen::Tab settings::tabs::SystemTab::build(SettingsScreen& screen) {
             const std::string& selected = tags[idx];
             screen.m_uiLanguageOverride = selected;
             if (screen.m_uiLanguageCb) screen.m_uiLanguageCb(selected);
-        };
-
-        t.items.push_back(std::move(it));
-    }
-
-    {
-        auto profiles = listProfileOptions();
-        SettingItem it;
-        it.label = i18n.tr("settings.system.default_profile", "Default Profile");
-        it.description = i18n.tr("settings.system.default_profile_desc",
-                                 "Launch games with this profile when possible.");
-        it.type = ItemType::Selector;
-        it.options.push_back(i18n.tr("settings.system.default_profile_ask", "Ask each time"));
-        for (const auto& profile : profiles)
-            it.options.push_back(profile.name);
-
-        it.intVal = 0;
-        if (!screen.m_defaultProfileUid.empty()) {
-            for (int i = 0; i < (int)profiles.size(); ++i) {
-                if (profiles[(size_t)i].uidHex == screen.m_defaultProfileUid) {
-                    it.intVal = i + 1;
-                    break;
-                }
-            }
-        }
-
-        it.onChange = [&screen, profiles = std::move(profiles)](SettingItem& self) {
-            int idx = std::clamp(self.intVal, 0, (int)profiles.size());
-            screen.m_defaultProfileUid = idx > 0 ? profiles[(size_t)(idx - 1)].uidHex : std::string();
-            if (screen.m_defaultProfileCb)
-                screen.m_defaultProfileCb(screen.m_defaultProfileUid);
         };
 
         t.items.push_back(std::move(it));

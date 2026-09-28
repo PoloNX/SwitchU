@@ -187,7 +187,8 @@ bool GpuDevice::downloadFramebufferRgba(std::vector<uint8_t>& outRgba,
 
     const uint32_t byteSize = static_cast<uint32_t>(outW) * static_cast<uint32_t>(outH) * 4u;
     const uint32_t stagingSize = (byteSize + kGpuAlign - 1) & ~(kGpuAlign - 1);
-    auto staging = dk::MemBlockMaker{m_dev, stagingSize}
+    // MemBlockMaker::create() returns a plain handle; only UniqueMemBlock frees it.
+    dk::UniqueMemBlock staging = dk::MemBlockMaker{m_dev, stagingSize}
         .setFlags(DkMemBlockFlags_CpuUncached | DkMemBlockFlags_GpuCached)
         .create();
     if (!staging || !staging.getCpuAddr())

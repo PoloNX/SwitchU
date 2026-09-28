@@ -53,9 +53,6 @@
       "region_south_korea": "Zuid-Korea",
       "auto_update": "Automatische update",
       "error_reporting": "Foutmelding",
-      "default_profile": "Default Profile",
-      "default_profile_desc": "Launch games with this profile when possible.",
-      "default_profile_ask": "Ask each time",
       "clock_12h": "12-uursklok",
       "clock_12h_desc": "Toon de tijd in 12-uursformaat."
     },

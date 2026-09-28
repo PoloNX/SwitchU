@@ -238,8 +238,6 @@ void WiiUMenuApp::createSettings() {
     m_settings->setWireframeState(m_showWireframe);
     m_settings->setGridLayoutState(m_config.gridColumns, m_config.gridRows);
     m_settings->setUiLanguageOverride(m_config.uiLanguageOverride);
-    m_settings->setDefaultProfileState(m_config.defaultProfileEnabled,
-                                       m_config.defaultProfileUid);
     m_settings->setClockUse12HourState(m_config.clockUse12Hour);
     m_settings->setAccessibilityEnabledState(m_config.accessibilityEnabled);
     m_settings->setAccessibilitySpeechState(m_config.accessibilitySpeakHints,
@@ -299,13 +297,6 @@ void WiiUMenuApp::createSettings() {
         app().renderer().reclaimReleasedTextureSlotsAfterIdle();
 #endif
         m_settingsNeedRefresh = true;
-    });
-    m_settings->onDefaultProfileChange([this](const std::string& uidHex) {
-        m_config.defaultProfileEnabled = !uidHex.empty();
-        m_config.defaultProfileUid = uidHex;
-        if (m_settings)
-            m_settings->setDefaultProfileState(m_config.defaultProfileEnabled,
-                                               m_config.defaultProfileUid);
     });
     m_settings->onClockUse12HourChange([this](bool enabled) {
         if (m_config.clockUse12Hour == enabled)
@@ -1121,6 +1112,58 @@ void WiiUMenuApp::createControllerTest() {
         if (m_settings && m_settings->isActive())
             focusManager().setFocus(m_settings.get());
     });
+}
+
+void WiiUMenuApp::createProfileCarousel() {
+    if (m_profileCarousel) return;
+    m_profileCarousel = std::make_shared<ProfileCarouselScreen>();
+    if (m_overlayLayer) m_overlayLayer->addChild(m_profileCarousel);
+    m_profileCarousel->setFont(&m_fontNormal);
+    m_profileCarousel->setSmallFont(&m_fontSmall);
+    m_profileCarousel->setTheme(&m_theme);
+    m_profileCarousel->onNavigateSfx([this]() { m_audio.playSfx(Sfx::Navigate); });
+    m_profileCarousel->onLockSfx([this]() { m_audio.playSfx(Sfx::ConfirmPositive); });
+    m_profileCarousel->onCloseSfx([this]() { m_audio.playSfx(Sfx::ModalHide); });
+    m_profileCarousel->onAccessibilityAnnouncement([this](const std::string& text) {
+        m_accessibility.announce(text);
+    });
+    m_profileCarousel->onLockProfile([this](std::optional<AccountUid> uid) {
+        setLockedProfile(uid);
+    });
+    m_profileCarousel->onOpenProfile([this](AccountUid uid) {
+        m_audio.playSfx(Sfx::Activate);
+        m_profileCarousel->hide();
+#ifdef SWITCHU_MENU
+        // The leave capture waits for the carousel to finish fading out.
+        scheduleLeaveCapture([this, uid]() { m_launcher.launchUserPage(uid); });
+#else
+        (void)uid;
+#endif
+    });
+    m_profileCarousel->onAddUser([this]() {
+        m_audio.playSfx(Sfx::Activate);
+        m_profileCarousel->hide();
+#ifdef SWITCHU_MENU
+        scheduleLeaveCapture([this]() { m_launcher.launchUserCreator(); });
+#endif
+    });
+    m_profileCarousel->onClosed([this]() {
+        if (m_navigator.route() != switchu::navigation::Route::ProfileSelect)
+            return;
+        m_navigator.resetToHome();
+        if (m_profileLock)
+            focusManager().setFocus(m_profileLock.get());
+    });
+}
+
+void WiiUMenuApp::openProfileCarousel() {
+    createProfileCarousel();
+    if (!m_profileCarousel || m_profileCarousel->isActive())
+        return;
+    refreshProfileLockButton();
+    m_navigator.navigate(switchu::navigation::Route::ProfileSelect);
+    m_profileCarousel->show();
+    focusManager().setFocus(m_profileCarousel.get());
 }
 
 void WiiUMenuApp::createThemeShop() {
@@ -2125,10 +2168,6 @@ void WiiUMenuApp::applyTheme() {
         m_pointerCursor->setCornerRadius(15.f);
         m_pointerCursor->setBorderWidth(2.5f);
     }
-    for (auto& avatar : m_userAvatarButtons) {
-        if (avatar)
-            avatar->setTheme(&m_theme);
-    }
     DebugLog::log("[theme-apply] widget recolor cursors done");
 
     m_clock->setBaseColor(m_theme.panelBase);
@@ -2159,14 +2198,10 @@ void WiiUMenuApp::applyTheme() {
     }
     if (m_folderHeaderLabel)
         m_folderHeaderLabel->setTextColor(m_theme.textPrimary);
-    for (auto& avatar : m_userAvatarButtons) {
-        avatar->setBaseColor(m_theme.iconDefault.withAlpha(
-            m_theme.mode == nxui::ThemeMode::Dark ? 0.92f : 0.94f));
-        avatar->setBorderColor(m_theme.panelBorder);
-        avatar->setHighlightColor(m_theme.panelHighlight);
-        avatar->setCornerRadius(28.f);
-        avatar->setChromeEnabled(true);
-    }
+    if (m_profileLock)
+        m_profileLock->setTheme(&m_theme);
+    if (m_profileCarousel)
+        m_profileCarousel->setTheme(&m_theme);
     DebugLog::log("[theme-apply] widget recolor HUD done");
 
     m_userSelect->setTheme(&m_theme);
