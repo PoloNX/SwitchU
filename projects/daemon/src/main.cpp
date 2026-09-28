@@ -458,10 +458,41 @@ static bool writeAppCatalogFile() {
     return true;
 }
 
+static void purgeRemovedControlCache(
+    const std::vector<switchu::ns::ExtApplicationRecord>& records) {
+    if (g_lastRecordCount <= 0)
+        return;
+
+    int purged = 0;
+    for (s32 i = 0; i < g_lastRecordCount && i < kMaxTrackedApplicationRecords; ++i) {
+        const uint64_t tid = g_lastRecordTids[i];
+        if (tid == 0)
+            continue;
+
+        bool stillInstalled = false;
+        for (const auto& record : records) {
+            if (record.id == tid) {
+                stillInstalled = true;
+                break;
+            }
+        }
+        if (stillInstalled)
+            continue;
+
+        if (switchu::control_cache::remove(tid))
+            ++purged;
+    }
+
+    if (purged > 0)
+        switchu::FileLog::log("[control-cache] purged %d stale title(s) after uninstall",
+                              purged);
+}
+
 static bool rebuildAppCatalog(const char* reason, bool* outChanged = nullptr) {
     std::vector<switchu::ns::ExtApplicationRecord> records;
     if (!listApplicationRecords(records, "catalog"))
         return false;
+    purgeRemovedControlCache(records);
     enqueueControlCacheRecords(records);
 
     std::vector<switchu::ns::ExtApplicationView> views;
@@ -2021,6 +2052,35 @@ static void controlCacheThreadFunc(void* arg) {
                                                 controlData,
                                                 sizeof(*controlData),
                                                 &controlSize);
+        // Switch 2 Edition titles can leave the legacy control slot without a
+        // name; theirs sits in ACD slots 1..3, reachable only through
+        // ControlData2. Keep the legacy data if no slot has a name either.
+        if (R_FAILED(rc) || controlSize < sizeof(NacpStruct)
+            || !switchu::control_cache::hasTitleName(*controlData)) {
+            auto* alternate = new NsApplicationControlData();
+            for (u8 acdIndex = 1; alternate && acdIndex <= 3; ++acdIndex) {
+                u64 alternateSize = 0;
+                u32 unk = 0;
+                Result alternateRc = nsGetApplicationControlData2(NsApplicationControlSource_Storage,
+                                                                  titleId,
+                                                                  alternate,
+                                                                  sizeof(*alternate),
+                                                                  0,
+                                                                  acdIndex,
+                                                                  &alternateSize,
+                                                                  &unk);
+                if (R_SUCCEEDED(alternateRc) && alternateSize >= sizeof(NacpStruct)
+                    && switchu::control_cache::hasTitleName(*alternate)) {
+                    std::swap(controlData, alternate);
+                    controlSize = alternateSize;
+                    rc = alternateRc;
+                    switchu::FileLog::log("[control-cache] 0x%016lX name from acd slot %u",
+                                          titleId, acdIndex);
+                    break;
+                }
+            }
+            delete alternate;
+        }
         const uint64_t elapsedMs = armTicksToNs(armGetSystemTick() - startTick) / 1'000'000ULL;
         if (R_SUCCEEDED(rc) && controlSize >= sizeof(NacpStruct)) {
             const bool ok = switchu::control_cache::writeFromControlData(

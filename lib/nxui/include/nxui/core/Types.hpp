@@ -55,6 +55,12 @@ struct Rect {
     }
     Rect expanded(float m) const { return {x - m, y - m, width + 2*m, height + 2*m}; }
     Rect shrunk(float m) const { return expanded(-m); }
+
+    static Rect lerp(const Rect& a, const Rect& b, float t) {
+        return {a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t,
+                a.width  + (b.width  - a.width)  * t,
+                a.height + (b.height - a.height) * t};
+    }
 };
 
 struct Color {
