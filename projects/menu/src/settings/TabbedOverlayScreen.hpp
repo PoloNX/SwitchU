@@ -116,11 +116,15 @@ public:
     struct SettingItem {
         std::string label;
         std::string buttonLabel;
+        // Optional second action drawn beside the primary button (e.g. Select + ×).
+        std::string secondaryButtonLabel;
         ItemType    type = ItemType::Info;
         std::string description;
 
         bool                     boolVal   = false;
         bool                     suppressToggleSfx = false;
+        bool                     enabled   = true;
+        int                      indentLevel = 0;
         float                    floatVal  = 0.f;
         int                      intVal    = 0;
         int                      sliderSteps = 20;
@@ -130,14 +134,30 @@ public:
         bool                     wrapLabel = false;
 
         std::function<void(SettingItem&)> onChange;
+        std::function<void(SettingItem&)> onSecondary;
+
+        // 0 = primary (Select), 1 = secondary (×). Used for controller focus.
+        int actionButtonFocus = 0;
+        // Set each frame by the overlay when this row owns content focus.
+        bool contentFocused = false;
+
+        // Filled by ActionRowWidget for touch hit-testing.
+        nxui::Rect primaryHit{};
+        nxui::Rect secondaryHit{};
 
         const std::string& effectiveButtonLabel() const {
             return buttonLabel.empty() ? label : buttonLabel;
         }
 
         bool focusable() const {
+            if (!enabled)
+                return false;
             return type == ItemType::Toggle || type == ItemType::Slider
                 || type == ItemType::Selector || type == ItemType::Action;
+        }
+
+        bool hasSecondaryAction() const {
+            return enabled && onSecondary && !secondaryButtonLabel.empty();
         }
     };
 

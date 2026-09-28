@@ -346,7 +346,7 @@ bool WiiUMenuApp::presentInitialFrame(nxui::Renderer& ren) {
         return true;
     }
 
-    // No cached frame — still avoid pure black while onCreate runs.
+    // No cached frame ΓÇö still avoid pure black while onCreate runs.
     ren.drawRect({0.f, 0.f, 1280.f, 720.f}, nxui::Color(0.07f, 0.12f, 0.18f, 1.f));
     m_leaveSplashDrawn = true;
     m_leaveSplashPhase = LeaveSplashPhase::None;
@@ -673,7 +673,7 @@ bool WiiUMenuApp::onCreate() {
         };
         char details[240]{};
         std::snprintf(details, sizeof(details),
-                      "%s failed.\nCommand: %u · Request: %lu\nResult: 0x%X · Module: %u · Description: %u",
+                      "%s failed.\nCommand: %u ┬╖ Request: %lu\nResult: 0x%X ┬╖ Module: %u ┬╖ Description: %u",
                       commandName(m_startupFailure.command),
                       m_startupFailure.command,
                       static_cast<unsigned long>(m_startupFailure.request_id),
@@ -1375,7 +1375,9 @@ void WiiUMenuApp::composeRootPending(std::vector<PendingApp>& apps) {
         item.folderId = folder.id;
         item.folderPreviewCount = static_cast<int>(folder.titleCount());
         item.folderColorIndex = folder.colorIndex;
-        item.folderCoverTitleId = switchu::folders::firstCoverTitleId(folder);
+        item.folderCoverTitleId = SteamGridDbManager::hasIcon(folderTitleId(folder.id))
+            ? folderTitleId(folder.id)
+            : switchu::folders::firstCoverTitleId(folder);
         itemOrder.push_back(item.titleId);
         byId.emplace(item.titleId, std::move(item));
     }
@@ -1546,7 +1548,9 @@ GridModel WiiUMenuApp::buildRootFolderModel() {
         entry.folderId = folder.id;
         entry.folderPreviewCount = static_cast<int>(folder.titleCount());
         entry.folderColorIndex = folder.colorIndex;
-        entry.folderCoverTitleId = switchu::folders::firstCoverTitleId(folder);
+        entry.folderCoverTitleId = SteamGridDbManager::hasIcon(folderTitleId(folder.id))
+            ? folderTitleId(folder.id)
+            : switchu::folders::firstCoverTitleId(folder);
         entries.emplace(entry.titleId, std::move(entry));
     }
     for (const auto& widget : m_widgetStore.all()) {
@@ -2896,9 +2900,9 @@ void WiiUMenuApp::showWidgetSizeMenu(int targetSlot, const nxui::Rect& anchor,
     std::vector<ContextMenu::Item> items;
     for (const auto size : switchu::widgets::supportedSizes(type, m_appLayoutMode)) {
         const bool available = canPlaceWidget(targetSlot, size);
-        const std::string label = std::to_string(size.columns) + "×"
+        const std::string label = std::to_string(size.columns) + "├ù"
             + std::to_string(size.rows)
-            + (available ? std::string() : " — " + i18n.tr("widget.no_space", "No space"));
+            + (available ? std::string() : " ΓÇö " + i18n.tr("widget.no_space", "No space"));
         items.push_back({label, [this, targetSlot, anchor, type, size]() {
             if (type == switchu::widgets::WidgetType::ImagePin)
                 showWidgetAssetMenu(targetSlot, anchor, type, size);
@@ -2972,7 +2976,7 @@ void WiiUMenuApp::showWidgetOptionsMenu(std::uint32_t widgetId, int slot,
     for (const auto size : switchu::widgets::supportedSizes(widget->type, m_appLayoutMode)) {
         const bool available = canPlaceWidget(slot, size, widgetId);
         const std::string label = i18n.tr("widget.resize", "Resize") + " "
-            + std::to_string(size.columns) + "×" + std::to_string(size.rows);
+            + std::to_string(size.columns) + "├ù" + std::to_string(size.rows);
         items.push_back({label, [this, widgetId, size]() {
             if (!m_widgetStore.setSize(widgetId, size)) {
                 m_contextMenu->hide();
@@ -3169,8 +3173,10 @@ void WiiUMenuApp::setAppLayoutMode(AppLayoutMode mode) {
     if (m_grid && !rebuildRoot) {
         m_grid->setLayoutMode(m_appLayoutMode);
     }
-    if (m_steamGridDbBackdrop)
+    if (m_steamGridDbBackdrop) {
         m_steamGridDbBackdrop->setLayoutMode(m_appLayoutMode);
+        showFocusedSteamGridDbArtwork(true);
+    }
 
     if (rebuildRoot) {
         std::uint64_t focused = 0;
@@ -3699,7 +3705,7 @@ std::shared_ptr<GlossyIcon> WiiUMenuApp::makeIcon(const AppEntry& entry) {
     icon->setAccessibilityHint(entry.isLaunchable()
         ? i18n.tr("accessibility.hints.game_launchable", "A to launch. Plus for options. Y to move. ZL or ZR to change page.")
         : i18n.tr("accessibility.hints.game_blocked", "A to show why this item is blocked."));
-    // Texture is set by IconStreamer::onPageChanged() — not here.
+    // Texture is set by IconStreamer::onPageChanged() ΓÇö not here.
     icon->setCornerRadius(m_theme.iconCornerRadius);
     icon->setLoadingColor(m_theme.cursorNormal);
     icon->setIsGameCard(entry.isGameCard());
@@ -4171,6 +4177,10 @@ void WiiUMenuApp::buildGrid() {
     m_steamGridDbPicker->onClosed([this]() {
         if (m_gameOptions && m_gameOptions->isActive())
             focusManager().setFocus(m_gameOptions.get());
+        else if (m_folderOptions && m_folderOptions->isActive())
+            focusManager().setFocus(m_folderOptions.get());
+        else if (m_settings && m_settings->isActive())
+            focusManager().setFocus(m_settings.get());
     });
     m_steamGridDbPicker->onSearch([this]() { editSteamGridDbPickerQuery(); });
     m_steamGridDbPicker->onApply(
@@ -4178,8 +4188,33 @@ void WiiUMenuApp::buildGrid() {
                const SteamGridDbManager::Candidate& candidate) {
             applySteamGridDbCandidate(browse, candidate);
         });
-    m_overlayLayer->addChild(m_steamGridDbPicker);
+    m_steamGridDbPicker->onPickGame(
+        [this](const SteamGridDbManager::BrowseResult& browse,
+               const SteamGridDbManager::GameMatch& match) {
+            if (browse.titleId == 0 || match.id <= 0) return;
+            if (m_steamGridDbBrowseFuture.valid() || m_steamGridDbApplyFuture.valid()
+                || m_steamGridDb.running())
+                return;
+            if (m_overlayLayer && m_steamGridDbPicker) {
+                m_overlayLayer->removeChild(m_steamGridDbPicker.get());
+                m_overlayLayer->addChild(m_steamGridDbPicker);
+            }
+            m_steamGridDbPicker->showLoading(browse.titleId, browse.title, browse.query,
+                                             browse.kind, true);
+            m_steamGridDbPicker->setMessage("Loading artwork for " + match.name + "...",
+                                            true);
+            focusManager().setFocus(m_steamGridDbPicker.get());
+            m_steamGridDbBrowseFuture = std::async(std::launch::async,
+                [apiKey = m_config.steamGridDbApiKey, browse, match]() {
+                    return SteamGridDbManager::browseGame(
+                        apiKey, browse.titleId, browse.title, browse.query,
+                        browse.kind, match.id, match.name);
+                });
+        });
+    // Picker is added after folder/game options so it paints above them; show
+    // path also re-parents it to the top of the overlay stack.
     createFolderOptions();
+    m_overlayLayer->addChild(m_steamGridDbPicker);
     createControllerTest();
 
     m_overlayLayer->addChild(m_contextMenu);
@@ -4454,8 +4489,8 @@ void WiiUMenuApp::finalizeRefresh() {
     }
 
     // The icons about to be replaced are held as raw pointers by both focus
-    // managers, and FocusManager::changeFocusTo calls onFocusLost() — a virtual
-    // — on whatever it thinks is focused. Destroying them without saying so
+    // managers, and FocusManager::changeFocusTo calls onFocusLost() ΓÇö a virtual
+    // ΓÇö on whatever it thinks is focused. Destroying them without saying so
     // leaves that call reading a freed vtable, which is what two crash reports
     // from a clean install show: a garbage pointer in x1, then
     // ldr x1,[x1,#40]; blr x1 inside changeFocusTo.
@@ -5102,7 +5137,8 @@ void WiiUMenuApp::onUpdate(float dt) {
         && !(m_gameOptions && m_gameOptions->isActive())
         && !(m_folderOptions && m_folderOptions->isActive())
         && !(m_controllerTest && m_controllerTest->isActive())
-        && !(m_userSelect && m_userSelect->isActive()))
+        && !(m_userSelect && m_userSelect->isActive())
+        && !(m_progressDialog && m_progressDialog->isActive()))
     {
         handleTouch();
     }
@@ -5133,7 +5169,8 @@ void WiiUMenuApp::onUpdate(float dt) {
         m_steamGridDbPicker->handleTouch(app().input());
 
     if (!debugTouchBlocked && !textEntryActive &&
-        m_folderOptions && m_folderOptions->isActive())
+        m_folderOptions && m_folderOptions->isActive()
+        && !(m_steamGridDbPicker && m_steamGridDbPicker->isActive()))
         m_folderOptions->handleTouch(app().input());
 
     if (!debugTouchBlocked && !textEntryActive &&
@@ -5142,6 +5179,9 @@ void WiiUMenuApp::onUpdate(float dt) {
 
     if (!debugTouchBlocked && m_textEntry && m_textEntry->isActive())
         m_textEntry->handleTouch(app().input());
+
+    if (!debugTouchBlocked && m_progressDialog && m_progressDialog->isActive())
+        m_progressDialog->handleTouch(app().input());
 
     if (m_dialogWasActive && !dialogActiveNow) {
         if (isCurrentFocusableWidget(m_dialogReturnFocus)) {
@@ -5258,6 +5298,12 @@ std::vector<WiiUMenuApp::ActionHint> WiiUMenuApp::buildActionHints() {
         add(buttonGlyph(nxui::Button::A), i18n.tr("hint.confirm", "Confirm"));
         add(buttonGlyph(nxui::Button::B), i18n.tr("hint.back", "Back"));
         addVoiceControls();
+        return hints;
+    }
+
+    if (m_progressDialog && m_progressDialog->isActive()) {
+        if (m_progressDialog->isCancellable())
+            add(buttonGlyph(nxui::Button::B), i18n.tr("hint.cancel", "Cancel"));
         return hints;
     }
 

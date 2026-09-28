@@ -23,6 +23,12 @@ public:
         int height = 0;
     };
 
+    struct GameMatch {
+        long long id = 0;
+        std::string name;
+        float score = 0.f;
+    };
+
     struct BrowseResult {
         bool success = false;
         std::uint64_t titleId = 0;
@@ -33,6 +39,9 @@ public:
         std::string gameName;
         float matchScore = 0.f;
         std::string error;
+        // When non-empty and candidates empty, the picker should let the user
+        // choose a SteamGridDB game before loading artwork.
+        std::vector<GameMatch> gameMatches;
         std::vector<Candidate> candidates;
     };
 
@@ -68,15 +77,25 @@ public:
                          const std::string& title, ArtworkKind kind, int direction);
     void wait();
     void cancelAndWait();
+    /// Non-blocking: scrape loop stops between titles. Prefer this from UI.
+    void requestCancel();
     Status status() const;
     bool running() const { return m_running.load(); }
 
     static BrowseResult browse(const std::string& apiKey, std::uint64_t titleId,
                                const std::string& title, const std::string& query,
                                ArtworkKind kind);
+    /// Load artwork candidates for an already-chosen SteamGridDB game id.
+    static BrowseResult browseGame(const std::string& apiKey, std::uint64_t titleId,
+                                   const std::string& title, const std::string& query,
+                                   ArtworkKind kind, long long gameId,
+                                   const std::string& gameName);
     static ApplyResult applyCandidate(const BrowseResult& browse,
                                       const Candidate& candidate,
                                       const ProgressCallback& onProgress = {});
+    /// Clear cached art. Pass ArtworkKind::None to clear hero+logo+icon.
+    static bool clearArtwork(std::uint64_t titleId, ArtworkKind kind);
+    static bool hasIcon(std::uint64_t titleId);
 
     static constexpr const char* kCacheRoot = "sdmc:/config/SwitchU/steamgriddb";
     static std::string heroPath(std::uint64_t titleId);

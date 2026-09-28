@@ -188,8 +188,9 @@ protected:
         syncCommon();
 
         nxui::Rect row = rect();
-        float innerX = row.x + kHorizontalInset;
-        float innerW = std::max(0.f, row.width - kHorizontalInset * 2.f);
+        const float indent = std::max(0, m_item.indentLevel) * kIndentStep;
+        float innerX = row.x + kHorizontalInset + indent;
+        float innerW = std::max(0.f, row.width - kHorizontalInset * 2.f - indent);
         float rightW = m_right->isVisible() ? std::clamp(preferredRightWidth(row.width), 0.f, innerW) : 0.f;
         float centerGap = rightW > 0.f ? kColumnGap : 0.f;
         float leftW = std::max(0.f, innerW - rightW - centerGap);
@@ -271,17 +272,25 @@ protected:
             m_labelMeasure = m_label->measureText();
         }
 
-        if (rowTheme != m_cachedTheme || isSection != m_cachedIsSection) {
+        if (rowTheme != m_cachedTheme || isSection != m_cachedIsSection
+            || m_item.enabled != m_cachedEnabled) {
             m_cachedTheme = rowTheme;
             m_cachedIsSection = isSection;
+            m_cachedEnabled = m_item.enabled;
             if (rowTheme) {
-                m_label->setTextColor(isSection ? rowTheme->textSecondary : rowTheme->textPrimary);
+                const bool muted = isSection || !m_item.enabled;
+                m_label->setTextColor(muted ? rowTheme->textSecondary : rowTheme->textPrimary);
                 m_desc->setTextColor(rowTheme->textSecondary);
             }
         }
 
-        m_label->setOpacity(opacity());
-        m_desc->setOpacity(opacity());
+        const float contentAlpha = opacity() * (m_item.enabled ? 1.f : 0.42f);
+        m_label->setOpacity(contentAlpha);
+        m_desc->setOpacity(contentAlpha);
+    }
+
+    float contentOpacity() const {
+        return opacity() * (m_item.enabled ? 1.f : 0.42f);
     }
 
     SettingsScreen::SettingItem& m_item;
@@ -296,6 +305,7 @@ private:
     static constexpr float kHorizontalInset = 10.f;
     static constexpr float kColumnGap = 12.f;
     static constexpr float kLabelGap = 2.f;
+    static constexpr float kIndentStep = 28.f;
 
     nxui::Font* m_cachedFont = nullptr;
     nxui::Font* m_cachedSmallFont = nullptr;
@@ -306,6 +316,7 @@ private:
     float m_cachedLabelScale = -1.f;
     bool m_cachedShowDesc = false;
     bool m_cachedIsSection = false;
+    bool m_cachedEnabled = true;
     nxui::Vec2 m_labelMeasure = {0.f, 0.f};
     nxui::Vec2 m_descMeasure = {0.f, 0.f};
 };
@@ -401,8 +412,9 @@ protected:
                 offC.b + (onC.b - offC.b) * t,
                 1.f
             );
-            m_track->setBaseColor(bg.withAlpha(opacity()));
-            m_knob->setBaseColor(nxui::Color(1.f, 1.f, 1.f, opacity()));
+            const float a = contentOpacity();
+            m_track->setBaseColor(bg.withAlpha(a));
+            m_knob->setBaseColor(nxui::Color(1.f, 1.f, 1.f, a));
         }
         float travel = 64.f - 8.f - 24.f;
         nxui::Rect trackRect = {
@@ -697,9 +709,18 @@ class ActionRowWidget final : public SettingRowBase {
 public:
     ActionRowWidget(SettingsScreen::SettingItem& item, const SettingWidgetContext& ctx)
         : SettingRowBase(item, ctx) {
+        m_secondaryBtn = std::make_shared<ActionButton>();
+        m_secondaryBtn->setCornerRadius(9.f);
+        m_secondaryLabel = std::make_shared<nxui::Label>(item.secondaryButtonLabel);
+        m_secondaryLabel->setScale(0.90f);
+        m_secondaryLabel->setHAlign(nxui::Label::HAlign::Center);
+        m_secondaryLabel->setVAlign(nxui::Label::VAlign::Center);
+        m_secondaryLabel->setGrow(1.f);
+        m_secondaryBtn->addChild(m_secondaryLabel);
+        m_right->addChild(m_secondaryBtn);
+
         m_btn = std::make_shared<ActionButton>();
         m_btn->setCornerRadius(9.f);
-
         m_btnLabel = std::make_shared<nxui::Label>(item.effectiveButtonLabel());
         m_btnLabel->setScale(0.84f);
         m_btnLabel->setHAlign(nxui::Label::HAlign::Center);
@@ -710,48 +731,106 @@ public:
     }
 protected:
     float preferredRightWidth(float rowWidth) const override {
+        if (!m_item.secondaryButtonLabel.empty())
+            return std::max(220.f, rowWidth * 0.48f);
         return std::max(160.f, rowWidth * 0.42f);
     }
 
     void syncRight(const nxui::Rect& rightRect) override {
         nxui::Font* rowSmallFont = smallFont();
         const nxui::Theme* rowTheme = theme();
+        const float alpha = contentOpacity();
+        const bool hasSecondary = !m_item.secondaryButtonLabel.empty();
 
         if (rowSmallFont != m_cachedLabelFont) {
             m_cachedLabelFont = rowSmallFont;
-            if (rowSmallFont)
+            if (rowSmallFont) {
                 m_btnLabel->setFont(rowSmallFont);
+                m_secondaryLabel->setFont(rowSmallFont);
+            }
         }
         const std::string& buttonText = m_item.effectiveButtonLabel();
         if (m_cachedButtonText != buttonText) {
             m_cachedButtonText = buttonText;
             m_btnLabel->setText(m_cachedButtonText);
         }
-
-        m_btn->setTheme(rowTheme);
-        m_btn->setVisualState(opacity(), m_item.anim01, 1.f);
-        if (rowTheme) {
-            m_btnLabel->setTextColor(rowTheme->textPrimary);
+        if (m_cachedSecondaryText != m_item.secondaryButtonLabel) {
+            m_cachedSecondaryText = m_item.secondaryButtonLabel;
+            m_secondaryLabel->setText(m_cachedSecondaryText);
         }
-        float btnW = std::max(140.f, std::min(rightRect.width, rect().width * 0.30f));
+
+        m_secondaryBtn->setVisible(hasSecondary);
+        m_secondaryLabel->setVisible(hasSecondary);
+
         float btnH = std::max(30.f, rect().height - 16.f);
-        nxui::Rect buttonRect = {
-            rightRect.right() - btnW,
+        float primaryW = std::max(120.f, std::min(rightRect.width * (hasSecondary ? 0.58f : 1.f),
+                                                   rect().width * 0.28f));
+        float secondaryW = hasSecondary ? std::max(48.f, std::min(64.f, rightRect.width * 0.22f)) : 0.f;
+        constexpr float kBtnGap = 8.f;
+        float totalW = primaryW + (hasSecondary ? secondaryW + kBtnGap : 0.f);
+        if (totalW > rightRect.width) {
+            const float scale = rightRect.width / std::max(1.f, totalW);
+            primaryW *= scale;
+            secondaryW *= scale;
+            totalW = rightRect.width;
+        }
+
+        // Select on the left, × on the right of the pair.
+        nxui::Rect secondaryRect = {
+            rightRect.right() - secondaryW,
             rightRect.y + (rightRect.height - btnH) * 0.5f,
-            btnW,
+            secondaryW,
             btnH
         };
-        m_btn->setRect(buttonRect);
-        m_btnLabel->setOpacity(opacity());
-        m_btnLabel->setRect({buttonRect.x + 12.f, buttonRect.y + 4.f,
-                             std::max(0.f, buttonRect.width - 24.f),
-                             std::max(0.f, buttonRect.height - 8.f)});
+        nxui::Rect primaryRect = {
+            hasSecondary ? secondaryRect.x - kBtnGap - primaryW
+                         : rightRect.right() - primaryW,
+            rightRect.y + (rightRect.height - btnH) * 0.5f,
+            primaryW,
+            btnH
+        };
+
+        // Single-button rows keep the normal full-row focus treatment (card +
+        // cursor). Dual-button rows light only the focused Select/× control.
+        const bool primaryFocused = hasSecondary && m_item.contentFocused
+            && m_item.actionButtonFocus == 0;
+        const bool secondaryFocused = hasSecondary && m_item.contentFocused
+            && m_item.actionButtonFocus == 1;
+
+        m_btn->setTheme(rowTheme);
+        m_btn->setVisualState(alpha, primaryFocused ? 1.f : 0.f, 1.f);
+        m_btn->setRect(primaryRect);
+        m_btnLabel->setOpacity(alpha);
+        if (rowTheme)
+            m_btnLabel->setTextColor(rowTheme->textPrimary);
+        m_btnLabel->setRect({primaryRect.x + 10.f, primaryRect.y + 4.f,
+                             std::max(0.f, primaryRect.width - 20.f),
+                             std::max(0.f, primaryRect.height - 8.f)});
+        m_item.primaryHit = primaryRect;
+
+        if (hasSecondary) {
+            m_secondaryBtn->setTheme(rowTheme);
+            m_secondaryBtn->setVisualState(alpha, secondaryFocused ? 1.f : 0.f, 1.f);
+            m_secondaryBtn->setRect(secondaryRect);
+            m_secondaryLabel->setOpacity(alpha);
+            if (rowTheme)
+                m_secondaryLabel->setTextColor(rowTheme->textPrimary);
+            m_secondaryLabel->setRect({secondaryRect.x + 4.f, secondaryRect.y + 4.f,
+                                       std::max(0.f, secondaryRect.width - 8.f),
+                                       std::max(0.f, secondaryRect.height - 8.f)});
+            m_item.secondaryHit = secondaryRect;
+        } else {
+            m_item.secondaryHit = {};
+        }
     }
 private:
     std::shared_ptr<ActionButton> m_btn;
     std::shared_ptr<nxui::Label> m_btnLabel;
+    std::shared_ptr<ActionButton> m_secondaryBtn;
+    std::shared_ptr<nxui::Label> m_secondaryLabel;
     nxui::Font* m_cachedLabelFont = nullptr;
     std::string m_cachedButtonText;
+    std::string m_cachedSecondaryText;
 };
 
 }

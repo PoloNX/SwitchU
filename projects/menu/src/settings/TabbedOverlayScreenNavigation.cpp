@@ -67,6 +67,9 @@ std::string itemActionText(const TabbedOverlayScreen::SettingItem& item) {
         case TabbedOverlayScreen::ItemType::Selector:
             return i18n.tr("accessibility.settings.selector_actions", "A or right to open the list. B to return to tabs.");
         case TabbedOverlayScreen::ItemType::Action:
+            if (item.hasSecondaryAction())
+                return i18n.tr("accessibility.settings.action_secondary_actions",
+                               "Left and right choose Select or clear. A to activate. B to return to tabs.");
             return i18n.tr("accessibility.settings.action_actions", "A to run the action. B to return to tabs.");
         default:
             return {};
@@ -270,6 +273,9 @@ void TabbedOverlayScreen::onPressA() {
         return;
     }
 
+    if (!item.enabled)
+        return;
+
     if (item.type == ItemType::Toggle) {
         item.boolVal = !item.boolVal;
         if (item.onChange) item.onChange(item);
@@ -280,7 +286,11 @@ void TabbedOverlayScreen::onPressA() {
         if (m_activateSfxCb) m_activateSfxCb();
         announceCurrentFocus();
     } else if (item.type == ItemType::Action) {
-        if (item.onChange) item.onChange(item);
+        if (item.actionButtonFocus == 1 && item.hasSecondaryAction()) {
+            item.onSecondary(item);
+        } else if (item.onChange) {
+            item.onChange(item);
+        }
         if (m_activateSfxCb) m_activateSfxCb();
         announceCurrentFocus();
     }
@@ -293,6 +303,21 @@ void TabbedOverlayScreen::onPressX() {
         announceCurrentFocus();
         return;
     }
+    if (m_dropdownOpen || m_focusArea != FocusArea::Content)
+        return;
+    if (m_tabIndex < 0 || m_tabIndex >= (int)m_tabs.size())
+        return;
+    auto& items = m_tabs[m_tabIndex].items;
+    int rawIdx = rawIndexFromFocusable(m_contentIdx);
+    if (rawIdx < 0 || rawIdx >= (int)items.size())
+        return;
+    auto& item = items[rawIdx];
+    if (item.type != ItemType::Action || !item.hasSecondaryAction())
+        return;
+    item.actionButtonFocus = 1;
+    item.onSecondary(item);
+    if (m_activateSfxCb) m_activateSfxCb();
+    announceCurrentFocus();
 }
 
 void TabbedOverlayScreen::onNavUp() {
@@ -337,7 +362,23 @@ void TabbedOverlayScreen::onNavUp() {
     }
 
     if (m_contentIdx > 0) {
+        int prevFocus = 0;
+        {
+            int raw = rawIndexFromFocusable(m_contentIdx);
+            if (raw >= 0 && raw < (int)m_tabs[m_tabIndex].items.size()) {
+                prevFocus = m_tabs[m_tabIndex].items[raw].actionButtonFocus;
+                m_tabs[m_tabIndex].items[raw].actionButtonFocus = 0;
+            }
+        }
         --m_contentIdx;
+        {
+            int raw = rawIndexFromFocusable(m_contentIdx);
+            if (raw >= 0 && raw < (int)m_tabs[m_tabIndex].items.size()) {
+                auto& next = m_tabs[m_tabIndex].items[raw];
+                next.actionButtonFocus =
+                    (prevFocus == 1 && next.hasSecondaryAction()) ? 1 : 0;
+            }
+        }
         if (m_navSfxCb) m_navSfxCb();
         scrollToFocused();
         announceCurrentFocus();
@@ -391,7 +432,23 @@ void TabbedOverlayScreen::onNavDown() {
     }
 
     if (m_contentIdx < focusableCount() - 1) {
+        int prevFocus = 0;
+        {
+            int raw = rawIndexFromFocusable(m_contentIdx);
+            if (raw >= 0 && raw < (int)m_tabs[m_tabIndex].items.size()) {
+                prevFocus = m_tabs[m_tabIndex].items[raw].actionButtonFocus;
+                m_tabs[m_tabIndex].items[raw].actionButtonFocus = 0;
+            }
+        }
         ++m_contentIdx;
+        {
+            int raw = rawIndexFromFocusable(m_contentIdx);
+            if (raw >= 0 && raw < (int)m_tabs[m_tabIndex].items.size()) {
+                auto& next = m_tabs[m_tabIndex].items[raw];
+                next.actionButtonFocus =
+                    (prevFocus == 1 && next.hasSecondaryAction()) ? 1 : 0;
+            }
+        }
         if (m_navSfxCb) m_navSfxCb();
         scrollToFocused();
         announceCurrentFocus();
@@ -432,6 +489,11 @@ void TabbedOverlayScreen::onNavLeft() {
         if (item.onChange) item.onChange(item);
         if (m_sliderSfxCb) m_sliderSfxCb(false);
         announceCurrentValue();
+    } else if (item.type == ItemType::Action && item.hasSecondaryAction()
+               && item.actionButtonFocus == 1) {
+        item.actionButtonFocus = 0;
+        if (m_navSfxCb) m_navSfxCb();
+        announceCurrentFocus();
     } else {
         m_focusArea = FocusArea::Tabs;
         if (m_navSfxCb) m_navSfxCb();
@@ -480,9 +542,15 @@ void TabbedOverlayScreen::onNavRight() {
         if (m_activateSfxCb) m_activateSfxCb();
         announceCurrentFocus();
     } else if (item.type == ItemType::Action) {
-        if (item.onChange) item.onChange(item);
-        if (m_activateSfxCb) m_activateSfxCb();
-        announceCurrentFocus();
+        if (item.hasSecondaryAction() && item.actionButtonFocus == 0) {
+            item.actionButtonFocus = 1;
+            if (m_navSfxCb) m_navSfxCb();
+            announceCurrentFocus();
+        } else if (!item.hasSecondaryAction()) {
+            if (item.onChange) item.onChange(item);
+            if (m_activateSfxCb) m_activateSfxCb();
+            announceCurrentFocus();
+        }
     }
 }
 
@@ -958,9 +1026,30 @@ void TabbedOverlayScreen::handleTouch(nxui::Input& input) {
                             if (m_toggleSfxCb && !item.suppressToggleSfx) m_toggleSfxCb(item.boolVal);
                         } else if (item.type == ItemType::Selector) {
                             onPressA();
+                        } else if (item.type == ItemType::Action) {
+                            if (item.hasSecondaryAction()
+                                && item.secondaryHit.contains(input.touchX(), input.touchY())) {
+                                item.actionButtonFocus = 1;
+                                item.onSecondary(item);
+                                if (m_activateSfxCb) m_activateSfxCb();
+                            } else {
+                                item.actionButtonFocus = 0;
+                                onPressA();
+                            }
                         }
                     } else if (m_touchOnSelected) {
-                        onPressA();
+                        int rawIdx = rawIndexFromFocusable(m_touchHitIndex);
+                        auto& item = m_tabs[m_tabIndex].items[rawIdx];
+                        if (item.type == ItemType::Action && item.hasSecondaryAction()
+                            && item.secondaryHit.contains(input.touchX(), input.touchY())) {
+                            item.actionButtonFocus = 1;
+                            item.onSecondary(item);
+                            if (m_activateSfxCb) m_activateSfxCb();
+                        } else {
+                            if (item.type == ItemType::Action)
+                                item.actionButtonFocus = 0;
+                            onPressA();
+                        }
                     } else {
                         m_focusArea = FocusArea::Content;
                         m_contentIdx = m_touchHitIndex;
@@ -1122,6 +1211,15 @@ void TabbedOverlayScreen::onContentUpdate(float dt) {
                 if (std::abs(target - item.anim01) < 0.0015f)
                     item.anim01 = target;
             }
+        }
+        // Custom layouts (Theme Shop Installed/Community) use empty SettingItem
+        // lists and their own focus model - do not yank Content back to Tabs.
+        if (!usesCustomContentLayout()) {
+            const int focusables = focusableCount();
+            if (m_focusArea == FocusArea::Content && focusables > 0)
+                m_contentIdx = std::clamp(m_contentIdx, 0, focusables - 1);
+            else if (focusables <= 0 && m_focusArea == FocusArea::Content)
+                m_focusArea = FocusArea::Tabs;
         }
     }
 }

@@ -78,6 +78,9 @@ bool AppConfig::load() {
     readJsonOpt(j, "accessibilitySpeakPosition", accessibilitySpeakPosition);
     readJsonOpt(j, "accessibilitySpeechRate", accessibilitySpeechRate);
     readJsonOpt(j, "steamGridDbEnabled", steamGridDbEnabled);
+    readJsonOpt(j, "steamGridDbShowInGrid", steamGridDbShowInGrid);
+    readJsonOpt(j, "steamGridDbShowInDynamicLine", steamGridDbShowInDynamicLine);
+    readJsonOpt(j, "steamGridDbShowInFolders", steamGridDbShowInFolders);
     readJsonOpt(j, "steamGridDbApiKey", steamGridDbApiKey);
     readJsonOpt(j, "sortMode", sortMode);
     readJsonOpt(j, "lastOpenedSequence", lastOpenedSequence);
@@ -190,6 +193,9 @@ bool AppConfig::save() const {
     j["accessibilitySpeakPosition"] = accessibilitySpeakPosition;
     j["accessibilitySpeechRate"] = std::clamp(accessibilitySpeechRate, 120, 320);
     j["steamGridDbEnabled"] = steamGridDbEnabled;
+    j["steamGridDbShowInGrid"] = steamGridDbShowInGrid;
+    j["steamGridDbShowInDynamicLine"] = steamGridDbShowInDynamicLine;
+    j["steamGridDbShowInFolders"] = steamGridDbShowInFolders;
     j["steamGridDbApiKey"] = steamGridDbApiKey;
     j["sortMode"] = std::clamp(sortMode, 0, 2);
     j["lastOpenedSequence"] = lastOpenedSequence;
@@ -247,7 +253,7 @@ bool AppConfig::save() const {
     }
     // No commit here: save() is submitted to the thread pool, so this ran on a
     // worker while the main thread was also writing. Committing an fs session
-    // from two threads at once is its own hazard, and the author's build —
-    // which does not corrupt — commits nowhere.
+    // from two threads at once is its own hazard, and the author's build -
+    // which does not corrupt - commits nowhere.
     return true;
 }

@@ -28,6 +28,11 @@ struct AppConfig {
     bool  accessibilitySpeakPosition = true;
     int   accessibilitySpeechRate = 190;
     bool  steamGridDbEnabled = true;
+    // Sub-toggles used when steamGridDbEnabled is on. Defaults keep prior
+    // behaviour (artwork everywhere the focused title allows).
+    bool  steamGridDbShowInGrid = true;
+    bool  steamGridDbShowInDynamicLine = true;
+    bool  steamGridDbShowInFolders = true;
     std::string steamGridDbApiKey;
 
     // 0 keeps the hand-made layout. The other modes are display-only
