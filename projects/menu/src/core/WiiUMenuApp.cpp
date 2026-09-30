@@ -361,10 +361,14 @@ bool WiiUMenuApp::presentInitialFrame(nxui::Renderer& ren) {
 
 void WiiUMenuApp::scheduleLeaveCapture(std::function<void()> afterCapture,
                                        std::uint64_t previewSuspendedTitleId) {
-    // Preview the launching title as suspended before this frame renders so the
-    // captured splash matches HOME after return (pulse on the new open title).
+    // Title launch/resume: lock green pulse, blue cursor, and session focus to
+    // the launching title before this frame renders. Without that, a fast
+    // Spharia↔MPO hop can capture the previous tile's focus while the green
+    // outline already moved.
     if (previewSuspendedTitleId != 0)
-        setSuspendedIconVisuals(previewSuspendedTitleId);
+        previewLeaveCaptureTitle(previewSuspendedTitleId);
+    else
+        m_leaveCaptureFocusTitleId = 0;
 
     // User/profile/settings overlays animate out. Capturing the next frame
     // immediately would persist the fading overlay instead of the HOME scene.
@@ -440,12 +444,43 @@ void WiiUMenuApp::setSuspendedIconVisuals(std::uint64_t titleId) {
         icon->setSuspended(titleId != 0 && icon->titleId() == titleId);
 }
 
+void WiiUMenuApp::previewLeaveCaptureTitle(std::uint64_t titleId) {
+    m_leaveCaptureFocusTitleId = titleId;
+    setSuspendedIconVisuals(titleId);
+    if (titleId == 0 || !m_grid)
+        return;
+
+    // Only retarget focus when the launching title is already on the current
+    // grid (root page or open folder). Never open a folder here — that would
+    // fight the splash composition.
+    const int idx = findTitleIndex(titleId);
+    if (idx < 0 || !m_grid->focusGlobalIndex(idx))
+        return;
+
+    if (auto* cur = m_grid->focusManager().current()) {
+        focusManager().setFocus(cur);
+        if (m_cursor) {
+            // Snap immediately so the captured splash does not bake in a
+            // mid-tween blue ring still sitting on the previous title.
+            m_cursor->moveTo(cur->focusRect().expanded(4.f), 0.f);
+            m_cursor->setVisible(true);
+        }
+    }
+}
+
 LeaveFrameSession WiiUMenuApp::captureLeaveSession() const {
     LeaveFrameSession session;
     session.valid = true;
     session.openFolderId = m_openFolderId;
     session.page = m_grid ? m_grid->currentPage() : 0;
     session.focusTitleId = 0;
+
+    // Prefer the launching title stamped by scheduleLeaveCapture — focusManager
+    // can still briefly report the previous icon after a fast hop.
+    if (m_leaveCaptureFocusTitleId != 0) {
+        session.focusTitleId = m_leaveCaptureFocusTitleId;
+        return session;
+    }
 
     if (auto* cur = focusManager().current()) {
         if (cur->tag() == "glossy_icon")
@@ -466,10 +501,12 @@ bool WiiUMenuApp::saveLeaveFrame(nxui::Renderer& ren) {
     int height = 0;
     if (!ren.downloadFramebufferRgba(rgba, width, height, false)) {
         DebugLog::log("[leave] framebuffer download failed");
+        m_leaveCaptureFocusTitleId = 0;
         return false;
     }
 
     const LeaveFrameSession session = captureLeaveSession();
+    m_leaveCaptureFocusTitleId = 0;
     if (!LeaveFrameCache::save(session, rgba.data(), width, height)) {
         DebugLog::log("[leave] cache write failed");
         return false;
@@ -4173,12 +4210,23 @@ void WiiUMenuApp::buildGrid() {
     // Leave-session restore already placed page/folder/focus to match the
     // title splash. Calling focusTitle(suspended) afterward would reopen a
     // folder under a mismatched root splash when returning from applets.
-    if (!restoredLeaveSession) {
-        if (!focusTitle(m_launcher.suspendedTitleId())) {
+    //
+    // Still, if the suspended title is already visible in the restored model,
+    // prefer it over a stale leave-session focus (fast title hops can capture
+    // the previous blue-ring target while the green pulse was already correct).
+    if (restoredLeaveSession) {
+        const std::uint64_t suspended = m_launcher.suspendedTitleId();
+        if (suspended != 0) {
+            const int idx = findTitleIndex(suspended);
+            if (idx >= 0 && m_grid->focusGlobalIndex(idx)) {
+                if (auto* focused = m_grid->focusManager().current())
+                    focusManager().setFocus(focused);
+            }
+        } else if (!focusManager().current()) {
             if (auto* firstIcon = m_grid->focusManager().current())
                 focusManager().setFocus(firstIcon);
         }
-    } else if (!focusManager().current()) {
+    } else if (!focusTitle(m_launcher.suspendedTitleId())) {
         if (auto* firstIcon = m_grid->focusManager().current())
             focusManager().setFocus(firstIcon);
     }
@@ -4186,7 +4234,12 @@ void WiiUMenuApp::buildGrid() {
     if (auto* firstIcon = m_grid->focusManager().current())
         focusManager().setFocus(firstIcon);
 #endif
-    updateCursor();
+    if (m_cursor && focusManager().current()) {
+        m_cursor->moveTo(focusManager().current()->focusRect().expanded(4.f), 0.f);
+        m_cursor->setVisible(true);
+    } else {
+        updateCursor();
+    }
     showFocusedSteamGridDbArtwork();
     m_themeRenderDebugFrames = 12;
 

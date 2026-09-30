@@ -183,6 +183,9 @@ private:
     void pollDeferredLeaveCapture();
     /// Visual-only suspended outline for leave-frame capture (no focus move).
     void setSuspendedIconVisuals(std::uint64_t titleId);
+    /// Align green pulse + blue cursor + leave-session focus to the launching
+    /// title before the splash frame is captured (does not open folders).
+    void previewLeaveCaptureTitle(std::uint64_t titleId);
     LeaveFrameSession captureLeaveSession() const;
     bool saveLeaveFrame(nxui::Renderer& ren);
     void restoreLeaveSession();
@@ -589,6 +592,7 @@ private:
     bool m_leaveCaptureDeferred = false;
     std::function<void()> m_leaveCaptureDeferredAfter;
     std::uint64_t m_leaveCaptureDeferredSuspendedTitleId = 0;
+    std::uint64_t m_leaveCaptureFocusTitleId = 0;
     LeaveFrameSession m_leaveSession;
     nxui::Texture m_leaveSplashTex;
     enum class LeaveSplashPhase { None, Hold, Fade };

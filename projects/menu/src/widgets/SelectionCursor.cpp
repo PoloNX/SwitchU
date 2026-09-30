@@ -80,7 +80,7 @@ void SelectionCursor::moveTo(const nxui::Rect& target, float duration) {
         std::abs(m_w.target() - target.width) < eps &&
         std::abs(m_h.target() - target.height) < eps)
         return;
-    if (m_instantMotion) {
+    if (m_instantMotion || duration <= 0.f) {
         m_x.setImmediate(target.x);
         m_y.setImmediate(target.y);
         m_w.setImmediate(target.width);
@@ -112,7 +112,7 @@ void SelectionCursor::moveTo(const nxui::Rect& target, float cornerRadius, float
         std::abs(m_h.target() - target.height) < eps &&
         std::abs(m_cornerRadius.target() - cornerRadius) < eps)
         return;
-    if (m_instantMotion) {
+    if (m_instantMotion || duration <= 0.f) {
         m_x.setImmediate(target.x);
         m_y.setImmediate(target.y);
         m_w.setImmediate(target.width);
