@@ -132,6 +132,8 @@ private:
     void closeFolder(bool preserveEditMode = false, bool animated = false);
     void finishCloseFolder(std::uint32_t oldId, bool preserveEditMode);
     nxui::Rect folderPanelRect() const;
+    // Re-anchor open-folder glass + title after leave-splash / layout settles.
+    void refreshOpenFolderChrome();
     void placeFolderHeader(const nxui::Rect& panel);
     void syncFolderHeader();
     void createFolder(int targetSlot = -1);
@@ -524,7 +526,10 @@ private:
     std::vector<AppEntry> m_allApps;
     std::uint32_t m_openFolderId = 0;
     std::uint32_t m_requestedFolderId = 0;
-    std::uint64_t m_folderOpenFocusTitleId = 0;  
+    std::uint64_t m_folderOpenFocusTitleId = 0;
+    /// Leave-splash folder restore deferred until HUD/layers exist (frosted capture).
+    std::uint32_t m_leaveRestoreFolderId = 0;
+    std::uint64_t m_leaveRestoreFolderFocus = 0;
     bool m_folderCaptureRequested = false;
     bool m_folderCaptureReady = false;
     bool m_folderClosing = false;

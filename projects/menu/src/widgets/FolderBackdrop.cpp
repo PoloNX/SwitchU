@@ -2,8 +2,14 @@
 
 #include <nxui/core/Renderer.hpp>
 
+#include <algorithm>
+
 namespace {
 constexpr float kPushScale = 0.03f;
+}
+
+void FolderBackdrop::setDimStrength(float strength) {
+    m_dimStrength = std::clamp(strength, 0.f, 1.f);
 }
 
 void FolderBackdrop::show(bool instant, const nxui::Rect& anchor, float dur) {
@@ -39,5 +45,6 @@ void FolderBackdrop::onRender(nxui::Renderer& renderer) {
         renderer.drawOffscreen(2, dest, nxui::Color::white().withAlpha(alpha));
     }
     renderer.drawRect({0.f, 0.f, 1280.f, 720.f},
-                      nxui::Color(0.025f, 0.045f, 0.09f, 0.30f * alpha));
+                      nxui::Color(0.025f, 0.045f, 0.09f,
+                                  0.30f * m_dimStrength * alpha));
 }

@@ -502,10 +502,17 @@ void WiiUMenuApp::restoreLeaveSession() {
     m_leaveSession.valid = false;
 
     if (session.openFolderId != 0 && m_folderStore.find(session.openFolderId)) {
-        m_requestedFolderId = session.openFolderId;
-        m_folderOpenFocusTitleId = session.focusTitleId;
-        openCapturedFolder();
-        DebugLog::log("[leave] restored folder=%u focus=%016lX",
+        // Do NOT openCapturedFolder here — HUD/header/sidebars/offscreen blur
+        // are not built yet. Defer through requestOpenFolder after layers exist
+        // so the frosted root capture runs under the leave splash.
+        m_leaveRestoreFolderId = session.openFolderId;
+        m_leaveRestoreFolderFocus = session.focusTitleId;
+        const int folderIdx = findTitleIndex(folderTitleId(session.openFolderId));
+        if (folderIdx >= 0 && m_grid->focusGlobalIndex(folderIdx)) {
+            if (auto* focused = m_grid->focusManager().current())
+                focusManager().setFocus(focused);
+        }
+        DebugLog::log("[leave] deferred folder restore id=%u focus=%016lX",
                       session.openFolderId,
                       static_cast<unsigned long>(session.focusTitleId));
         return;
@@ -576,6 +583,10 @@ void WiiUMenuApp::updateLeaveSplashHandoff(float dt) {
             m_leaveSplashFade = 0.f;
             m_leaveSplashPhase = LeaveSplashPhase::None;
             setLeaveMotionFrozen(false);
+            // Leave-restore can open the folder before the grid has its final
+            // content rect; re-anchor glass + title once HOME is interactive.
+            refreshOpenFolderChrome();
+            showFocusedSteamGridDbArtwork();
             DebugLog::log("[leave] splash handoff complete");
         }
     }
@@ -3148,6 +3159,16 @@ void WiiUMenuApp::setAppLayoutMode(AppLayoutMode mode) {
     }
     if (m_steamGridDbBackdrop)
         m_steamGridDbBackdrop->setLayoutMode(m_appLayoutMode);
+    if (m_openFolderId != 0) {
+        const bool lineFolder = m_appLayoutMode == AppLayoutMode::DynamicLine;
+        if (m_folderZoom) {
+            m_folderZoom->setFillStrength(lineFolder ? 0.42f : 1.f);
+            m_folderZoom->retarget(folderPanelRect());
+        }
+        if (m_folderBackdrop)
+            m_folderBackdrop->setDimStrength(lineFolder ? 0.28f : 1.f);
+        placeFolderHeader(folderPanelRect());
+    }
 
     if (rebuildRoot) {
         std::uint64_t focused = 0;
@@ -3198,8 +3219,11 @@ void WiiUMenuApp::openCapturedFolder() {
     // A folder opened mid-move may reflow the root grid underneath it, so the
     // tile it grew from is no longer a safe target to fly back into.
     m_folderOriginStale = m_editMode;
-    if (m_folderBackdrop)
+    const bool lineFolder = m_appLayoutMode == AppLayoutMode::DynamicLine;
+    if (m_folderBackdrop) {
+        m_folderBackdrop->setDimStrength(lineFolder ? 0.28f : 1.f);
         m_folderBackdrop->show(refocus, m_folderZoomOriginRect, FolderZoom::kOpenDur);
+    }
     IconAppearOptions appear;
     if (zoom) {
         appear.baseDelay = kFolderZoomCascadeDelay;
@@ -3212,6 +3236,7 @@ void WiiUMenuApp::openCapturedFolder() {
     m_folderOpenFocusTitleId = 0;
     // The panel is sized from the laid-out folder grid, so place it afterwards.
     if (m_folderZoom) {
+        m_folderZoom->setFillStrength(lineFolder ? 0.42f : 1.f);
         const nxui::Color tint = switchu::folders::colorForIndex(folder->colorIndex);
         if (zoom) {
             m_folderZoom->open(m_folderZoomOriginRect, folderPanelRect(), tint,
@@ -3239,9 +3264,65 @@ void WiiUMenuApp::openCapturedFolder() {
         m_audio.playSfx(Sfx::ModalShow);
 }
 
+void WiiUMenuApp::refreshOpenFolderChrome() {
+    if (m_openFolderId == 0)
+        return;
+    // Never retarget FolderZoom mid-close: showStatic() drops the close
+    // onDone callback, which leaves m_folderClosing stuck (empty folder +
+    // soft-lock until a non-animated Home close). Leave-splash handoff can
+    // call here right as the user presses B.
+    if (m_folderClosing) {
+        DebugLog::log("[folders] chrome refresh skipped — close in progress id=%u",
+                      m_openFolderId);
+        return;
+    }
+    const auto* folder = m_folderStore.find(m_openFolderId);
+    if (!folder)
+        return;
+
+    // Leave-restore can open the folder before the grid has its final content
+    // rect. Re-anchor the glass panel + title pill once HOME is interactive so
+    // the folder name does not stay missing / off-screen.
+    const nxui::Rect panel = folderPanelRect();
+    if (m_folderZoom) {
+        const nxui::Color tint = switchu::folders::colorForIndex(folder->colorIndex);
+        const bool lineFolder = m_appLayoutMode == AppLayoutMode::DynamicLine;
+        m_folderZoom->setFillStrength(lineFolder ? 0.42f : 1.f);
+        m_folderZoom->showStatic(panel, tint);
+    }
+    if (m_folderHeaderLabel) {
+        m_folderHeaderLabel->setText(folder->name);
+        m_folderHeaderLabel->setTextColor(m_theme.textPrimary);
+    }
+    placeFolderHeader(panel);
+    m_folderHeaderAnim.setImmediate(1.f);
+    syncFolderHeader();
+    DebugLog::log("[folders] chrome refreshed id=%u name=%s headerY=%.0f",
+                  m_openFolderId, folder->name.c_str(), m_folderHeaderRest.y);
+}
+
 nxui::Rect WiiUMenuApp::folderPanelRect() const {
     if (!m_grid)
         return kFolderGridRect;
+
+    // Single-line folders keep one carousel row; size the glass to that band so
+    // SteamGridDB hero/logo remain visible above and below.
+    if (m_appLayoutMode == AppLayoutMode::DynamicLine) {
+        const nxui::Rect grid = m_grid->rect();
+        const float centerY = grid.y + grid.height * 0.66f;
+        constexpr float baseCellH = 150.f;
+        constexpr float focusScale = 1.36f;
+        constexpr float sideLift = 32.f;
+        const float focusH = baseCellH * focusScale;
+        const float padY = 18.f;
+        const float padX = kFolderPanelPadX;
+        const float top = centerY - focusH * 0.5f - sideLift - padY;
+        const float bottom = centerY + focusH * 0.5f + padY;
+        const float x = grid.x + 40.f - padX;
+        const float w = grid.width - 80.f + padX * 2.f;
+        return {x, top, w, std::max(focusH + padY * 2.f, bottom - top)};
+    }
+
     const nxui::Rect content = m_grid->contentRect();
     // Tighten the vertical margin (evenly) when the tallest folder grid would
     // push the panel into the title pill.
@@ -4170,6 +4251,17 @@ void WiiUMenuApp::buildGrid() {
     root.addChild(m_overlayLayer);
 
 #ifdef SWITCHU_MENU
+    // Folder leave-restore must run after HUD/header/sidebars exist so
+    // requestOpenFolder can capture the frosted root backdrop correctly.
+    if (m_leaveRestoreFolderId != 0) {
+        const std::uint32_t folderId = m_leaveRestoreFolderId;
+        const std::uint64_t focusId = m_leaveRestoreFolderFocus;
+        m_leaveRestoreFolderId = 0;
+        m_leaveRestoreFolderFocus = 0;
+        requestOpenFolder(folderId, focusId);
+        DebugLog::log("[leave] folder restore capture armed id=%u", folderId);
+    }
+
     // Leave-session restore already placed page/folder/focus to match the
     // title splash. Calling focusTitle(suspended) afterward would reopen a
     // folder under a mismatched root splash when returning from applets.

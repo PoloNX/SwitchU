@@ -1,6 +1,7 @@
 #pragma once
 #include <nxui/widgets/Widget.hpp>
 #include <nxui/core/Animation.hpp>
+#include <algorithm>
 
 
 // Tinted glass panel behind an open folder. It grows out of the folder tile,
@@ -17,6 +18,10 @@ public:
     // Follow a folder grid relayout; only affects a settled, open panel.
     void retarget(const nxui::Rect& panel);
     void hide();
+    // 1 = normal glass fill; lower values let folder hero art show through.
+    void setFillStrength(float strength) {
+        m_fillStrength = std::clamp(strength, 0.f, 1.f);
+    }
 
     bool isPlaying() const { return m_state == State::Opening || m_state == State::Closing; }
 
@@ -44,6 +49,7 @@ private:
     nxui::AnimatedFloat m_progress;
     nxui::Color         m_tint;
     nxui::VoidCallback  m_onDone;
+    float               m_fillStrength = 1.f;
 
     static constexpr float kTileRadius = 16.f;
     static constexpr float kGridRadius = 28.f;
