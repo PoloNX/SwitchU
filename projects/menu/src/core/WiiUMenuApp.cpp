@@ -51,7 +51,8 @@ std::optional<std::uint64_t> queryApplicationPlaytimeSeconds(std::uint64_t title
 #endif
 
 static constexpr const char* kLayoutPath = "sdmc:/config/SwitchU/layout.json";
-static constexpr int kMinHomePages = 8;
+static constexpr int kMinHomePages = 1;
+static constexpr int kMaxHomePages = switchu::folders::kMaxFolderPages;
 static constexpr const char* kBuiltInSoundPreset = "wiiu";
 
 static constexpr float kGridRectX = 0.f;
@@ -3551,6 +3552,10 @@ std::shared_ptr<GlossyIcon> WiiUMenuApp::makeIcon(const AppEntry& entry) {
         icon->setNotLaunchable(false);
         icon->setCornerRadius(m_theme.iconCornerRadius);
         icon->setPanelOpacity(0.96f);
+        icon->setOnActivate([this]() {
+            if (deletePageAvailable())
+                showDeletePageDialog();
+        });
         return icon;
     }
 
@@ -4661,6 +4666,15 @@ void WiiUMenuApp::onUpdate(float dt) {
         step(m_arrowAnimLeft, paging && page > 0);
         step(m_arrowAnimRight, (paging && page < total - 1) || m_addPageMode);
 
+        {
+            const float d = dt / kPageArrowFade;
+            const bool showDelete = deletePageAvailable();
+            m_deletePageShow = std::clamp(
+                m_deletePageShow + (showDelete ? d : -d), 0.f, 1.f);
+            if (!showDelete)
+                m_touchDeletePage = false;
+        }
+
         if (m_addPageMode) {
             const bool holding = m_addPageTouchHold
                               || app().input().isHeld(nxui::Button::ZR);
@@ -4669,7 +4683,7 @@ void WiiUMenuApp::onUpdate(float dt) {
                 if (m_addPageHold >= 1.f) {
                     m_addPageHold = 0.f;
                     m_addPageTouchHold = false;
-                    createFolderPage();
+                    createPage();
                 }
             } else {
                 m_addPageHold = std::max(0.f, m_addPageHold - dt / (kAddPageHoldDur * 0.4f));
@@ -5331,6 +5345,15 @@ std::vector<WiiUMenuApp::ActionHint> WiiUMenuApp::buildActionHints() {
                 else
                     add(buttonGlyph(nxui::Button::Y), i18n.tr("folder.move", "Move"));
             }
+        } else if (m_openFolderId == 0 && deletePageAvailable()) {
+#ifdef SWITCHU_MENU
+            add(buttonGlyph(nxui::Button::A), i18n.tr("page.delete", "Delete page"));
+            add(buttonGlyph(nxui::Button::Plus), i18n.tr("add.title", "Add"));
+#else
+            add(buttonGlyph(nxui::Button::A), i18n.tr("page.delete", "Delete page"));
+#endif
+        } else if (m_openFolderId != 0 && deletePageAvailable()) {
+            add(buttonGlyph(nxui::Button::A), i18n.tr("page.delete", "Delete page"));
         } else if (m_openFolderId == 0) {
 #ifdef SWITCHU_MENU
             add(buttonGlyph(nxui::Button::Plus), i18n.tr("add.title", "Add"));
@@ -5651,38 +5674,109 @@ void WiiUMenuApp::kickPageArrow(int dir) {
 bool WiiUMenuApp::addPageAvailable() {
     if (m_appLayoutMode == AppLayoutMode::DynamicLine)
         return false;
-    if (m_openFolderId == 0 || !m_grid || m_editMode)
+    if (!m_grid || m_editMode)
         return false;
     if (m_navigator.route() != switchu::navigation::Route::Home || focusRoot() != &rootBox())
         return false;
-    const auto* folder = m_folderStore.find(m_openFolderId);
-    if (!folder || folder->pageCount >= switchu::folders::kMaxFolderPages)
+    if (m_grid->currentPage() < m_grid->totalPages() - 1)
         return false;
-    return m_grid->currentPage() >= m_grid->totalPages() - 1;
+
+    if (m_openFolderId != 0) {
+        const auto* folder = m_folderStore.find(m_openFolderId);
+        if (!folder || folder->pageCount >= switchu::folders::kMaxFolderPages)
+            return false;
+        return true;
+    }
+
+    return m_grid->totalPages() < kMaxHomePages;
 }
 
-void WiiUMenuApp::createFolderPage() {
-    if (m_openFolderId == 0 || !m_grid)
-        return;
-    const auto* folder = m_folderStore.find(m_openFolderId);
-    if (!folder)
+bool WiiUMenuApp::currentPageEmpty() const {
+    if (!m_grid || m_editMode)
+        return false;
+    if (m_appLayoutMode == AppLayoutMode::DynamicLine)
+        return false;
+    if (m_navigator.route() != switchu::navigation::Route::Home)
+        return false;
+    for (auto* icon : m_grid->pageIcons()) {
+        if (icon && icon->titleId() != 0)
+            return false;
+    }
+    return true;
+}
+
+bool WiiUMenuApp::deletePageAvailable() const {
+    if (!currentPageEmpty() || !m_grid)
+        return false;
+    return m_grid->totalPages() > 1;
+}
+
+nxui::Rect WiiUMenuApp::deletePageButtonRect() const {
+    constexpr float kSize = 64.f;
+    if (!m_grid)
+        return {640.f - kSize * 0.5f, 360.f - kSize * 0.5f, kSize, kSize};
+    const nxui::Rect content = m_grid->contentRect();
+    return {
+        content.x + content.width * 0.5f - kSize * 0.5f,
+        content.y + content.height * 0.5f - kSize * 0.5f,
+        kSize,
+        kSize
+    };
+}
+
+void WiiUMenuApp::createPage() {
+    if (!addPageAvailable() || !m_grid)
         return;
 
-    const auto [cols, rows] = folderGridDimensions(m_openFolderId);
+    if (m_openFolderId != 0) {
+        const auto* folder = m_folderStore.find(m_openFolderId);
+        if (!folder)
+            return;
+
+        const auto [cols, rows] = folderGridDimensions(m_openFolderId);
+        const int perPage = std::max(1, cols * rows);
+        const int pages = std::max(folder->pageCount, m_grid->totalPages());
+        if (pages >= switchu::folders::kMaxFolderPages)
+            return;
+        if (!m_folderStore.setPageCount(m_openFolderId, pages + 1))
+            return;
+        if (!saveFoldersOrReport("add_folder_page"))
+            return;
+
+        applyDisplayModel(buildOpenFolderModel(m_openFolderId), 0, false);
+        syncPageIndicator();
+
+        const int target = pages;
+        m_grid->setPage(target - 1);
+        m_grid->startPageTransition(target);
+        if (m_grid->focusGlobalIndex(target * perPage)) {
+            if (auto* cur = m_grid->focusManager().current())
+                focusManager().setFocus(cur);
+        }
+        kickPageArrow(+1);
+        m_audio.playSfx(Sfx::ConfirmPositive);
+        m_accessibility.announce(nxui::I18n::instance().tr(
+            "folder.page_added", "Page added"), true, true);
+        updateCursor();
+        return;
+    }
+
+    const int cols = std::clamp(m_config.gridColumns, 1, 8);
+    const int rows = std::clamp(m_config.gridRows, 1, 5);
     const int perPage = std::max(1, cols * rows);
-    const int pages = std::max(folder->pageCount, m_grid->totalPages());
-    if (pages >= switchu::folders::kMaxFolderPages)
-        return;
-    if (!m_folderStore.setPageCount(m_openFolderId, pages + 1))
-        return;
-    if (!saveFoldersOrReport("add_folder_page"))
+    const int pages = m_grid->totalPages();
+    if (pages >= kMaxHomePages)
         return;
 
-    applyDisplayModel(buildOpenFolderModel(m_openFolderId), 0, false);
+    m_layoutSlots.resize(static_cast<std::size_t>((pages + 1) * perPage), 0);
+    m_layoutDirty = true;
+    saveMenuLayout();
+
+    applyDisplayModel(buildRootFolderModel(), 0, false);
     syncPageIndicator();
 
     const int target = pages;
-    m_grid->setPage(target - 1);
+    m_grid->setPage(std::max(0, target - 1));
     m_grid->startPageTransition(target);
     if (m_grid->focusGlobalIndex(target * perPage)) {
         if (auto* cur = m_grid->focusManager().current())
@@ -5692,6 +5786,217 @@ void WiiUMenuApp::createFolderPage() {
     m_audio.playSfx(Sfx::ConfirmPositive);
     m_accessibility.announce(nxui::I18n::instance().tr(
         "folder.page_added", "Page added"), true, true);
+    updateCursor();
+}
+
+namespace {
+
+bool pageSlotsEmpty(const std::vector<std::uint64_t>& slots, int page, int perPage) {
+    if (perPage <= 0 || page < 0)
+        return true;
+    const int start = page * perPage;
+    const int end = start + perPage;
+    for (int index = start; index < end; ++index) {
+        if (index < static_cast<int>(slots.size()) &&
+            slots[static_cast<std::size_t>(index)] != 0)
+            return false;
+    }
+    return true;
+}
+
+bool removeSlotPage(std::vector<std::uint64_t>& slots, int page, int perPage) {
+    if (perPage <= 0 || page < 0)
+        return false;
+    const int pages = std::max(1,
+        (static_cast<int>(slots.size()) + perPage - 1) / perPage);
+    if (page >= pages || pages <= 1)
+        return false;
+    slots.resize(static_cast<std::size_t>(pages * perPage), 0);
+    slots.erase(slots.begin() + page * perPage,
+                slots.begin() + (page + 1) * perPage);
+    return true;
+}
+
+int removeEmptySlotPages(std::vector<std::uint64_t>& slots, int perPage) {
+    if (perPage <= 0)
+        return 0;
+    int pages = std::max(1,
+        (static_cast<int>(slots.size()) + perPage - 1) / perPage);
+    slots.resize(static_cast<std::size_t>(pages * perPage), 0);
+    int removed = 0;
+    for (int page = pages - 1; page >= 0 && pages - removed > 1; --page) {
+        if (!pageSlotsEmpty(slots, page, perPage))
+            continue;
+        slots.erase(slots.begin() + page * perPage,
+                    slots.begin() + (page + 1) * perPage);
+        ++removed;
+    }
+    return removed;
+}
+
+} // namespace
+
+void WiiUMenuApp::showDeletePageDialog() {
+    if (!deletePageAvailable() || !m_dialog)
+        return;
+
+    auto& i18n = nxui::I18n::instance();
+    m_audio.playSfx(Sfx::ModalShow);
+    m_dialogReturnFocus = focusManager().current();
+    m_dialog->show(
+        i18n.tr("page.delete_title", "Delete page"),
+        i18n.tr("page.delete_message", "This page is empty. What would you like to remove?"),
+        {
+            {i18n.tr("page.delete_this", "Delete this page"), [this]() {
+                m_audio.playSfx(Sfx::ConfirmPositive);
+                deleteCurrentPage();
+            }, true},
+            {i18n.tr("page.delete_unused", "Delete all unused pages"), [this]() {
+                m_audio.playSfx(Sfx::ConfirmPositive);
+                deleteAllUnusedPages();
+            }, true},
+            {i18n.tr("button.cancel", "Cancel"), [this]() {
+                m_audio.playSfx(Sfx::ModalHide);
+                if (m_dialogReturnFocus)
+                    focusManager().setFocus(m_dialogReturnFocus);
+                m_dialogReturnFocus = nullptr;
+            }, true},
+        },
+        0,
+        [this]() {
+            if (m_dialogReturnFocus)
+                focusManager().setFocus(m_dialogReturnFocus);
+            m_dialogReturnFocus = nullptr;
+        });
+    focusManager().setFocus(m_dialog.get());
+}
+
+void WiiUMenuApp::deleteCurrentPage() {
+    if (!m_grid || m_grid->totalPages() <= 1)
+        return;
+    m_dialogReturnFocus = nullptr;
+
+    const int page = m_grid->currentPage();
+    const int perPage = std::max(1, m_grid->iconsPerPage());
+
+    if (m_openFolderId != 0) {
+        auto* folder = m_folderStore.find(m_openFolderId);
+        if (!folder)
+            return;
+        const int pages = std::max(folder->pageCount, m_grid->totalPages());
+        folder->titleIds.resize(static_cast<std::size_t>(pages * perPage), 0);
+        if (!removeSlotPage(folder->titleIds, page, perPage))
+            return;
+        folder->pageCount = std::max(1,
+            (static_cast<int>(folder->titleIds.size()) + perPage - 1) / perPage);
+        if (!saveFoldersOrReport("delete_folder_page"))
+            return;
+
+        const int focusPage = std::min(page, folder->pageCount - 1);
+        applyDisplayModel(buildOpenFolderModel(m_openFolderId), 0, false);
+        syncPageIndicator();
+        m_grid->setPage(focusPage);
+        if (m_grid->focusGlobalIndex(focusPage * perPage)) {
+            if (auto* cur = m_grid->focusManager().current())
+                focusManager().setFocus(cur);
+        }
+        m_accessibility.announce(nxui::I18n::instance().tr(
+            "page.deleted", "Page deleted"), true, true);
+        updateCursor();
+        return;
+    }
+
+    if (!removeSlotPage(m_layoutSlots, page, perPage))
+        return;
+    m_layoutDirty = true;
+    saveMenuLayout();
+
+    const int newPages = std::max(1,
+        (static_cast<int>(m_layoutSlots.size()) + perPage - 1) / perPage);
+    const int focusPage = std::min(page, newPages - 1);
+    applyDisplayModel(buildRootFolderModel(), 0, false);
+    syncPageIndicator();
+    m_grid->setPage(focusPage);
+    if (m_grid->focusGlobalIndex(focusPage * perPage)) {
+        if (auto* cur = m_grid->focusManager().current())
+            focusManager().setFocus(cur);
+    }
+    m_accessibility.announce(nxui::I18n::instance().tr(
+        "page.deleted", "Page deleted"), true, true);
+    updateCursor();
+}
+
+void WiiUMenuApp::deleteAllUnusedPages() {
+    if (!m_grid || m_grid->totalPages() <= 1)
+        return;
+    m_dialogReturnFocus = nullptr;
+
+    const int perPage = std::max(1, m_grid->iconsPerPage());
+    const int stayPage = m_grid->currentPage();
+
+    if (m_openFolderId != 0) {
+        auto* folder = m_folderStore.find(m_openFolderId);
+        if (!folder)
+            return;
+        const int pages = std::max(folder->pageCount, m_grid->totalPages());
+        folder->titleIds.resize(static_cast<std::size_t>(pages * perPage), 0);
+
+        // Count how many empty pages before stayPage so focus can shift left.
+        int removedBefore = 0;
+        for (int page = 0; page < stayPage; ++page) {
+            if (pageSlotsEmpty(folder->titleIds, page, perPage))
+                ++removedBefore;
+        }
+        const int removed = removeEmptySlotPages(folder->titleIds, perPage);
+        if (removed <= 0)
+            return;
+        folder->pageCount = std::max(1,
+            (static_cast<int>(folder->titleIds.size()) + perPage - 1) / perPage);
+        if (!saveFoldersOrReport("delete_unused_folder_pages"))
+            return;
+
+        const int focusPage = std::clamp(stayPage - removedBefore, 0, folder->pageCount - 1);
+        applyDisplayModel(buildOpenFolderModel(m_openFolderId), 0, false);
+        syncPageIndicator();
+        m_grid->setPage(focusPage);
+        if (m_grid->focusGlobalIndex(focusPage * perPage)) {
+            if (auto* cur = m_grid->focusManager().current())
+                focusManager().setFocus(cur);
+        }
+        m_accessibility.announce(nxui::I18n::instance().tr(
+            "page.unused_deleted", "Unused pages deleted"), true, true);
+        updateCursor();
+        return;
+    }
+
+    int removedBefore = 0;
+    {
+        const int pages = std::max(1,
+            (static_cast<int>(m_layoutSlots.size()) + perPage - 1) / perPage);
+        m_layoutSlots.resize(static_cast<std::size_t>(pages * perPage), 0);
+        for (int page = 0; page < stayPage; ++page) {
+            if (pageSlotsEmpty(m_layoutSlots, page, perPage))
+                ++removedBefore;
+        }
+    }
+    const int removed = removeEmptySlotPages(m_layoutSlots, perPage);
+    if (removed <= 0)
+        return;
+    m_layoutDirty = true;
+    saveMenuLayout();
+
+    const int newPages = std::max(1,
+        (static_cast<int>(m_layoutSlots.size()) + perPage - 1) / perPage);
+    const int focusPage = std::clamp(stayPage - removedBefore, 0, newPages - 1);
+    applyDisplayModel(buildRootFolderModel(), 0, false);
+    syncPageIndicator();
+    m_grid->setPage(focusPage);
+    if (m_grid->focusGlobalIndex(focusPage * perPage)) {
+        if (auto* cur = m_grid->focusManager().current())
+            focusManager().setFocus(cur);
+    }
+    m_accessibility.announce(nxui::I18n::instance().tr(
+        "page.unused_deleted", "Unused pages deleted"), true, true);
     updateCursor();
 }
 
@@ -5777,6 +6082,42 @@ void WiiUMenuApp::renderPageArrows(nxui::Renderer& ren) {
     drawArrow(true, m_arrowTexLeft, m_arrowAnimLeft, buttonGlyph(nxui::Button::ZL), false);
     drawArrow(false, m_arrowTexRight, m_arrowAnimRight, buttonGlyph(nxui::Button::ZR),
               m_addPageMode);
+}
+
+void WiiUMenuApp::renderDeletePageButton(nxui::Renderer& ren) {
+    if (m_deletePageShow <= 0.002f)
+        return;
+    if ((m_dialog && m_dialog->isActive()) ||
+        (m_progressDialog && m_progressDialog->isActive()) ||
+        (m_contextMenu && m_contextMenu->isActive()) ||
+        (m_textEntry && m_textEntry->isActive()) ||
+        (m_userSelect && m_userSelect->isActive()) ||
+        (m_settings && m_settings->isActive()) ||
+        (m_themeShop && m_themeShop->isActive()) ||
+        (m_gameOptions && m_gameOptions->isActive()) ||
+        (m_folderOptions && m_folderOptions->isActive()) ||
+        (m_quickSettings && m_quickSettings->isActive()) ||
+        (m_steamGridDbPicker && m_steamGridDbPicker->isActive()))
+        return;
+
+    const float e = m_deletePageShow * m_deletePageShow * (3.f - 2.f * m_deletePageShow);
+    const nxui::Rect base = deletePageButtonRect();
+    const float cx = base.x + base.width * 0.5f;
+    const float cy = base.y + base.height * 0.5f;
+    const float ring = std::min(base.width, base.height) * 0.42f;
+
+    ren.drawCircle({cx, cy + 2.f}, ring,
+                   nxui::Color(0.02f, 0.04f, 0.06f, 0.32f * e), 28);
+    ren.drawCircle({cx, cy}, ring,
+                   m_theme.panelBase.withAlpha(0.88f * e), 28);
+    ren.drawCircle({cx, cy}, ring - 1.6f,
+                   m_theme.panelHighlight.withAlpha(0.10f * e), 28);
+
+    const float bar = ring * 0.92f;
+    const float thick = std::max(2.f, ring * 0.17f);
+    const nxui::Color ink = m_theme.textPrimary.withAlpha(0.92f * e);
+    ren.drawRoundedRect({cx - bar * 0.5f, cy - thick * 0.5f, bar, thick},
+                        ink, thick * 0.5f);
 }
 
 void WiiUMenuApp::onRender(nxui::Renderer& ren) {
@@ -5871,6 +6212,7 @@ void WiiUMenuApp::onRender(nxui::Renderer& ren) {
     }
 
     renderPageArrows(ren);
+    renderDeletePageButton(ren);
     if (m_config.actionHintStyle == "panel")
         renderActionHintPanel(ren);
     else
