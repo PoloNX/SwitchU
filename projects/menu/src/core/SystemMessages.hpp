@@ -7,7 +7,8 @@
 
 #ifdef SWITCHU_MENU
 enum class SysAction {
-    HomeButton,
+    HomeButton,   // return from title / applet (keep open folder)
+    HomeDismiss,  // HOME while already browsing — close folder overlays
     Sleep,
     Shutdown,
     Reboot,

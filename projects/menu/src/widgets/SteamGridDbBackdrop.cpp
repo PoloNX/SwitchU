@@ -52,7 +52,9 @@ void SteamGridDbBackdrop::setPreloadTitles(std::vector<std::uint64_t> titleIds) 
 }
 
 void SteamGridDbBackdrop::showTitle(std::uint64_t titleId, bool forceReload) {
-    if (!m_enabled) return;
+    // Clearing (titleId == 0) must run even when disabled so folder close /
+    // view toggles never leave a stale hero on screen.
+    if (!m_enabled && titleId != 0) return;
     if (!forceReload && m_requestedTitleId == titleId) return;
 
     // A direct artwork-to-artwork change may crossfade from the current set.
@@ -71,7 +73,19 @@ void SteamGridDbBackdrop::showTitle(std::uint64_t titleId, bool forceReload) {
         m_requestedTitleId = 0;
         ++m_requestGeneration;
         m_appliedGeneration = m_requestGeneration;
-        m_artworkOpacity.set(0.f, 0.22f, nxui::Easing::outCubic);
+        m_showPreviousDuringCrossfade = false;
+        if (forceReload) {
+            // Instant wipe (folder close) — no fade of the previous hero.
+            for (auto& set : m_sets) {
+                set.titleId = 0;
+                set.hasHero = false;
+                set.hasLogo = false;
+            }
+            m_artworkOpacity.setImmediate(0.f);
+            m_fade.setImmediate(1.f);
+        } else {
+            m_artworkOpacity.set(0.f, 0.22f, nxui::Easing::outCubic);
+        }
         DebugLog::log("[steamgriddb-ui] artwork cleared: selection has no title");
         return;
     }
@@ -111,6 +125,7 @@ void SteamGridDbBackdrop::showTitle(std::uint64_t titleId, bool forceReload) {
         m_requestedTitleId = titleId;
         ++m_requestGeneration;
         m_appliedGeneration = m_requestGeneration;
+        m_showPreviousDuringCrossfade = false;
         m_artworkOpacity.set(0.f, 0.22f, nxui::Easing::outCubic);
         DebugLog::log("[steamgriddb-ui] artwork cleared: title=%016llX has no assets",
                       static_cast<unsigned long long>(titleId));
@@ -134,6 +149,7 @@ void SteamGridDbBackdrop::showTitle(std::uint64_t titleId, bool forceReload) {
             if (m_missingArtworkTitleIds.size() > kMissingCacheLimit)
                 m_missingArtworkTitleIds.erase(m_missingArtworkTitleIds.begin());
         }
+        m_showPreviousDuringCrossfade = false;
         m_artworkOpacity.set(0.f, 0.22f, nxui::Easing::outCubic);
         DebugLog::log("[steamgriddb-ui] artwork fading out: title=%016llX has no files",
                       static_cast<unsigned long long>(titleId));

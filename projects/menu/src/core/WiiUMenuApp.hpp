@@ -259,7 +259,7 @@ private:
     int findTitleIndex(uint64_t titleId) const;
     bool focusTitle(uint64_t titleId);
     void markSuspendedIcon(uint64_t titleId);
-    void closeActiveOverlays();
+    void closeActiveOverlays(bool closeFolders = true);
     void handleTouch();
     std::shared_ptr<GlossyIcon> makeIcon(const AppEntry& entry);
     nxui::Texture* folderCoverTexture(std::uint64_t titleId);
