@@ -9,6 +9,7 @@
 #include <curlpp/cURLpp.hpp>
 #include <switch.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <mutex>
 #include <sstream>
@@ -98,11 +99,16 @@ void ensureInternetConnectionReady(const std::string& url) {
     }
 }
 
+bool isAbortRequested(const themeshop::http::AbortCheck& shouldAbort) {
+    return shouldAbort && shouldAbort();
+}
+
 void configureRequest(curlpp::Easy& request,
                       const std::string& url,
                       std::ostringstream& response,
                       const std::list<std::string>& headers,
-                      const themeshop::http::ProgressCallback& onProgress = {}) {
+                      const themeshop::http::ProgressCallback& onProgress = {},
+                      const themeshop::http::AbortCheck& shouldAbort = {}) {
     request.setOpt<curlpp::options::Url>(url);
     request.setOpt<curlpp::options::FollowLocation>(true);
     request.setOpt<curlpp::options::NoSignal>(true);
@@ -114,12 +120,16 @@ void configureRequest(curlpp::Easy& request,
         request.setOpt<curlpp::options::HttpHeader>(headers);
     }
     request.setOpt<curlpp::options::WriteStream>(&response);
-    if (onProgress) {
+    if (onProgress || shouldAbort) {
         request.setOpt<curlpp::options::NoProgress>(false);
         request.setOpt<curlpp::options::ProgressFunction>(
-            [onProgress](double downloadTotal, double downloaded, double, double) {
-                onProgress(downloaded > 0.0 ? static_cast<std::uint64_t>(downloaded) : 0,
-                           downloadTotal > 0.0 ? static_cast<std::uint64_t>(downloadTotal) : 0);
+            [onProgress, shouldAbort](double downloadTotal, double downloaded, double, double) {
+                if (isAbortRequested(shouldAbort))
+                    return 1; // Non-zero aborts the curl transfer immediately.
+                if (onProgress) {
+                    onProgress(downloaded > 0.0 ? static_cast<std::uint64_t>(downloaded) : 0,
+                               downloadTotal > 0.0 ? static_cast<std::uint64_t>(downloadTotal) : 0);
+                }
                 return 0;
             });
     }
@@ -127,11 +137,24 @@ void configureRequest(curlpp::Easy& request,
 
 std::vector<std::uint8_t> performRequestBytes(const std::string& url,
                                               const std::list<std::string>& headers,
-                                              const themeshop::http::ProgressCallback& onProgress) {
+                                              const themeshop::http::ProgressCallback& onProgress,
+                                              const themeshop::http::AbortCheck& shouldAbort) {
+    if (isAbortRequested(shouldAbort))
+        throw std::runtime_error("Cancelled");
+
     std::ostringstream response;
     curlpp::Easy request;
-    configureRequest(request, url, response, headers, onProgress);
-    request.perform();
+    configureRequest(request, url, response, headers, onProgress, shouldAbort);
+    try {
+        request.perform();
+    } catch (...) {
+        if (isAbortRequested(shouldAbort))
+            throw std::runtime_error("Cancelled");
+        throw;
+    }
+
+    if (isAbortRequested(shouldAbort))
+        throw std::runtime_error("Cancelled");
 
     long statusCode = curlpp::infos::ResponseCode::get(request);
     std::string body = response.str();
@@ -148,30 +171,37 @@ std::vector<std::uint8_t> performRequestBytes(const std::string& url,
 
 std::vector<std::uint8_t> performBytes(const std::string& url,
                                        const std::list<std::string>& headers,
-                                       const themeshop::http::ProgressCallback& onProgress = {}) {
+                                       const themeshop::http::ProgressCallback& onProgress = {},
+                                       const themeshop::http::AbortCheck& shouldAbort = {}) {
     std::lock_guard<std::mutex> lk(g_themeHttpMutex);
 
     std::string lastError = "Theme Shop HTTP request failed";
     for (int attempt = 1; attempt <= kRequestAttemptCount; ++attempt) {
+        if (isAbortRequested(shouldAbort))
+            throw std::runtime_error("Cancelled");
         try {
             if (!initializeRuntimeLocked()) {
                 throw std::runtime_error("Theme Shop HTTP runtime is unavailable");
             }
 
             ensureInternetConnectionReady(url);
-            auto bytes = performRequestBytes(url, headers, onProgress);
+            auto bytes = performRequestBytes(url, headers, onProgress, shouldAbort);
             if (attempt > 1) {
                 DebugLog::log("[themeshop] request recovered on retry %d: %s", attempt, url.c_str());
             }
             return bytes;
         } catch (const std::exception& ex) {
             lastError = ex.what();
+            if (lastError == "Cancelled" || isAbortRequested(shouldAbort))
+                throw std::runtime_error("Cancelled");
             DebugLog::log("[themeshop] request failed (%d/%d): %s -> %s",
                           attempt,
                           kRequestAttemptCount,
                           url.c_str(),
                           ex.what());
         } catch (...) {
+            if (isAbortRequested(shouldAbort))
+                throw std::runtime_error("Cancelled");
             lastError = "Unknown HTTP error";
             DebugLog::log("[themeshop] request failed (%d/%d): %s -> unknown error",
                           attempt,
@@ -208,13 +238,15 @@ bool isInitialized() {
 
 std::vector<std::uint8_t> getBytes(const std::string& url,
                                    const std::list<std::string>& headers,
-                                   const ProgressCallback& onProgress) {
-    return performBytes(url, headers, onProgress);
+                                   const ProgressCallback& onProgress,
+                                   const AbortCheck& shouldAbort) {
+    return performBytes(url, headers, onProgress, shouldAbort);
 }
 
 std::string getText(const std::string& url,
-                    const std::list<std::string>& headers) {
-    auto bytes = performBytes(url, headers);
+                    const std::list<std::string>& headers,
+                    const AbortCheck& shouldAbort) {
+    auto bytes = performBytes(url, headers, {}, shouldAbort);
     return std::string(bytes.begin(), bytes.end());
 }
 

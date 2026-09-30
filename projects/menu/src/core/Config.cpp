@@ -78,6 +78,9 @@ bool AppConfig::load() {
     readJsonOpt(j, "accessibilitySpeakPosition", accessibilitySpeakPosition);
     readJsonOpt(j, "accessibilitySpeechRate", accessibilitySpeechRate);
     readJsonOpt(j, "steamGridDbEnabled", steamGridDbEnabled);
+    readJsonOpt(j, "steamGridDbShowInGrid", steamGridDbShowInGrid);
+    readJsonOpt(j, "steamGridDbShowInDynamicLine", steamGridDbShowInDynamicLine);
+    readJsonOpt(j, "steamGridDbShowInFolders", steamGridDbShowInFolders);
     readJsonOpt(j, "steamGridDbApiKey", steamGridDbApiKey);
     readJsonOpt(j, "sortMode", sortMode);
     readJsonOpt(j, "lastOpenedSequence", lastOpenedSequence);
@@ -103,6 +106,8 @@ bool AppConfig::load() {
     readJsonOpt(j, "folderStyle", folderStyle);
     const bool hasShowCoverKey = j.find("folderShowCover") != j.end();
     readJsonOpt(j, "folderShowCover", folderShowCover);
+    readJsonOpt(j, "textEntryFullLayout", textEntryFullLayout);
+    readJsonOpt(j, "textEntryGlassStyle", textEntryGlassStyle);
 
     if (musicVolume < 0.f) musicVolume = 0.f;
     if (musicVolume > 1.f) musicVolume = 1.f;
@@ -188,6 +193,9 @@ bool AppConfig::save() const {
     j["accessibilitySpeakPosition"] = accessibilitySpeakPosition;
     j["accessibilitySpeechRate"] = std::clamp(accessibilitySpeechRate, 120, 320);
     j["steamGridDbEnabled"] = steamGridDbEnabled;
+    j["steamGridDbShowInGrid"] = steamGridDbShowInGrid;
+    j["steamGridDbShowInDynamicLine"] = steamGridDbShowInDynamicLine;
+    j["steamGridDbShowInFolders"] = steamGridDbShowInFolders;
     j["steamGridDbApiKey"] = steamGridDbApiKey;
     j["sortMode"] = std::clamp(sortMode, 0, 2);
     j["lastOpenedSequence"] = lastOpenedSequence;
@@ -213,6 +221,8 @@ bool AppConfig::save() const {
     j["autoThemeGeoCity"] = autoThemeGeoCity;
     j["folderStyle"] = std::clamp(folderStyle, 0, switchu::folders::kFolderStyleCount - 1);
     j["folderShowCover"] = folderShowCover;
+    j["textEntryFullLayout"] = textEntryFullLayout;
+    j["textEntryGlassStyle"] = textEntryGlassStyle;
 
     // Written beside the real file and swapped in, never over it. Truncating
     // the live config and then dying mid-write is how a crash used to reset
@@ -243,7 +253,7 @@ bool AppConfig::save() const {
     }
     // No commit here: save() is submitted to the thread pool, so this ran on a
     // worker while the main thread was also writing. Committing an fs session
-    // from two threads at once is its own hazard, and the author's build —
-    // which does not corrupt — commits nowhere.
+    // from two threads at once is its own hazard, and the author's build -
+    // which does not corrupt - commits nowhere.
     return true;
 }

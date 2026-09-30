@@ -15,6 +15,7 @@ namespace {
 constexpr int kColumns = 4;
 constexpr int kRows = 3;
 constexpr int kPerPage = kColumns * kRows;
+constexpr int kGameListVisible = 8;
 }
 
 SteamGridDbPickerScreen::SteamGridDbPickerScreen(nxui::GpuDevice& gpu,
@@ -43,39 +44,80 @@ SteamGridDbPickerScreen::SteamGridDbPickerScreen(nxui::GpuDevice& gpu,
     addAction(static_cast<std::uint64_t>(nxui::Button::X), [this]() {
         if (m_searchCb) m_searchCb();
     });
-    addAction(static_cast<std::uint64_t>(nxui::Button::B), [this]() { hide(); });
+    addAction(static_cast<std::uint64_t>(nxui::Button::B), [this]() { goBack(); });
 }
 
 void SteamGridDbPickerScreen::showLoading(std::uint64_t titleId,
                                           const std::string& title,
                                           const std::string& query,
-                                          SteamGridDbManager::ArtworkKind kind) {
+                                          SteamGridDbManager::ArtworkKind kind,
+                                          bool preserveGameMatches) {
     ++m_generation;
     for (auto& slot : m_slots) {
         if (slot.state) slot.state->cancelled.store(true);
         slot.ready = false;
         slot.failed = false;
     }
+    // Keep title/query/kind for the loading header; clear candidates so we do
+    // not flash stale artwork while a new search runs.
+    const auto keptMatches = m_gameMatches;
     m_result = {};
     m_result.titleId = titleId;
     m_result.title = title;
     m_result.query = query;
     m_result.kind = kind;
+    if (preserveGameMatches && !keptMatches.empty())
+        m_gameMatches = keptMatches;
+    else
+        m_gameMatches.clear();
     m_selected = 0;
     m_loading = true;
+    m_pickingGame = false;
     m_message = "Searching SteamGridDB...";
     m_active = true;
     setVisible(true);
 }
 
+void SteamGridDbPickerScreen::showGameList(const std::vector<GameMatch>& matches) {
+    m_gameMatches = matches;
+    m_pickingGame = true;
+    m_loading = false;
+    m_selected = 0;
+    m_result.candidates.clear();
+    m_result.gameMatches = matches;
+    m_result.success = !matches.empty();
+    m_message = matches.empty()
+        ? "No games found"
+        : std::to_string(matches.size()) + " games - pick one";
+}
+
 void SteamGridDbPickerScreen::setResult(BrowseResult result) {
+    const auto previousMatches = m_gameMatches;
     m_result = std::move(result);
     m_loading = false;
     m_selected = 0;
+    ++m_generation;
+
+    if (m_result.success && !m_result.gameMatches.empty() && m_result.candidates.empty()) {
+        showGameList(m_result.gameMatches);
+        return;
+    }
+
+    if (!m_result.success && !previousMatches.empty() && m_result.candidates.empty()) {
+        // Failed artwork load after a game pick - return to the list with the error.
+        showGameList(previousMatches);
+        m_message = m_result.error.empty() ? "Search failed" : m_result.error;
+        return;
+    }
+
+    m_pickingGame = false;
+    if (!m_result.gameMatches.empty())
+        m_gameMatches = m_result.gameMatches;
+    else if (!previousMatches.empty())
+        m_gameMatches = previousMatches;
     m_message = m_result.success
         ? std::to_string(m_result.candidates.size()) + " choices for " + m_result.gameName
         : m_result.error;
-    ++m_generation;
     schedulePreviews();
 }
 
@@ -87,10 +129,23 @@ void SteamGridDbPickerScreen::setMessage(const std::string& message, bool loadin
 void SteamGridDbPickerScreen::hide() {
     if (!m_active) return;
     m_active = false;
+    m_pickingGame = false;
+    m_gameMatches.clear();
     setVisible(false);
     for (auto& slot : m_slots)
         if (slot.state) slot.state->cancelled.store(true);
     if (m_closedCb) m_closedCb();
+}
+
+void SteamGridDbPickerScreen::goBack() {
+    // From artwork gallery after a game pick, return to the ranked game list.
+    if (!m_pickingGame && !m_loading && !m_gameMatches.empty()) {
+        for (auto& slot : m_slots)
+            if (slot.state) slot.state->cancelled.store(true);
+        showGameList(m_gameMatches);
+        return;
+    }
+    hide();
 }
 
 void SteamGridDbPickerScreen::wait() {
@@ -177,6 +232,7 @@ void SteamGridDbPickerScreen::schedulePreview(std::size_t index) {
 void SteamGridDbPickerScreen::onUpdate(float dt) {
     if (!m_active) return;
     m_spinner += dt;
+    if (m_pickingGame) return;
 
     for (std::size_t i = 0; i < m_retiredFutures.size();) {
         if (m_retiredFutures[i].wait_for(std::chrono::seconds(0))
@@ -213,7 +269,7 @@ void SteamGridDbPickerScreen::onUpdate(float dt) {
     int activeJobs = 0;
     for (const auto& slot : m_slots)
         if (slot.future.valid()) ++activeJobs;
-    const int count = static_cast<int>(std::min(m_result.candidates.size(), m_slots.size()));
+    const int count = artworkCount();
     const int pageStart = count > 0 ? (m_selected / kPerPage) * kPerPage : 0;
     for (int offset = 0; offset < kPerPage && activeJobs < 2; ++offset) {
         const int index = pageStart + offset;
@@ -241,6 +297,14 @@ std::string SteamGridDbPickerScreen::kindLabel() const {
          : m_result.kind == SteamGridDbManager::ArtworkKind::Logo ? "Logo" : "Icon";
 }
 
+int SteamGridDbPickerScreen::gameListCount() const {
+    return static_cast<int>(m_gameMatches.size());
+}
+
+int SteamGridDbPickerScreen::artworkCount() const {
+    return static_cast<int>(std::min(m_result.candidates.size(), m_slots.size()));
+}
+
 void SteamGridDbPickerScreen::onRender(nxui::Renderer& renderer) {
     if (!m_active || !m_theme) return;
     renderer.drawRect(rect(), nxui::Color(0.f, 0.f, 0.f, 0.62f));
@@ -266,7 +330,37 @@ void SteamGridDbPickerScreen::onRender(nxui::Renderer& renderer) {
         return;
     }
 
-    const int count = static_cast<int>(std::min(m_result.candidates.size(), m_slots.size()));
+    if (m_pickingGame) {
+        const int count = gameListCount();
+        const int windowStart = std::max(0, std::min(m_selected - kGameListVisible / 2,
+                                                     std::max(0, count - kGameListVisible)));
+        constexpr float rowH = 52.f;
+        constexpr float rowGap = 8.f;
+        for (int local = 0; local < kGameListVisible; ++local) {
+            const int index = windowStart + local;
+            const nxui::Rect row{105.f, 210.f + local * (rowH + rowGap), 1070.f, rowH};
+            m_visibleRects[(size_t)local] = row;
+            if (index >= count) continue;
+            const bool focused = index == m_selected;
+            renderer.drawRoundedRect(row,
+                m_theme->panelBorder.withAlpha(focused ? 0.34f : 0.18f), 14.f);
+            if (focused)
+                renderer.drawRoundedRectOutline(row.expanded(3.f), m_theme->cursorNormal,
+                                                16.f, 3.5f);
+            if (m_smallFont) {
+                const auto& match = m_gameMatches[(size_t)index];
+                renderer.drawText(match.name, {128.f, row.y + 14.f}, m_smallFont,
+                                  m_theme->textPrimary, 0.86f);
+            }
+        }
+        if (m_smallFont && count > 0) {
+            renderer.drawText("A Choose game   B Back   X Search",
+                              {108.f, 651.f}, m_smallFont, m_theme->textSecondary, 0.72f);
+        }
+        return;
+    }
+
+    const int count = artworkCount();
     const int page = count > 0 ? m_selected / kPerPage : 0;
     const int start = page * kPerPage;
     constexpr float cardW = 250.f;
@@ -295,22 +389,42 @@ void SteamGridDbPickerScreen::onRender(nxui::Renderer& renderer) {
     }
     if (m_smallFont && count > 0) {
         const int pages = (count + kPerPage - 1) / kPerPage;
-        renderer.drawText("A Apply   B Back   X Search   Page " + std::to_string(page + 1)
-                          + "/" + std::to_string(pages),
+        const char* backHint = m_gameMatches.empty() ? "B Back" : "B Games";
+        renderer.drawText(std::string("A Apply   ") + backHint + "   X Search   Page "
+                          + std::to_string(page + 1) + "/" + std::to_string(pages),
                           {108.f, 651.f}, m_smallFont, m_theme->textSecondary, 0.72f);
     }
 }
 
 void SteamGridDbPickerScreen::moveSelection(int dx, int dy) {
-    const int count = static_cast<int>(std::min(m_result.candidates.size(), m_slots.size()));
-    if (count <= 0 || m_loading) return;
+    if (m_loading) return;
+    if (m_pickingGame) {
+        const int count = gameListCount();
+        if (count <= 0) return;
+        int target = m_selected + dy;
+        if (dx != 0) target = m_selected + dx;
+        if (target >= 0 && target < count) m_selected = target;
+        return;
+    }
+    const int count = artworkCount();
+    if (count <= 0) return;
     int target = m_selected + dx + dy * kColumns;
     if (target >= 0 && target < count) m_selected = target;
 }
 
 void SteamGridDbPickerScreen::activateSelection() {
-    const int count = static_cast<int>(std::min(m_result.candidates.size(), m_slots.size()));
-    if (m_loading || m_selected < 0 || m_selected >= count) return;
+    if (m_loading) return;
+    if (m_pickingGame) {
+        const int count = gameListCount();
+        if (m_selected < 0 || m_selected >= count) return;
+        const GameMatch match = m_gameMatches[(size_t)m_selected];
+        m_loading = true;
+        m_message = "Loading artwork for " + match.name + "...";
+        if (m_pickGameCb) m_pickGameCb(m_result, match);
+        return;
+    }
+    const int count = artworkCount();
+    if (m_selected < 0 || m_selected >= count) return;
     m_loading = true;
     m_message = "Applying selection...";
     if (m_applyCb) m_applyCb(m_result, m_result.candidates[(size_t)m_selected]);
@@ -318,7 +432,24 @@ void SteamGridDbPickerScreen::activateSelection() {
 
 void SteamGridDbPickerScreen::handleTouch(nxui::Input& input) {
     if (!m_active || m_loading || !input.touchUp()) return;
-    const int count = static_cast<int>(std::min(m_result.candidates.size(), m_slots.size()));
+
+    if (m_pickingGame) {
+        const int count = gameListCount();
+        const int windowStart = std::max(0, std::min(m_selected - kGameListVisible / 2,
+                                                     std::max(0, count - kGameListVisible)));
+        for (int local = 0; local < kGameListVisible; ++local) {
+            const int index = windowStart + local;
+            if (index >= count
+                || !m_visibleRects[(size_t)local].contains(input.touchX(), input.touchY()))
+                continue;
+            if (m_selected == index) activateSelection();
+            else m_selected = index;
+            return;
+        }
+        return;
+    }
+
+    const int count = artworkCount();
     const int page = count > 0 ? m_selected / kPerPage : 0;
     for (int local = 0; local < kPerPage; ++local) {
         const int index = page * kPerPage + local;

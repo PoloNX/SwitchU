@@ -18,18 +18,26 @@ public:
         bool canMove = true;
         bool canResize = true;
         int sizeIndex = 0;
+        bool hasHeroArt = false;
+        bool hasLogoArt = false;
+        bool hasIconArt = false;
     };
 
     GameOptionsScreen();
 
     void setGame(const GameInfo& info);
     void setGameIcon(nxui::Texture* icon) { m_game.icon = icon; }
+    /// Rebuild SteamGridDB rows so × only appears when that kind has art.
+    void refreshArtworkPresence(bool hasHero, bool hasLogo, bool hasIcon);
     void onMove(VoidCb cb) { m_moveCb = std::move(cb); }
     void onResize(IntCb cb) { m_resizeCb = std::move(cb); }
     void onCloseSoftware(VoidCb cb) { m_closeSoftwareCb = std::move(cb); }
     void onDeleteSoftware(VoidCb cb) { m_deleteSoftwareCb = std::move(cb); }
     void onSelectArtwork(std::function<void(ArtworkKind)> cb) {
         m_selectArtworkCb = std::move(cb);
+    }
+    void onClearArtwork(std::function<void(ArtworkKind)> cb) {
+        m_clearArtworkCb = std::move(cb);
     }
 
 protected:
@@ -45,4 +53,5 @@ private:
     VoidCb m_closeSoftwareCb;
     VoidCb m_deleteSoftwareCb;
     std::function<void(ArtworkKind)> m_selectArtworkCb;
+    std::function<void(ArtworkKind)> m_clearArtworkCb;
 };

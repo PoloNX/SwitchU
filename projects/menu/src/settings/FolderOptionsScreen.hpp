@@ -1,6 +1,7 @@
 #pragma once
 
 #include "TabbedOverlayScreen.hpp"
+#include <nxui/core/Texture.hpp>
 #include <cstdint>
 
 class FolderOptionsScreen final : public TabbedOverlayScreen {
@@ -13,6 +14,8 @@ public:
         int sizeIndex = 1;
         int styleIndex = 0;
         bool showCover = false;
+        bool hasCustomIcon = false;
+        nxui::Texture* cover = nullptr;
     };
 
     FolderOptionsScreen();
@@ -25,6 +28,8 @@ public:
     void onSizeChange(IntCb cb) { m_sizeCb = std::move(cb); }
     void onStyleChange(IntCb cb) { m_styleCb = std::move(cb); }
     void onCoverChange(BoolCb cb) { m_coverCb = std::move(cb); }
+    void onCustomIconSelect(VoidCb cb) { m_customIconSelectCb = std::move(cb); }
+    void onCustomIconClear(VoidCb cb) { m_customIconClearCb = std::move(cb); }
 
 protected:
     void buildTabs() override;
@@ -42,4 +47,6 @@ private:
     IntCb m_sizeCb;
     IntCb m_styleCb;
     BoolCb m_coverCb;
+    VoidCb m_customIconSelectCb;
+    VoidCb m_customIconClearCb;
 };

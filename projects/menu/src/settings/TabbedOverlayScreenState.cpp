@@ -134,6 +134,8 @@ void TabbedOverlayScreen::warmup() {
 }
 
 bool TabbedOverlayScreen::itemFocusable(const SettingItem& item) const {
+    if (!item.enabled)
+        return false;
     if (item.focusable())
         return true;
     const bool isSection = item.type == ItemType::Section;

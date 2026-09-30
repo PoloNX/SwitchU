@@ -198,13 +198,21 @@ private:
                           std::function<void(const std::string&)> onAccept);
     void editSteamGridDbApiKey();
     void startSteamGridDbScrape();
+    void cancelSteamGridDbScrape();
     void openSteamGridDbPicker(GameOptionsScreen::ArtworkKind kind,
                                const std::string& query = std::string());
+    void openSteamGridDbPickerForTitle(std::uint64_t titleId,
+                                       const std::string& title,
+                                       GameOptionsScreen::ArtworkKind kind,
+                                       const std::string& query = std::string());
+    void clearSteamGridDbArtwork(std::uint64_t titleId,
+                                 GameOptionsScreen::ArtworkKind kind);
     void editSteamGridDbPickerQuery();
     void applySteamGridDbCandidate(const SteamGridDbManager::BrowseResult& browse,
                                    const SteamGridDbManager::Candidate& candidate);
     void syncSteamGridDb();
     void showFocusedSteamGridDbArtwork(bool forceReload = false);
+    bool steamGridDbArtworkAllowedHere() const;
     void applyTheme();
     void applyThemeResources(const ThemePreset& preset);
     void retryPendingBackgroundImage();

@@ -21,6 +21,7 @@ class SteamGridDbPickerScreen final : public nxui::GlassWidget {
 public:
     using BrowseResult = SteamGridDbManager::BrowseResult;
     using Candidate = SteamGridDbManager::Candidate;
+    using GameMatch = SteamGridDbManager::GameMatch;
 
     SteamGridDbPickerScreen(nxui::GpuDevice& gpu, nxui::Renderer& renderer,
                             nxui::ThreadPool& threadPool);
@@ -29,12 +30,14 @@ public:
     void setSmallFont(nxui::Font* font) { m_smallFont = font; }
     void setTheme(const nxui::Theme* theme) { m_theme = theme; }
     void showLoading(std::uint64_t titleId, const std::string& title,
-                     const std::string& query, SteamGridDbManager::ArtworkKind kind);
+                     const std::string& query, SteamGridDbManager::ArtworkKind kind,
+                     bool preserveGameMatches = false);
     void setResult(BrowseResult result);
     void setMessage(const std::string& message, bool loading = false);
     void hide();
     void wait();
     bool isActive() const { return m_active; }
+    bool pickingGame() const { return m_pickingGame; }
     const std::string& query() const { return m_result.query; }
     std::uint64_t titleId() const { return m_result.titleId; }
     SteamGridDbManager::ArtworkKind artworkKind() const { return m_result.kind; }
@@ -44,6 +47,9 @@ public:
     void onSearch(std::function<void()> cb) { m_searchCb = std::move(cb); }
     void onApply(std::function<void(const BrowseResult&, const Candidate&)> cb) {
         m_applyCb = std::move(cb);
+    }
+    void onPickGame(std::function<void(const BrowseResult&, const GameMatch&)> cb) {
+        m_pickGameCb = std::move(cb);
     }
     void handleTouch(nxui::Input& input);
 
@@ -77,6 +83,10 @@ private:
     void schedulePreview(std::size_t index);
     void moveSelection(int dx, int dy);
     void activateSelection();
+    void goBack();
+    void showGameList(const std::vector<GameMatch>& matches);
+    int gameListCount() const;
+    int artworkCount() const;
     std::string kindLabel() const;
 
     nxui::GpuDevice& m_gpu;
@@ -86,6 +96,7 @@ private:
     nxui::Font* m_smallFont = nullptr;
     const nxui::Theme* m_theme = nullptr;
     BrowseResult m_result;
+    std::vector<GameMatch> m_gameMatches;
     std::array<PreviewSlot, 18> m_slots;
     std::vector<std::future<void>> m_retiredFutures;
     std::array<nxui::Rect, 12> m_visibleRects{};
@@ -93,9 +104,11 @@ private:
     int m_selected = 0;
     bool m_active = false;
     bool m_loading = false;
+    bool m_pickingGame = false;
     std::string m_message;
     float m_spinner = 0.f;
     std::function<void()> m_closedCb;
     std::function<void()> m_searchCb;
     std::function<void(const BrowseResult&, const Candidate&)> m_applyCb;
+    std::function<void(const BrowseResult&, const GameMatch&)> m_pickGameCb;
 };

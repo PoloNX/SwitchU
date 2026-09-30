@@ -10,6 +10,7 @@
 #include <cmath>
 #include <cstdio>
 #include <ctime>
+#include <filesystem>
 #include <unordered_set>
 #include <nxui/core/I18n.hpp>
 
@@ -1308,6 +1309,15 @@ void WiiUMenuApp::showGameContextMenu(GlossyIcon* icon) {
     const auto currentSize = gameGridSize(titleId, AppLayoutMode::Grid);
     game.sizeIndex = currentSize == switchu::widgets::WidgetSize{2, 2}
         ? 2 : (currentSize == switchu::widgets::WidgetSize{2, 1} ? 1 : 0);
+    {
+        std::error_code ec;
+        game.hasHeroArt = std::filesystem::exists(
+            SteamGridDbManager::heroPath(titleId), ec);
+        ec.clear();
+        game.hasLogoArt = std::filesystem::exists(
+            SteamGridDbManager::logoPath(titleId), ec);
+        game.hasIconArt = SteamGridDbManager::hasIcon(titleId);
+    }
     m_gameOptions->setGame(game);
     m_gameOptions->onMove([this]() {
         if (m_gameOptions) m_gameOptions->hide();
@@ -1353,6 +1363,9 @@ void WiiUMenuApp::showGameContextMenu(GlossyIcon* icon) {
     m_gameOptions->onSelectArtwork([this](GameOptionsScreen::ArtworkKind kind) {
         openSteamGridDbPicker(kind);
     });
+    m_gameOptions->onClearArtwork([this, titleId](GameOptionsScreen::ArtworkKind kind) {
+        clearSteamGridDbArtwork(titleId, kind);
+    });
     m_audio.playSfx(Sfx::ModalShow);
     m_gameOptionsTitleId = titleId;
     m_navigator.navigate(switchu::navigation::Route::GameOptions);
@@ -1373,6 +1386,11 @@ void WiiUMenuApp::showFolderContextMenu(std::uint32_t folderId) {
     info.sizeIndex = folder->sizeIndex;
     info.styleIndex = m_config.folderStyle;
     info.showCover = m_config.folderShowCover;
+    info.hasCustomIcon = SteamGridDbManager::hasIcon(folderTitleId(folderId));
+    const std::uint64_t coverTitleId = info.hasCustomIcon
+        ? folderTitleId(folderId)
+        : switchu::folders::firstCoverTitleId(*folder);
+    info.cover = folderCoverTexture(coverTitleId);
     m_folderOptions->setFolder(info);
     m_folderOptions->onOpen([this, folderId]() {
         if (m_folderOptions) m_folderOptions->hide();
@@ -1434,6 +1452,36 @@ void WiiUMenuApp::showFolderContextMenu(std::uint32_t folderId) {
             config.save();
         });
         applyFolderCoversToIcons();
+    });
+    m_folderOptions->onCustomIconSelect([this, folderId, name]() {
+        const std::uint64_t pseudo = folderTitleId(folderId);
+        openSteamGridDbPickerForTitle(pseudo, name,
+                                      GameOptionsScreen::ArtworkKind::Icon, name);
+    });
+    m_folderOptions->onCustomIconClear([this, folderId]() {
+        const std::uint64_t pseudo = folderTitleId(folderId);
+        clearSteamGridDbArtwork(pseudo, GameOptionsScreen::ArtworkKind::Icon);
+        // Refresh folder options state + cover textures.
+        if (m_folderOptions) {
+            FolderOptionsScreen::FolderInfo info = {};
+            if (const auto* folder = m_folderStore.find(folderId)) {
+                info.id = folder->id;
+                info.name = folder->name;
+                info.itemCount = static_cast<int>(folder->titleCount());
+                info.colorIndex = folder->colorIndex;
+                info.sizeIndex = folder->sizeIndex;
+                info.styleIndex = m_config.folderStyle;
+                info.showCover = m_config.folderShowCover;
+                info.hasCustomIcon = false;
+                info.cover = folderCoverTexture(
+                    switchu::folders::firstCoverTitleId(*folder));
+                m_folderOptions->setFolder(info);
+            }
+        }
+        if (m_openFolderId == 0)
+            applyDisplayModel(buildRootFolderModel(), folderTitleId(folderId), false);
+        else
+            applyFolderCoversToIcons();
     });
     m_folderOptions->onDelete([this, folderId, name]() {
         auto& local = nxui::I18n::instance();
@@ -1629,7 +1677,7 @@ void WiiUMenuApp::handleTouch() {
                    && m_grid
                    && m_grid->hitTest(input.touchX(), input.touchY()) < 0) {
             // Tap anywhere that isn't an icon (dimmed margins left/right/above/below,
-            // and empty gaps) to leave — mirrors B, including edit-mode keep-move.
+            // and empty gaps) to leave - mirrors B, including edit-mode keep-move.
             closeFolder(m_editMode, true);
         }
         m_touchHitIndex = -1;

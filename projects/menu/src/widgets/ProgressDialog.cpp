@@ -1,4 +1,6 @@
 #include "ProgressDialog.hpp"
+#include <nxui/core/I18n.hpp>
+#include <nxui/core/Input.hpp>
 #include <nxui/core/Renderer.hpp>
 #include <algorithm>
 #include <cmath>
@@ -41,10 +43,43 @@ ProgressDialog::ProgressDialog() {
     setLiquidGlassShaderEnabled(false);
     setBlurEnabled(false);
     setPanelOpacity(0.90f);
+    setFrameworkTouchEnabled(false);
+    wireCancelAction();
+}
+
+void ProgressDialog::wireCancelAction() {
+    clearActions();
+    addAction(static_cast<std::uint64_t>(nxui::Button::B), [this]() {
+        requestCancel();
+    });
+    addAction(static_cast<std::uint64_t>(nxui::Button::A), [this]() {
+        requestCancel();
+    });
+}
+
+void ProgressDialog::setCancellable(bool cancellable, std::function<void()> onCancel) {
+    m_cancellable = cancellable;
+    m_onCancel = std::move(onCancel);
+    if (!cancellable)
+        m_cancelRequested = false;
+}
+
+void ProgressDialog::requestCancel() {
+    if (!m_active || !m_cancellable || m_cancelRequested)
+        return;
+    m_cancelRequested = true;
+    if (m_onCancel)
+        m_onCancel();
 }
 
 nxui::Rect ProgressDialog::panelRect() const {
     return {(1280.f - kPanelW) * 0.5f, (720.f - kPanelH) * 0.5f, kPanelW, kPanelH};
+}
+
+nxui::Rect ProgressDialog::cancelButtonRect(const nxui::Rect& panel) const {
+    constexpr float btnW = 196.f;
+    constexpr float btnH = 46.f;
+    return {panel.x + (panel.width - btnW) * 0.5f, panel.bottom() - 64.f, btnW, btnH};
 }
 
 void ProgressDialog::show(const std::string& title, const std::string& message, float progress01) {
@@ -53,6 +88,8 @@ void ProgressDialog::show(const std::string& title, const std::string& message, 
     m_progress01 = progress01;
     m_active = true;
     m_animatingOut = false;
+    m_cancelRequested = false;
+    m_touchOnCancel = false;
     m_overlayAlpha.setImmediate(0.f);
     m_overlayAlpha.set(1.f, 0.18f, nxui::Easing::outCubic);
     m_panelScale.setImmediate(0.92f);
@@ -73,8 +110,28 @@ void ProgressDialog::hide() {
         return;
     m_active = false;
     m_animatingOut = true;
+    m_cancellable = false;
+    m_onCancel = {};
+    m_cancelRequested = false;
+    m_touchOnCancel = false;
     m_overlayAlpha.set(0.f, 0.16f, nxui::Easing::outCubic);
     m_panelScale.set(0.96f, 0.16f, nxui::Easing::outCubic);
+}
+
+void ProgressDialog::handleTouch(nxui::Input& input) {
+    if (!m_active || !m_cancellable || m_cancelRequested)
+        return;
+    const nxui::Rect btn = cancelButtonRect(panelRect());
+    if (input.touchDown() && btn.contains(input.touchX(), input.touchY())) {
+        m_touchOnCancel = true;
+        return;
+    }
+    if (input.touchUp()) {
+        const bool wasOn = m_touchOnCancel;
+        m_touchOnCancel = false;
+        if (wasOn && btn.contains(input.touchX(), input.touchY()))
+            requestCancel();
+    }
 }
 
 void ProgressDialog::update(float dt) {
@@ -116,7 +173,7 @@ void ProgressDialog::render(nxui::Renderer& ren) {
                      m_theme->textSecondary.withAlpha(0.94f * alpha), 0.80f);
     }
 
-    nxui::Rect track = {panel.x + pad, panel.y + 148.f, panel.width - pad * 2.f, 18.f};
+    nxui::Rect track = {panel.x + pad, panel.y + 140.f, panel.width - pad * 2.f, 18.f};
     ren.drawRoundedRect(track, m_theme->panelBorder.withAlpha(0.22f * alpha), 9.f);
 
     if (m_progress01 >= 0.f) {
@@ -127,7 +184,7 @@ void ProgressDialog::render(nxui::Renderer& ren) {
         if (m_smallFont) {
             std::string pct = std::to_string((int)std::round(p * 100.f)) + "%";
             nxui::Vec2 pctSize = m_smallFont->measure(pct);
-            ren.drawText(pct, {track.right() - pctSize.x * 0.72f, track.bottom() + 14.f},
+            ren.drawText(pct, {track.right() - pctSize.x * 0.72f, track.bottom() + 12.f},
                          m_smallFont, m_theme->textPrimary.withAlpha(alpha), 0.72f);
         }
     } else {
@@ -136,5 +193,24 @@ void ProgressDialog::render(nxui::Renderer& ren) {
         float phase = std::fmod(m_spinnerT * 0.65f, 1.f);
         nxui::Rect fill = {track.x + travel * phase, track.y, segmentW, track.height};
         ren.drawRoundedRect(fill, m_theme->cursorNormal.withAlpha(0.82f * alpha), 9.f);
+    }
+
+    if (m_cancellable) {
+        auto& i18n = nxui::I18n::instance();
+        const nxui::Rect btn = cancelButtonRect(panel);
+        const bool pressed = m_touchOnCancel || m_cancelRequested;
+        ren.drawRoundedRect(btn,
+            m_theme->panelBorder.withAlpha((pressed ? 0.42f : 0.28f) * alpha), 12.f);
+        ren.drawRoundedRectOutline(btn, m_theme->cursorNormal.withAlpha(0.55f * alpha), 12.f, 1.6f);
+        if (m_smallFont) {
+            const std::string label = m_cancelRequested
+                ? i18n.tr("settings.steamgriddb.cancelling", "Cancelling...")
+                : i18n.tr("button.cancel", "Cancel");
+            const nxui::Vec2 size = m_smallFont->measure(label);
+            ren.drawText(label,
+                         {btn.x + (btn.width - size.x * 0.84f) * 0.5f,
+                          btn.y + (btn.height - size.y * 0.84f) * 0.5f},
+                         m_smallFont, m_theme->textPrimary.withAlpha(alpha), 0.84f);
+        }
     }
 }

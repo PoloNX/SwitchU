@@ -119,6 +119,26 @@ void FolderOptionsScreen::buildTabs() {
         if (m_coverCb) m_coverCb(m_folder.showCover);
     };
     appearance.items.push_back(std::move(cover));
+
+    SettingItem customIcon;
+    customIcon.label = i18n.tr("folder.custom_icon", "Custom cover icon");
+    customIcon.buttonLabel = i18n.tr("button.select", "Select");
+    if (m_folder.hasCustomIcon) {
+        customIcon.secondaryButtonLabel = i18n.tr("button.clear_x", "×");
+        customIcon.onSecondary = [this](SettingItem&) {
+            if (m_customIconClearCb) m_customIconClearCb();
+        };
+    }
+    customIcon.description = m_folder.hasCustomIcon
+        ? i18n.tr("folder.custom_icon_set_desc",
+                  "SteamGridDB icon is active for this folder. Requires Show cover.")
+        : i18n.tr("folder.custom_icon_desc",
+                  "Search SteamGridDB and use an icon as this folder's cover.");
+    customIcon.type = ItemType::Action;
+    customIcon.onChange = [this](SettingItem&) {
+        if (m_customIconSelectCb) m_customIconSelectCb();
+    };
+    appearance.items.push_back(std::move(customIcon));
     m_tabs.push_back(std::move(appearance));
 
     Tab management;
@@ -171,7 +191,8 @@ void FolderOptionsScreen::drawOverlayHeader(nxui::Renderer& ren,
     preview.themeMode = m_theme->mode;
     preview.drawName = false;
     preview.showCover = m_folder.showCover;
-    preview.schematicPlaceholder = true;
+    preview.cover = (m_folder.cover && m_folder.cover->valid()) ? m_folder.cover : nullptr;
+    preview.schematicPlaceholder = preview.cover == nullptr;
     switchu::folders::drawFolderStyle(preview);
 
     const float textX = shell.right() + 24.f;

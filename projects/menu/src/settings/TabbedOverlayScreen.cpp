@@ -649,6 +649,8 @@ void TabbedOverlayScreen::drawContent(nxui::Renderer& ren, const nxui::Rect& pan
             cardH
         };
         bool visible = itemRect.bottom() >= cr.y - 8.f && itemRect.y <= cr.bottom() + 8.f;
+        const bool selected = (i == focusedRawIdx);
+        items[i].contentFocused = selected;
 
         itemChildren[i]->setVisible(visible);
         if (!visible) {
@@ -672,13 +674,26 @@ void TabbedOverlayScreen::drawContent(nxui::Renderer& ren, const nxui::Rect& pan
         itemChildren[i]->setOpacity(rowOpacity);
 
         auto* card = static_cast<SettingsItemCard*>(itemChildren[i].get());
-        bool selected = (i == focusedRawIdx);
-        card->sync(m_theme, selected, rowOpacity);
+        // Dual-button action rows (Select + ×): suppress the full-row card
+        // highlight so L/R focus on the buttons themselves stays readable.
+        const bool multiButton = selected
+            && items[i].type == ItemType::Action
+            && items[i].hasSecondaryAction();
+        card->sync(m_theme, multiButton ? false : selected, rowOpacity);
 
         if (selected) {
-            m_focusCursor.moveTo(itemChildren[i]->rect().expanded(1.f),
-                                 items[i].type == ItemType::Section ? 14.f : 18.f,
-                                 0.08f);
+            if (multiButton) {
+                const nxui::Rect& hit = items[i].actionButtonFocus == 1
+                    ? items[i].secondaryHit : items[i].primaryHit;
+                if (hit.width > 1.f && hit.height > 1.f)
+                    m_focusCursor.moveTo(hit.expanded(3.f), 12.f, 0.08f);
+                else
+                    m_focusCursor.moveTo(itemChildren[i]->rect().expanded(1.f), 18.f, 0.08f);
+            } else {
+                m_focusCursor.moveTo(itemChildren[i]->rect().expanded(1.f),
+                                     items[i].type == ItemType::Section ? 14.f : 18.f,
+                                     0.08f);
+            }
         }
         y += h;
     }

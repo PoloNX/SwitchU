@@ -70,7 +70,8 @@
       "toggle_actions": "A to change. Left to return to tabs.",
       "slider_actions": "Left or right to adjust. B to return to tabs.",
       "selector_actions": "A or right to open the list. B to return to tabs.",
-      "action_actions": "A to run the action. B to return to tabs."
+      "action_actions": "A to run the action. B to return to tabs.",
+      "action_secondary_actions": "Left and right choose Select or clear. A to activate. B to return to tabs."
     },
     "value": {
       "label": "Value",
@@ -159,7 +160,9 @@
     "search": "Search",
     "sort_custom": "My order",
     "sort_alpha": "A-Z",
-    "sort_recent": "Recent"
+    "sort_recent": "Recent",
+    "cancel_b": "B Cancel",
+    "cancel": "Cancel"
   },
   "settings": {
     "tabs": {
@@ -292,12 +295,18 @@
     "steamgriddb": {
       "section": "Game artwork",
       "enabled": "Display SteamGridDB artwork",
-      "enabled_desc": "Show heroes and logos behind the application menu.",
+      "enabled_desc": "Master switch. Nested options below choose where artwork appears.",
+      "show_grid": "Show on grid menu",
+      "show_grid_desc": "Hero backdrop behind the standard HOME grid.",
+      "show_line": "Show on single-row menu",
+      "show_line_desc": "Hero and logo behind the single-row carousel.",
+      "show_folders": "Show inside folders",
+      "show_folders_desc": "Artwork while browsing games inside an open folder.",
       "api_key": "API key",
       "api_key_set": "Configured (hidden)",
       "api_key_missing": "Not configured",
-      "scan": "Search artwork for missing applications",
-      "scan_desc": "Downloads a hero and logo only for applications that do not already have artwork.",
+      "scan": "Search artwork for missing assets",
+      "scan_desc": "Downloads a hero and logo only for applications that do not already have artwork. Cancel or press B to stop.",
       "already_running": "A scan is already running.",
       "need_key": "Configure an API key first.",
       "progress": "Artwork scan",
@@ -310,7 +319,9 @@
       "start_failed": "The artwork scan could not be started.",
       "started": "SteamGridDB scan started.",
       "download_title": "Downloading artwork",
-      "download_start": "Searching SteamGridDB..."
+      "download_start": "Searching SteamGridDB...",
+      "cancelling": "Cancelling...",
+      "scan_cancelled": "Artwork scan cancelled."
     },
     "controllers": {
       "test": "Test Input Devices",
@@ -474,7 +485,10 @@
       "logo": "Logo",
       "logo_desc": "Open the logo gallery and choose the image to use.",
       "icon": "Replacement icon",
-      "icon_desc": "Open the icon gallery and choose an override for this game."
+      "icon_desc": "Open the icon gallery and choose an override for this game.",
+      "clear_desc": "Remove the SteamGridDB override and restore the default.",
+      "cleared": "SteamGridDB artwork cleared.",
+      "nothing_to_clear": "No SteamGridDB artwork to clear."
     }
   },
   "folder": {
@@ -533,6 +547,10 @@
     "style_label": "Label",
     "show_cover": "Show cover",
     "show_cover_desc": "Shows the first game on every folder. Classic keeps the mosaic instead.",
+    "custom_icon": "Custom cover icon",
+    "custom_icon_desc": "Search SteamGridDB and use an icon as this folder's cover.",
+    "custom_icon_set_desc": "SteamGridDB icon is active for this folder. Requires Show cover.",
+    "custom_icon_clear_desc": "Remove the custom SteamGridDB cover and use the first game again.",
     "items": "items"
   },
   "add": {
@@ -627,6 +645,8 @@
     "move": "Move",
     "uninstall": "Uninstall",
     "select": "Select",
+    "none": "None",
+    "clear_x": "×",
     "open": "Open",
     "rename": "Rename",
     "connect": "Connect",
@@ -748,13 +768,19 @@
     }
   },
   "text_entry": {
+    "backspace": "←",
+    "caps": "CAPS",
     "erase": "Erase",
     "full": "Maximum length reached",
-    "hint": "A: type   X: erase   Y: shift   L/R: symbols   Plus: confirm   B: cancel",
+    "hint": "A type · X erase · Y shift · L/R symbols · − size · ZR style · + OK · B cancel",
+    "layout_compact": "Compact",
+    "layout_full": "Full",
     "letters": "ABC",
-    "opened": "On-screen keyboard. Directional pad to choose a key, A to type, X to erase, Plus to confirm, B to cancel.",
+    "opened": "On-screen keyboard. Directional pad to choose a key, A to type, X to erase, Plus to confirm, B to cancel. Minus switches size. ZR switches glass or flat style.",
     "shift": "Shift",
     "space": "Space",
+    "style_flat": "Flat",
+    "style_glass": "Glass",
     "symbols": "?12#"
   },
   "quicksettings": {
