@@ -50,6 +50,11 @@ void FolderZoom::close(const nxui::Rect& tile, const nxui::Color& tint,
 }
 
 void FolderZoom::showStatic(const nxui::Rect& panel, const nxui::Color& tint) {
+    // Interrupting Closing without running onDone soft-locks the menu
+    // (m_folderClosing stays true). Refuse retarget while closing — callers
+    // should also skip, but keep this defensive.
+    if (m_state == State::Closing)
+        return;
     m_tint   = tint;
     m_state  = State::Open;
     m_onDone = {};
@@ -104,12 +109,25 @@ void FolderZoom::onRender(nxui::Renderer& ren) {
     const nxui::Rect r = m_panel.value();
     const float cr = m_radius.value();
 
+    const float strength = std::clamp(m_fillStrength, 0.f, 1.f);
+    // Single-line folders use a light translucent plate so SteamGridDB hero
+    // stays readable (~75% transparent when strength is low).
+    if (strength < 0.55f) {
+        const float plate = 0.25f * strength / 0.42f; // ~0.25 at default line strength
+        const float a = std::clamp(plate, 0.12f, 0.28f) * fade;
+        ren.drawRoundedRect(r, m_tint.withAlpha(a), cr);
+        ren.drawRoundedRect(r, nxui::Color(1.f, 1.f, 1.f, 0.05f * fade), cr);
+        ren.drawRoundedRectOutline(r, m_tint.withAlpha(0.28f * fade), cr, 1.4f);
+        ren.drawRoundedRectOutline(r, nxui::Color::white().withAlpha(0.22f * fade), cr, 1.f);
+        return;
+    }
     if (ren.gpu().offscreenReady())
-        ren.drawLiquidGlass(2, r, cr, m_tint.withAlpha(0.22f), fade, 0.08f);
+        ren.drawLiquidGlass(2, r, cr, m_tint.withAlpha(0.22f * strength), fade, 0.08f);
     else
-        ren.drawRoundedRect(r, m_tint.withAlpha(0.28f * fade), cr);
-    ren.drawRoundedRect(r, nxui::Color(1.f, 1.f, 1.f, 0.04f * fade), cr);
-    ren.drawRoundedRectOutline(r.shrunk(1.5f), m_tint.withAlpha(0.35f * fade),
+        ren.drawRoundedRect(r, m_tint.withAlpha(0.28f * strength * fade), cr);
+    ren.drawRoundedRect(r, nxui::Color(1.f, 1.f, 1.f, 0.04f * strength * fade), cr);
+    ren.drawRoundedRectOutline(r.shrunk(1.5f), m_tint.withAlpha(0.35f * strength * fade),
                                std::max(4.f, cr - 1.5f), 1.5f);
-    ren.drawRoundedRectOutline(r, nxui::Color::white().withAlpha(0.38f * fade), cr, 1.f);
+    ren.drawRoundedRectOutline(r, nxui::Color::white().withAlpha(0.38f * strength * fade),
+                               cr, 1.f);
 }
