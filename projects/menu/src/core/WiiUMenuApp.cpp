@@ -3304,11 +3304,8 @@ void WiiUMenuApp::closeFolder(bool preserveEditMode, bool animated) {
 
     // Clear in-folder SGDB art as soon as close begins so a quick open of
     // another folder never inherits the previous title's hero.
-    if (m_steamGridDbBackdrop) {
-        m_steamGridDbBackdrop->setInFolder(false);
-        m_lastSteamGridDbTitleId = ~0ull;
+    if (m_steamGridDbBackdrop)
         m_steamGridDbBackdrop->showTitle(0, true);
-    }
 
     if (m_folderBackdrop) m_folderBackdrop->hide(FolderZoom::kCloseDur);
 
@@ -3365,11 +3362,8 @@ void WiiUMenuApp::finishCloseFolder(std::uint32_t oldId, bool preserveEditMode) 
     syncPageIndicator();
     // Drop in-folder hero art immediately so the next folder open does not
     // briefly (or permanently) show the previous title's artwork.
-    if (m_steamGridDbBackdrop) {
-        m_steamGridDbBackdrop->setInFolder(false);
-        m_lastSteamGridDbTitleId = ~0ull;
+    if (m_steamGridDbBackdrop)
         m_steamGridDbBackdrop->showTitle(0, true);
-    }
     showFocusedSteamGridDbArtwork(true);
     if (preserveEditMode) {
         // Focus is on the folder we just left; use that as the root placement target.
