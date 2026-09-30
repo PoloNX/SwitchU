@@ -1964,11 +1964,32 @@ void WiiUMenuApp::createTextEntry() {
     m_textEntry->setFont(&m_fontNormal);
     m_textEntry->setSmallFont(&m_fontSmall);
     m_textEntry->setTheme(&m_theme);
+    m_textEntry->setFullLayout(m_config.textEntryFullLayout);
+    m_textEntry->setGlassStyle(m_config.textEntryGlassStyle);
     m_textEntry->onKeySfx([this]() { m_audio.playSfx(Sfx::Activate); });
     m_textEntry->onNavigateSfx([this]() { m_audio.playSfx(Sfx::Navigate); });
     m_textEntry->onCloseSfx([this]() { m_audio.playSfx(Sfx::ModalHide); });
     m_textEntry->onAccessibilityAnnouncement([this](const std::string& text) {
         m_accessibility.announce(text);
+    });
+    auto saveTextEntryPrefs = [this]() {
+        if (m_configSaveFuture.valid())
+            m_configSaveFuture.wait();
+        m_configSaveFuture = m_threadPool.submit([config = m_config]() {
+            config.save();
+        });
+    };
+    m_textEntry->onLayoutModeChanged([this, saveTextEntryPrefs](bool full) {
+        if (m_config.textEntryFullLayout == full)
+            return;
+        m_config.textEntryFullLayout = full;
+        saveTextEntryPrefs();
+    });
+    m_textEntry->onGlassStyleChanged([this, saveTextEntryPrefs](bool glass) {
+        if (m_config.textEntryGlassStyle == glass)
+            return;
+        m_config.textEntryGlassStyle = glass;
+        saveTextEntryPrefs();
     });
     if (m_overlayLayer) m_overlayLayer->addChild(m_textEntry);
 }
@@ -1983,6 +2004,8 @@ void WiiUMenuApp::requestTextEntry(
         m_overlayLayer->removeChild(m_textEntry.get());
         m_overlayLayer->addChild(m_textEntry);
     }
+    m_textEntry->setFullLayout(m_config.textEntryFullLayout);
+    m_textEntry->setGlassStyle(m_config.textEntryGlassStyle);
     nxui::Widget* returnFocus = focusManager().current();
     auto restoreFocus = [this, returnFocus]() {
         nxui::Widget* target = isCurrentFocusableWidget(returnFocus)
