@@ -1044,7 +1044,7 @@ void WiiUMenuApp::markSuspendedIcon(uint64_t titleId) {
     }
 }
 
-void WiiUMenuApp::closeActiveOverlays() {
+void WiiUMenuApp::closeActiveOverlays(bool closeFolders) {
     // Transfer input ownership before starting any exit animation. An overlay
     // that is still visually fading out must never win focusRoot().
     m_navigator.resetToHome();
@@ -1072,7 +1072,9 @@ void WiiUMenuApp::closeActiveOverlays() {
         m_controllerTest->hide();
     if (m_steamGridDbPicker && m_steamGridDbPicker->isActive())
         m_steamGridDbPicker->hide();
-    if (m_openFolderId != 0)
+    // Returning from a suspended title must keep the open folder — closing then
+    // focusTitle(game) reopens it and re-captures a dimmed frosted backdrop.
+    if (closeFolders && m_openFolderId != 0)
         closeFolder();
 }
 
@@ -1640,6 +1642,20 @@ void WiiUMenuApp::handleTouch() {
 #ifdef SWITCHU_MENU
 void WiiUMenuApp::handleSystemAction(SysAction a) {
     switch (a) {
+        case SysAction::HomeDismiss: {
+            // Physical HOME while already browsing the menu.
+            DebugLog::log("[pump] HomeDismiss -> close folder/overlays");
+            m_launcher.setAppHasForeground(false);
+            const std::uint32_t folderBefore = m_openFolderId;
+            closeActiveOverlays(true);
+            if (folderBefore != 0) {
+                // Land on the folder tile — never focusTitle(inner game) or the
+                // folder reopens and the frosted dim stacks.
+                focusTitle(folderTitleId(folderBefore));
+            }
+            showFocusedSteamGridDbArtwork(true);
+            break;
+        }
         case SysAction::HomeButton: {
             DebugLog::log("[pump] HomeButton -> UI update");
             m_launcher.setAppHasForeground(false);
@@ -1653,7 +1669,9 @@ void WiiUMenuApp::handleSystemAction(SysAction a) {
             refreshRecentActivityDuration();
             if (!m_widgetStore.save())
                 DebugLog::log("[widgets] recent activity duration could not be saved");
-            closeActiveOverlays();
+            // Keep an already-open folder — closing+refocus was reopening it and
+            // stacking FolderBackdrop dims on every HOME-from-title return.
+            closeActiveOverlays(false);
             const bool hasActivityWidget = std::any_of(
                 m_widgetStore.all().begin(), m_widgetStore.all().end(),
                 [](const switchu::widgets::Widget& widget) {

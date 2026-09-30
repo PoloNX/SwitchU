@@ -3300,6 +3300,13 @@ void WiiUMenuApp::closeFolder(bool preserveEditMode, bool animated) {
         return;
     }
 
+    DebugLog::log("[folders] close id=%u animated=%d", oldId, animated ? 1 : 0);
+
+    // Clear in-folder SGDB art as soon as close begins so a quick open of
+    // another folder never inherits the previous title's hero.
+    if (m_steamGridDbBackdrop)
+        m_steamGridDbBackdrop->showTitle(0, true);
+
     if (m_folderBackdrop) m_folderBackdrop->hide(FolderZoom::kCloseDur);
 
     // Mirror of the open: the folder's icons fly back into its tile while the
@@ -3353,6 +3360,11 @@ void WiiUMenuApp::finishCloseFolder(std::uint32_t oldId, bool preserveEditMode) 
     m_grid->setRect({kGridRectX, kGridRectY, kGridRectW, kGridRectH});
     applyDisplayModel(buildRootFolderModel(), folderTitleId(oldId), false);
     syncPageIndicator();
+    // Drop in-folder hero art immediately so the next folder open does not
+    // briefly (or permanently) show the previous title's artwork.
+    if (m_steamGridDbBackdrop)
+        m_steamGridDbBackdrop->showTitle(0, true);
+    showFocusedSteamGridDbArtwork(true);
     if (preserveEditMode) {
         // Focus is on the folder we just left; use that as the root placement target.
         m_editTargetIndex = findTitleIndex(folderTitleId(oldId));
@@ -4873,7 +4885,10 @@ void WiiUMenuApp::onUpdate(float dt) {
 
             switch (notif.msg) {
             case switchu::smi::MenuMessage::HomeRequest:
-                m_sysMsg.pushAction(SysAction::HomeButton);
+                // Already on the menu — dismiss open folders/overlays. Do not
+                // reuse HomeButton: that path re-focuses a title and can reopen
+                // the folder (and re-capture a dimmed frosted backdrop).
+                m_sysMsg.pushAction(SysAction::HomeDismiss);
                 break;
             case switchu::smi::MenuMessage::ApplicationExited:
                 m_launcher.setAppRunning(false);
