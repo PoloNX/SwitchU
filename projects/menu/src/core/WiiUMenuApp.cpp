@@ -109,6 +109,54 @@ bool directoryExists(const std::string& path) {
     return std::filesystem::is_directory(path, ec);
 }
 
+
+bool isMp3Filename(const std::string& name) {
+    if (name.size() < 4)
+        return false;
+    const auto ext = name.substr(name.size() - 4);
+    return ext == ".mp3" || ext == ".MP3";
+}
+
+std::vector<uint8_t> readBinaryFileLimited(const std::string& path, size_t maxBytes = 2 * 1024 * 1024) {
+    std::ifstream f(path, std::ios::binary);
+    if (!f)
+        return {};
+    f.seekg(0, std::ios::end);
+    const auto sz = static_cast<size_t>(f.tellg());
+    if (sz == 0 || sz > maxBytes)
+        return {};
+    f.seekg(0, std::ios::beg);
+    std::vector<uint8_t> bytes(sz);
+    f.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(sz));
+    if (!f)
+        return {};
+    return bytes;
+}
+
+std::vector<uint8_t> loadAlbumFolderCover(const std::string& albumDir) {
+    static const char* kNames[] = {
+        "cover.jpg", "cover.png", "folder.jpg", "folder.png",
+        "AlbumArt.jpg", "AlbumArt.png", "albumart.jpg", "albumart.png"
+    };
+    for (const char* name : kNames) {
+        auto bytes = readBinaryFileLimited(albumDir + "/" + name);
+        if (!bytes.empty())
+            return bytes;
+    }
+    return {};
+}
+
+void sortMusicTrackNames(std::vector<std::string>& names) {
+    std::sort(names.begin(), names.end(), [](const std::string& left, const std::string& right) {
+        const bool leftIsHome = (left == "home.mp3" || left == "home.MP3");
+        const bool rightIsHome = (right == "home.mp3" || right == "home.MP3");
+        if (leftIsHome != rightIsHome)
+            return leftIsHome;
+        return left < right;
+    });
+}
+
+
 std::string resolveAudioOverridePath(const std::string& preferredBase,
                                     const std::string& fallbackBase,
                                     const char* relativePath) {
@@ -4291,30 +4339,94 @@ void WiiUMenuApp::loadSoundPreset(const std::string& preset) {
     std::string musicDir = musicBase + "/music";
     std::error_code ec;
     if (std::filesystem::is_directory(musicDir, ec)) {
-        std::vector<std::string> tracks;
+        std::vector<std::string> rootTracks;
+        std::vector<std::string> albumFolders;
         ec.clear();
         for (const auto& entry : std::filesystem::directory_iterator(musicDir, ec)) {
             if (ec)
                 break;
-
-            std::string name = entry.path().filename().string();
-            if (name.size() > 4 && name.substr(name.size() - 4) == ".mp3")
-                tracks.push_back(name);
+            const auto name = entry.path().filename().string();
+            if (name.empty() || name[0] == '.')
+                continue;
+            std::error_code entryEc;
+            if (entry.is_directory(entryEc)) {
+                albumFolders.push_back(name);
+            } else if (entry.is_regular_file(entryEc) && isMp3Filename(name)) {
+                rootTracks.push_back(name);
+            }
         }
-        std::sort(tracks.begin(), tracks.end(), [](const std::string& left, const std::string& right) {
-            const bool leftIsHome = (left == "home.mp3");
-            const bool rightIsHome = (right == "home.mp3");
-            if (leftIsHome != rightIsHome)
-                return leftIsHome;
-            return left < right;
-        });
-        for (const auto& t : tracks)
-            m_audio.loadTrack(musicDir + "/" + t);
-        DebugLog::log("[audio] Loaded %zu music tracks", tracks.size());
+        sortMusicTrackNames(rootTracks);
+        std::sort(albumFolders.begin(), albumFolders.end());
+
+        size_t loaded = 0;
+        for (const auto& t : rootTracks) {
+            if (m_audio.loadTrack(musicDir + "/" + t))
+                ++loaded;
+        }
+        for (const auto& folder : albumFolders) {
+            const std::string albumDir = musicDir + "/" + folder;
+            std::vector<std::string> albumTracks;
+            ec.clear();
+            for (const auto& entry : std::filesystem::directory_iterator(albumDir, ec)) {
+                if (ec)
+                    break;
+                std::error_code entryEc;
+                if (!entry.is_regular_file(entryEc))
+                    continue;
+                const auto name = entry.path().filename().string();
+                if (isMp3Filename(name))
+                    albumTracks.push_back(name);
+            }
+            if (albumTracks.empty())
+                continue;
+            sortMusicTrackNames(albumTracks);
+            auto cover = loadAlbumFolderCover(albumDir);
+            if (!cover.empty())
+                m_audio.setFolderCover(folder, std::move(cover));
+            for (const auto& t : albumTracks) {
+                if (m_audio.loadTrack(albumDir + "/" + t, folder))
+                    ++loaded;
+            }
+            // If no folder.jpg, reuse the first track APIC as the album thumb.
+            if (!m_audio.folderCoverArt(folder)) {
+                for (const auto& track : m_audio.tracks()) {
+                    if (track.albumFolder == folder && !track.coverArt.empty()) {
+                        m_audio.setFolderCover(folder, track.coverArt);
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (!m_config.musicPlaylistOrder.empty())
+            m_audio.applyPlaylistOrder(m_config.musicPlaylistOrder);
+        m_audio.setShuffle(m_config.musicShuffle);
+        m_audio.setRepeatMode(static_cast<MusicRepeatMode>(
+            std::clamp(m_config.musicRepeatMode, 0, 2)));
+        DebugLog::log("[audio] Loaded %zu music tracks (%zu albums)",
+                      loaded, albumFolders.size());
     } else {
         DebugLog::log("[audio] No music directory for preset '%s'", effectivePreset.c_str());
     }
 }
+
+void WiiUMenuApp::persistMusicPlaybackState(bool updateEnabledFlag) {
+    m_config.musicTrackIndex = m_audio.currentIndex();
+    m_config.musicPositionSeconds = m_audio.positionSeconds();
+    m_config.musicShuffle = m_audio.shuffle();
+    m_config.musicRepeatMode = static_cast<int>(m_audio.repeatMode());
+    m_config.musicPlaylistOrder = m_audio.playlistOrderKeys();
+    if (updateEnabledFlag)
+        m_config.musicEnabled = m_audio.isPlaying();
+}
+
+void WiiUMenuApp::resumeMenuMusicAfterReturn() {
+    m_audio.setMusicFade(1.f);
+    m_musicFadeActive = false;
+    if (m_config.musicEnabled && m_audio.trackCount() > 0)
+        m_audio.play();
+}
+
 
 void WiiUMenuApp::changeSoundPreset(const std::string& preset) {
     const std::string effectivePreset = resolveSoundPresetId(preset);
@@ -4770,10 +4882,20 @@ void WiiUMenuApp::onUpdate(float dt) {
         const float t = m_launchAnim->musicFadeProgress();
         m_audio.setMusicFade(1.f - nxui::Easing::outQuad(t));
         m_musicFadeActive = true;
+        if (t >= 0.98f && m_audio.isPlaying()) {
+            persistMusicPlaybackState();
+            m_audio.pause();
+        }
     } else if (m_musicFadeActive) { // cancel fade if the animation was interrupted
         m_musicFadeActive = false;
         m_audio.setMusicFade(1.f);
     }
+
+    if (m_audioStarted)
+        m_audio.update(dt);
+
+    if (m_quickSettings && m_quickSettings->isActive())
+        m_quickSettings->refreshMusicState();
 
     syncThemePackageTransfer();
     retryPendingBackgroundImage();
@@ -4796,6 +4918,35 @@ void WiiUMenuApp::onUpdate(float dt) {
                                                          m_effectivePreset.icons.basePath));
             DebugLog::log("[init] deferred initial icon/sidebar uploads done");
         }
+    }
+
+
+    // Finish music start only after leave-splash + deferred assets. Doing
+    // Mix_PlayMusic/seek in the same burst as sidebar/icon GPU uploads was
+    // freezing AppletReturn (menu.log stopped right after deferred uploads).
+    if (m_audioPlaybackRestorePending
+        && m_audioStarted
+        && !leaveSplashActive()
+        && m_deferredInitialAssetFrames == 0) {
+        if (m_audioPlaybackRestoreDelayFrames > 0)
+            --m_audioPlaybackRestoreDelayFrames;
+        if (m_audioPlaybackRestoreDelayFrames == 0) {
+            DebugLog::log("[boot] restoring music playback");
+            m_audioPlaybackRestorePending = false;
+            m_audio.restorePlaybackState(m_config.musicTrackIndex,
+                                         m_config.musicPositionSeconds,
+                                         m_config.musicEnabled);
+            // Seek + unmute immediately — splash/deferred uploads are already done.
+            m_audio.updateDeferredSeek();
+            m_audioSeekAfterHoldoff = false;
+            DebugLog::log("[boot] music playback restore returned");
+        }
+    } else if (m_audioSeekAfterHoldoff
+               && !leaveSplashActive()) {
+        DebugLog::log("[boot] applying deferred music seek");
+        m_audioSeekAfterHoldoff = false;
+        m_audio.updateDeferredSeek();
+        DebugLog::log("[boot] deferred music seek returned");
     }
 
     if (m_audioInitPending) {
@@ -4823,13 +4974,21 @@ void WiiUMenuApp::onUpdate(float dt) {
 
     if (!m_audioStarted && m_audioFuture.valid() &&
         m_audioFuture.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+        DebugLog::log("[boot] audio future ready — applying volume/playlist (playback delayed)");
         m_audioFuture.get();
         m_audio.setVolume(m_config.musicVolume);
         m_audio.setSfxVolume(m_config.sfxVolume);
-        if (m_config.musicEnabled) m_audio.play();
+        m_audio.setShuffle(m_config.musicShuffle);
+        m_audio.setRepeatMode(static_cast<MusicRepeatMode>(
+            std::clamp(m_config.musicRepeatMode, 0, 2)));
+        if (!m_config.musicPlaylistOrder.empty())
+            m_audio.applyPlaylistOrder(m_config.musicPlaylistOrder);
         m_loadedSoundPreset = resolveSoundPresetId(m_config.soundPreset);
         m_audioStarted = true;
-        DebugLog::log("[init] Audio ready (deferred)");
+        m_audioPlaybackRestorePending = true;
+        m_audioPlaybackRestoreDelayFrames = 0; // restore as soon as splash + deferred uploads clear
+        DebugLog::log("[init] Audio ready (deferred); playback restore armed delay=%d",
+                      m_audioPlaybackRestoreDelayFrames);
     }
 
     if (m_presetChangePending && m_audioFuture.valid() &&
@@ -4837,8 +4996,14 @@ void WiiUMenuApp::onUpdate(float dt) {
         m_audioFuture.get();
         m_audio.setVolume(m_config.musicVolume);
         m_audio.setSfxVolume(m_config.sfxVolume);
-        if (m_config.musicEnabled)
-            m_audio.play();
+        m_audio.setShuffle(m_config.musicShuffle);
+        m_audio.setRepeatMode(static_cast<MusicRepeatMode>(
+            std::clamp(m_config.musicRepeatMode, 0, 2)));
+        if (!m_config.musicPlaylistOrder.empty())
+            m_audio.applyPlaylistOrder(m_config.musicPlaylistOrder);
+        m_audio.restorePlaybackState(m_config.musicTrackIndex,
+                                     m_config.musicPositionSeconds,
+                                     m_config.musicEnabled);
         m_loadedSoundPreset = m_pendingSoundPreset.empty() ? resolveSoundPresetId(m_config.soundPreset)
                                                            : m_pendingSoundPreset;
         m_pendingSoundPreset.clear();
@@ -5046,6 +5211,7 @@ void WiiUMenuApp::onUpdate(float dt) {
         !m_editMode &&
         !(m_contextMenu && m_contextMenu->isActive()) &&
         !(m_dialog && m_dialog->isActive()) &&
+        !(m_quickSettings && m_quickSettings->isActive()) &&
         !(m_settings && m_settings->isActive()) &&
         !(m_themeShop && m_themeShop->isActive()) &&
         !(m_gameOptions && m_gameOptions->isActive()) &&
@@ -5214,10 +5380,47 @@ std::vector<WiiUMenuApp::ActionHint> WiiUMenuApp::buildActionHints() {
         return hints;
 
     if (m_quickSettings && m_quickSettings->isActive()) {
-        add(dpadGlyph(), i18n.tr("hint.navigate", "Navigate"));
-        add(buttonGlyph(nxui::Button::A), i18n.tr("hint.select", "Select"));
-        add(buttonGlyph(nxui::Button::B) + buttonGlyph(nxui::Button::L),
-            i18n.tr("hint.close", "Close"));
+        if (m_quickSettings->isCoverFullscreen()) {
+            add(dpadGlyph(), i18n.tr("hint.navigate", "Navigate"));
+            add(buttonGlyph(nxui::Button::A), i18n.tr("hint.select", "Select"));
+            add(buttonGlyph(nxui::Button::ZL), i18n.tr("quicksettings.prev", "Prev"));
+            add(buttonGlyph(nxui::Button::ZR), i18n.tr("quicksettings.next", "Next"));
+            add(buttonGlyph(nxui::Button::R), i18n.tr("quicksettings.play_pause", "Play/Pause"));
+            add(buttonGlyph(nxui::Button::LStick), i18n.tr("quicksettings.repeat", "Repeat"));
+            add(buttonGlyph(nxui::Button::RStick), i18n.tr("quicksettings.shuffle", "Shuffle"));
+            add(buttonGlyph(nxui::Button::Plus),
+                i18n.tr("quicksettings.playlist", "Playlist"));
+            add(buttonGlyph(nxui::Button::B) + buttonGlyph(nxui::Button::Minus),
+                i18n.tr("hint.close", "Close"));
+            return hints;
+        }
+        if (m_quickSettings->isPlaylistReorderMode()) {
+            add(dpadGlyph(), i18n.tr("hint.move", "Move"));
+            add(buttonGlyph(nxui::Button::A), i18n.tr("hint.place", "Place"));
+            add(buttonGlyph(nxui::Button::B), i18n.tr("hint.cancel", "Cancel"));
+        } else if (m_quickSettings->isPlaylistOpen()) {
+            add(dpadGlyph(), i18n.tr("hint.navigate", "Navigate"));
+            add(buttonGlyph(nxui::Button::A), i18n.tr("hint.select", "Select"));
+            if (!m_quickSettings->hasAlbumFolders())
+                add(buttonGlyph(nxui::Button::Y), i18n.tr("hint.move", "Move"));
+            add(buttonGlyph(nxui::Button::X), i18n.tr("hint.artwork", "Art"));
+            add(buttonGlyph(nxui::Button::Plus), i18n.tr("quicksettings.playlist", "Playlist"));
+            if (m_quickSettings->isCoverFullscreen() == false)
+                add(buttonGlyph(nxui::Button::Minus), i18n.tr("hint.fullscreen", "Fullscreen"));
+            add(buttonGlyph(nxui::Button::B), i18n.tr("hint.back", "Back"));
+        } else {
+            add(dpadGlyph(), i18n.tr("hint.navigate", "Navigate"));
+            add(buttonGlyph(nxui::Button::A), i18n.tr("hint.select", "Select"));
+            add(buttonGlyph(nxui::Button::ZL), i18n.tr("quicksettings.prev", "Prev"));
+            add(buttonGlyph(nxui::Button::ZR), i18n.tr("quicksettings.next", "Next"));
+            add(buttonGlyph(nxui::Button::R), i18n.tr("quicksettings.play_pause", "Play/Pause"));
+            add(buttonGlyph(nxui::Button::Plus), i18n.tr("quicksettings.playlist", "Playlist"));
+            add(buttonGlyph(nxui::Button::Minus), i18n.tr("hint.fullscreen", "Fullscreen"));
+            add(buttonGlyph(nxui::Button::LStick), i18n.tr("quicksettings.repeat", "Repeat"));
+            add(buttonGlyph(nxui::Button::RStick), i18n.tr("quicksettings.shuffle", "Shuffle"));
+            add(buttonGlyph(nxui::Button::B) + buttonGlyph(nxui::Button::L),
+                i18n.tr("hint.close", "Close"));
+        }
         return hints;
     }
 

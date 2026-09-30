@@ -159,7 +159,10 @@
     "search": "Search",
     "sort_custom": "My order",
     "sort_alpha": "A-Z",
-    "sort_recent": "Recent"
+    "sort_recent": "Recent",
+    "fullscreen": "Fullscreen",
+    "artwork": "Art",
+    "place": "Place"
   },
   "settings": {
     "tabs": {
@@ -778,6 +781,13 @@
     "reboot": "Reboot",
     "power_off": "Power Off",
     "hint_adjust": "Adjust",
-    "hint_shortcut": "Quick Settings"
+    "hint_shortcut": "Quick Settings",
+    "music_empty": "No music loaded",
+    "prev": "Prev",
+    "next": "Next",
+    "play_pause": "Play/Pause",
+    "repeat": "Repeat",
+    "shuffle": "Shuffle",
+    "playlist": "Playlist"
   }
 }

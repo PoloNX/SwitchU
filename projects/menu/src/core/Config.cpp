@@ -54,6 +54,17 @@ bool AppConfig::load() {
     readJsonOpt(j, "musicEnabled", musicEnabled);
     readJsonOpt(j, "musicVolume", musicVolume);
     readJsonOpt(j, "sfxVolume", sfxVolume);
+    readJsonOpt(j, "musicTrackIndex", musicTrackIndex);
+    readJsonOpt(j, "musicPositionSeconds", musicPositionSeconds);
+    readJsonOpt(j, "musicShuffle", musicShuffle);
+    readJsonOpt(j, "musicRepeatMode", musicRepeatMode);
+    musicPlaylistOrder.clear();
+    if (auto it = j.find("musicPlaylistOrder"); it != j.end() && it->is_array()) {
+        for (const auto& item : *it) {
+            if (item.is_string())
+                musicPlaylistOrder.push_back(item.get<std::string>());
+        }
+    }
     readJsonOpt(j, "gridColumns", gridColumns);
     readJsonOpt(j, "gridRows", gridRows);
     {
@@ -171,6 +182,11 @@ bool AppConfig::save() const {
     j["musicEnabled"] = musicEnabled;
     j["musicVolume"] = musicVolume;
     j["sfxVolume"] = sfxVolume;
+    j["musicTrackIndex"] = musicTrackIndex;
+    j["musicPositionSeconds"] = musicPositionSeconds;
+    j["musicShuffle"] = musicShuffle;
+    j["musicRepeatMode"] = std::clamp(musicRepeatMode, 0, 2);
+    j["musicPlaylistOrder"] = musicPlaylistOrder;
     j["gridColumns"] = std::clamp(gridColumns, 1, 8);
     j["gridRows"] = std::clamp(gridRows, 1, 5);
     j["appLayoutMode"] = (appLayoutMode == AppLayoutMode::DynamicLine) ? "dynamic_line" : "grid";
