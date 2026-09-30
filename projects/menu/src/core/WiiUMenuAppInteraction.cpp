@@ -1517,6 +1517,7 @@ void WiiUMenuApp::handleTouch() {
         float ty = input.touchY();
 
         m_touchArrowLeft = m_touchArrowRight = false;
+        m_touchBattery = false;
         if (m_arrowAnimLeft.show > 0.5f && pageArrowRect(true).expanded(12.f).contains(tx, ty)) {
             m_touchArrowLeft = true;
             m_touchHitIndex = -1;
@@ -1525,6 +1526,14 @@ void WiiUMenuApp::handleTouch() {
         if (m_arrowAnimRight.show > 0.5f && pageArrowRect(false).expanded(12.f).contains(tx, ty)) {
             m_touchArrowRight = true;
             m_addPageTouchHold = m_addPageMode;
+            m_touchHitIndex = -1;
+            return;
+        }
+
+        // Whole battery pill opens Quick Settings (chevron = "more").
+        if (m_battery && m_battery->isVisible() && m_battery->hitTest(tx, ty)
+            && m_topHud && m_topHud->isVisible()) {
+            m_touchBattery = true;
             m_touchHitIndex = -1;
             return;
         }
@@ -1584,6 +1593,18 @@ void WiiUMenuApp::handleTouch() {
     }
 
     if (input.touchUp()) {
+        if (m_touchBattery) {
+            m_touchBattery = false;
+            float dx = input.touchDeltaX();
+            float dy = input.touchDeltaY();
+            if (std::abs(dx) < 20.f && std::abs(dy) < 20.f
+                && m_battery && m_battery->isVisible()
+                && m_battery->hitTest(input.touchX(), input.touchY())) {
+                openQuickSettings();
+            }
+            return;
+        }
+
         if (m_touchArrowLeft || m_touchArrowRight) {
             const bool left = m_touchArrowLeft;
             const bool wasAddHold = m_addPageTouchHold;
@@ -1654,6 +1675,7 @@ void WiiUMenuApp::handleSystemAction(SysAction a) {
             if (!m_widgetStore.save())
                 DebugLog::log("[widgets] recent activity duration could not be saved");
             closeActiveOverlays();
+            resumeMenuMusicAfterReturn();
             const bool hasActivityWidget = std::any_of(
                 m_widgetStore.all().begin(), m_widgetStore.all().end(),
                 [](const switchu::widgets::Widget& widget) {

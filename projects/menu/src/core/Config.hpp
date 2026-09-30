@@ -10,6 +10,11 @@ struct AppConfig {
     bool  musicEnabled = true;
     float musicVolume  = 0.4f;
     float sfxVolume    = 0.7f;
+    int   musicTrackIndex = 0;
+    float musicPositionSeconds = 0.f;
+    bool  musicShuffle = false;
+    int   musicRepeatMode = 1; // MusicRepeatMode::All
+    std::vector<std::string> musicPlaylistOrder;
     int   gridColumns  = 5;
     int   gridRows     = 3;
     AppLayoutMode appLayoutMode = AppLayoutMode::Grid;

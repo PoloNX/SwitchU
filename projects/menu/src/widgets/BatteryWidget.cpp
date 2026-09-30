@@ -46,7 +46,8 @@ void BatteryWidget::onContentRender(nxui::Renderer& ren) {
     float bw = 46.f, bh = 22.f;
     float boltSlotW = m_charging ? 22.f : 0.f;
     float gap = m_charging ? 8.f : 0.f;
-    float groupW = bw + gap + boltSlotW;
+    // Battery body + terminal (+ bolt when charging). Center this group in the pill.
+    float groupW = bw + 2.f + 4.8f + gap + boltSlotW;
     float bx = cr.x + (cr.width - groupW) * 0.5f;
     float textH = m_font ? m_font->measure("100%").y * 0.75f : 14.f;
     float contentH = bh + 6.f + textH;
@@ -89,13 +90,16 @@ void BatteryWidget::onContentRender(nxui::Renderer& ren) {
                             std::min(radius * 0.45f, fillRect.width * 0.45f));
     }
 
+    float groupRight = body.right() + 2.f + 4.8f;
     if (m_charging) {
         float boltPulse = 0.70f + 0.30f * (0.5f + 0.5f * std::sin(m_chargeAnim * 6.8f));
         float boltH = 27.f + 1.6f * boltPulse;
         float boltW = boltH * 0.78f;
-        float boltX = body.right() + gap + (boltSlotW - boltW) * 0.5f;
+        // Sit the bolt just past the terminal nub.
+        float boltX = body.right() + 2.f + 4.8f + 4.f + (boltSlotW - boltW) * 0.5f;
         float boltY = by + (bh - boltH) * 0.5f - 0.5f;
         nxui::Rect boltRect = {boltX, boltY, boltW, boltH};
+        groupRight = std::max(groupRight, boltRect.right());
 
         nxui::Color glow = nxui::Color(1.f, 0.74f, 0.12f, 0.18f * op * boltPulse);
         drawLightningBolt(ren, boltRect.expanded(2.8f), glow, glow.withAlpha(0.f), 0.f);
@@ -115,6 +119,17 @@ void BatteryWidget::onContentRender(nxui::Renderer& ren) {
         float tx = cr.x + (cr.width - sz.x * 0.75f) * 0.5f;
         float ty = by + bh + 6.f;
         ren.drawText(buf, {tx, ty}, m_font, m_textColor.withAlpha(op), 0.75f);
+    }
+
+    // Chevron centered in the free space to the right of the battery group.
+    {
+        const float freeLeft = groupRight + 2.f;
+        const float freeRight = cr.right();
+        const float cx = (freeLeft + freeRight) * 0.5f;
+        const float cy = cr.y + cr.height * 0.5f;
+        const nxui::Color chev = m_textColor.withAlpha(0.42f * op);
+        ren.drawLine({cx - 3.5f, cy - 5.5f}, {cx + 2.5f, cy}, chev, 1.7f);
+        ren.drawLine({cx + 2.5f, cy}, {cx - 3.5f, cy + 5.5f}, chev, 1.7f);
     }
 }
 

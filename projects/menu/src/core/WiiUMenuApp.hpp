@@ -247,6 +247,7 @@ private:
     };
     PageArrowAnim m_arrowAnimLeft, m_arrowAnimRight;
     bool m_touchArrowLeft = false, m_touchArrowRight = false;
+    bool m_touchBattery = false;
 
     nxui::Rect pageArrowRect(bool left);
     void kickPageArrow(int dir);
@@ -273,6 +274,8 @@ private:
     void createSettings();
     void createQuickSettings();
     void openQuickSettings();
+    void persistMusicPlaybackState(bool updateEnabledFlag = false);
+    void resumeMenuMusicAfterReturn();
     void closeQuickSettings();
     void createThemeShop();
     void createGameOptions();
@@ -417,6 +420,9 @@ private:
     std::future<void>    m_configSaveFuture;
     std::future<void>    m_themeDeleteFuture;
     bool                 m_audioStarted = false;
+    bool  m_audioPlaybackRestorePending = false;
+    bool  m_audioSeekAfterHoldoff = false;
+    int   m_audioPlaybackRestoreDelayFrames = 0;
     bool                 m_musicFadeActive = false;
     std::vector<std::string> m_availablePresets;
     bool                 m_presetChangePending = false;

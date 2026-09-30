@@ -556,6 +556,83 @@ void WiiUMenuApp::createQuickSettings() {
         m_config.sfxVolume = value;
         m_audio.setSfxVolume(value);
     };
+    callbacks.onMusicPlayPause = [this]() {
+        m_audio.togglePlayPause();
+        m_config.musicEnabled = m_audio.isPlaying();
+        persistMusicPlaybackState(false);
+        m_config.save();
+    };
+    callbacks.onMusicPrev = [this]() {
+        m_audio.prevTrack();
+        persistMusicPlaybackState(false);
+        m_config.musicEnabled = true;
+        m_config.save();
+    };
+    callbacks.onMusicNext = [this]() {
+        m_audio.nextTrack();
+        persistMusicPlaybackState(false);
+        m_config.musicEnabled = true;
+        m_config.save();
+    };
+    callbacks.onMusicToggleShuffle = [this]() {
+        m_audio.setShuffle(!m_audio.shuffle());
+        persistMusicPlaybackState(false);
+        m_config.save();
+    };
+    callbacks.onMusicCycleRepeat = [this]() {
+        const int next = (static_cast<int>(m_audio.repeatMode()) + 1) % 3;
+        m_audio.setRepeatMode(static_cast<MusicRepeatMode>(next));
+        persistMusicPlaybackState(false);
+        m_config.save();
+    };
+    callbacks.onMusicSelectTrack = [this](int index) {
+        m_audio.playTrackAt(index);
+        m_config.musicEnabled = true;
+        persistMusicPlaybackState(false);
+        m_config.save();
+    };
+    callbacks.onMusicMoveTrack = [this](int from, int to) {
+        if (!m_audio.moveTrack(from, to))
+            return;
+        persistMusicPlaybackState(false);
+        m_config.save();
+    };
+    callbacks.onMusicSeek = [this](float seconds) {
+        m_audio.seekTo(seconds);
+    };
+    callbacks.onMusicQueryState = [this]() {
+        QuickSettingsOverlay::MusicUiState state;
+        state.nowPlaying = m_audio.currentDisplayTitle();
+        if (state.nowPlaying.empty())
+            state.nowPlaying = nxui::I18n::instance().tr(
+                "quicksettings.music_empty", "No music loaded");
+        state.playing = m_audio.isPlaying();
+        state.shuffle = m_audio.shuffle();
+        state.repeat = m_audio.repeatMode();
+        state.volume = m_audio.volume();
+        state.positionSeconds = m_audio.positionSeconds();
+        state.durationSeconds = m_audio.durationSeconds();
+        state.currentIndex = m_audio.currentIndex();
+        state.hasAlbumFolders = m_audio.hasAlbumFolders();
+        state.playlistFilenames = m_audio.playlistFilenames();
+        state.playlistOrderKeys = m_audio.playlistOrderKeys();
+        state.playlistTitles.reserve(m_audio.tracks().size());
+        state.playlistAlbumFolders.reserve(m_audio.tracks().size());
+        for (const auto& track : m_audio.tracks()) {
+            state.playlistTitles.push_back(track.displayTitle());
+            state.playlistAlbumFolders.push_back(track.albumFolder);
+        }
+        return state;
+    };
+    callbacks.onMusicQueryCoverArt = [this]() {
+        return m_audio.currentCoverArt();
+    };
+    callbacks.onMusicQueryTrackCover = [this](int index) -> const std::vector<uint8_t>* {
+        return m_audio.trackCoverArt(index);
+    };
+    callbacks.onMusicQueryFolderCover = [this](const std::string& folder) -> const std::vector<uint8_t>* {
+        return m_audio.folderCoverArt(folder);
+    };
     callbacks.onSleepRequested = [this]() {
         if (!m_dialog) return;
         auto& i18n = nxui::I18n::instance();
@@ -645,6 +722,7 @@ void WiiUMenuApp::openQuickSettings() {
 void WiiUMenuApp::closeQuickSettings() {
     if (!m_quickSettings || !m_quickSettings->isActive()) return;
     m_quickSettings->hide();
+    persistMusicPlaybackState(false);
     m_config.save();
     nxui::Widget* target = m_dialogReturnFocus;
     if (!isCurrentFocusableWidget(target) && m_grid)
@@ -1233,8 +1311,13 @@ void WiiUMenuApp::createThemeShop() {
     });
 
     m_themeShop->onMusicEnabledChange([this](bool enabled) {
-        if (enabled) m_audio.play(); else m_audio.stop();
         m_config.musicEnabled = enabled;
+        if (enabled)
+            m_audio.play();
+        else
+            m_audio.pause();
+        persistMusicPlaybackState(false);
+        m_config.save();
     });
     m_themeShop->onMusicVolumeChange([this](float v) {
         m_audio.setVolume(v);
