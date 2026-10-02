@@ -48,6 +48,10 @@ bool Renderer::initialize() {
             .initialize(layout);
 
         m_whiteMemBlock = m_gpu.allocImageMemory(layout.getSize());
+        if (!m_whiteMemBlock) {
+            std::printf("[Renderer] FAILED to allocate memory for white texture\n");
+            return false;
+        }
         m_whiteImage.initialize(layout, m_whiteMemBlock, 0);
 
         uint32_t white = 0xFFFFFFFF;

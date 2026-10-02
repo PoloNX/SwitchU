@@ -278,13 +278,19 @@ dk::UniqueMemBlock GpuDevice::allocImageMemory(uint32_t size) {
     if (R_SUCCEEDED(svcGetInfo(&total, InfoType_TotalMemorySize, CUR_PROCESS_HANDLE, 0)) &&
         R_SUCCEEDED(svcGetInfo(&used, InfoType_UsedMemorySize, CUR_PROCESS_HANDLE, 0)) &&
         total > used) {
-        constexpr u64 kAllocationHeadroom = 24ull * 1024ull * 1024ull;
+        // Keep a small process free-memory cushion so concurrent sysmodules
+        // (Frame Tap, Ultrahand, etc.) do not push the menu into soft-locks.
+        // 2 MiB is intentionally lower than the prior 24 MiB reserve so more
+        // artwork can still load while refusing before total exhaustion.
+        constexpr u64 kAllocationHeadroom = 2ull * 1024ull * 1024ull;
         const u64 freeMemory = total - used;
         if (freeMemory < static_cast<u64>(size) + kAllocationHeadroom) {
             GpuDevice::logGpu(
-                "[GpuDevice] refusing %u image bytes: free=%llu headroom=%llu\n",
+                "[GpuDevice] refusing %u image bytes: free=%llu used=%llu total=%llu headroom=%llu\n",
                 size,
                 static_cast<unsigned long long>(freeMemory),
+                static_cast<unsigned long long>(used),
+                static_cast<unsigned long long>(total),
                 static_cast<unsigned long long>(kAllocationHeadroom));
             return {};
         }
@@ -325,6 +331,25 @@ GpuDevice::ImageAlloc GpuDevice::allocImageFromPool(uint32_t size, uint32_t alig
                      (unsigned long long)kDefaultImageBudget);
         return {};
     }
+
+    u64 total = 0, used = 0;
+    if (R_SUCCEEDED(svcGetInfo(&total, InfoType_TotalMemorySize, CUR_PROCESS_HANDLE, 0)) &&
+        R_SUCCEEDED(svcGetInfo(&used, InfoType_UsedMemorySize, CUR_PROCESS_HANDLE, 0)) &&
+        total > used) {
+        constexpr u64 kAllocationHeadroom = 2ull * 1024ull * 1024ull;
+        const u64 freeMemory = total - used;
+        if (freeMemory < static_cast<u64>(size) + kAllocationHeadroom) {
+            GpuDevice::logGpu(
+                "[GpuDevice] pool refusing %u bytes: free=%llu used=%llu total=%llu headroom=%llu\n",
+                size,
+                static_cast<unsigned long long>(freeMemory),
+                static_cast<unsigned long long>(used),
+                static_cast<unsigned long long>(total),
+                static_cast<unsigned long long>(kAllocationHeadroom));
+            return {};
+        }
+    }
+
     // Try to fit in an existing chunk
     for (auto& chunk : m_imageChunks) {
         uint32_t aligned = (chunk.used + alignment - 1) & ~(alignment - 1);
