@@ -72,7 +72,9 @@ target("nxui")
     end
 
     if is_mode("release") then
-        add_cxflags("-O3", "-flto=auto", "-ffast-math", {force = true})
+        -- LTO disabled: -flto=auto stalled local release links and produced
+        -- "Input file doesn't fit ELF header" failures on some toolchains.
+        add_cxflags("-O3", "-ffast-math", {force = true})
     end
 target_end()
 
@@ -182,8 +184,7 @@ target("SwitchU")
     add_syslinks("nx")
 
     if is_mode("release") then
-        add_cxflags("-O3", "-flto=auto", "-ffast-math", {force = true})
-        add_ldflags("-flto=auto", {force = true})
+        add_cxflags("-O3", "-ffast-math", {force = true})
     end
 
     add_defines(version_define)
@@ -274,8 +275,7 @@ target("SwitchU-Manager")
     add_defines(version_define)
 
     if is_mode("release") then
-        add_cxflags("-O3", "-flto=auto", "-ffast-math", {force = true})
-        add_ldflags("-flto=auto", {force = true})
+        add_cxflags("-O3", "-ffast-math", {force = true})
     end
 
     before_build(function(target)
@@ -329,8 +329,7 @@ target("switchu-daemon")
     add_syslinks("nx")
 
     if is_mode("release") then
-        add_cxflags("-O3", "-flto=auto", "-ffast-math", {force = true})
-        add_ldflags("-flto=auto", {force = true})
+        add_cxflags("-O3", "-ffast-math", {force = true})
     end
 
     set_values("switch.name",    "switchu-daemon")
