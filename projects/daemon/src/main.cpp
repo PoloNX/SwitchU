@@ -217,7 +217,10 @@ static bool g_menuGfxRelaunchPending = false;
 // worsen vi/omm cascades. One delayed retry only; snappy path stays on success.
 static constexpr int kMenuGfxRelaunchMaxTries = 1;
 static constexpr int kMenuGfxRelaunchDelayTicks = 60; // ~600ms at 10ms tick
-static constexpr uint64_t kMenuEarlyExitNs = 2'500'000'000ULL;
+// Fallback window when last_gfx_fail.txt is missing. Slow probes under load
+// (catalog/control-cache) can exceed ~2.5s - do not require a short runtime
+// when the sticky gfx_fail marker is present.
+static constexpr uint64_t kMenuEarlyExitNs = 10'000'000'000ULL;
 static constexpr uint64_t kHomeMenuSettleNs = 80'000'000ULL;
 static constexpr uint64_t kHomeMenuGfxFailSettleNs = 600'000'000ULL;
 static constexpr const char* kLastGfxFailPath = "sdmc:/config/SwitchU/last_gfx_fail.txt";
@@ -1891,10 +1894,12 @@ static void mainLoop() {
                                   g_menuFastExitCount, g_menuRelaunchCooldown);
             g_menuFastExitCount = 0;
         }
-        // Early exit before MenuReady: one delayed retry only. Immediate multi-try
-        // relaunch after 0xF601 appeared to worsen vi/omm panics.
-        if (!sawReady
-            && runtimeNs < kMenuEarlyExitNs
+        // Exit before MenuReady: one delayed retry only. Prefer the sticky gfx_fail
+        // marker over a short runtime cutoff - slow probes under load were skipping
+        // recovery and leaving a black screen with no menu.
+        const bool gfxRecoverCandidate = !sawReady
+            && (haveGfxFail || runtimeNs < kMenuEarlyExitNs);
+        if (gfxRecoverCandidate
             && g_menuRelaunchCooldown <= 0
             && g_actionQueue.empty()
             && !g_pendingHomeMenuLaunch
@@ -1906,20 +1911,26 @@ static void mainLoop() {
             g_menuGfxRelaunchPending = true;
             switchu::FileLog::logCommit(
                 "[main] menu died before ready; scheduling gfx relaunch try=%d/%d "
-                "delay_ticks=%d (~%dms) suspended=0x%016lX",
+                "delay_ticks=%d (~%dms) suspended=0x%016lX gfx_fail=%d runtime=%lums",
                 g_menuGfxRelaunchTries, kMenuGfxRelaunchMaxTries, g_menuGfxRelaunchDelay,
-                g_menuGfxRelaunchDelay * 10, suspended);
+                g_menuGfxRelaunchDelay * 10, suspended, haveGfxFail ? 1 : 0,
+                static_cast<unsigned long>(runtimeNs / 1'000'000ULL));
         } else if (sawReady) {
             g_menuGfxRelaunchTries = 0;
             g_menuGfxRelaunchPending = false;
-        } else if (!sawReady && runtimeNs < kMenuEarlyExitNs) {
+        } else if (gfxRecoverCandidate) {
             switchu::FileLog::logCommit(
                 "[main] menu died before ready; NOT relaunching "
-                "(tries=%d/%d cooldown=%d pending_home=%d fg_applet=%d actions=%zu) "
-                "press HOME again to retry suspended=0x%016lX",
+                "(tries=%d/%d cooldown=%d pending_home=%d fg_applet=%d actions=%zu "
+                "gfx_fail=%d) press HOME again to retry suspended=0x%016lX",
                 g_menuGfxRelaunchTries, kMenuGfxRelaunchMaxTries, g_menuRelaunchCooldown,
                 g_pendingHomeMenuLaunch ? 1 : 0, g_foregroundAppletActive ? 1 : 0,
-                g_actionQueue.size(), suspended);
+                g_actionQueue.size(), haveGfxFail ? 1 : 0, suspended);
+        } else if (!sawReady) {
+            switchu::FileLog::logCommit(
+                "[main] menu exited without ready; no gfx recovery "
+                "(runtime=%lums gfx_fail=0) suspended=0x%016lX",
+                static_cast<unsigned long>(runtimeNs / 1'000'000ULL), suspended);
         }
         didWork = true;
     }
