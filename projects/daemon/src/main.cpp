@@ -217,19 +217,18 @@ static bool g_menuGfxRelaunchPending = false;
 // Watchdog tears it down so we do not forward HOME forever into a dead holder.
 static bool g_menuGfxAwaitingReady = false;
 static int  g_menuGfxReadyWatchdog = 0;
-// After 0xF601 / early probe exit, multi-relaunch was observed to finish off a
-// wounded vi. One soft auto-retry with a longer gap; a hung MenuReady watchdog
-// never schedules another open.
+// Soft auto-retry is only for early exits WITHOUT a sticky gfx_fail marker.
+// A probe fail (viInitialize 0xF601) means vi is already wounded - auto-relaunch
+// was seen to hang then cascade into vi/omm. Hung MenuReady watchdog also never
+// schedules another open.
 static constexpr int kMenuGfxRelaunchMaxTries = 1;
 static constexpr int kMenuGfxRelaunchDelayTicksTry1 = 300; // ~3000ms before sole retry
 static constexpr int kMenuGfxReadyWatchdogTicks = 350; // ~3.5s awaiting MenuReady
 static constexpr uint64_t kMenuGfxWatchdogTerminateNs = 2'000'000'000ULL;
-// Fallback window when last_gfx_fail.txt is missing. Slow probes under load
-// (catalog/control-cache) can exceed ~2.5s - do not require a short runtime
-// when the sticky gfx_fail marker is present.
+// Early-exit window for soft retry when last_gfx_fail.txt is missing.
 static constexpr uint64_t kMenuEarlyExitNs = 10'000'000'000ULL;
 // Happy-path settle before Album launch. Idle stays snappy; suspended titles
-// get a short vi/layer quiet window. Longer settle is only on gfx-fail retry.
+// get a short vi/layer quiet window. Longer settle is only on soft retry.
 static constexpr uint64_t kHomeMenuSettleNsIdle = 80'000'000ULL;        // ~80ms
 static constexpr uint64_t kHomeMenuSettleNsSuspended = 300'000'000ULL;  // ~300ms
 static constexpr uint64_t kHomeMenuGfxFailSettleNs = 2'500'000'000ULL; // 2.5s before sole relaunch
@@ -1950,12 +1949,14 @@ static void mainLoop() {
                                   g_menuFastExitCount, g_menuRelaunchCooldown);
             g_menuFastExitCount = 0;
         }
-        // Exit before MenuReady: one delayed retry only. Prefer the sticky gfx_fail
-        // marker over a short runtime cutoff - slow probes under load were skipping
-        // recovery and leaving a black screen with no menu.
-        const bool gfxRecoverCandidate = !sawReady
-            && (haveGfxFail || runtimeNs < kMenuEarlyExitNs);
-        if (gfxRecoverCandidate
+        // Exit before MenuReady:
+        // - Sticky gfx_fail (0xF601): do NOT auto-relaunch; press HOME again.
+        // - Early exit without marker: one soft auto-retry (often recovers).
+        // - Hung MenuReady path above never schedules another open.
+        const bool softRetryCandidate = !sawReady && !haveGfxFail
+            && runtimeNs < kMenuEarlyExitNs;
+        const bool stickyGfxFailStop = !sawReady && haveGfxFail;
+        if (softRetryCandidate
             && g_menuRelaunchCooldown <= 0
             && g_actionQueue.empty()
             && !g_pendingHomeMenuLaunch
@@ -1967,25 +1968,30 @@ static void mainLoop() {
             g_menuGfxRelaunchPending = true;
             switchu::FileLog::logCommit(
                 "[main] menu died before ready; scheduling gfx relaunch try=%d/%d "
-                "delay_ticks=%d (~%dms) suspended=0x%016lX gfx_fail=%d runtime=%lums",
+                "delay_ticks=%d (~%dms) suspended=0x%016lX gfx_fail=0 runtime=%lums",
                 g_menuGfxRelaunchTries, kMenuGfxRelaunchMaxTries, g_menuGfxRelaunchDelay,
-                g_menuGfxRelaunchDelay * 10, suspended, haveGfxFail ? 1 : 0,
+                g_menuGfxRelaunchDelay * 10, suspended,
                 static_cast<unsigned long>(runtimeNs / 1'000'000ULL));
         } else if (sawReady) {
             g_menuGfxRelaunchTries = 0;
             g_menuGfxRelaunchPending = false;
-        } else if (gfxRecoverCandidate) {
-            // Stop the empty-shell "no app/menu; relaunching" hammer from
-            // immediately undoing soft-recovery's stop (boot/crash loops).
+        } else if (stickyGfxFailStop || softRetryCandidate) {
+            if (g_menuGfxRelaunchTries < kMenuGfxRelaunchMaxTries)
+                g_menuGfxRelaunchTries = kMenuGfxRelaunchMaxTries;
             if (g_menuRelaunchCooldown < 500)
                 g_menuRelaunchCooldown = 500;
             switchu::FileLog::logCommit(
                 "[main] menu died before ready; NOT relaunching "
-                "(tries=%d/%d cooldown=%d pending_home=%d fg_applet=%d actions=%zu "
-                "gfx_fail=%d) press HOME again to retry suspended=0x%016lX",
+                "(sticky_gfx_fail=%d tries=%d/%d cooldown=%d pending_home=%d "
+                "fg_applet=%d actions=%zu step=%s rc=0x%X) press HOME again "
+                "suspended=0x%016lX",
+                stickyGfxFailStop ? 1 : 0,
                 g_menuGfxRelaunchTries, kMenuGfxRelaunchMaxTries, g_menuRelaunchCooldown,
                 g_pendingHomeMenuLaunch ? 1 : 0, g_foregroundAppletActive ? 1 : 0,
-                g_actionQueue.size(), haveGfxFail ? 1 : 0, suspended);
+                g_actionQueue.size(),
+                haveGfxFail ? failStep : "-",
+                haveGfxFail ? failRc : 0,
+                suspended);
         } else if (!sawReady) {
             if (g_menuRelaunchCooldown < 500)
                 g_menuRelaunchCooldown = 500;
