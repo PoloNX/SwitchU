@@ -90,7 +90,7 @@ inline Result cleanupHolder() {
     return 0;
 }
 
-inline Result terminate();
+inline Result terminate(uint64_t timeoutNs = 15'000'000'000ULL);
 
 inline Result prepare() {
     const uint64_t startedAt = armGetSystemTick();
@@ -179,13 +179,14 @@ inline Result launch(smi::MenuStartMode mode, const smi::SystemStatus& status) {
     return startPrepared(mode, status);
 }
 
-inline Result terminate() {
+inline Result terminate(uint64_t timeoutNs) {
     if (!g_holderCreated)
         return cleanupHolder();
-    switchu::FileLog::log("[menu_la] terminate begin holderActive=%d",
-                          (g_active && appletHolderActive(&g_holder)) ? 1 : 0);
+    switchu::FileLog::log("[menu_la] terminate begin holderActive=%d timeout_ms=%lu",
+                          (g_active && appletHolderActive(&g_holder)) ? 1 : 0,
+                          static_cast<unsigned long>(timeoutNs / 1'000'000ULL));
     if (g_active) {
-        Result rc = appletHolderRequestExitOrTerminate(&g_holder, 15'000'000'000ULL);
+        Result rc = appletHolderRequestExitOrTerminate(&g_holder, timeoutNs);
         switchu::FileLog::log("[menu_la] terminate request rc=0x%X", rc);
         g_lastExitReason = R_SUCCEEDED(rc) ? appletHolderGetExitReason(&g_holder)
                                            : LibAppletExitReason_Unexpected;
