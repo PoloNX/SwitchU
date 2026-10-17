@@ -107,9 +107,26 @@ static constexpr float kPowerIconScale = 0.96f;
 static constexpr float kPowerMoonScale = 1.18f;
 static constexpr float kPowerIconGap = 7.f;
 
+static constexpr float kPlaylistRowH = 40.f;
+static constexpr float kPlaylistThumbSize = 28.f;
+static constexpr float kPlaylistThumbGap = 8.f;
+static constexpr float kSliderTrackH = 14.f;
+static constexpr float kSliderLabelScale = 0.82f;
+// Player now-playing strip: a step up from playlist thumbs (28). Card height is
+// tuned so padding under the power row equals kWidgetGap.
+static constexpr float kMusicNowPlayingThumbSize = 36.f;
+static constexpr float kMusicNowPlayingThumbGap = 10.f;
+
 static constexpr float kStatusY = kTitleY + kTitleLineH + kTitleBreath;
 static constexpr float kMusicY = kStatusY + kStatusH + kWidgetGap;
-static constexpr float kMusicH = 136.f;
+static constexpr float kMusicNowPlayingPadY = 5.f;
+static constexpr float kMusicNowPlayingH = 44.f;
+static constexpr float kMusicControlsY = kMusicNowPlayingPadY + kMusicNowPlayingH + 5.f;
+static constexpr float kMusicControlsH = 44.f;
+static constexpr float kMusicProgressLabelY = kMusicControlsY + kMusicControlsH + 10.f;
+static constexpr float kMusicProgressTrackY = kMusicProgressLabelY + 22.f;
+// +14 bottom inset → power-row slack == kWidgetGap (10).
+static constexpr float kMusicH = kMusicProgressTrackY + kSliderTrackH + 14.f;
 static constexpr float kBgmY = kMusicY + kMusicH + kWidgetGap;
 static constexpr float kSfxY = kBgmY + kSliderItemH + kWidgetGap;
 static constexpr float kBrightnessY = kSfxY + kSliderItemH + kWidgetGap;
@@ -117,12 +134,6 @@ static constexpr float kAirplaneY = kBrightnessY + kSliderItemH + kWidgetGap;
 static constexpr float kWifiY = kAirplaneY + kToggleH + kWidgetGap;
 // Power row sits where the old section title was — same gap as every other widget.
 static constexpr float kPowerBtnY = kWifiY + kToggleH + kWidgetGap;
-
-static constexpr float kMusicControlsY = 30.f;
-static constexpr float kMusicControlsH = 44.f;
-// Player card: title + transport + scrub only (BGM volume is its own row).
-static constexpr float kMusicProgressLabelY = 84.f;
-static constexpr float kMusicProgressTrackY = 106.f;
 // Fullscreen cover overlay player.
 static constexpr float kCoverFsCardW = 560.f;
 static constexpr float kCoverFsCardH = 168.f;
@@ -135,7 +146,6 @@ static constexpr float kCoverFsProgressTrackY = 130.f;
 static constexpr int kCoverFsControlCount = 6; // Prev..Playlist
 static constexpr float kCoverFsPlaylistHeaderH = 40.f;
 static constexpr float kCoverFsPlaylistListPad = 10.f;
-static constexpr float kPlaylistRowH = 40.f;
 static constexpr float kPlaylistHeaderBaseH = 42.f;
 static constexpr float kPlaylistArtPad = 12.f;
 // Match playlist entry gutter (list inset); a touch wider than the old full-bleed.
@@ -143,13 +153,9 @@ static constexpr float kPlaylistArtSidePad = 16.f;
 static constexpr float kMusicCardLabelSidePad = 12.f;
 static constexpr float kPlaylistEyeSize = 28.f;
 static constexpr float kPlaylistHandleW = 28.f;
-static constexpr float kPlaylistThumbSize = 28.f;
-static constexpr float kPlaylistThumbGap = 8.f;
 static constexpr float kPlaylistTreeIndent = 20.f;
 static constexpr int kPlaylistThumbCacheMax = 20;
 static constexpr float kPlaylistListBottomPad = 12.f;
-static constexpr float kSliderTrackH = 14.f;
-static constexpr float kSliderLabelScale = 0.82f;
 
 // Bandcamp-style title marquee (see title_marquee.py).
 static constexpr float kMarqueeStartDelay = 0.40f;
@@ -705,8 +711,11 @@ const nxui::Texture* QuickSettingsOverlay::playlistThumbTexture(
     PlaylistThumb entry;
     entry.key = key;
     entry.lastUse = m_playlistThumbClock;
+    const float decodePx = (key.rfind("np", 0) == 0)
+        ? kMusicNowPlayingThumbSize * 2.f
+        : kPlaylistThumbSize * 2.f;
     if (!entry.tex.loadFromMemory(ren.gpu(), ren, bytes->data(), bytes->size(),
-                                  static_cast<int>(kPlaylistThumbSize * 2.f)))
+                                  static_cast<int>(decodePx)))
         return nullptr;
 
     if (static_cast<int>(m_playlistThumbs.size()) >= kPlaylistThumbCacheMax) {
@@ -900,6 +909,7 @@ void QuickSettingsOverlay::openPlaylist() {
     m_playlistFocusParked = false;
     m_playlistEyeFocused = false;
     m_playlistArtFocused = false;
+    m_nowPlayingFocused = false;
     m_coverFullscreen = false;
     if (m_playlistRows.empty())
         rebuildPlaylistRows();
@@ -1085,6 +1095,13 @@ void QuickSettingsOverlay::updatePlaylistMarquee(float dt) {
 }
 
 void QuickSettingsOverlay::cycleMusicControl(int delta) {
+    if (m_nowPlayingFocused) {
+        m_nowPlayingFocused = false;
+        m_selectedMusicControl = (delta < 0) ? MusicControl::Prev : MusicControl::Playlist;
+        updateCursorTarget();
+        if (m_callbacks.onNavigateSfx) m_callbacks.onNavigateSfx();
+        return;
+    }
     int c = static_cast<int>(m_selectedMusicControl) + delta;
     const int count = static_cast<int>(MusicControl::Count);
     while (c < 0) c += count;
@@ -1093,7 +1110,66 @@ void QuickSettingsOverlay::cycleMusicControl(int delta) {
     if (m_callbacks.onNavigateSfx) m_callbacks.onNavigateSfx();
 }
 
+void QuickSettingsOverlay::resetNowPlayingMarquee() {
+    m_nowPlayingMarqueeOffset = 0.f;
+    m_nowPlayingMarqueeHold = kMarqueeStartDelay;
+}
+
+void QuickSettingsOverlay::updateNowPlayingMarquee(float dt) {
+    if (!m_nowPlayingFocused || !m_smallFont
+        || m_selectedItem != ItemIndex::MusicTransport
+        || (m_playlistOpen && !m_playlistFocusParked)) {
+        m_nowPlayingMarqueeOffset = 0.f;
+        return;
+    }
+
+    const std::string& np = m_music.nowPlaying.empty()
+        ? std::string()
+        : m_music.nowPlaying;
+    if (np.empty()) {
+        m_nowPlayingMarqueeOffset = 0.f;
+        return;
+    }
+
+    const float textScale = 0.78f;
+    nxui::Rect npRow = computeNowPlayingRect();
+    const float textX = npRow.x + 2.f + kMusicNowPlayingThumbSize + kMusicNowPlayingThumbGap;
+    const float textMaxW = npRow.x + npRow.width - textX - 6.f;
+    const float textW = m_smallFont->measure(np).x * textScale;
+    if (textW <= textMaxW + 1.f) {
+        m_nowPlayingMarqueeOffset = 0.f;
+        m_nowPlayingMarqueeHold = kMarqueeStartDelay;
+        return;
+    }
+
+    if (m_nowPlayingMarqueeHold > 0.f) {
+        m_nowPlayingMarqueeHold -= dt;
+        return;
+    }
+
+    m_nowPlayingMarqueeOffset += kMarqueeSpeedPx * dt;
+    const float cycle = textW + kMarqueeGapPx;
+    if (cycle > 1.f && m_nowPlayingMarqueeOffset >= cycle)
+        m_nowPlayingMarqueeOffset = std::fmod(m_nowPlayingMarqueeOffset, cycle);
+}
+
+void QuickSettingsOverlay::activateNowPlaying() {
+    if (m_coverFullscreen) {
+        toggleCoverFsPlaylist();
+    } else if (m_playlistOpen) {
+        closePlaylist();
+    } else {
+        openPlaylist();
+    }
+    if (m_callbacks.onActivateSfx) m_callbacks.onActivateSfx();
+    updateCursorTarget();
+}
+
 void QuickSettingsOverlay::activateMusicControl() {
+    if (m_nowPlayingFocused) {
+        activateNowPlaying();
+        return;
+    }
     const bool trackStep = m_selectedMusicControl == MusicControl::Prev
         || m_selectedMusicControl == MusicControl::Next;
     switch (m_selectedMusicControl) {
@@ -1201,6 +1277,20 @@ void QuickSettingsOverlay::setupNavigationActions() {
             if (m_callbacks.onNavigateSfx) m_callbacks.onNavigateSfx();
             return;
         }
+        // Music card: transport buttons → now-playing strip → previous QS item.
+        if (m_selectedItem == ItemIndex::MusicTransport
+            && (!m_playlistOpen || m_playlistFocusParked)) {
+            if (!m_nowPlayingFocused) {
+                m_nowPlayingFocused = true;
+                resetNowPlayingMarquee();
+                updateCursorTarget();
+                if (m_callbacks.onNavigateSfx) m_callbacks.onNavigateSfx();
+                return;
+            }
+            m_nowPlayingFocused = false;
+        } else {
+            m_nowPlayingFocused = false;
+        }
         int next = static_cast<int>(m_selectedItem) - 1;
         if (next < 0)
             next = static_cast<int>(ItemIndex::Count) - 1;
@@ -1266,6 +1356,16 @@ void QuickSettingsOverlay::setupNavigationActions() {
             if (m_callbacks.onNavigateSfx) m_callbacks.onNavigateSfx();
             return;
         }
+        // Music card: now-playing strip → transport buttons → progress.
+        if (m_selectedItem == ItemIndex::MusicTransport
+            && m_nowPlayingFocused
+            && (!m_playlistOpen || m_playlistFocusParked)) {
+            m_nowPlayingFocused = false;
+            updateCursorTarget();
+            if (m_callbacks.onNavigateSfx) m_callbacks.onNavigateSfx();
+            return;
+        }
+        m_nowPlayingFocused = false;
         int next = static_cast<int>(m_selectedItem) + 1;
         if (next >= static_cast<int>(ItemIndex::Count))
             next = 0;
@@ -1301,7 +1401,7 @@ void QuickSettingsOverlay::setupNavigationActions() {
         if (m_playlistOpen && m_playlistFocusParked) {
             if (m_playlistReorderMode) return;
             const bool hopFromPrev = m_selectedItem == ItemIndex::MusicTransport
-                && m_selectedMusicControl == MusicControl::Prev;
+                && (m_nowPlayingFocused || m_selectedMusicControl == MusicControl::Prev);
             const bool hopFromToggle = m_selectedItem == ItemIndex::AirplaneMode
                 || m_selectedItem == ItemIndex::Wifi;
             const bool hopFromSleep = m_selectedItem == ItemIndex::PowerActions
@@ -1664,6 +1764,8 @@ void QuickSettingsOverlay::show() {
     setFocusable(true);
     m_selectedItem = ItemIndex::MusicTransport;
     m_selectedMusicControl = MusicControl::PlayPause;
+    m_nowPlayingFocused = false;
+    resetNowPlayingMarquee();
     m_selectedPower = PowerAction::Sleep;
     m_statusPollTimer = 0.f;
     closePlaylist();
@@ -1922,6 +2024,16 @@ nxui::Rect QuickSettingsOverlay::computeMusicCardRect() const {
     return computeItemRect(ItemIndex::MusicTransport);
 }
 
+nxui::Rect QuickSettingsOverlay::computeNowPlayingRect() const {
+    nxui::Rect musicCard = computeMusicCardRect();
+    return {
+        musicCard.x + 6.f,
+        musicCard.y + kMusicNowPlayingPadY,
+        musicCard.width - 12.f,
+        kMusicNowPlayingH
+    };
+}
+
 nxui::Rect QuickSettingsOverlay::computePowerButtonRect(PowerAction action) const {
     // Match the outer width of every other QS card (cx - 4, cw + 8).
     nxui::Rect panel = computePanelRect();
@@ -2142,6 +2254,10 @@ void QuickSettingsOverlay::updateCursorTarget(bool instant) {
 
     m_cursor.setVisible(true);
     if (m_selectedItem == ItemIndex::MusicTransport) {
+        if (m_nowPlayingFocused) {
+            m_cursor.moveTo(computeNowPlayingRect(), 10.f, dur);
+            return;
+        }
         nxui::Rect r = computeMusicControlRect(m_selectedMusicControl);
         m_cursor.moveTo(r, 10.f, dur);
         return;
@@ -2210,6 +2326,7 @@ void QuickSettingsOverlay::update(float dt) {
             handleTouch(*m_input);
         }
         updatePlaylistMarquee(dt);
+        updateNowPlayingMarquee(dt);
     }
 
     m_cursor.update(dt);
@@ -2348,6 +2465,7 @@ void QuickSettingsOverlay::handleTouch(nxui::Input& input) {
             progressHit = {progressHit.x - 8.f, progressHit.y - 12.f,
                            progressHit.width + 16.f, progressHit.height + 24.f};
             if (progressHit.contains(tx, ty) && m_music.durationSeconds > 0.05f) {
+                m_nowPlayingFocused = false;
                 m_selectedItem = ItemIndex::MusicProgress;
                 m_draggingProgress = true;
                 seekFromProgressX(tx);
@@ -2355,6 +2473,14 @@ void QuickSettingsOverlay::handleTouch(nxui::Input& input) {
                 return;
             }
             m_selectedItem = ItemIndex::MusicTransport;
+            if (computeNowPlayingRect().contains(tx, ty)) {
+                m_nowPlayingFocused = true;
+                resetNowPlayingMarquee();
+                activateNowPlaying();
+                updateCursorTarget();
+                return;
+            }
+            m_nowPlayingFocused = false;
             for (int i = 0; i < static_cast<int>(MusicControl::Count); ++i) {
                 auto ctrl = static_cast<MusicControl>(i);
                 if (computeMusicControlRect(ctrl).contains(tx, ty)) {
@@ -2728,6 +2854,9 @@ void QuickSettingsOverlay::render(nxui::Renderer& ren) {
     const float cardX = panel.x + 18.f;
     const float cardW = panel.width - 36.f;
 
+    // Current-track cover for the now-playing strip (and playlist art).
+    refreshCoverTexture(ren);
+
     if (m_font || m_smallFont) {
         std::string title = i18n.tr("quicksettings.title", "Quick Settings");
         nxui::Font* titleFont = m_font ? m_font : m_smallFont;
@@ -2834,19 +2963,87 @@ void QuickSettingsOverlay::render(nxui::Renderer& ren) {
         ren.drawRoundedRect(musicCard, cardFill, 12.f);
         ren.drawRoundedRectOutline(musicCard, neutralBorder, 12.f, 1.f);
 
-        if (m_smallFont) {
-            std::string np = m_music.nowPlaying.empty()
-                ? i18n.tr("quicksettings.music_idle", "Not playing")
-                : m_music.nowPlaying;
-            np = ellipsize(m_smallFont, np, musicCard.width - 24.f, 0.78f);
-            ren.drawText(np, {musicCard.x + 12.f, musicCard.y + 8.f},
-                         m_smallFont, primaryText, 0.78f);
+        // Now-playing strip: playlist-row layout; highlight only when focused.
+        {
+            nxui::Rect npRow = computeNowPlayingRect();
+            const bool npFocused = m_selectedItem == ItemIndex::MusicTransport
+                && m_nowPlayingFocused
+                && (!m_playlistOpen || m_playlistFocusParked);
+            const bool hasTrack = m_music.currentIndex >= 0
+                && !m_music.nowPlaying.empty();
+            if (npFocused) {
+                ren.drawRoundedRect(npRow, cursorColor.withAlpha(0.22f * alpha), 10.f);
+            }
+
+            nxui::Rect thumb = {
+                npRow.x + 2.f,
+                npRow.y + (npRow.height - kMusicNowPlayingThumbSize) * 0.5f,
+                kMusicNowPlayingThumbSize,
+                kMusicNowPlayingThumbSize
+            };
+            const std::vector<uint8_t>* artBytes = nullptr;
+            std::string artKey;
+            if (hasTrack) {
+                artKey = "np:" + std::to_string(m_music.currentIndex);
+                if (m_callbacks.onMusicQueryTrackCover)
+                    artBytes = m_callbacks.onMusicQueryTrackCover(m_music.currentIndex);
+                if ((!artBytes || artBytes->empty())
+                    && m_music.currentIndex < static_cast<int>(m_music.playlistAlbumFolders.size())
+                    && m_callbacks.onMusicQueryFolderCover) {
+                    const std::string& folder =
+                        m_music.playlistAlbumFolders[static_cast<size_t>(m_music.currentIndex)];
+                    if (!folder.empty()) {
+                        artKey = "npfolder:" + folder;
+                        artBytes = m_callbacks.onMusicQueryFolderCover(folder);
+                    }
+                }
+            }
+            // Decode at player thumb size (cache key differs from playlist 28px thumbs).
+            const nxui::Texture* thumbTex = nullptr;
+            if (artBytes && !artBytes->empty()) {
+                thumbTex = playlistThumbTexture(ren, artKey, artBytes);
+            }
+            if (!thumbTex && m_coverTex.valid())
+                thumbTex = &m_coverTex;
+            ren.drawRoundedRect(thumb, cardFill, 8.f);
+            if (thumbTex)
+                ren.drawTextureRounded(thumbTex, thumb, 8.f,
+                                       nxui::Color(1.f, 1.f, 1.f, alpha));
+
+            if (m_smallFont) {
+                std::string np = m_music.nowPlaying.empty()
+                    ? i18n.tr("quicksettings.music_idle", "Not playing")
+                    : m_music.nowPlaying;
+                const float textScale = 0.78f;
+                const float textX = thumb.x + thumb.width + kMusicNowPlayingThumbGap;
+                const float textMaxW = npRow.x + npRow.width - textX - 6.f;
+                nxui::Vec2 fullSz = m_smallFont->measure(np);
+                float ty = npRow.y + (npRow.height - fullSz.y * textScale) * 0.5f;
+                nxui::Rect textClip = {textX, npRow.y, textMaxW, npRow.height};
+                const bool marquee = npFocused
+                    && fullSz.x * textScale > textMaxW + 1.f
+                    && m_nowPlayingMarqueeHold <= 0.f;
+                if (marquee) {
+                    ren.pushClipRect(textClip);
+                    const float cycle = fullSz.x * textScale + kMarqueeGapPx;
+                    const float scroll = std::fmod(m_nowPlayingMarqueeOffset, cycle);
+                    ren.drawText(np, {textX - scroll, ty},
+                                 m_smallFont, primaryText, textScale);
+                    ren.drawText(np, {textX - scroll + cycle, ty},
+                                 m_smallFont, primaryText, textScale);
+                    ren.popClipRect();
+                } else {
+                    std::string title = ellipsize(m_smallFont, np, textMaxW, textScale);
+                    ren.drawText(title, {textX, ty}, m_smallFont, primaryText, textScale);
+                }
+            }
         }
 
         for (int i = 0; i < static_cast<int>(MusicControl::Count); ++i) {
             auto ctrl = static_cast<MusicControl>(i);
             nxui::Rect btn = computeMusicControlRect(ctrl);
             const bool focused = (m_selectedItem == ItemIndex::MusicTransport
+                && !m_nowPlayingFocused
                 && m_selectedMusicControl == ctrl
                 && (!m_playlistOpen || m_playlistFocusParked));
             const bool activeMode =

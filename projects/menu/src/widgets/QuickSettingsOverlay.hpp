@@ -137,6 +137,9 @@ private:
     void openPlaylist();
     void closePlaylist();
     void cycleMusicControl(int delta);
+    void resetNowPlayingMarquee();
+    void updateNowPlayingMarquee(float dt);
+    void activateNowPlaying();
     void beginPlaylistReorder();
     void confirmPlaylistReorder();
     void cancelPlaylistReorder();
@@ -184,6 +187,7 @@ private:
     nxui::Rect computeSliderTrackRect(ItemIndex item) const;
     nxui::Rect computeMusicControlRect(MusicControl control) const;
     nxui::Rect computeMusicCardRect() const;
+    nxui::Rect computeNowPlayingRect() const;
     nxui::Rect computePlaylistRowRect(int index) const;
     nxui::Rect computePlaylistHandleRect(int index) const;
     nxui::Rect computePlaylistListRect() const;
@@ -209,6 +213,9 @@ private:
 
     ItemIndex   m_selectedItem = ItemIndex::MusicTransport;
     MusicControl m_selectedMusicControl = MusicControl::PlayPause;
+    bool  m_nowPlayingFocused = false; // focus on the now-playing strip (above transport)
+    float m_nowPlayingMarqueeOffset = 0.f;
+    float m_nowPlayingMarqueeHold = 0.f;
     PowerAction m_selectedPower = PowerAction::Sleep;
 
     SelectionCursor m_cursor;

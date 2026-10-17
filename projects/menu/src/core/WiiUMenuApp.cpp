@@ -5840,17 +5840,15 @@ std::vector<WiiUMenuApp::ActionHint> WiiUMenuApp::buildActionHints() {
                 add(buttonGlyph(nxui::Button::Minus), i18n.tr("hint.fullscreen", "Fullscreen"));
             add(buttonGlyph(nxui::Button::B), i18n.tr("hint.back", "Back"));
         } else {
-            add(dpadGlyph(), i18n.tr("hint.navigate", "Navigate"));
-            add(buttonGlyph(nxui::Button::A), i18n.tr("hint.select", "Select"));
-            add(buttonGlyph(nxui::Button::ZL), i18n.tr("quicksettings.prev", "Prev"));
-            add(buttonGlyph(nxui::Button::ZR), i18n.tr("quicksettings.next", "Next"));
+            // Lean legend: Navigate / Select / Close are obvious here. L3/R3
+            // cycle repeat + toggle shuffle ("Modes").
+            add(buttonGlyph(nxui::Button::ZL) + buttonGlyph(nxui::Button::ZR),
+                i18n.tr("hint.skip", "Skip"));
             add(buttonGlyph(nxui::Button::R), i18n.tr("quicksettings.play_pause", "Play/Pause"));
+            add(buttonGlyph(nxui::Button::LStick) + buttonGlyph(nxui::Button::RStick),
+                i18n.tr("hint.modes", "Modes"));
             add(buttonGlyph(nxui::Button::Plus), i18n.tr("quicksettings.playlist", "Playlist"));
             add(buttonGlyph(nxui::Button::Minus), i18n.tr("hint.fullscreen", "Fullscreen"));
-            add(buttonGlyph(nxui::Button::LStick), i18n.tr("quicksettings.repeat", "Repeat"));
-            add(buttonGlyph(nxui::Button::RStick), i18n.tr("quicksettings.shuffle", "Shuffle"));
-            add(buttonGlyph(nxui::Button::B) + buttonGlyph(nxui::Button::L),
-                i18n.tr("hint.close", "Close"));
         }
         return hints;
     }
@@ -6104,6 +6102,12 @@ void WiiUMenuApp::renderActionHintBar(nxui::Renderer& ren) {
     // Find the smallest possible number of rows, then choose the contiguous
     // split whose widest row is the narrowest. With only eight hints there are
     // at most 128 layouts to inspect, and this avoids an awkward 5+1 split.
+    // QS-only (no playlist sheet): always one row — a second row sits on the
+    // power buttons. Playlist-open already packs into one row under kHintRowMaxW.
+    const bool qsForceOneRow = m_quickSettings && m_quickSettings->isActive()
+        && !m_quickSettings->isCoverFullscreen()
+        && !m_quickSettings->isPlaylistOpen();
+    const float rowMaxW = qsForceOneRow ? 4096.f : kHintRowMaxW;
     std::vector<std::pair<int, int>> rows;
     int bestRowCount = count + 1;
     float bestScore = std::numeric_limits<float>::max();
@@ -6119,6 +6123,8 @@ void WiiUMenuApp::renderActionHintBar(nxui::Renderer& ren) {
         }
 
         const int rowCount = static_cast<int>(candidate.size());
+        if (qsForceOneRow && rowCount != 1)
+            continue;
         if (rowCount > bestRowCount)
             continue;
 
@@ -6130,7 +6136,7 @@ void WiiUMenuApp::renderActionHintBar(nxui::Renderer& ren) {
             for (int i = rowFirst; i < rowLast; ++i)
                 width += m_hintCapsules[(size_t)i].width
                        + (i > rowFirst ? kHintCapGap : 0.f);
-            if (width > kHintRowMaxW && rowLast - rowFirst > 1) {
+            if (width > rowMaxW && rowLast - rowFirst > 1) {
                 valid = false;
                 break;
             }
@@ -6147,6 +6153,9 @@ void WiiUMenuApp::renderActionHintBar(nxui::Renderer& ren) {
             rows = std::move(candidate);
         }
     }
+    // Safety: if packing found nothing (should not), fall back to a single row.
+    if (rows.empty())
+        rows.push_back({0, count});
 
     const float reveal = std::clamp(m_hintContentReveal.value(), 0.f, 1.f);
     const float blockH = rows.size() * kHintCapH + (rows.size() - 1) * kHintRowGap;
