@@ -28,6 +28,7 @@ public:
     void setLayoutMode(AppLayoutMode mode) { m_layoutMode = mode; }
     // Screen-space band the logo is centred in (single-row mode only).
     void setLogoArea(const nxui::Rect& area) { m_logoArea = area; }
+    void setShowLogo(bool show) { m_showLogo = show; }
     void setPreloadTitles(std::vector<std::uint64_t> titleIds);
     void showTitle(std::uint64_t titleId, bool forceReload = false);
 
@@ -98,6 +99,7 @@ private:
     // Band the logo is centred in while single-row mode is active. The app
     // raises it above the folder title bubble when a folder is open.
     nxui::Rect m_logoArea{370.f, 149.f, 540.f, 150.f};
+    bool m_showLogo = true;
     bool m_showPreviousDuringCrossfade = false;
     nxui::AnimatedFloat m_fade{1.f};
     nxui::AnimatedFloat m_artworkOpacity{1.f};

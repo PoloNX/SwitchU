@@ -139,6 +139,26 @@ void FolderOptionsScreen::buildTabs() {
         if (m_customIconSelectCb) m_customIconSelectCb();
     };
     appearance.items.push_back(std::move(customIcon));
+
+    SettingItem customPoster;
+    customPoster.label = i18n.tr("folder.custom_poster", "Custom poster");
+    customPoster.buttonLabel = i18n.tr("button.select", "Select");
+    if (m_folder.hasCustomPoster) {
+        customPoster.secondaryButtonLabel = i18n.tr("button.clear_x", "×");
+        customPoster.onSecondary = [this](SettingItem&) {
+            if (m_customPosterClearCb) m_customPosterClearCb();
+        };
+    }
+    customPoster.description = m_folder.hasCustomPoster
+        ? i18n.tr("folder.custom_poster_set_desc",
+                  "SteamGridDB poster is active for this folder in single-row view.")
+        : i18n.tr("folder.custom_poster_desc",
+                  "Search SteamGridDB for a tall poster (single-row view).");
+    customPoster.type = ItemType::Action;
+    customPoster.onChange = [this](SettingItem&) {
+        if (m_customPosterSelectCb) m_customPosterSelectCb();
+    };
+    appearance.items.push_back(std::move(customPoster));
     m_tabs.push_back(std::move(appearance));
 
     Tab management;

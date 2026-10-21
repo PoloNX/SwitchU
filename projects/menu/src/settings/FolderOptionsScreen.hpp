@@ -15,6 +15,7 @@ public:
         int styleIndex = 0;
         bool showCover = false;
         bool hasCustomIcon = false;
+        bool hasCustomPoster = false;
         nxui::Texture* cover = nullptr;
     };
 
@@ -30,6 +31,8 @@ public:
     void onCoverChange(BoolCb cb) { m_coverCb = std::move(cb); }
     void onCustomIconSelect(VoidCb cb) { m_customIconSelectCb = std::move(cb); }
     void onCustomIconClear(VoidCb cb) { m_customIconClearCb = std::move(cb); }
+    void onCustomPosterSelect(VoidCb cb) { m_customPosterSelectCb = std::move(cb); }
+    void onCustomPosterClear(VoidCb cb) { m_customPosterClearCb = std::move(cb); }
 
 protected:
     void buildTabs() override;
@@ -49,4 +52,6 @@ private:
     BoolCb m_coverCb;
     VoidCb m_customIconSelectCb;
     VoidCb m_customIconClearCb;
+    VoidCb m_customPosterSelectCb;
+    VoidCb m_customPosterClearCb;
 };

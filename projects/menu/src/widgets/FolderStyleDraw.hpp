@@ -2,6 +2,7 @@
 
 #include <nxui/core/Types.hpp>
 #include <nxui/Theme.hpp>
+#include <array>
 #include <cstdint>
 #include <string>
 
@@ -12,6 +13,9 @@ class Texture;
 }
 
 namespace switchu::folders {
+
+/// 2x3 icon peek grid in single-row poster folders (6 small icons — cheap).
+inline constexpr int kFolderPeekMax = 6;
 
 struct FolderStyleDrawArgs {
     nxui::Renderer* renderer = nullptr;
@@ -25,10 +29,17 @@ struct FolderStyleDrawArgs {
     nxui::Font* font = nullptr;
     const std::string* title = nullptr;
     nxui::Texture* cover = nullptr;
+    /// Up to 6 small title icons (2x3) when no custom folder poster is set.
+    std::array<nxui::Texture*, kFolderPeekMax> peekCovers{};
+    int peekCoverCount = 0;
     bool showCover = false;
     bool focused = false;
     bool drawName = true;
     bool schematicPlaceholder = false;
+    /// Dynamic Line + posters: draw portrait-tuned chrome in a tall 2:3 tile.
+    bool posterAspect = false;
+    /// True when `cover` is the folder's own SteamGridDB poster (single inset).
+    bool coverIsFolderPoster = false;
 };
 
 void drawFolderStyle(const FolderStyleDrawArgs& args);

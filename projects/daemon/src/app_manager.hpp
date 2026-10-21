@@ -38,7 +38,6 @@ public:
     Result launch(std::uint64_t titleId, AccountUid uid);
     Result resume();
     Result terminate();
-    Result terminate(std::uint64_t gracefulTimeoutNs);
     Result requestExitLibraryAppletOrTerminate(std::uint64_t timeoutNs);
     Result areLibraryAppletsLeft(bool* out);
 
@@ -78,7 +77,6 @@ Event* stateChangedEvent();
 Result launch(std::uint64_t titleId, AccountUid uid);
 Result resume();
 Result terminate();
-Result terminate(std::uint64_t gracefulTimeoutNs);
 Result areLibraryAppletsLeft(bool* out);
 Result requestExitLibraryAppletOrTerminate(std::uint64_t timeoutNs);
 bool checkFinished();

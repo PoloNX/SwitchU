@@ -95,6 +95,8 @@ bool AppConfig::load() {
     readJsonOpt(j, "steamGridDbShowInGrid", steamGridDbShowInGrid);
     readJsonOpt(j, "steamGridDbShowInDynamicLine", steamGridDbShowInDynamicLine);
     readJsonOpt(j, "steamGridDbShowInFolders", steamGridDbShowInFolders);
+    readJsonOpt(j, "steamGridDbShowPosterInDynamicLine", steamGridDbShowPosterInDynamicLine);
+    readJsonOpt(j, "steamGridDbShowLogoInDynamicLine", steamGridDbShowLogoInDynamicLine);
     readJsonOpt(j, "steamGridDbApiKey", steamGridDbApiKey);
     readJsonOpt(j, "sortMode", sortMode);
     readJsonOpt(j, "sortLargeTiles", sortLargeTiles);
@@ -218,6 +220,8 @@ bool AppConfig::save() const {
     j["steamGridDbShowInGrid"] = steamGridDbShowInGrid;
     j["steamGridDbShowInDynamicLine"] = steamGridDbShowInDynamicLine;
     j["steamGridDbShowInFolders"] = steamGridDbShowInFolders;
+    j["steamGridDbShowPosterInDynamicLine"] = steamGridDbShowPosterInDynamicLine;
+    j["steamGridDbShowLogoInDynamicLine"] = steamGridDbShowLogoInDynamicLine;
     j["steamGridDbApiKey"] = steamGridDbApiKey;
     j["sortMode"] = std::clamp(sortMode, 0, 2);
     j["sortLargeTiles"] = sortLargeTiles;

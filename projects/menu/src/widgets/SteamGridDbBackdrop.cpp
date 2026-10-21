@@ -313,10 +313,8 @@ void SteamGridDbBackdrop::drawSet(nxui::Renderer& renderer,
 
     if (m_layoutMode != AppLayoutMode::DynamicLine) return;
 
-    if (set.hasLogo && set.logo.valid()) {
-        // Visually center the logo in the open space between the profile strip
-        // and the single-row carousel (the app raises this area inside a
-        // folder so the logo never hides behind the folder title bubble).
+    if (m_showLogo && set.hasLogo && set.logo.valid()) {
+        // containRect centres and constrains the logo inside the gutter band.
         renderer.drawTexture(&set.logo, containRect(set.logo, m_logoArea),
                              nxui::Color::white().withAlpha(0.96f * alpha));
     }

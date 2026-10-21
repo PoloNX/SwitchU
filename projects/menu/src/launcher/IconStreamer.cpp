@@ -1,11 +1,35 @@
 #include "IconStreamer.hpp"
 #include "widgets/GlossyIcon.hpp"
 #include "core/DebugLog.hpp"
+#include "steamgriddb/ArtworkCache.hpp"
+#include "steamgriddb/SteamGridDbManager.hpp"
 #include <nxui/third_party/stb/stb_image.h>
 #include <algorithm>
 #include <chrono>
 #include <cstring>
+#include <future>
 #include <unordered_map>
+
+namespace {
+
+constexpr int kPosterFitMaxW = 320;
+constexpr int kPosterFitMaxH = 480;
+
+IconStreamer::DecodedIcon decodePosterFromCache(std::uint64_t titleId) {
+    IconStreamer::DecodedIcon out{};
+    if (titleId == 0 || !SteamGridDbManager::hasPoster(titleId))
+        return out;
+    auto decoded = steamgriddb::artwork::decodeFit(
+        SteamGridDbManager::posterPath(titleId), kPosterFitMaxW, kPosterFitMaxH);
+    if (decoded.rgba.empty())
+        return out;
+    out.rgba = std::move(decoded.rgba);
+    out.w = decoded.width;
+    out.h = decoded.height;
+    return out;
+}
+
+} // namespace
 
 
 void IconStreamer::init(int appCount) {
@@ -13,10 +37,36 @@ void IconStreamer::init(int appCount) {
     m_compressed.resize(appCount);
     m_titleIds.assign(appCount, 0);
     m_appToSlot.assign(appCount, -1);
+    m_artStale.assign(static_cast<std::size_t>(appCount), 0);
 }
 
 void IconStreamer::setIconDataLoader(IconDataLoader loader) {
     m_iconLoader = std::move(loader);
+}
+
+void IconStreamer::softInvalidateArt() {
+    for (auto& bytes : m_compressed)
+        bytes.clear();
+    cancelPending();
+    m_pendingDecodes.clear();
+    m_failedTitleIds.clear();
+    m_artStale.assign(m_appToSlot.size(), 1);
+    m_lastPage = -1;
+    m_lastIconsPerPage = -1;
+}
+
+bool IconStreamer::setPreferPosterArt(bool preferPoster) {
+    if (m_preferPosterArt == preferPoster)
+        return false;
+    m_preferPosterArt = preferPoster;
+    softInvalidateArt();
+    return true;
+}
+
+bool IconStreamer::isArtStale(int appIndex) const {
+    return appIndex >= 0
+        && appIndex < static_cast<int>(m_artStale.size())
+        && m_artStale[static_cast<std::size_t>(appIndex)] != 0;
 }
 
 void IconStreamer::setTitleId(int appIndex, uint64_t titleId) {
@@ -41,6 +91,7 @@ void IconStreamer::resize(int appCount) {
     m_compressed.resize(appCount);
     m_titleIds.resize(appCount, 0);
     m_appToSlot.resize(appCount, -1);
+    m_artStale.resize(static_cast<std::size_t>(appCount), 0);
     if (m_pinnedIndex >= appCount)
         m_pinnedIndex = -1;
     m_lastPage = -1;
@@ -56,21 +107,33 @@ void IconStreamer::clearPinnedIndex() {
 }
 
 void IconStreamer::clear() {
+    cancelShadowPrefetch();
     cancelPending();
     m_pool.clear();
     m_compressed.clear();
     m_titleIds.clear();
     m_appToSlot.clear();
+    m_artStale.clear();
     m_freeSlots.clear();
     m_pendingDecodes.clear();
     m_failedTitleIds.clear();
     m_lastPage = -1;
     m_lastIconsPerPage = -1;
     m_pinnedIndex = -1;
+    m_preferPosterArt = false;
 }
 
 void IconStreamer::cancelPending() {
     for (auto& pending : m_pendingDecodes) {
+        if (pending.state)
+            pending.state->cancelled.store(true);
+    }
+}
+
+void IconStreamer::cancelPendingExcept(std::uint64_t keepTitleId) {
+    for (auto& pending : m_pendingDecodes) {
+        if (pending.titleId == keepTitleId)
+            continue;
         if (pending.state)
             pending.state->cancelled.store(true);
     }
@@ -155,6 +218,7 @@ void IconStreamer::reconcileTitleIds(const std::vector<uint64_t>& titleIds) {
     m_titleIds = titleIds;
     m_compressed = std::move(newCompressed);
     m_appToSlot = std::move(newAppToSlot);
+    m_artStale.assign(titleIds.size(), 0);
     m_pinnedIndex = -1;
     if (pinnedTitle != 0) {
         auto next = newIndexByTitle.find(pinnedTitle);
@@ -205,7 +269,8 @@ bool IconStreamer::needsVisibleLoads(int currentPage, int iconsPerPage) const {
         const bool pending = std::any_of(
             m_pendingDecodes.begin(), m_pendingDecodes.end(),
             [titleId](const PendingDecode& decode) { return decode.titleId == titleId; });
-        if (m_appToSlot[i] < 0 && !failed && (pending || hasData(i)))
+        const bool needsSlot = m_appToSlot[i] < 0 || isArtStale(i);
+        if (needsSlot && !failed && (pending || hasData(i)))
             return true;
     }
     return false;
@@ -224,8 +289,13 @@ IconStreamer::DecodedIcon IconStreamer::decodeIconData(const std::vector<uint8_t
     if (!raw) return out;
     std::unique_ptr<uint8_t, decltype(&stbi_image_free)> full(raw, &stbi_image_free);
 
-    if (w > kIconSize || h > kIconSize) {
-        int dstW = kIconSize, dstH = kIconSize;
+    // Preserve aspect. Room for ~2× single-row Posters (300×450 focused).
+    constexpr int kMaxW = kIconSize * 2;       // 320
+    constexpr int kMaxH = kIconSize * 3;       // 480
+    if (w > kMaxW || h > kMaxH) {
+        const float scale = std::min((float)kMaxW / (float)w, (float)kMaxH / (float)h);
+        const int dstW = std::max(1, (int)((float)w * scale + 0.5f));
+        const int dstH = std::max(1, (int)((float)h * scale + 0.5f));
         std::vector<uint8_t> scaled((size_t)dstW * dstH * 4);
         if (!scaled.empty()) {
             float scaleX = (float)w / dstW;
@@ -373,7 +443,7 @@ void IconStreamer::onPageChanged(int currentPage, int iconsPerPage,
             });
         if (!hasReusableTexture &&
             gpu.imageMemoryAvailable() <= kGpuImageReserve +
-                                              kIconSize * kIconSize * 4u) {
+                                              (kIconSize * 2) * (kIconSize * 3) * 4u) {
             ++pendingIndex;
             continue;
         }
@@ -401,37 +471,42 @@ void IconStreamer::onPageChanged(int currentPage, int iconsPerPage,
                           static_cast<unsigned long>(titleId));
             continue;
         }
-        if (!stillWanted || m_appToSlot[(size_t)appIndex] >= 0)
+        const bool stale = isArtStale(appIndex);
+        // Keep showing the previous art kind until a swap-in upload lands.
+        if (!stillWanted || (m_appToSlot[(size_t)appIndex] >= 0 && !stale))
             continue;
 
-        int poolIdx = -1;
-        if (!m_freeSlots.empty()) {
-            poolIdx = m_freeSlots.back();
-            m_freeSlots.pop_back();
-        } else {
-            poolIdx = static_cast<int>(m_pool.size());
-            m_pool.emplace_back(std::make_unique<TexSlot>());
+        int poolIdx = m_appToSlot[(size_t)appIndex];
+        if (poolIdx < 0 || poolIdx >= (int)m_pool.size() || !m_pool[(size_t)poolIdx]) {
+            if (!m_freeSlots.empty()) {
+                poolIdx = m_freeSlots.back();
+                m_freeSlots.pop_back();
+            } else {
+                poolIdx = static_cast<int>(m_pool.size());
+                m_pool.emplace_back(std::make_unique<TexSlot>());
+            }
         }
 
         auto& slot = *m_pool[(size_t)poolIdx];
         auto& decoded = state->decoded;
-        // A recycled pool texture keeps the same descriptor and address.
-        // Detach every stale consumer before overwriting it, including icons
-        // that moved to another index during a reflow.
-        for (const auto& icon : allIcons) {
-            if (icon && icon->texture() == &slot.texture)
-                icon->setTexture(nullptr);
+        // In-place swap-in keeps the icon pointer on this texture so the morph
+        // never blanks. Only detach foreign consumers of a recycled slot.
+        if (slot.appIndex != appIndex) {
+            for (const auto& icon : allIcons) {
+                if (icon && icon->texture() == &slot.texture)
+                    icon->setTexture(nullptr);
+            }
         }
         if (slot.texture.loadFromPixels(gpu, ren, decoded.rgba.data(), decoded.w, decoded.h)) {
             slot.appIndex = appIndex;
             m_appToSlot[(size_t)appIndex] = poolIdx;
+            if (appIndex < (int)m_artStale.size())
+                m_artStale[(size_t)appIndex] = 0;
             if (appIndex < (int)allIcons.size())
                 allIcons[(size_t)appIndex]->setTexture(&slot.texture);
-            // DebugLog::log("[streamer] uploaded title=0x%016lX app=%d pending=%d",
-            //               static_cast<unsigned long>(titleId), appIndex,
-            //               static_cast<int>(m_pendingDecodes.size()));
         } else {
             slot.appIndex = -1;
+            m_appToSlot[(size_t)appIndex] = -1;
             m_freeSlots.push_back(poolIdx);
             m_failedTitleIds.push_back(titleId);
             DebugLog::log("[streamer] upload failed title=0x%016lX app=%d",
@@ -459,7 +534,8 @@ void IconStreamer::onPageChanged(int currentPage, int iconsPerPage,
     for (int appIndex : loadOrder) {
         if ((int)m_pendingDecodes.size() >= (inBurst() ? kBurstMaxPendingDecodes : kMaxPendingDecodes))
             break;
-        if (m_appToSlot[(size_t)appIndex] >= 0 || !hasData(appIndex))
+        const bool stale = isArtStale(appIndex);
+        if ((m_appToSlot[(size_t)appIndex] >= 0 && !stale) || !hasData(appIndex))
             continue;
 
         const uint64_t titleId = m_titleIds[(size_t)appIndex];
@@ -471,15 +547,23 @@ void IconStreamer::onPageChanged(int currentPage, int iconsPerPage,
         if (titleId == 0 || failed || pending)
             continue;
 
+        // Stale art must re-read from the loader; cached bytes are the wrong kind.
         std::vector<uint8_t> compressed;
-        if (appIndex < (int)m_compressed.size())
+        if (!stale && appIndex < (int)m_compressed.size())
             compressed = std::move(m_compressed[(size_t)appIndex]);
 
         auto state = std::make_shared<DecodeState>();
         IconDataLoader loader = m_iconLoader;
-        auto work = [state, titleId, loader, compressed = std::move(compressed)]() mutable {
+        const bool preferPoster = m_preferPosterArt;
+        auto work = [state, titleId, loader, preferPoster,
+                     compressed = std::move(compressed)]() mutable {
             if (state->cancelled.load())
                 return;
+            if (preferPoster) {
+                state->decoded = decodePosterFromCache(titleId);
+                if (!state->decoded.rgba.empty())
+                    return;
+            }
             if (compressed.empty() && loader)
                 compressed = loader(titleId);
             if (state->cancelled.load())
@@ -541,10 +625,227 @@ void IconStreamer::forceReload(int currentPage, int iconsPerPage,
     cancelPending();
     m_pendingDecodes.clear();
     m_failedTitleIds.clear();
+    // Drop cached JPEG/PNG bytes too — otherwise a Poster loaded for single-row
+    // would keep showing after switching back to the square grid.
+    for (auto& bytes : m_compressed)
+        bytes.clear();
+    m_artStale.assign(m_appToSlot.size(), 0);
 
     m_lastPage = -1;
     m_lastIconsPerPage = -1;
     onPageChanged(currentPage, iconsPerPage, gpu, ren, allIcons);
+}
+
+void IconStreamer::cancelShadowPrefetch() {
+    for (auto& entry : m_shadowPrefetch) {
+        if (entry.state)
+            entry.state->cancelled.store(true);
+    }
+    m_shadowPrefetch.clear();
+}
+
+void IconStreamer::startShadowPrefetch(bool preferPoster,
+                                       const std::vector<std::uint64_t>& titleIds,
+                                       IconDataLoader loader) {
+    cancelShadowPrefetch();
+    m_shadowPreferPoster = preferPoster;
+    if (!loader)
+        return;
+
+    std::unordered_map<std::uint64_t, bool> seen;
+    m_shadowPrefetch.reserve(titleIds.size());
+    for (const std::uint64_t titleId : titleIds) {
+        if (titleId == 0 || seen[titleId])
+            continue;
+        seen[titleId] = true;
+
+        ShadowPrefetchEntry entry;
+        entry.titleId = titleId;
+        entry.state = std::make_shared<DecodeState>();
+        auto state = entry.state;
+        auto work = [state, titleId, loader, preferPoster]() {
+            const auto started = std::chrono::steady_clock::now();
+            if (state->cancelled.load())
+                return;
+            const char* source = "jpeg";
+            if (preferPoster) {
+                state->decoded = decodePosterFromCache(titleId);
+                if (!state->decoded.rgba.empty()) {
+                    source = "fit-cache";
+                    DebugLog::log("[layout-prefetch] shadow decode title=%016lX "
+                                  "source=%s %dx%d in %ldms",
+                                  static_cast<unsigned long>(titleId), source,
+                                  state->decoded.w, state->decoded.h,
+                                  static_cast<long>(std::chrono::duration_cast<
+                                      std::chrono::milliseconds>(
+                                      std::chrono::steady_clock::now() - started)
+                                                        .count()));
+                    return;
+                }
+            }
+            auto compressed = loader(titleId);
+            if (state->cancelled.load())
+                return;
+            if (compressed.empty()) {
+                state->failed = true;
+                DebugLog::log("[layout-prefetch] shadow decode title=%016lX FAILED empty",
+                              static_cast<unsigned long>(titleId));
+                return;
+            }
+            state->decoded = IconStreamer::decodeIconData(compressed);
+            state->failed = state->decoded.rgba.empty();
+            DebugLog::log("[layout-prefetch] shadow decode title=%016lX source=%s "
+                          "%dx%d failed=%d in %ldms",
+                          static_cast<unsigned long>(titleId), source,
+                          state->decoded.w, state->decoded.h,
+                          state->failed ? 1 : 0,
+                          static_cast<long>(std::chrono::duration_cast<
+                              std::chrono::milliseconds>(
+                              std::chrono::steady_clock::now() - started).count()));
+        };
+        if (m_threadPool) {
+            entry.future = m_threadPool->submit(std::move(work));
+        } else {
+            std::promise<void> completed;
+            entry.future = completed.get_future();
+            try {
+                work();
+                completed.set_value();
+            } catch (...) {
+                completed.set_exception(std::current_exception());
+            }
+        }
+        m_shadowPrefetch.push_back(std::move(entry));
+    }
+}
+
+void IconStreamer::pumpShadowPrefetch(nxui::GpuDevice& gpu, nxui::Renderer& ren) {
+    for (auto& entry : m_shadowPrefetch) {
+        if (entry.decodedReady || !entry.future.valid())
+            continue;
+        if (entry.future.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
+            continue;
+        try {
+            entry.future.get();
+        } catch (...) {
+            if (entry.state)
+                entry.state->failed = true;
+        }
+        if (!entry.state || entry.state->cancelled.load()) {
+            entry.failed = true;
+            entry.decodedReady = true;
+            entry.uploaded = true;
+            continue;
+        }
+        entry.failed = entry.state->failed || entry.state->decoded.rgba.empty();
+        if (!entry.failed)
+            entry.decoded = std::move(entry.state->decoded);
+        entry.decodedReady = true;
+        if (entry.failed)
+            entry.uploaded = true;
+        entry.state.reset();
+    }
+
+    // Spread GPU uploads across frames so HOME stays responsive during prefetch.
+    int uploads = 0;
+    for (auto& entry : m_shadowPrefetch) {
+        if (uploads >= kShadowUploadsPerPump)
+            break;
+        if (!entry.decodedReady || entry.failed || entry.uploaded)
+            continue;
+        if (entry.decoded.rgba.empty()) {
+            entry.failed = true;
+            entry.uploaded = true;
+            continue;
+        }
+        auto tex = std::make_unique<nxui::Texture>();
+        if (!tex->loadFromPixels(gpu, ren, entry.decoded.rgba.data(),
+                                 entry.decoded.w, entry.decoded.h)) {
+            entry.failed = true;
+            entry.uploaded = true;
+            continue;
+        }
+        entry.decoded.rgba.clear();
+        entry.decoded.rgba.shrink_to_fit();
+        entry.texture = std::move(tex);
+        entry.uploaded = true;
+        DebugLog::log("[layout-prefetch] shadow upload title=%016lX ok",
+                      static_cast<unsigned long>(entry.titleId));
+        ++uploads;
+    }
+}
+
+bool IconStreamer::shadowPrefetchReady() const {
+    if (m_shadowPrefetch.empty())
+        return true;
+    for (const auto& entry : m_shadowPrefetch) {
+        if (!entry.decodedReady || !entry.uploaded)
+            return false;
+    }
+    return true;
+}
+
+void IconStreamer::installShadowPrefetch(
+    const std::vector<std::shared_ptr<GlossyIcon>>& allIcons) {
+    if (m_shadowPrefetch.empty())
+        return;
+
+    std::unordered_map<std::uint64_t, ShadowPrefetchEntry*> byTitle;
+    byTitle.reserve(m_shadowPrefetch.size());
+    for (auto& entry : m_shadowPrefetch) {
+        if (entry.uploaded && !entry.failed && entry.texture && entry.texture->valid())
+            byTitle.emplace(entry.titleId, &entry);
+    }
+
+    // Destination preference is now live; drop stale bytes so we never re-bind
+    // the previous art kind for these titles.
+    m_preferPosterArt = m_shadowPreferPoster;
+    for (auto& bytes : m_compressed)
+        bytes.clear();
+
+    for (int appIndex = 0; appIndex < (int)allIcons.size(); ++appIndex) {
+        if (!allIcons[(size_t)appIndex])
+            continue;
+        const uint64_t titleId = appIndex < (int)m_titleIds.size()
+            ? m_titleIds[(size_t)appIndex] : 0;
+        if (titleId == 0)
+            continue;
+        auto found = byTitle.find(titleId);
+        if (found == byTitle.end() || !found->second->texture)
+            continue;
+
+        int poolIdx = appIndex < (int)m_appToSlot.size() ? m_appToSlot[(size_t)appIndex] : -1;
+        if (poolIdx < 0 || poolIdx >= (int)m_pool.size() || !m_pool[(size_t)poolIdx]) {
+            if (!m_freeSlots.empty()) {
+                poolIdx = m_freeSlots.back();
+                m_freeSlots.pop_back();
+            } else {
+                poolIdx = static_cast<int>(m_pool.size());
+                m_pool.emplace_back(std::make_unique<TexSlot>());
+            }
+        }
+
+        auto& slot = *m_pool[(size_t)poolIdx];
+        if (slot.appIndex != appIndex) {
+            for (const auto& icon : allIcons) {
+                if (icon && icon->texture() == &slot.texture)
+                    icon->setTexture(nullptr);
+            }
+        }
+        // Steal the already-uploaded texture — no GPU stall on the morph frame.
+        slot.texture = std::move(*found->second->texture);
+        found->second->texture.reset();
+        slot.appIndex = appIndex;
+        if (appIndex < (int)m_appToSlot.size())
+            m_appToSlot[(size_t)appIndex] = poolIdx;
+        if (appIndex < (int)m_artStale.size())
+            m_artStale[(size_t)appIndex] = 0;
+        allIcons[(size_t)appIndex]->setTexture(&slot.texture);
+    }
+
+    cancelShadowPrefetch();
+    m_lastPage = -1;
+    m_lastIconsPerPage = -1;
 }
 
 void IconStreamer::reloadTitle(

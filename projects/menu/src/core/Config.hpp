@@ -45,6 +45,10 @@ struct AppConfig {
     bool  steamGridDbShowInGrid = true;
     bool  steamGridDbShowInDynamicLine = true;
     bool  steamGridDbShowInFolders = true;
+    // Tall SteamGridDB portrait covers (Poster) on the single-row carousel only.
+    bool  steamGridDbShowPosterInDynamicLine = true;
+    // Logo overlay above / beside the single-row carousel.
+    bool  steamGridDbShowLogoInDynamicLine = true;
     std::string steamGridDbApiKey;
 
     // 0 keeps the hand-made layout. The other modes are display-only

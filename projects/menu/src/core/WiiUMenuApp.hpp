@@ -56,6 +56,7 @@
 #include <nxui/widgets/Box.hpp>
 #include <nxui/widgets/GlassPanel.hpp>
 #include <nxui/widgets/Label.hpp>
+#include <chrono>
 #include <cstdint>
 #include <memory>
 #include <vector>
@@ -125,7 +126,17 @@ private:
     GridModel buildOpenFolderModel(std::uint32_t folderId) const;
     void applyDisplayModel(GridModel model, std::uint64_t focusId, bool animate,
                            const IconAppearOptions& appear = {},
-                           bool instantFocus = false);
+                           bool instantFocus = false,
+                           bool morphLayout = false);
+    // Shared tail of applyDisplayModel (reconcile → setup → focus). Used by the
+    // one-shot path and by the chunked single-row commit after icons are built.
+    void completeDisplayModelApply(std::vector<std::shared_ptr<GlossyIcon>> icons,
+                                   std::vector<std::uint64_t> titleIds,
+                                   std::uint64_t focusId, bool animate,
+                                   const IconAppearOptions& appear,
+                                   bool instantFocus, bool morphLayout);
+    void prepareRetainedImagePins(const GridModel& newModel);
+    std::shared_ptr<GlossyIcon> makeDisplayIcon(const AppEntry& entry);
     nxui::Rect folderTileRect(std::uint32_t folderId) const;
     void snapCursorToFocus();
     void syncEditJiggle();
@@ -225,6 +236,8 @@ private:
     void syncSteamGridDb();
     void showFocusedSteamGridDbArtwork(bool forceReload = false);
     bool steamGridDbArtworkAllowedHere() const;
+    // Layout the user still sees (grid stays up during poster prefetch).
+    AppLayoutMode presentationLayoutMode() const;
     void applyTheme();
     void applyThemeResources(const ThemePreset& preset);
     void retryPendingBackgroundImage();
@@ -274,6 +287,8 @@ private:
     nxui::Rect deletePageButtonRect() const;
     void kickPageArrow(int dir);
     bool flipPage(int dir);
+    // Single-row: jump by grid page size (same local cell when possible).
+    bool flipDynamicLinePage(int dir);
     bool addPageAvailable();
     bool currentPageEmpty() const;
     bool deletePageAvailable() const;
@@ -294,8 +309,15 @@ private:
     void closeActiveOverlays(bool closeFolders = true);
     void handleTouch();
     std::shared_ptr<GlossyIcon> makeIcon(const AppEntry& entry);
-    nxui::Texture* folderCoverTexture(std::uint64_t titleId);
-    void applyFolderCoversToIcons();
+    nxui::Texture* folderCoverTexture(std::uint64_t titleId, bool preferPoster = false);
+    /// Small square icon for folder peek stacks (never loads posters).
+    nxui::Texture* folderPeekTexture(std::uint64_t titleId);
+    std::uint64_t resolveFolderCoverTitleId(const switchu::folders::Folder& folder,
+                                            bool preferPoster) const;
+    bool preferSingleRowPosters() const;
+    // centerIndex < 0 or radius < 0 → all folders; otherwise only nearby slots
+    // (used by slim layout morph so commit stays cheap).
+    void applyFolderCoversToIcons(int centerIndex = -1, int radius = -1);
     void wireFocusCallback();
     void wireGlobalActions();
     void toggleAccessibilitySpeech();
@@ -365,6 +387,17 @@ private:
 
     void toggleAppLayoutMode();
     void setAppLayoutMode(AppLayoutMode mode);
+    // Tall Poster tiles + icon loader preference for single-row only.
+    void syncSingleRowPosterPresentation(bool forceReloadIcons = false);
+    bool preferPosterForMode(AppLayoutMode mode) const;
+    void beginLayoutArtPrefetch();
+    void beginVisibleArtWait();
+    void commitPendingLayoutVisuals();
+    // Grid→single-row slim morph: reuse icons, no completeDisplayModelApply /
+    // neighbor art burst. False → full rebuild (edit / line→grid / mismatch).
+    bool tryCommitInPlaceLayoutMorph(std::uint64_t focused);
+    void updateLayoutTransition(float dt);
+    void layoutPrefetchWindow(int& page, int& pageSize) const;
     void configureDynamicLineNavigation();
     void cycleSortMode();
     std::string sortModeLabel() const;
@@ -457,6 +490,7 @@ private:
     AccessibilityManager m_accessibility;
     std::future<void>    m_audioFuture;
     std::future<void>    m_configSaveFuture;
+    bool                 m_configSaveDeferred = false;
     std::future<void>    m_themeDeleteFuture;
     bool                 m_audioStarted = false;
     bool  m_audioPlaybackRestorePending = false;
@@ -529,7 +563,12 @@ private:
     std::vector<uint64_t> m_layoutSlots;
     std::unordered_map<std::uint64_t, switchu::widgets::WidgetSize> m_gameSizes;
     bool m_layoutDirty = false;
-    std::unordered_map<std::uint64_t, std::unique_ptr<nxui::Texture>> m_folderCoverCache;
+    struct FolderCoverCacheEntry {
+        std::unique_ptr<nxui::Texture> texture;
+        bool preferPoster = false;
+    };
+    std::unordered_map<std::uint64_t, FolderCoverCacheEntry> m_folderCoverCache;
+    std::unordered_map<std::uint64_t, std::unique_ptr<nxui::Texture>> m_folderPeekCache;
     switchu::folders::FolderStore m_folderStore;
     switchu::widgets::WidgetStore m_widgetStore;
     std::uint64_t m_recentWidgetAssetTitleId = 0;
@@ -592,6 +631,26 @@ private:
     bool m_folderOriginStale = false;
     bool m_gridSliding = false;
 
+    // Prefetch correct icon/poster art, then morph (or reveal).
+    enum class LayoutTransitionKind : std::uint8_t {
+        Idle,
+        PrefetchThenMorph,
+        WaitForVisibleArt,
+    };
+    struct LayoutTransitionState {
+        LayoutTransitionKind kind = LayoutTransitionKind::Idle;
+        AppLayoutMode visualMode = AppLayoutMode::Grid;
+        std::uint64_t focusId = 0;
+        bool editing = false;
+        float elapsed = 0.f;
+        // Prefetch finished / fit-cache armed — ready to morph.
+        bool commitNextFrame = false;
+    };
+    LayoutTransitionState m_layoutTransition{};
+    // Focused title only — neighbours lazy-load after the morph.
+    static constexpr float kLayoutArtPrefetchTimeout = 0.70f;
+    bool m_pendingNeighborArtBurst = false;
+
     int  m_touchHitIndex     = -1;
     bool m_touchOnFocused    = false;
     bool m_touchEditDragActive = false;
@@ -607,6 +666,9 @@ private:
     AppConfig m_config;
     SteamGridDbManager m_steamGridDb;
     std::future<SteamGridDbManager::BrowseResult> m_steamGridDbBrowseFuture;
+    std::vector<std::future<SteamGridDbManager::BrowseResult>> m_steamGridDbRetiredBrowses;
+    std::uint64_t m_steamGridDbBrowseGeneration = 0;
+    std::uint64_t m_steamGridDbBrowseFutureGeneration = 0;
     std::future<SteamGridDbManager::ApplyResult> m_steamGridDbApplyFuture;
     std::shared_ptr<SteamGridDbApplyProgressShared> m_steamGridDbApplyProgress;
     std::uint64_t m_steamGridDbApplyProgressUiRevision = 0;

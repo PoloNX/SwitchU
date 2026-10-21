@@ -319,15 +319,11 @@ Result ApplicationSession::resume() {
 }
 
 Result ApplicationSession::terminate() {
-    return terminate(kGracefulExitTimeoutNs);
-}
-
-Result ApplicationSession::terminate(std::uint64_t gracefulTimeoutNs) {
     if (!isRunning() && !appletApplicationActive(&m_application)) {
         resetToIdle();
         return 0;
     }
-    return stopCurrent(gracefulTimeoutNs, "explicit-terminate");
+    return stopCurrent(kGracefulExitTimeoutNs, "explicit-terminate");
 }
 
 Result ApplicationSession::areLibraryAppletsLeft(bool* out) {
@@ -382,7 +378,6 @@ Event* stateChangedEvent() { return session().stateChangedEvent(); }
 Result launch(std::uint64_t titleId, AccountUid uid) { return session().launch(titleId, uid); }
 Result resume() { return session().resume(); }
 Result terminate() { return session().terminate(); }
-Result terminate(std::uint64_t gracefulTimeoutNs) { return session().terminate(gracefulTimeoutNs); }
 Result areLibraryAppletsLeft(bool* out) { return session().areLibraryAppletsLeft(out); }
 Result requestExitLibraryAppletOrTerminate(std::uint64_t timeoutNs) {
     return session().requestExitLibraryAppletOrTerminate(timeoutNs);

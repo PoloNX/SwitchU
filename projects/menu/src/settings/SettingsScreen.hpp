@@ -49,6 +49,12 @@ public:
     void onSteamGridDbViewFlagsChange(std::function<void(bool, bool, bool)> cb) {
         m_steamGridDbViewFlagsCb = std::move(cb);
     }
+    void onSteamGridDbPosterInLineChange(BoolCb cb) {
+        m_steamGridDbPosterInLineCb = std::move(cb);
+    }
+    void onSteamGridDbLogoInLineChange(BoolCb cb) {
+        m_steamGridDbLogoInLineCb = std::move(cb);
+    }
     void onSteamGridDbApiKeyRequest(VoidCb cb) { m_steamGridDbApiKeyCb = std::move(cb); }
     void onSteamGridDbScrapeRequest(VoidCb cb) { m_steamGridDbScrapeCb = std::move(cb); }
     void onControllerPairing(VoidCb cb) { m_controllerPairingCb = std::move(cb); }
@@ -90,12 +96,16 @@ public:
     void setSteamGridDbState(bool enabled, bool hasApiKey,
                              bool showInGrid = true,
                              bool showInDynamicLine = true,
-                             bool showInFolders = true) {
+                             bool showInFolders = true,
+                             bool showPosterInDynamicLine = true,
+                             bool showLogoInDynamicLine = true) {
         m_steamGridDbEnabled = enabled;
         m_steamGridDbHasApiKey = hasApiKey;
         m_steamGridDbShowInGrid = showInGrid;
         m_steamGridDbShowInDynamicLine = showInDynamicLine;
         m_steamGridDbShowInFolders = showInFolders;
+        m_steamGridDbShowPosterInDynamicLine = showPosterInDynamicLine;
+        m_steamGridDbShowLogoInDynamicLine = showLogoInDynamicLine;
     }
     void setSteamGridDbProgress(bool running, bool finished, int completed, int total,
                                 int matched, int failed, const std::string& current,
@@ -144,6 +154,8 @@ private:
     VoidCb m_netConnectCb;
     BoolCb m_steamGridDbEnabledCb;
     std::function<void(bool, bool, bool)> m_steamGridDbViewFlagsCb;
+    BoolCb m_steamGridDbPosterInLineCb;
+    BoolCb m_steamGridDbLogoInLineCb;
     VoidCb m_steamGridDbApiKeyCb;
     VoidCb m_steamGridDbScrapeCb;
     VoidCb m_controllerPairingCb;
@@ -170,6 +182,8 @@ private:
     bool m_steamGridDbShowInGrid = true;
     bool m_steamGridDbShowInDynamicLine = true;
     bool m_steamGridDbShowInFolders = true;
+    bool m_steamGridDbShowPosterInDynamicLine = true;
+    bool m_steamGridDbShowLogoInDynamicLine = true;
     bool m_steamGridDbHasApiKey = false;
     bool m_steamGridDbRunning = false;
     bool m_steamGridDbFinished = false;
