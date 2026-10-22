@@ -997,6 +997,7 @@ void WiiUMenuApp::clearSteamGridDbArtwork(std::uint64_t titleId,
          || managerKind == SteamGridDbManager::ArtworkKind::Poster) && m_grid) {
         m_folderCoverCache.erase(titleId);
         m_folderPeekCache.erase(titleId);
+        m_folderPeekBorrowed.erase(titleId);
         const bool preferPoster = preferSingleRowPosters();
         const bool isFolderArt = titleId >= kFolderTitleIdPrefix;
         if (managerKind == SteamGridDbManager::ArtworkKind::Poster) {
@@ -1165,6 +1166,7 @@ void WiiUMenuApp::syncSteamGridDb() {
                  || result.kind == SteamGridDbManager::ArtworkKind::Poster) && m_grid) {
                 m_folderCoverCache.erase(result.titleId);
                 m_folderPeekCache.erase(result.titleId);
+                m_folderPeekBorrowed.erase(result.titleId);
                 const bool preferPoster = preferSingleRowPosters();
                 const bool isFolderArt = result.titleId >= kFolderTitleIdPrefix;
                 for (const auto& icon : m_grid->allIcons()) {
@@ -1396,6 +1398,10 @@ void WiiUMenuApp::showFocusedSteamGridDbArtwork(bool forceReload) {
     // Zero is meaningful: it clears artwork when focus moves to a folder,
     // an empty slot or any non-application widget.
     m_steamGridDbBackdrop->showTitle(titleId, forceReload);
+    // After layout morph, skip neighbour hero/logo warm for a beat so HOME
+    // stays responsive; focused title still updates above.
+    if (m_deferBackdropPreloadSec > 0.f)
+        nearbyTitleIds.clear();
     m_steamGridDbBackdrop->setPreloadTitles(std::move(nearbyTitleIds));
     syncSteamGridDbLogoArea();
 }

@@ -2102,8 +2102,10 @@ void WiiUMenuApp::completeDisplayModelApply(
     // the old kind during the morph and swap in the correct kind as it loads.
     const bool artKindChanged = m_iconStreamer.setPreferPosterArt(preferPoster);
     if (artKindChanged) {
+        // Covers can be poster vs icon; peeks are always square icons — keep
+        // them so grid↔line does not re-decode every folder stack.
         m_folderCoverCache.clear();
-        m_folderPeekCache.clear();
+        m_folderPeekBorrowed.clear();
     }
     int columns = std::clamp(m_config.gridColumns, 1, 8);
     int rows = std::clamp(m_config.gridRows, 1, 5);
@@ -3577,6 +3579,10 @@ bool WiiUMenuApp::tryCommitInPlaceLayoutMorph(std::uint64_t focused) {
             return false;
     }
 
+    // Cover morph (~0.4s) + settle so hero/logo neighbour prefetch stays off
+    // the first interactive beat after the transition.
+    m_deferBackdropPreloadSec = 0.90f;
+
     if (m_steamGridDbBackdrop) {
         m_steamGridDbBackdrop->setLayoutMode(m_appLayoutMode);
         showFocusedSteamGridDbArtwork(false);
@@ -3630,13 +3636,18 @@ bool WiiUMenuApp::tryCommitInPlaceLayoutMorph(std::uint64_t focused) {
         focusManager().setFocus(first);
     }
 
-    // Only covers/peeks near focus on the morph frame; the rest catch up after
-    // the morph so we don't reintroduce the pre-transition hitch.
+    // Nearby folder peeks/covers on the morph frame (full 2×3, not a single
+    // cover placeholder). Far folders catch up after morph. Prefer GPU-resident
+    // member icons (borrowed); promote to owned peeks during the morph.
     constexpr int kFolderCoverWarmRadius = 4;
     applyFolderCoversToIcons(m_grid->focusedGlobalIndex(), kFolderCoverWarmRadius);
+    DebugLog::log("[layout-prefetch] folder peeks borrowed=%u owned=%u",
+                  static_cast<unsigned>(m_folderPeekBorrowed.size()),
+                  static_cast<unsigned>(m_folderPeekCache.size()));
 
     m_iconStreamer.installShadowPrefetch(m_grid->allIcons());
-    m_iconStreamer.cancelPendingExcept(focused);
+    // Keep neighbour poster decodes running through the morph (fit RAM hits are
+    // cheap). Cancelling here only forced a cold re-schedule when the morph ended.
     m_pendingNeighborArtBurst = true;
 
     syncSteamGridDbLogoArea();
@@ -3674,6 +3685,7 @@ void WiiUMenuApp::commitPendingLayoutVisuals() {
 
     // Brighten hero/logo before the rebuild hitch so the first post-freeze
     // frame already has single-row backdrop (reuse cached GPU art — no reload).
+    m_deferBackdropPreloadSec = 0.90f;
     if (m_steamGridDbBackdrop) {
         m_steamGridDbBackdrop->setLayoutMode(m_appLayoutMode);
         showFocusedSteamGridDbArtwork(false);
@@ -3888,7 +3900,7 @@ void WiiUMenuApp::syncSingleRowPosterPresentation(bool forceReloadIcons) {
 
     if (artKindChanged || preferPoster != wasPoster) {
         m_folderCoverCache.clear();
-        m_folderPeekCache.clear();
+        m_folderPeekBorrowed.clear();
     }
     applyFolderCoversToIcons();
 
@@ -4408,12 +4420,39 @@ nxui::Texture* WiiUMenuApp::folderCoverTexture(std::uint64_t titleId,
     return raw;
 }
 
-nxui::Texture* WiiUMenuApp::folderPeekTexture(std::uint64_t titleId) {
+nxui::Texture* WiiUMenuApp::findResidentAppTexture(std::uint64_t titleId) const {
+    if (!m_grid || titleId == 0)
+        return nullptr;
+    for (const auto& icon : m_grid->allIcons()) {
+        if (!icon || icon->entryKind() != GridEntryKind::Application)
+            continue;
+        if (icon->titleId() != titleId)
+            continue;
+        if (auto* tex = icon->texture(); tex && tex->valid())
+            return tex;
+    }
+    return nullptr;
+}
+
+nxui::Texture* WiiUMenuApp::folderPeekTexture(std::uint64_t titleId,
+                                              bool allowBorrow) {
     if (titleId == 0)
         return nullptr;
     auto it = m_folderPeekCache.find(titleId);
-    if (it != m_folderPeekCache.end() && it->second && it->second->valid())
+    if (it != m_folderPeekCache.end() && it->second && it->second->valid()) {
+        m_folderPeekBorrowed.erase(titleId);
         return it->second.get();
+    }
+
+    // Morph commit: reuse a tile already on the GPU instead of SD decode +
+    // upload. Caller must promoteBorrowedFolderPeeks before streamer swaps
+    // those slots to poster art.
+    if (allowBorrow) {
+        if (auto* resident = findResidentAppTexture(titleId)) {
+            m_folderPeekBorrowed.insert(titleId);
+            return resident;
+        }
+    }
 
     auto tex = std::make_unique<nxui::Texture>();
     // Icons only — keep peeks cheap so multi-title stacks stay snappy.
@@ -4426,7 +4465,23 @@ nxui::Texture* WiiUMenuApp::folderPeekTexture(std::uint64_t titleId) {
     }
     nxui::Texture* raw = tex.get();
     m_folderPeekCache[titleId] = std::move(tex);
+    m_folderPeekBorrowed.erase(titleId);
     return raw;
+}
+
+int WiiUMenuApp::promoteBorrowedFolderPeeks(int maxPromotions) {
+    if (maxPromotions <= 0 || m_folderPeekBorrowed.empty())
+        return 0;
+    int promoted = 0;
+    auto it = m_folderPeekBorrowed.begin();
+    while (it != m_folderPeekBorrowed.end() && promoted < maxPromotions) {
+        const std::uint64_t titleId = *it;
+        it = m_folderPeekBorrowed.erase(it);
+        // Force an owned decode into m_folderPeekCache (no resident borrow).
+        if (folderPeekTexture(titleId, false))
+            ++promoted;
+    }
+    return promoted;
 }
 
 void WiiUMenuApp::applyFolderCoversToIcons(int centerIndex, int radius) {
@@ -5816,11 +5871,32 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
         showFocusedSteamGridDbArtwork();
     }
 
+    if (m_deferBackdropPreloadSec > 0.f)
+        m_deferBackdropPreloadSec = std::max(0.f, m_deferBackdropPreloadSec - dt);
+
+    // Own borrowed folder peeks before IconStreamer overwrites those GPU slots
+    // with posters. Prefer spreading decode across the morph; drain any
+    // remainder before the post-morph neighbour burst.
+    if (m_grid && !m_folderPeekBorrowed.empty() && preferSingleRowPosters()) {
+        const bool morphing = m_grid->isLayoutMorphing();
+        const int budget = morphing ? 2 : (m_pendingNeighborArtBurst ? 8 : 1);
+        if (promoteBorrowedFolderPeeks(budget) > 0) {
+            applyFolderCoversToIcons(m_grid->focusedGlobalIndex(), 4);
+        }
+    }
+
     if (m_pendingNeighborArtBurst && m_grid && !m_grid->isLayoutMorphing()) {
+        // Last chance: do not let onPageChanged recycle textures still aliased
+        // by folder peek stacks.
+        if (!m_folderPeekBorrowed.empty() && preferSingleRowPosters()) {
+            if (promoteBorrowedFolderPeeks(16) > 0)
+                applyFolderCoversToIcons(m_grid->focusedGlobalIndex(), 4);
+        }
         m_pendingNeighborArtBurst = false;
-        // Finish folder peeks/covers that were skipped on the slim commit frame.
-        applyFolderCoversToIcons();
-        m_iconStreamer.startBurst(0.9f);
+        // Far folder peeks only — nearby ±4 already applied on the commit frame.
+        m_pendingFolderCoverFill = true;
+        m_pendingFolderCoverNext = 0;
+        // No startBurst — neighbours often already warmed during the morph.
         int page = 0, pageSize = 1;
         if (m_appLayoutMode == AppLayoutMode::DynamicLine) {
             page = std::max(0, m_grid->focusedGlobalIndex());
@@ -5831,6 +5907,23 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
         }
         m_iconStreamer.onPageChanged(page, pageSize, app().gpu(), app().renderer(),
                                      m_grid->allIcons());
+    }
+
+    if (m_pendingFolderCoverFill && m_grid) {
+        const int total = m_model.count();
+        const int focus = m_grid->focusedGlobalIndex();
+        constexpr int kSkipRadius = 4; // matches slim-commit warm radius
+        while (m_pendingFolderCoverNext < total) {
+            const int index = m_pendingFolderCoverNext++;
+            if (!m_model.at(index).isFolder())
+                continue;
+            if (focus >= 0 && std::abs(index - focus) <= kSkipRadius)
+                continue; // already correct from commit
+            applyFolderCoversToIcons(index, 0);
+            break; // one folder decode budget per frame
+        }
+        if (m_pendingFolderCoverNext >= total)
+            m_pendingFolderCoverFill = false;
     }
 
     if (m_folderCaptureReady)

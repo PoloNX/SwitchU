@@ -66,6 +66,7 @@
 #include <utility>
 #include <functional>
 #include <unordered_map>
+#include <unordered_set>
 #include <switch.h>
 #ifdef SWITCHU_MENU
 #include <switchu/smi_protocol.hpp>
@@ -311,7 +312,14 @@ private:
     std::shared_ptr<GlossyIcon> makeIcon(const AppEntry& entry);
     nxui::Texture* folderCoverTexture(std::uint64_t titleId, bool preferPoster = false);
     /// Small square icon for folder peek stacks (never loads posters).
-    nxui::Texture* folderPeekTexture(std::uint64_t titleId);
+    /// When allowBorrow is true, may return a live IconStreamer/grid texture
+    /// (tracked in m_folderPeekBorrowed) to avoid sync decode on morph commit.
+    nxui::Texture* folderPeekTexture(std::uint64_t titleId, bool allowBorrow = true);
+    /// GPU texture already resident on an Application tile, if any.
+    nxui::Texture* findResidentAppTexture(std::uint64_t titleId) const;
+    /// Decode borrowed peeks into m_folderPeekCache (budgeted) so streamer
+    /// poster swaps cannot overwrite folder stacks mid-display.
+    int promoteBorrowedFolderPeeks(int maxPromotions);
     std::uint64_t resolveFolderCoverTitleId(const switchu::folders::Folder& folder,
                                             bool preferPoster) const;
     bool preferSingleRowPosters() const;
@@ -569,6 +577,9 @@ private:
     };
     std::unordered_map<std::uint64_t, FolderCoverCacheEntry> m_folderCoverCache;
     std::unordered_map<std::uint64_t, std::unique_ptr<nxui::Texture>> m_folderPeekCache;
+    // titleIds whose peek pointers currently alias a streamer/grid Texture
+    // (not owned by m_folderPeekCache). Must be promoted before art swaps.
+    std::unordered_set<std::uint64_t> m_folderPeekBorrowed;
     switchu::folders::FolderStore m_folderStore;
     switchu::widgets::WidgetStore m_widgetStore;
     std::uint64_t m_recentWidgetAssetTitleId = 0;
@@ -650,6 +661,11 @@ private:
     // Focused title only — neighbours lazy-load after the morph.
     static constexpr float kLayoutArtPrefetchTimeout = 0.70f;
     bool m_pendingNeighborArtBurst = false;
+    // Spread remaining folder peek/cover decodes across frames after morph.
+    bool m_pendingFolderCoverFill = false;
+    int m_pendingFolderCoverNext = 0;
+    // Suppress neighbour hero/logo preload until morph + a beat of input settle.
+    float m_deferBackdropPreloadSec = 0.f;
 
     int  m_touchHitIndex     = -1;
     bool m_touchOnFocused    = false;
