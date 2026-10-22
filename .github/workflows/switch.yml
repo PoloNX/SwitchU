@@ -53,7 +53,7 @@ jobs:
           path: |
             lib/Atmosphere-libs/libstratosphere/lib
             build/.stamps/libstratosphere
-          key: atmosphere-libs-${{ steps.atmo_rev.outputs.sha }}
+          key: atmosphere-libs-v2-${{ steps.atmo_rev.outputs.sha }}
 
       - name: Install system dependencies
         shell: bash
@@ -100,7 +100,7 @@ jobs:
           path: |
             lib/Atmosphere-libs/libstratosphere/lib
             build/.stamps/libstratosphere
-          key: atmosphere-libs-${{ steps.atmo_rev.outputs.sha }}
+          key: atmosphere-libs-v2-${{ steps.atmo_rev.outputs.sha }}
 
       - name: Package install layout
         run: xmake install -o "dist/${{ matrix.variant }}/${{ matrix.mode }}" --root
