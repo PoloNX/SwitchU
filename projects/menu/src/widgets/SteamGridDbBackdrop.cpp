@@ -64,6 +64,20 @@ void SteamGridDbBackdrop::setPreloadTitles(std::vector<std::uint64_t> titleIds) 
     }
 }
 
+void SteamGridDbBackdrop::setPreloadMinInterval(float seconds) {
+    m_preloadMinInterval = std::max(0.f, seconds);
+}
+
+void SteamGridDbBackdrop::setPreloadPaused(bool paused) {
+    m_preloadPaused = paused;
+}
+
+bool SteamGridDbBackdrop::isArtworkBusy() const {
+    return m_pendingDecode.has_value()
+        || m_readyArtwork.has_value()
+        || m_uploadStage > 0;
+}
+
 void SteamGridDbBackdrop::showTitle(std::uint64_t titleId, bool forceReload) {
     // Clearing (titleId == 0) must run even when disabled so folder close /
     // view toggles never leave a stale hero on screen.
@@ -323,6 +337,8 @@ void SteamGridDbBackdrop::drawSet(nxui::Renderer& renderer,
 void SteamGridDbBackdrop::onUpdate(float dt) {
     m_fade.update(std::min(dt, 0.04f));
     m_artworkOpacity.update(std::min(dt, 0.04f));
+    if (m_preloadGapSec > 0.f)
+        m_preloadGapSec = std::max(0.f, m_preloadGapSec - dt);
 
     if (m_pendingDecode
         && m_pendingDecode->future.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
@@ -429,7 +445,8 @@ void SteamGridDbBackdrop::onUpdate(float dt) {
         m_decodeDebounce = std::max(0.f, m_decodeDebounce - dt);
         if (m_decodeDebounce <= 0.f)
             startPendingDecode(m_requestedTitleId);
-    } else if (!m_pendingDecode && !m_readyArtwork) {
+    } else if (!m_pendingDecode && !m_readyArtwork
+               && !m_preloadPaused && m_preloadGapSec <= 0.f) {
         for (std::uint64_t titleId : m_preloadTitleIds) {
             const bool decoded = std::any_of(
                 m_decodedCache.begin(), m_decodedCache.end(),
@@ -441,6 +458,7 @@ void SteamGridDbBackdrop::onUpdate(float dt) {
                 DebugLog::log("[steamgriddb-ui] prefetch scheduled title=%016llX",
                               static_cast<unsigned long long>(titleId));
                 startPendingDecode(titleId);
+                m_preloadGapSec = m_preloadMinInterval;
                 break;
             }
         }

@@ -998,6 +998,11 @@ void WiiUMenuApp::clearSteamGridDbArtwork(std::uint64_t titleId,
         m_folderCoverCache.erase(titleId);
         m_folderPeekCache.erase(titleId);
         m_folderPeekBorrowed.erase(titleId);
+        if (titleId >= kFolderTitleIdPrefix)
+            invalidateFolderPeekComposite(static_cast<std::uint32_t>(
+                titleId & 0xFFFFFFFFu));
+        else
+            invalidateFolderPeekCompositesForTitle(titleId);
         const bool preferPoster = preferSingleRowPosters();
         const bool isFolderArt = titleId >= kFolderTitleIdPrefix;
         if (managerKind == SteamGridDbManager::ArtworkKind::Poster) {
@@ -1223,6 +1228,7 @@ void WiiUMenuApp::syncSteamGridDb() {
                         }
                     }
                 } else {
+                    invalidateFolderPeekCompositesForTitle(result.titleId);
                     applyFolderCoversToIcons();
                 }
             } else {

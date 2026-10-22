@@ -641,6 +641,7 @@ bool WiiUMenuApp::commitEditModePlacement() {
             folder->titleIds = visibleOrder;
             if (!saveFoldersOrReport("move_single_row"))
                 return false;
+            refreshFolderPeekComposite(m_openFolderId);
         } else {
             const std::unordered_set<std::uint64_t> visibleIds(
                 visibleOrder.begin(), visibleOrder.end());
@@ -887,6 +888,7 @@ bool WiiUMenuApp::activateEditModeTarget() {
             // current render, so the moved tile must already be gone from it.
             // Focus lands on the folder tile, the anchor the folder returns to.
             applyDisplayModel(buildRootFolderModel(), folderTitleId(folderId), false);
+            refreshFolderPeekComposite(folderId);
             requestOpenFolder(folderId);
             return true;
         }
@@ -904,6 +906,7 @@ bool WiiUMenuApp::activateEditModeTarget() {
                                       static_cast<std::size_t>(target)) ||
             !saveFoldersOrReport("place_in_folder"))
             return false;
+        refreshFolderPeekComposite(targetFolderId);
 
         if (m_editOriginFolderId == 0 && m_editOriginRootSlot >= 0 &&
             m_editOriginRootSlot < static_cast<int>(m_layoutSlots.size())) {
@@ -923,6 +926,7 @@ bool WiiUMenuApp::activateEditModeTarget() {
         if (!m_folderStore.removeTitle(m_editOriginFolderId, m_editHeldTitleId) ||
             !saveFoldersOrReport("move_out_of_folder"))
             return false;
+        refreshFolderPeekComposite(m_editOriginFolderId);
         const std::uint64_t titleId = m_editHeldTitleId;
         m_layoutSlots[static_cast<std::size_t>(target)] = titleId;
         m_layoutDirty = true;
@@ -1064,6 +1068,14 @@ void WiiUMenuApp::wireFocusCallback() {
                     m_iconStreamer.onPageChanged(focusedIndex, 1,
                                                  app().gpu(), app().renderer(),
                                                  m_grid->allIcons());
+                    // Blank albums: fill peeks as soon as the user lands on a
+                    // folder (focus first; ±1 once soft-land gates are open).
+                    if (preferSingleRowPosters()
+                        && focusedIndex < m_model.count()
+                        && m_model.at(focusedIndex).isFolder()) {
+                        m_lastFolderPeekWarmFocus = focusedIndex;
+                        warmFolderPeeksAroundFocus(1);
+                    }
                 }
             }
             if (m_steamGridDbBackdrop && icon->titleId() != 0
@@ -1589,6 +1601,7 @@ void WiiUMenuApp::showFolderContextMenu(std::uint32_t folderId) {
         }
         if (m_openFolderId == folderId && m_pageIndicator)
             m_pageIndicator->setActiveColor(switchu::folders::colorForIndex(colorIndex));
+        refreshFolderPeekComposite(folderId);
     });
     m_folderOptions->onSizeChange([this, folderId](int sizeIndex) {
         if (!m_folderStore.setSizeIndex(folderId, sizeIndex))
@@ -1676,6 +1689,7 @@ void WiiUMenuApp::showFolderContextMenu(std::uint32_t folderId) {
                        {
                            {local.tr("button.cancel", "Cancel"), {}, true},
                            {local.tr("button.delete", "Delete"), [this, folderId]() {
+                               invalidateFolderPeekComposite(folderId);
                                m_folderStore.remove(folderId);
                                if (!saveFoldersOrReport("delete")) return;
                                const auto pseudo = folderTitleId(folderId);

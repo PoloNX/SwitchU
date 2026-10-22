@@ -275,6 +275,7 @@ void drawFolderStyle(const FolderStyleDrawArgs& args) {
     const bool named = !poster && args.drawName && args.font && args.title
         && !args.title->empty();
     const nxui::Texture* cover = (args.cover && args.cover->valid()) ? args.cover : nullptr;
+    const bool peekComposite = args.coverIsPeekComposite && cover;
     int peekCount = std::clamp(args.peekCoverCount, 0, kFolderPeekMax);
     for (int i = 0; i < peekCount; ++i) {
         if (!args.peekCovers[static_cast<std::size_t>(i)]
@@ -283,10 +284,10 @@ void drawFolderStyle(const FolderStyleDrawArgs& args) {
             break;
         }
     }
-    const bool hasArt = cover || args.schematicPlaceholder || peekCount > 0;
+    const bool hasArt = cover || args.schematicPlaceholder || peekCount > 0 || peekComposite;
     const bool useCover = hasArt && (
         (style != kFolderStyleClassic && folderShouldShowCover(style, args.showCover))
-        || (poster && (cover || peekCount > 0)));
+        || (poster && (cover || peekCount > 0 || peekComposite)));
 
     auto drawCenteredName = [&](bool halo, float preferred, float minScale, float yBias) {
         if (!named)
@@ -325,6 +326,19 @@ void drawFolderStyle(const FolderStyleDrawArgs& args) {
                            cover, accent, opacity, true);
             return;
         }
+        if (poster && peekComposite) {
+            // Same content band as drawPeekGrid; mosaic margins are baked in.
+            const float side = std::max(4.f, 6.f * s);
+            const nxui::Rect content{
+                host.x + side,
+                host.y + topPad,
+                std::max(8.f, host.width - side * 2.f),
+                std::max(18.f, host.height - topPad - bottomPad)};
+            const float rad = std::max(6.f, std::min(content.width, content.height) * 0.06f);
+            ren.drawTextureRounded(cover, content, rad,
+                                   nxui::Color::white().withAlpha(opacity));
+            return;
+        }
         if (poster && peekCount > 0) {
             // Stay below/above style chrome; equal margin is applied inside drawPeekGrid.
             const float side = std::max(4.f, 6.f * s);
@@ -350,7 +364,8 @@ void drawFolderStyle(const FolderStyleDrawArgs& args) {
         ren.drawRoundedRect(shell, plateWash, shellRadius);
         ren.drawRoundedRectOutline(shell.shrunk(1.f * s), theme.outline,
                                    std::max(8.f, shellRadius - 1.f * s), 1.5f * s);
-        if (poster && (peekCount > 0 || (args.coverIsFolderPoster && cover))) {
+        if (poster && (peekCount > 0 || peekComposite
+                       || (args.coverIsFolderPoster && cover))) {
             drawArtInHost(inner.shrunk(8.f * s), 0.f, 0.f);
         } else {
             drawNineGrid(ren, shell, accent, s, opacity);

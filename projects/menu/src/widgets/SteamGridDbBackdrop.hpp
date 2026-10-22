@@ -30,6 +30,11 @@ public:
     void setLogoArea(const nxui::Rect& area) { m_logoArea = area; }
     void setShowLogo(bool show) { m_showLogo = show; }
     void setPreloadTitles(std::vector<std::uint64_t> titleIds);
+    // Pace neighbour hero/logo warm so return soft-land does not dump a burst
+    // of 3.6MB SD reads the moment defer expires. 0 = as soon as free.
+    void setPreloadMinInterval(float seconds);
+    void setPreloadPaused(bool paused);
+    bool isArtworkBusy() const;
     void showTitle(std::uint64_t titleId, bool forceReload = false);
 
 protected:
@@ -95,6 +100,9 @@ private:
     std::vector<DecodedArtwork> m_decodedCache;
     int m_uploadStage = 0;
     bool m_waitForGpuBeforeUpload = false;
+    float m_preloadMinInterval = 0.f;
+    float m_preloadGapSec = 0.f;
+    bool m_preloadPaused = false;
     AppLayoutMode m_layoutMode = AppLayoutMode::Grid;
     // Band the logo is centred in while single-row mode is active. The app
     // raises it above the folder title bubble when a folder is open.

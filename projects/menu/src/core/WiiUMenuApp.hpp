@@ -39,6 +39,7 @@
 #include "themeshop/ThemeShopScreen.hpp"
 #include "core/Config.hpp"
 #include "core/FolderStore.hpp"
+#include "core/FolderPeekComposite.hpp"
 #include "core/WidgetStore.hpp"
 #include "core/ThemePreset.hpp"
 #include "core/LeaveFrameCache.hpp"
@@ -327,6 +328,25 @@ private:
     // centerIndex < 0 or radius < 0 → all folders; otherwise only nearby slots
     // (used by slim layout morph so commit stays cheap).
     void applyFolderCoversToIcons(int centerIndex = -1, int radius = -1);
+    bool folderTileNeedsArt(int index) const;
+    void markFolderCoverFilled(int index);
+    void ensureFolderCoverFillDoneSize();
+    /// Sync-fill the focused folder (and optional neighbours) when peeks are empty.
+    void warmFolderPeeksAroundFocus(int radius = 0);
+    /// At splash handoff: disk-attach nearby composites, queue-bake the rest.
+    void warmFolderCompositesEarly();
+    int nextFolderCoverFillIndex(int focus) const;
+    /// Grid: on first/last page, ZL/ZR snaps to start/end of the current row.
+    bool snapGridRowEdge(int dir);
+    nxui::Texture* folderPeekCompositeTexture(std::uint32_t folderId);
+    void requestFolderPeekCompositeBake(std::uint32_t folderId);
+    void pumpFolderPeekComposites();
+    void invalidateFolderPeekComposite(std::uint32_t folderId);
+    void invalidateFolderPeekCompositesForTitle(std::uint64_t titleId);
+    /// Drop cache and re-queue bake/attach for one folder tile.
+    void refreshFolderPeekComposite(std::uint32_t folderId);
+    void attachFolderPeekComposite(GlossyIcon& icon, std::uint32_t folderId,
+                                   nxui::Texture* composite);
     void wireFocusCallback();
     void wireGlobalActions();
     void toggleAccessibilitySpeech();
@@ -579,6 +599,22 @@ private:
     };
     std::unordered_map<std::uint64_t, FolderCoverCacheEntry> m_folderCoverCache;
     std::unordered_map<std::uint64_t, std::unique_ptr<nxui::Texture>> m_folderPeekCache;
+    // Baked 2×3 folder mosaics (GPU), keyed by folderId.
+    std::unordered_map<std::uint32_t, std::unique_ptr<nxui::Texture>> m_folderPeekCompositeCache;
+    struct FolderPeekCompositeBakeState {
+        std::uint32_t folderId = 0;
+        switchu::folders::Folder folderSnapshot{};
+        switchu::folders::peek_composite::BakedImage image;
+        std::atomic<bool> cancelled{false};
+        bool failed = false;
+        long elapsedMs = 0;
+    };
+    struct PendingFolderPeekCompositeBake {
+        std::shared_ptr<FolderPeekCompositeBakeState> state;
+        std::future<void> future;
+    };
+    std::vector<PendingFolderPeekCompositeBake> m_pendingFolderPeekComposites;
+    std::unordered_set<std::uint32_t> m_folderPeekCompositeBakeQueued;
     // titleIds whose peek pointers currently alias a streamer/grid Texture
     // (not owned by m_folderPeekCache). Must be promoted before art swaps.
     std::unordered_set<std::uint64_t> m_folderPeekBorrowed;
@@ -665,10 +701,14 @@ private:
     bool m_pendingNeighborArtBurst = false;
     // Spread remaining folder peek/cover decodes across frames after morph.
     bool m_pendingFolderCoverFill = false;
-    int m_pendingFolderCoverNext = 0;
+    int m_pendingFolderCoverNext = 0; // legacy linear cursor (unused by outward fill)
     // Folders within this radius of focus were already warmed; fill skips them.
     // Negative = warm nothing yet (fill every folder, including focus).
     int m_pendingFolderCoverSkipRadius = 4;
+    // Per-slot "already applied" so outward fill + focus-warm do not redo work
+    // (including empty folders that legitimately have zero peeks).
+    std::vector<std::uint8_t> m_folderCoverFillDone;
+    int m_lastFolderPeekWarmFocus = -1;
     // Fast-return: arm folder peek fill after leave-splash handoff, not in buildGrid.
     bool m_armFolderCoverFillAfterSplash = false;
     // Extra frames after splash before peeks start (keeps first input frames free).
@@ -682,6 +722,8 @@ private:
     bool m_wasLayoutMorphing = false;
     // Suppress neighbour hero/logo preload until morph + a beat of input settle.
     float m_deferBackdropPreloadSec = 0.f;
+    // After HOME return: keep paced hero prefetch for a few seconds past defer.
+    float m_returnPreloadPaceSec = 0.f;
 
     int  m_touchHitIndex     = -1;
     bool m_touchOnFocused    = false;

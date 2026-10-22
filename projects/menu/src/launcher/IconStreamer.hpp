@@ -70,6 +70,12 @@ public:
     // per frame. Reverts to the normal limits by itself.
     void startBurst(float seconds);
 
+    // After splash handoff: keep single-row neighbor warming tight, then widen
+    // gradually so radius does not jump 2→4 in one frame. Reverts by itself.
+    void startSoftLanding(float tightSeconds, int tightRadius = 2,
+                          float widenSeconds = 0.f, int widenRadius = 3);
+    bool softLandingActive() const { return inSoftLanding(); }
+
     // Off-screen art prefetch for layout transitions: decode destination art
     // (poster or icon) by titleId without touching textures already shown on
     // tiles. pumpShadowPrefetch() uploads a few GPU textures per frame so the
@@ -172,5 +178,26 @@ private:
     static constexpr int kBurstMaxPendingDecodes = 8;
     std::chrono::steady_clock::time_point m_burstUntil{};
     bool inBurst() const { return std::chrono::steady_clock::now() < m_burstUntil; }
+    std::chrono::steady_clock::time_point m_softLandingUntil{};
+    std::chrono::steady_clock::time_point m_softLandingWidenUntil{};
+    int m_softLandingRadius = kPageCacheRadius;
+    int m_softLandingWidenRadius = kPageCacheRadius;
+    bool inSoftLanding() const {
+        const auto now = std::chrono::steady_clock::now();
+        return now < m_softLandingUntil || now < m_softLandingWidenUntil;
+    }
+    int pageCacheRadius() const {
+        const auto now = std::chrono::steady_clock::now();
+        auto clampRadius = [](int radius) {
+            if (radius <= 0)
+                return 0;
+            return radius < kPageCacheRadius ? radius : kPageCacheRadius;
+        };
+        if (now < m_softLandingUntil)
+            return clampRadius(m_softLandingRadius);
+        if (now < m_softLandingWidenUntil)
+            return clampRadius(m_softLandingWidenRadius);
+        return kPageCacheRadius;
+    }
     static constexpr std::uint64_t kGpuImageReserve = 4u * 1024u * 1024u;
 };

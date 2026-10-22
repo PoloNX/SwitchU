@@ -476,6 +476,7 @@ void GlossyIcon::copyWidgetPresentationFrom(GlossyIcon& source) {
     m_folderShowCover = source.m_folderShowCover;
     m_folderCover = source.m_folderCover;
     m_folderCoverIsPoster = source.m_folderCoverIsPoster;
+    m_folderPeekComposite = source.m_folderPeekComposite;
     m_folderPeeks = source.m_folderPeeks;
     m_folderPeekCount = source.m_folderPeekCount;
     m_folderCoverTitleId = source.m_folderCoverTitleId;
@@ -974,6 +975,7 @@ void GlossyIcon::onContentRender(nxui::Renderer& ren) {
         args.drawName = !m_posterFrame;
         args.posterAspect = m_posterFrame;
         args.coverIsFolderPoster = m_folderCoverIsPoster;
+        args.coverIsPeekComposite = m_folderPeekComposite;
         switchu::folders::drawFolderStyle(args);
         return;
     }

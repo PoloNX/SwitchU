@@ -256,11 +256,12 @@ bool IconStreamer::needsVisibleLoads(int currentPage, int iconsPerPage) const {
     currentPage = std::clamp(currentPage, 0, std::max(0, totalPages - 1));
     int begin = currentPage * iconsPerPage;
     int end = std::min(totalApps, begin + iconsPerPage);
-    // In single-row mode callers use one icon per logical page. Keep the four
-    // closest icons on either side hot; this is nine 160px textures at most.
+    // In single-row mode callers use one icon per logical page. Keep nearby
+    // icons hot (radius shrinks during soft-landing after HOME return).
     if (iconsPerPage == 1) {
-        begin = std::max(0, currentPage - kPageCacheRadius);
-        end = std::min(totalApps, currentPage + kPageCacheRadius + 1);
+        const int radius = pageCacheRadius();
+        begin = std::max(0, currentPage - radius);
+        end = std::min(totalApps, currentPage + radius + 1);
     }
     for (int i = begin; i < end; ++i) {
         const uint64_t titleId = i < (int)m_titleIds.size() ? m_titleIds[(size_t)i] : 0;
@@ -344,6 +345,20 @@ void IconStreamer::startBurst(float seconds) {
         std::chrono::milliseconds(static_cast<int>(seconds * 1000.f));
 }
 
+void IconStreamer::startSoftLanding(float tightSeconds, int tightRadius,
+                                    float widenSeconds, int widenRadius) {
+    const auto now = std::chrono::steady_clock::now();
+    m_softLandingRadius = std::max(0, tightRadius);
+    m_softLandingWidenRadius = std::max(0, widenRadius);
+    m_softLandingUntil = now + std::chrono::milliseconds(
+        static_cast<int>(std::max(0.f, tightSeconds) * 1000.f));
+    m_softLandingWidenUntil = m_softLandingUntil + std::chrono::milliseconds(
+        static_cast<int>(std::max(0.f, widenSeconds) * 1000.f));
+    DebugLog::log("[streamer] soft-landing radius=%d for %.2fs then %d for %.2fs",
+                  m_softLandingRadius, tightSeconds,
+                  m_softLandingWidenRadius, widenSeconds);
+}
+
 void IconStreamer::onPageChanged(int currentPage, int iconsPerPage,
                                  nxui::GpuDevice& gpu, nxui::Renderer& ren,
                                  const std::vector<std::shared_ptr<GlossyIcon>>& allIcons)
@@ -363,11 +378,10 @@ void IconStreamer::onPageChanged(int currentPage, int iconsPerPage,
 
     int visibleStartApp = currentPage * iconsPerPage;
     int visibleEndApp   = std::min(totalApps, visibleStartApp + iconsPerPage);
-    // Four neighbours are inexpensive in the one-item carousel, but the same
-    // radius in the 5x3 grid can retain 135 textures. Keep three grid pages
-    // hot under the enlarged image budget without returning to that extreme.
+    // Soft-landing can temporarily shrink the single-row radius so post-HOME
+    // SD work does not stack on the first interactive seconds. Grid stays ±1.
     const int cacheRadius = iconsPerPage == 1
-        ? kPageCacheRadius : kGridPageCacheRadius;
+        ? pageCacheRadius() : kGridPageCacheRadius;
     int cacheStartPage  = std::max(0, currentPage - cacheRadius);
     int cacheEndPage    = std::min(totalPages - 1, currentPage + cacheRadius);
     int cacheStartApp   = cacheStartPage * iconsPerPage;
@@ -521,7 +535,7 @@ void IconStreamer::onPageChanged(int currentPage, int iconsPerPage,
     std::vector<int> loadOrder;
     if (iconsPerPage == 1) {
         loadOrder.push_back(visibleStartApp);
-        for (int distance = 1; distance <= kPageCacheRadius; ++distance) {
+        for (int distance = 1; distance <= cacheRadius; ++distance) {
             if (visibleStartApp + distance < cacheEndApp)
                 loadOrder.push_back(visibleStartApp + distance);
             if (visibleStartApp - distance >= cacheStartApp)

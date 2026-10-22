@@ -59,13 +59,18 @@ public:
     void setFolderStyleIndex(int index) { m_folderStyleIndex = index; }
     void setFolderShowCover(bool show) { m_folderShowCover = show; }
     void setFolderCoverTexture(nxui::Texture* tex) { m_folderCover = tex; }
+    nxui::Texture* folderCoverTexture() const { return m_folderCover; }
     void setFolderCoverTitleId(std::uint64_t id) { m_folderCoverTitleId = id; }
     void setFolderCoverIsPoster(bool isPoster) { m_folderCoverIsPoster = isPoster; }
+    bool folderCoverIsPoster() const { return m_folderCoverIsPoster; }
+    void setFolderPeekComposite(bool composite) { m_folderPeekComposite = composite; }
+    bool folderPeekComposite() const { return m_folderPeekComposite; }
     void setFolderPeekTextures(const std::array<nxui::Texture*, switchu::folders::kFolderPeekMax>& peeks,
                                int count) {
         m_folderPeeks = peeks;
         m_folderPeekCount = std::clamp(count, 0, switchu::folders::kFolderPeekMax);
     }
+    int folderPeekCount() const { return m_folderPeekCount; }
     void clearFolderPeeks() {
         m_folderPeeks.fill(nullptr);
         m_folderPeekCount = 0;
@@ -191,6 +196,7 @@ private:
     bool          m_folderShowCover = false;
     nxui::Texture* m_folderCover = nullptr;
     bool          m_folderCoverIsPoster = false;
+    bool          m_folderPeekComposite = false;
     std::array<nxui::Texture*, switchu::folders::kFolderPeekMax> m_folderPeeks{};
     int           m_folderPeekCount = 0;
     std::uint64_t m_folderCoverTitleId = 0;

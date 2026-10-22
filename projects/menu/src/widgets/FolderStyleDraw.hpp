@@ -40,6 +40,8 @@ struct FolderStyleDrawArgs {
     bool posterAspect = false;
     /// True when `cover` is the folder's own SteamGridDB poster (single inset).
     bool coverIsFolderPoster = false;
+    /// True when `cover` is a baked 2×3 peek mosaic (draw into peek content rect).
+    bool coverIsPeekComposite = false;
 };
 
 void drawFolderStyle(const FolderStyleDrawArgs& args);
