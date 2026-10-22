@@ -2014,6 +2014,8 @@ void WiiUMenuApp::updateCursor() {
     auto* cur = focusManager().current();
     if (cur) {
         const bool morphing = m_grid && m_grid->isLayoutMorphing();
+        const bool morphJustEnded = m_wasLayoutMorphing && !morphing;
+        m_wasLayoutMorphing = morphing;
         const bool movingLineFocus = m_grid
                                   && (m_grid->isDynamicLine() || morphing)
                                   && cur->tag() == "glossy_icon";
@@ -2039,13 +2041,17 @@ void WiiUMenuApp::updateCursor() {
         }
         // The app carousel already owns the motion curve; attaching the ring
         // directly avoids a second easing curve that would visibly lag behind.
+        // Snap after morph so a remapped grid cell never eases in from the
+        // carousel's far-right ghost position.
         const bool carouselScrolling = movingLineFocus
                                     && (morphing || m_grid->isDynamicLineScrolling());
-        m_cursor->moveTo(fr.expanded(4.f), carouselScrolling ? 0.f : 0.2f);
+        const float dur = (carouselScrolling || morphJustEnded) ? 0.f : 0.2f;
+        m_cursor->moveTo(fr.expanded(4.f), dur);
         m_cursor->setVisible(true);
         if (m_grid && m_grid->isDynamicLine())
             syncSteamGridDbLogoArea();
     } else {
+        m_wasLayoutMorphing = false;
         m_cursor->setVisible(false);
     }
 }

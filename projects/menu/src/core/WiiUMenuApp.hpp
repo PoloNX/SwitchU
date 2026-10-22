@@ -10,6 +10,7 @@
 #include "widgets/SelectionCursor.hpp"
 #include "widgets/WaraWaraBackground.hpp"
 #include "widgets/DateTimeWidget.hpp"
+#include "widgets/LayoutFlipButton.hpp"
 #include "widgets/BatteryWidget.hpp"
 #include "widgets/TitlePillWidget.hpp"
 #include "core/AudioManager.hpp"
@@ -448,6 +449,7 @@ private:
     std::shared_ptr<IconGrid>          m_grid;
     std::shared_ptr<SelectionCursor>   m_cursor;
     std::shared_ptr<DateTimeWidget>    m_clock;
+    std::shared_ptr<LayoutFlipButton>  m_layoutFlip;
     std::shared_ptr<BatteryWidget>     m_battery;
     std::shared_ptr<TitlePillWidget>   m_titlePill;
     std::shared_ptr<PageIndicator>     m_pageIndicator;
@@ -664,6 +666,20 @@ private:
     // Spread remaining folder peek/cover decodes across frames after morph.
     bool m_pendingFolderCoverFill = false;
     int m_pendingFolderCoverNext = 0;
+    // Folders within this radius of focus were already warmed; fill skips them.
+    // Negative = warm nothing yet (fill every folder, including focus).
+    int m_pendingFolderCoverSkipRadius = 4;
+    // Fast-return: arm folder peek fill after leave-splash handoff, not in buildGrid.
+    bool m_armFolderCoverFillAfterSplash = false;
+    // Extra frames after splash before peeks start (keeps first input frames free).
+    int m_folderCoverFillDelayFrames = 0;
+    // Keep D-pad/touch focus on the flip control across a view toggle.
+    bool m_retainLayoutFlipFocus = false;
+    void placeLayoutFlipButton();
+    void wireLayoutFlipNavigation();
+    void restoreLayoutFlipFocusIfNeeded();
+    // Cursor snap when a layout morph just finished (index remap safety).
+    bool m_wasLayoutMorphing = false;
     // Suppress neighbour hero/logo preload until morph + a beat of input settle.
     float m_deferBackdropPreloadSec = 0.f;
 

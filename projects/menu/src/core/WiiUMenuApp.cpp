@@ -721,8 +721,25 @@ void WiiUMenuApp::updateLeaveSplashHandoff(float dt) {
                 m_grid->setLayoutMode(m_appLayoutMode, false);
                 configureDynamicLineNavigation();
             }
+            // Neighbour hero/logo preload off the first interactive beat —
+            // same soft-landing as slim morph commit.
+            if (preferSingleRowPosters())
+                m_deferBackdropPreloadSec = 0.90f;
+            if (m_armFolderCoverFillAfterSplash) {
+                m_armFolderCoverFillAfterSplash = false;
+                // Don't sync-decode peeks on the handoff frame — that was the
+                // remaining return hitch. Spread after a few interactive frames.
+                m_pendingFolderCoverFill = false;
+                m_folderCoverFillDelayFrames = 8;
+                m_pendingFolderCoverNext = 0;
+                m_pendingFolderCoverSkipRadius = -1;
+            }
+            const auto handoffArt = std::chrono::steady_clock::now();
             showFocusedSteamGridDbArtwork();
-            DebugLog::log("[leave] splash handoff complete");
+            DebugLog::log("[leave] splash handoff complete art=%ldms fillDelay=%d",
+                          static_cast<long>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                              std::chrono::steady_clock::now() - handoffArt).count()),
+                          m_folderCoverFillDelayFrames);
         }
     }
 }
@@ -1079,12 +1096,63 @@ void WiiUMenuApp::setLockedProfile(std::optional<AccountUid> uid) {
     DebugLog::log("[profiles] launch profile %s", uid ? "locked" : "cleared");
 }
 
+void WiiUMenuApp::placeLayoutFlipButton() {
+    if (!m_layoutFlip || !m_clock)
+        return;
+    constexpr float kSize = 52.f;
+    constexpr float kGap = 12.f;
+    const nxui::Rect clock = m_clock->rect();
+    const float x = clock.x + clock.width + kGap;
+    const float y = clock.y + (clock.height - kSize) * 0.5f;
+    m_layoutFlip->setRect({x, y, kSize, kSize});
+    m_layoutFlip->setVisible(m_topHud && m_topHud->isVisible() && m_openFolderId == 0);
+}
+
+void WiiUMenuApp::restoreLayoutFlipFocusIfNeeded() {
+    if (!m_retainLayoutFlipFocus || !m_layoutFlip)
+        return;
+    // Wait out the layout morph so focus isn't stolen by icon rebuilds.
+    if (m_grid && m_grid->isLayoutMorphing())
+        return;
+    if (m_layoutTransition.kind != LayoutTransitionKind::Idle)
+        return;
+    placeLayoutFlipButton();
+    wireLayoutFlipNavigation();
+    if (m_layoutFlip->isVisible()) {
+        focusManager().setFocus(m_layoutFlip.get());
+        updateCursor();
+    }
+    m_retainLayoutFlipFocus = false;
+}
+
+void WiiUMenuApp::wireLayoutFlipNavigation() {
+    if (!m_layoutFlip)
+        return;
+    auto* flip = m_layoutFlip.get();
+    flip->setCustomNavigation(nxui::FocusDirection::UP, flip);
+    flip->setCustomNavigation(nxui::FocusDirection::LEFT,
+                              m_profileLock
+                                  ? static_cast<nxui::Widget*>(m_profileLock.get())
+                                  : static_cast<nxui::Widget*>(flip));
+    flip->setCustomNavigation(nxui::FocusDirection::RIGHT, flip);
+    flip->removeAction(static_cast<uint64_t>(nxui::Button::DDown));
+    flip->removeAction(static_cast<uint64_t>(nxui::Button::LStickD));
+    flip->removeAction(static_cast<uint64_t>(nxui::Button::RStickD));
+    flip->addDirectionAction(nxui::FocusDirection::DOWN, [this]() {
+        if (!m_grid || m_navigator.route() != switchu::navigation::Route::Home)
+            return;
+        if (auto* target = m_grid->focusManager().current())
+            focusManager().setFocus(target);
+    });
+}
+
 void WiiUMenuApp::wireProfileLockNavigation() {
     if (!m_profileLock)
         return;
     auto* lock = m_profileLock.get();
     const bool dynamicLine = m_appLayoutMode == AppLayoutMode::DynamicLine;
     const auto& leftButtons = m_sidebar.leftButtons();
+    auto* flip = (m_layoutFlip && m_layoutFlip->isVisible()) ? m_layoutFlip.get() : nullptr;
 
     lock->setCustomNavigation(nxui::FocusDirection::LEFT, lock);
     lock->setCustomNavigation(nxui::FocusDirection::UP, lock);
@@ -1094,9 +1162,12 @@ void WiiUMenuApp::wireProfileLockNavigation() {
     lock->removeAction(static_cast<uint64_t>(nxui::Button::RStickD));
 
     if (dynamicLine) {
-        // The tile heads the top strip: [profile] [left applets] [right applets].
+        // Top strip: [profile] → [flip] → [left applets] …
         nxui::Widget* first = leftButtons.empty() ? nullptr : leftButtons.front().get();
-        lock->setCustomNavigation(nxui::FocusDirection::RIGHT, first ? first : lock);
+        lock->setCustomNavigation(nxui::FocusDirection::RIGHT,
+                                  flip ? flip : (first ? first : lock));
+        if (flip)
+            flip->setCustomNavigation(nxui::FocusDirection::RIGHT, first ? first : flip);
         m_sidebar.setDynamicLineProfileTarget(lock);
         lock->addDirectionAction(nxui::FocusDirection::DOWN, [this]() {
             if (!m_grid || m_appLayoutMode != AppLayoutMode::DynamicLine
@@ -1109,7 +1180,7 @@ void WiiUMenuApp::wireProfileLockNavigation() {
             m_grid->setDynamicLineUpTarget(lock);
         m_sidebar.setDynamicLineUpTarget(nullptr);
     } else {
-        lock->setCustomNavigation(nxui::FocusDirection::RIGHT, nullptr);
+        lock->setCustomNavigation(nxui::FocusDirection::RIGHT, flip ? flip : nullptr);
         m_sidebar.setDynamicLineProfileTarget(nullptr);
         // Grid mode: the tile sits right above the left applet column.
         if (!leftButtons.empty()) {
@@ -1117,6 +1188,7 @@ void WiiUMenuApp::wireProfileLockNavigation() {
             leftButtons.front()->setCustomNavigation(nxui::FocusDirection::UP, lock);
         }
     }
+    wireLayoutFlipNavigation();
 }
 
 void WiiUMenuApp::loadNextProfile() {
@@ -2171,6 +2243,10 @@ void WiiUMenuApp::completeDisplayModelApply(
             focusManager().setFocus(first);
         }
     }
+    // Compact line ↔ padded grid remaps indices; setLayoutMode ran on the old
+    // list and could pin morphPage to the wrong grid page (cursor flies right).
+    if (morphLayout)
+        m_grid->rebindLayoutMorphAnchor();
     if (artKindChanged)
         m_iconStreamer.startBurst(0.85f);
     {
@@ -3371,6 +3447,7 @@ void WiiUMenuApp::cycleSortMode() {
 void WiiUMenuApp::configureDynamicLineNavigation() {
     const bool dynamicLine = m_appLayoutMode == AppLayoutMode::DynamicLine;
     m_sidebar.setDynamicLineLayout(dynamicLine);
+    placeLayoutFlipButton();
 
     if (m_grid) {
         std::vector<nxui::Widget*> leftTargets;
@@ -3641,6 +3718,7 @@ bool WiiUMenuApp::tryCommitInPlaceLayoutMorph(std::uint64_t focused) {
     // member icons (borrowed); promote to owned peeks during the morph.
     constexpr int kFolderCoverWarmRadius = 4;
     applyFolderCoversToIcons(m_grid->focusedGlobalIndex(), kFolderCoverWarmRadius);
+    m_pendingFolderCoverSkipRadius = kFolderCoverWarmRadius;
     DebugLog::log("[layout-prefetch] folder peeks borrowed=%u owned=%u",
                   static_cast<unsigned>(m_folderPeekBorrowed.size()),
                   static_cast<unsigned>(m_folderPeekCache.size()));
@@ -3680,6 +3758,7 @@ void WiiUMenuApp::commitPendingLayoutVisuals() {
             std::chrono::steady_clock::now() - commitStarted).count();
         DebugLog::log("[layout-prefetch] commit done inplace=%ldms",
                       static_cast<long>(commitMs));
+        // Focus restore waits until morph settles (see update loop).
         return;
     }
 
@@ -3723,6 +3802,7 @@ void WiiUMenuApp::commitPendingLayoutVisuals() {
         std::chrono::steady_clock::now() - commitStarted).count();
     DebugLog::log("[layout-prefetch] commit done rebuild=%ldms total=%ldms",
                   static_cast<long>(rebuildMs), static_cast<long>(commitMs));
+    // Rebuild morph still in flight — restore after it settles.
 }
 
 void WiiUMenuApp::updateLayoutTransition(float dt) {
@@ -3792,6 +3872,8 @@ void WiiUMenuApp::setAppLayoutMode(AppLayoutMode mode) {
 
     m_appLayoutMode = mode;
     m_config.appLayoutMode = mode;
+    if (m_layoutFlip)
+        m_layoutFlip->setSingleRowActive(mode == AppLayoutMode::DynamicLine);
     // Never stall the layout morph on a prior config write. Reclaim a finished
     // future, then either save now or note a deferred save when one is in flight.
     if (m_configSaveFuture.valid()
@@ -3851,6 +3933,7 @@ void WiiUMenuApp::setAppLayoutMode(AppLayoutMode mode) {
     configureDynamicLineNavigation();
     syncPageIndicator();
     updateCursor();
+    restoreLayoutFlipFocusIfNeeded();
 }
 
 bool WiiUMenuApp::preferSingleRowPosters() const {
@@ -3902,7 +3985,27 @@ void WiiUMenuApp::syncSingleRowPosterPresentation(bool forceReloadIcons) {
         m_folderCoverCache.clear();
         m_folderPeekBorrowed.clear();
     }
-    applyFolderCoversToIcons();
+    // Single-row: same soft-landing as slim morph — warm nearby folder peeks,
+    // spread the rest across frames. Full sync here was the HOME-return hitch
+    // (~1s+ decoding every folder stack before input).
+    if (preferPoster && m_appLayoutMode == AppLayoutMode::DynamicLine) {
+        if (m_fastReturnRequested) {
+            // Applet return / cold boot: zero sync peeks on the critical path.
+            // Splash keeps covering HOME; fill starts at handoff.
+            m_pendingFolderCoverFill = false;
+            m_armFolderCoverFillAfterSplash = true;
+            m_pendingFolderCoverSkipRadius = -1;
+        } else {
+            constexpr int kFolderCoverWarmRadius = 4;
+            applyFolderCoversToIcons(m_grid->focusedGlobalIndex(),
+                                    kFolderCoverWarmRadius);
+            m_pendingFolderCoverFill = true;
+            m_pendingFolderCoverNext = 0;
+            m_pendingFolderCoverSkipRadius = kFolderCoverWarmRadius;
+        }
+    } else {
+        applyFolderCoversToIcons();
+    }
 
     if (m_openFolderId != 0 && (artKindChanged || preferPoster != wasPoster)) {
         const nxui::Rect panel = folderPanelRect();
@@ -3910,7 +4013,10 @@ void WiiUMenuApp::syncSingleRowPosterPresentation(bool forceReloadIcons) {
         placeFolderHeader(panel);
     }
 
-    if (artKindChanged || forceReloadIcons) {
+    // Applet return: skip the poster burst here — it was the remaining HOME
+    // hitch (same pattern as the old morph). Deferred uploads + post-splash
+    // fill warm the focused tile and neighbours gently.
+    if ((artKindChanged || forceReloadIcons) && !m_fastReturnRequested) {
         int page = 0, pageSize = 1;
         if (m_appLayoutMode == AppLayoutMode::DynamicLine) {
             page = std::max(0, m_grid->focusedGlobalIndex());
@@ -3938,6 +4044,7 @@ void WiiUMenuApp::openCapturedFolder() {
     m_folderCaptureReady = false;
     const bool refocus = (m_folderOpenFocusTitleId != 0);
     if (m_topHud) m_topHud->setVisible(false);
+    placeLayoutFlipButton();
     if (m_leftSidebar) m_leftSidebar->setVisible(false);
     if (m_rightSidebar) m_rightSidebar->setVisible(false);
     if (m_pageIndicator)
@@ -4236,6 +4343,8 @@ void WiiUMenuApp::finishCloseFolder(std::uint32_t oldId, bool preserveEditMode) 
     if (m_folderHeaderAnim.target() > 0.f)
         m_folderHeaderAnim.set(0.f, 0.16f, nxui::Easing::inCubic);
     if (m_topHud) m_topHud->setVisible(true);
+    placeLayoutFlipButton();
+    wireLayoutFlipNavigation();
     if (m_leftSidebar) m_leftSidebar->setVisible(true);
     if (m_rightSidebar) m_rightSidebar->setVisible(true);
     if (m_pageIndicator)
@@ -4822,7 +4931,8 @@ void WiiUMenuApp::buildGrid() {
                   gridMetrics.cellW, gridMetrics.cellH,
                   gridMetrics.padX, gridMetrics.padY);
     m_grid->setLayoutMode(m_appLayoutMode, false);
-    syncSingleRowPosterPresentation(false);
+    // Defer syncSingleRowPosterPresentation until after leave-session restore
+    // so folder-peek warm uses the real focus (not index 0).
 
     m_cursor = std::make_shared<SelectionCursor>();
     m_cursor->setInstantMotion(m_config.cursorMotionMode == 1);
@@ -4837,6 +4947,21 @@ void WiiUMenuApp::buildGrid() {
     m_clock->setCornerRadius(m_theme.cellCornerRadius);
     m_clock->setForceLiquidGlass(true);
     m_clock->setBlurEnabled(false);
+
+    m_layoutFlip = std::make_shared<LayoutFlipButton>();
+    m_layoutFlip->setTheme(&m_theme);
+    m_layoutFlip->setSingleRowActive(m_appLayoutMode == AppLayoutMode::DynamicLine);
+    m_layoutFlip->ensureIcon(app().gpu(), app().renderer(),
+                             std::string(SD_ASSETS) + "/icons/change_view.png");
+    m_layoutFlip->setOnActivate([this]() {
+        if (m_editMode || m_openFolderId != 0 || leaveSplashActive())
+            return;
+        if (m_layoutTransition.kind != LayoutTransitionKind::Idle)
+            return;
+        m_retainLayoutFlipFocus = true;
+        m_audio.playSfx(Sfx::Navigate);
+        toggleAppLayoutMode();
+    });
 
     m_battery = std::make_shared<BatteryWidget>();
     m_battery->setMarginTop(14.f);
@@ -4997,6 +5122,29 @@ void WiiUMenuApp::buildGrid() {
             m_grid->setPage(initialPage);
     }
 #endif
+
+    // After focus/page restore: poster frames + budgeted folder peeks (±4).
+    if (m_grid) {
+        const auto posterSyncStarted = std::chrono::steady_clock::now();
+        syncSingleRowPosterPresentation(false);
+        if (preferSingleRowPosters())
+            m_deferBackdropPreloadSec = 0.90f;
+        // Fast-return without a leave-splash hold still needs the fill armed.
+        if (m_armFolderCoverFillAfterSplash && !leaveSplashActive()) {
+            m_armFolderCoverFillAfterSplash = false;
+            m_pendingFolderCoverFill = false;
+            m_folderCoverFillDelayFrames = 8;
+            m_pendingFolderCoverNext = 0;
+            m_pendingFolderCoverSkipRadius = -1;
+        }
+        DebugLog::log("[init] single-row poster sync in %ldms focus=%d peeksOwned=%u pendingFill=%d armAfterSplash=%d",
+                      static_cast<long>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                          std::chrono::steady_clock::now() - posterSyncStarted).count()),
+                      m_grid->focusedGlobalIndex(),
+                      static_cast<unsigned>(m_folderPeekCache.size()),
+                      m_pendingFolderCoverFill ? 1 : 0,
+                      m_armFolderCoverFillAfterSplash ? 1 : 0);
+    }
 
     const bool fastReturn = m_fastReturnRequested;
     if (fastReturn) {
@@ -5181,6 +5329,8 @@ void WiiUMenuApp::buildGrid() {
     m_topHud->addChild(m_clock);
     m_topHud->addChild(m_battery);
     m_topHud->layout();
+    placeLayoutFlipButton();
+    wireLayoutFlipNavigation();
 
     m_leftSidebar = std::make_shared<nxui::Box>(nxui::Axis::COLUMN);
     m_leftSidebar->setTag("leftSidebar");
@@ -5204,6 +5354,10 @@ void WiiUMenuApp::buildGrid() {
     m_contentLayer->addChild(m_leftSidebar);
     m_contentLayer->addChild(m_rightSidebar);
     m_contentLayer->addChild(m_topHud);
+    // Sibling of topHud (not nested) so clock layout stays unchanged and the
+    // flip control remains independently focusable / tappable.
+    if (m_layoutFlip)
+        m_contentLayer->addChild(m_layoutFlip);
     m_contentLayer->addChild(m_titlePill);
     m_contentLayer->addChild(m_pageIndicator);
 
@@ -5885,6 +6039,9 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
         }
     }
 
+    if (m_retainLayoutFlipFocus)
+        restoreLayoutFlipFocusIfNeeded();
+
     if (m_pendingNeighborArtBurst && m_grid && !m_grid->isLayoutMorphing()) {
         // Last chance: do not let onPageChanged recycle textures still aliased
         // by folder peek stacks.
@@ -5893,9 +6050,10 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
                 applyFolderCoversToIcons(m_grid->focusedGlobalIndex(), 4);
         }
         m_pendingNeighborArtBurst = false;
-        // Far folder peeks only — nearby ±4 already applied on the commit frame.
+        // Far folder peeks only — nearby warm radius already applied on commit.
         m_pendingFolderCoverFill = true;
         m_pendingFolderCoverNext = 0;
+        // Keep whatever skip radius the commit/sync path armed.
         // No startBurst — neighbours often already warmed during the morph.
         int page = 0, pageSize = 1;
         if (m_appLayoutMode == AppLayoutMode::DynamicLine) {
@@ -5909,16 +6067,32 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
                                      m_grid->allIcons());
     }
 
-    if (m_pendingFolderCoverFill && m_grid) {
+    if (m_folderCoverFillDelayFrames > 0
+        && !leaveSplashActive()
+        && m_deferredInitialAssetFrames <= 0) {
+        --m_folderCoverFillDelayFrames;
+        if (m_folderCoverFillDelayFrames == 0) {
+            m_pendingFolderCoverFill = true;
+            m_pendingFolderCoverNext = 0;
+            DebugLog::log("[leave] folder peek fill armed after delay");
+        }
+    }
+
+    // Don't compete with the deferred icon/sidebar upload frame for GPU time.
+    if (m_pendingFolderCoverFill && m_grid
+        && m_deferredInitialAssetFrames <= 0
+        && m_folderCoverFillDelayFrames <= 0
+        && !leaveSplashActive()) {
         const int total = m_model.count();
         const int focus = m_grid->focusedGlobalIndex();
-        constexpr int kSkipRadius = 4; // matches slim-commit warm radius
+        const int skipRadius = m_pendingFolderCoverSkipRadius;
         while (m_pendingFolderCoverNext < total) {
             const int index = m_pendingFolderCoverNext++;
             if (!m_model.at(index).isFolder())
                 continue;
-            if (focus >= 0 && std::abs(index - focus) <= kSkipRadius)
-                continue; // already correct from commit
+            if (skipRadius >= 0 && focus >= 0
+                && std::abs(index - focus) <= skipRadius)
+                continue; // already correct from commit/sync warm
             applyFolderCoversToIcons(index, 0);
             break; // one folder decode budget per frame
         }

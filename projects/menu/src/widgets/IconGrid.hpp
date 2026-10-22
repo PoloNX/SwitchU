@@ -37,6 +37,10 @@ public:
     bool isDynamicLine() const { return m_layoutMode == AppLayoutMode::DynamicLine; }
     bool isDynamicLineScrolling() const;
     bool isLayoutMorphing() const { return m_layoutMorphing; }
+    // After a model rebuild remaps global indices (compact line ↔ padded grid),
+    // re-anchor morph page + line scroll to the focused title so the cursor and
+    // tiles blend into the correct grid cells.
+    void rebindLayoutMorphAnchor();
     void setDynamicLineUpTarget(nxui::Widget* target);
     void setDynamicLineDownTarget(nxui::Widget* target);
     // When true, single-row may use per-tile Poster frames (apps with poster.img).

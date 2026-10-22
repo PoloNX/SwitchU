@@ -66,6 +66,21 @@ void IconGrid::setLayoutMode(AppLayoutMode mode, bool animate) {
                       nxui::Easing::inOutCubic);
 }
 
+void IconGrid::rebindLayoutMorphAnchor() {
+    if (!m_layoutMorphing)
+        return;
+    const int cur = focusedGlobalIndex();
+    const int perPage = std::max(1, iconsPerPage());
+    m_layoutMorphPage = cur >= 0 ? cur / perPage : m_page;
+    if (cur >= 0)
+        m_lineScrollOffset.setImmediate(static_cast<float>(cur));
+    if (m_layoutMode == AppLayoutMode::Grid && cur >= 0) {
+        const int wanted = cur / perPage;
+        if (wanted != m_page)
+            setPage(wanted);
+    }
+}
+
 bool IconGrid::isDynamicLineScrolling() const {
     return m_layoutMode == AppLayoutMode::DynamicLine
         && std::abs(m_lineScrollOffset.value() - m_lineScrollOffset.target()) > 0.01f;
