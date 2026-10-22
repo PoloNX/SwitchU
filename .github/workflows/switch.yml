@@ -45,9 +45,10 @@ jobs:
         shell: bash
         run: echo "sha=$(git -C lib/Atmosphere-libs rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-      - name: Cache Atmosphere-libs build
+      - name: Restore Atmosphere-libs cache
         if: matrix.variant == 'sysmodule'
-        uses: actions/cache@v4
+        id: atmo-cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             lib/Atmosphere-libs/libstratosphere/lib
@@ -91,6 +92,15 @@ jobs:
 
       - name: Build SwitchU
         run: xmake -vD --root
+
+      - name: Save Atmosphere-libs cache
+        if: matrix.variant == 'sysmodule' && github.ref == 'refs/heads/master' && steps.atmo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            lib/Atmosphere-libs/libstratosphere/lib
+            build/.stamps/libstratosphere
+          key: atmosphere-libs-${{ steps.atmo_rev.outputs.sha }}
 
       - name: Package install layout
         run: xmake install -o "dist/${{ matrix.variant }}/${{ matrix.mode }}" --root
