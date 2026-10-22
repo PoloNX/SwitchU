@@ -40,6 +40,20 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Get Atmosphere-libs revision
+        id: atmo_rev
+        shell: bash
+        run: echo "sha=$(git -C lib/Atmosphere-libs rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Atmosphere-libs build
+        if: matrix.variant == 'sysmodule'
+        uses: actions/cache@v4
+        with:
+          path: |
+            lib/Atmosphere-libs/libstratosphere/lib
+            build/.stamps/libstratosphere
+          key: atmosphere-libs-${{ steps.atmo_rev.outputs.sha }}
+
       - name: Install system dependencies
         shell: bash
         run: |
