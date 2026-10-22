@@ -48,7 +48,7 @@ jobs:
       - name: Restore Atmosphere-libs cache
         if: matrix.variant == 'sysmodule'
         id: atmo-cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: |
             lib/Atmosphere-libs/libstratosphere/lib
@@ -95,7 +95,7 @@ jobs:
 
       - name: Save Atmosphere-libs cache
         if: matrix.variant == 'sysmodule' && github.ref == 'refs/heads/master' && steps.atmo-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: |
             lib/Atmosphere-libs/libstratosphere/lib
