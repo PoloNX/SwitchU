@@ -107,6 +107,7 @@ void SteamGridDbBackdrop::showTitle(std::uint64_t titleId, bool forceReload) {
                 set.titleId = 0;
                 set.hasHero = false;
                 set.hasLogo = false;
+                set.heroLuminance = -1.f;
             }
             m_artworkOpacity.setImmediate(0.f);
             m_fade.setImmediate(1.f);
@@ -249,6 +250,50 @@ SteamGridDbBackdrop::DecodedImage SteamGridDbBackdrop::decodeImage(
     return out;
 }
 
+float SteamGridDbBackdrop::sampleLuminance(const DecodedImage& image) {
+    if (image.rgba.empty() || image.width <= 0 || image.height <= 0)
+        return -1.f;
+    // Sparse grid (~32×18) — cheap enough for the decode worker thread.
+    const int stepX = std::max(1, image.width / 32);
+    const int stepY = std::max(1, image.height / 18);
+    double sum = 0.0;
+    int count = 0;
+    for (int y = 0; y < image.height; y += stepY) {
+        for (int x = 0; x < image.width; x += stepX) {
+            const std::size_t i = (static_cast<std::size_t>(y) * static_cast<std::size_t>(image.width)
+                                   + static_cast<std::size_t>(x)) * 4u;
+            if (i + 2 >= image.rgba.size())
+                continue;
+            const float r = image.rgba[i] / 255.f;
+            const float g = image.rgba[i + 1] / 255.f;
+            const float b = image.rgba[i + 2] / 255.f;
+            sum += 0.2126 * r + 0.7152 * g + 0.0722 * b;
+            ++count;
+        }
+    }
+    return count > 0 ? static_cast<float>(sum / count) : -1.f;
+}
+
+bool SteamGridDbBackdrop::useFullHeroOpacity() const {
+    // Full-opacity heroes are single-row only; folder grid stays dimmed.
+    return m_layoutMode == AppLayoutMode::DynamicLine;
+}
+
+bool SteamGridDbBackdrop::hasDisplayedHero() const {
+    if (!m_enabled || !isVisible())
+        return false;
+    if (m_artworkOpacity.value() <= 0.05f)
+        return false;
+    const auto& set = m_sets[m_current];
+    return set.hasHero && set.hero.valid();
+}
+
+float SteamGridDbBackdrop::displayedHeroLuminance() const {
+    if (!hasDisplayedHero())
+        return -1.f;
+    return m_sets[m_current].heroLuminance;
+}
+
 void SteamGridDbBackdrop::startPendingDecode(std::uint64_t titleId) {
     auto state = std::make_shared<DecodeState>();
     state->artwork.titleId = titleId;
@@ -262,6 +307,8 @@ void SteamGridDbBackdrop::startPendingDecode(std::uint64_t titleId) {
             // free + waitIdle on the render thread during focus changes.
             state->artwork.hero = decodeImage(
                 SteamGridDbManager::heroPath(titleId), 1280, 720, true);
+            if (!state->cancelled.load())
+                state->artwork.heroLuminance = sampleLuminance(state->artwork.hero);
             if (!state->cancelled.load())
                 state->artwork.logo = decodeImage(
                     SteamGridDbManager::logoPath(titleId), 640, 180, false);
@@ -312,12 +359,14 @@ void SteamGridDbBackdrop::drawSet(nxui::Renderer& renderer,
     const nxui::Rect screen = rect();
 
     if (set.hasHero && set.hero.valid()) {
-        const float heroAlpha = m_layoutMode == AppLayoutMode::DynamicLine ? 0.94f : 0.24f;
+        const bool fullHero = useFullHeroOpacity();
+        const float heroAlpha = fullHero ? 0.94f : 0.24f;
         renderer.pushClipRect(screen);
         renderer.drawTexture(&set.hero, fillRect(set.hero, screen),
                              nxui::Color::white().withAlpha(alpha * heroAlpha));
         renderer.popClipRect();
-        if (m_layoutMode == AppLayoutMode::DynamicLine) {
+        // Soft bottom scrim so chrome stays legible over bright/dark heroes.
+        if (fullHero) {
             renderer.drawGradientRect(
                 screen,
                 nxui::Color(0.f, 0.f, 0.f, 0.04f * alpha),
@@ -422,6 +471,7 @@ void SteamGridDbBackdrop::onUpdate(float dt) {
             target.hasHero = !decoded.hero.rgba.empty()
                 && target.hero.loadFromPixels(m_gpu, m_renderer, decoded.hero.rgba.data(),
                                               decoded.hero.width, decoded.hero.height);
+            target.heroLuminance = target.hasHero ? decoded.heroLuminance : -1.f;
             decoded.hero.rgba.clear();
         } else if (m_uploadStage == 1) {
             target.hasLogo = !decoded.logo.rgba.empty()

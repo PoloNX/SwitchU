@@ -83,6 +83,9 @@ struct AppConfig {
     int folderStyle = 0;
     // First-game icon overlay. Ignored by Classic (the mosaic is the cover).
     bool folderShowCover = false;
+    // Layout when opening a folder: 0 = Auto (keep current), 1 = Grid,
+    // 2 = Single-row. Does not change the HOME layout preference on its own.
+    int folderDefaultView = 0;
 
     // Automatic day/night theme switching.
     std::string autoThemeMode = "off";       // "off" | "manual" | "geo"

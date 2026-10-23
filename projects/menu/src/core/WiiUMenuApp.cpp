@@ -767,6 +767,8 @@ void WiiUMenuApp::updateLeaveSplashHandoff(float dt) {
                 m_pendingFolderCoverSkipRadius = -1;
                 warmFolderCompositesEarly();
             }
+            // Splash is gone — stop treating later rebuilds as soft-return.
+            m_fastReturnRequested = false;
             const auto handoffArt = std::chrono::steady_clock::now();
             showFocusedSteamGridDbArtwork();
             DebugLog::log("[leave] splash handoff complete art=%ldms fillDelay=%d softLand=2.00+1.75 pace=%.2f",
@@ -1029,20 +1031,20 @@ void WiiUMenuApp::loadResources() {
 
 void WiiUMenuApp::loadStaticTextures() {
     DebugLog::log("[init] loadResources: static textures");
-    std::string gameCardPath = std::string(SD_ASSETS) + "/icons/gamecard.png";
+    std::string gameCardPath = std::string(SD_ASSETS) + "/icons/default/gamecard.png";
     if (m_gameCardTex.loadFromFile(app().gpu(), app().renderer(), gameCardPath))
         m_loadedGameCardPath = gameCardPath;
 
     m_arrowTexLeft.loadFromFile(app().gpu(), app().renderer(),
-                                std::string(SD_ASSETS) + "/icons/page_arrow_left.png");
+                                std::string(SD_ASSETS) + "/icons/default/page_arrow_left.png");
     m_arrowTexRight.loadFromFile(app().gpu(), app().renderer(),
-                                 std::string(SD_ASSETS) + "/icons/page_arrow_right.png");
+                                 std::string(SD_ASSETS) + "/icons/default/page_arrow_right.png");
     m_batteryConsoleTex.loadFromFile(app().gpu(), app().renderer(),
-                                     std::string(SD_ASSETS) + "/icons/widget_battery_switch.png");
+                                     std::string(SD_ASSETS) + "/icons/default/widget_battery_switch.png");
     m_batteryJoyconLeftTex.loadFromFile(app().gpu(), app().renderer(),
-                                        std::string(SD_ASSETS) + "/icons/widget_battery_joycon_left.png");
+                                        std::string(SD_ASSETS) + "/icons/default/widget_battery_joycon_left.png");
     m_batteryJoyconRightTex.loadFromFile(app().gpu(), app().renderer(),
-                                         std::string(SD_ASSETS) + "/icons/widget_battery_joycon_right.png");
+                                         std::string(SD_ASSETS) + "/icons/default/widget_battery_joycon_right.png");
 }
 
 void WiiUMenuApp::loadProfiles(bool loadImmediately) {
@@ -2372,9 +2374,10 @@ void WiiUMenuApp::completeDisplayModelApply(
         metrics.padY *= 0.92f;
     }
     // Inside a folder there is no sidebar to the left or right of the grid, so
-    // the edge columns are free to flip the page instead.
+    // the edge columns are free to flip the page instead. Single-row never
+    // pages — leave edge actions off or Grid→line morph keeps stale DRight.
     const bool inFolder = (m_openFolderId != 0);
-    m_grid->setEdgePaging(inFolder);
+    m_grid->setEdgePaging(inFolder && m_appLayoutMode == AppLayoutMode::Grid);
     m_grid->setSlideTransition(m_config.pageTransitionMode == 0);
     m_grid->setLayoutMode(m_appLayoutMode, morphLayout);
     m_grid->setup(std::move(icons), columns, rows, metrics.cellW, metrics.cellH,
@@ -3530,6 +3533,9 @@ void WiiUMenuApp::requestOpenFolder(std::uint32_t folderId, std::uint64_t focusT
 void WiiUMenuApp::flipPageFromEdge(int dir) {
     if (!m_grid || m_grid->isTransitioning())
         return;
+    // Single-row scrolls by focus index; grid edge-paging must not run.
+    if (m_appLayoutMode == AppLayoutMode::DynamicLine)
+        return;
     const int target = m_grid->currentPage() + dir;
     if (target < 0 || target >= m_grid->totalPages()) {
         m_grid->bumpEdge(dir);
@@ -3884,6 +3890,7 @@ bool WiiUMenuApp::tryCommitInPlaceLayoutMorph(std::uint64_t focused) {
         metrics.padY *= 0.92f;
     }
 
+    m_grid->setEdgePaging(false);
     m_grid->setLayoutMode(AppLayoutMode::DynamicLine, true);
     m_grid->setup(std::move(icons), columns, rows, metrics.cellW, metrics.cellH,
                   metrics.padX, metrics.padY);
@@ -3910,10 +3917,20 @@ bool WiiUMenuApp::tryCommitInPlaceLayoutMorph(std::uint64_t focused) {
     // cheap). Cancelling here only forced a cold re-schedule when the morph ended.
     m_pendingNeighborArtBurst = true;
 
+    // In-place morph skips completeDisplayModelApply, which normally retargets
+    // the folder glass + title to the single-row band. Without this the large
+    // multi-row plate from grid mode sticks around.
+    if (m_openFolderId != 0) {
+        const nxui::Rect panel = folderPanelRect();
+        if (m_folderZoom) m_folderZoom->retarget(panel);
+        placeFolderHeader(panel);
+    }
+
     syncSteamGridDbLogoArea();
     configureDynamicLineNavigation();
     syncPageIndicator();
     updateCursor();
+    updateHeroAwareChrome(true);
     return true;
 }
 
@@ -4053,22 +4070,26 @@ void WiiUMenuApp::setAppLayoutMode(AppLayoutMode mode) {
                   static_cast<unsigned long>(focused));
 
     m_appLayoutMode = mode;
-    m_config.appLayoutMode = mode;
     if (m_layoutFlip)
         m_layoutFlip->setSingleRowActive(mode == AppLayoutMode::DynamicLine);
-    // Never stall the layout morph on a prior config write. Reclaim a finished
-    // future, then either save now or note a deferred save when one is in flight.
-    if (m_configSaveFuture.valid()
-        && m_configSaveFuture.wait_for(std::chrono::seconds(0))
-            == std::future_status::ready) {
-        try { m_configSaveFuture.get(); } catch (...) {}
-    }
-    if (!m_configSaveFuture.valid()) {
-        m_configSaveFuture = m_threadPool.submit([config = m_config]() {
-            config.save();
-        });
-    } else {
-        m_configSaveDeferred = true;
+    // Inside a folder, layout flips are session-only — HOME stays locked to
+    // whatever view was active when the folder opened (config.appLayoutMode).
+    if (m_openFolderId == 0) {
+        m_config.appLayoutMode = mode;
+        // Never stall the layout morph on a prior config write. Reclaim a finished
+        // future, then either save now or note a deferred save when one is in flight.
+        if (m_configSaveFuture.valid()
+            && m_configSaveFuture.wait_for(std::chrono::seconds(0))
+                == std::future_status::ready) {
+            try { m_configSaveFuture.get(); } catch (...) {}
+        }
+        if (!m_configSaveFuture.valid()) {
+            m_configSaveFuture = m_threadPool.submit([config = m_config]() {
+                config.save();
+            });
+        } else {
+            m_configSaveDeferred = true;
+        }
     }
 
     m_audio.playSfx(Sfx::ThemeToggle);
@@ -4180,7 +4201,10 @@ void WiiUMenuApp::syncSingleRowPosterPresentation(bool forceReloadIcons) {
     // spread the rest across frames. Full sync here was the HOME-return hitch
     // (~1s+ decoding every folder stack before input).
     if (preferPoster && m_appLayoutMode == AppLayoutMode::DynamicLine) {
-        if (m_fastReturnRequested) {
+        // Only defer while leave-splash still covers HOME. Sticky
+        // m_fastReturnRequested alone used to skip warm after closing a
+        // folder mid-session → blank folder albums until focus moved.
+        if (m_fastReturnRequested && leaveSplashActive()) {
             // Applet return / cold boot: zero sync peeks on the critical path.
             // Splash keeps covering HOME; fill starts at handoff / on focus.
             m_pendingFolderCoverFill = false;
@@ -4229,6 +4253,37 @@ void WiiUMenuApp::syncSingleRowPosterPresentation(bool forceReloadIcons) {
     }
 }
 
+void WiiUMenuApp::applyFolderDefaultViewOnOpen() {
+    // 0 = Auto (keep current HOME layout), 1 = Grid, 2 = Single-row.
+    AppLayoutMode desired = m_appLayoutMode;
+    switch (std::clamp(m_config.folderDefaultView, 0, 2)) {
+        case 1: desired = AppLayoutMode::Grid; break;
+        case 2: desired = AppLayoutMode::DynamicLine; break;
+        default: return;
+    }
+    if (desired == m_appLayoutMode)
+        return;
+    // Temporary for this folder session — HOME stays in config.appLayoutMode.
+    m_appLayoutMode = desired;
+    if (m_layoutFlip)
+        m_layoutFlip->setSingleRowActive(desired == AppLayoutMode::DynamicLine);
+    if (m_steamGridDbBackdrop)
+        m_steamGridDbBackdrop->setLayoutMode(m_appLayoutMode);
+}
+
+void WiiUMenuApp::restoreHomeLayoutAfterFolder() {
+    // Always return to the view that was active when the folder opened
+    // (locked in config while in-folder flips stay local).
+    if (m_appLayoutMode == m_config.appLayoutMode)
+        return;
+    m_appLayoutMode = m_config.appLayoutMode;
+    if (m_layoutFlip)
+        m_layoutFlip->setSingleRowActive(
+            m_appLayoutMode == AppLayoutMode::DynamicLine);
+    if (m_steamGridDbBackdrop)
+        m_steamGridDbBackdrop->setLayoutMode(m_appLayoutMode);
+}
+
 void WiiUMenuApp::openCapturedFolder() {
     const auto* folder = m_folderStore.find(m_requestedFolderId);
     if (!folder) return;
@@ -4244,8 +4299,10 @@ void WiiUMenuApp::openCapturedFolder() {
         m_pageIndicator->setActiveColor(switchu::folders::colorForIndex(folder->colorIndex));
     if (m_folderHeaderLabel) {
         m_folderHeaderLabel->setText(folder->name);
-        m_folderHeaderLabel->setTextColor(m_theme.textPrimary);
+        m_folderHeaderLabel->setTextColor(m_homeChrome.textPrimary);
     }
+    applyFolderDefaultViewOnOpen();
+    syncHeroBackdropPresentation();
     m_grid->setRect(kFolderGridRect);
     // Don't inherit the root page number into the folder grid.
     m_grid->setPage(0);
@@ -4348,7 +4405,7 @@ void WiiUMenuApp::refreshOpenFolderChrome() {
     }
     if (m_folderHeaderLabel) {
         m_folderHeaderLabel->setText(folder->name);
-        m_folderHeaderLabel->setTextColor(m_theme.textPrimary);
+        m_folderHeaderLabel->setTextColor(m_homeChrome.textPrimary);
     }
     placeFolderHeader(panel);
     m_folderHeaderAnim.setImmediate(1.f);
@@ -4532,6 +4589,8 @@ void WiiUMenuApp::finishCloseFolder(std::uint32_t oldId, bool preserveEditMode) 
         unbindEditActions();
     }
     m_openFolderId = 0;
+    restoreHomeLayoutAfterFolder();
+    syncHeroBackdropPresentation();
     // Sink back into the panel as it shrinks away.
     if (m_folderHeaderAnim.target() > 0.f)
         m_folderHeaderAnim.set(0.f, 0.16f, nxui::Easing::inCubic);
@@ -4544,7 +4603,20 @@ void WiiUMenuApp::finishCloseFolder(std::uint32_t oldId, bool preserveEditMode) 
         m_pageIndicator->clearActiveColor();
     m_grid->setRect({kGridRectX, kGridRectY, kGridRectW, kGridRectH});
     applyDisplayModel(buildRootFolderModel(), folderTitleId(oldId), false, {}, true);
+    configureDynamicLineNavigation();
     syncPageIndicator();
+    // Leaving Grid-default folders back to single-row HOME can clear poster
+    // peeks during the layout restore — re-warm nearby albums immediately so
+    // they are not blank until the user scrolls.
+    if (preferSingleRowPosters() && m_grid && !leaveSplashActive()) {
+        constexpr int kFolderCoverWarmRadius = 4;
+        applyFolderCoversToIcons(m_grid->focusedGlobalIndex(),
+                                kFolderCoverWarmRadius);
+        m_pendingFolderCoverFill = true;
+        m_pendingFolderCoverNext = 0;
+        m_pendingFolderCoverSkipRadius = kFolderCoverWarmRadius;
+        m_armFolderCoverFillAfterSplash = false;
+    }
     // The folder title is gone again: put the single-row logo back in its
     // default band.
     syncSteamGridDbLogoArea();
@@ -5766,7 +5838,7 @@ void WiiUMenuApp::buildGrid() {
     configureDynamicLineNavigation();
     if (!fastReturn) {
         m_sidebar.reloadAssets(app().gpu(), app().renderer(), SD_ASSETS,
-                               resolveThemeAssetPath(m_effectivePreset, m_effectivePreset.icons.basePath));
+                                 resolveThemeAssetPath(m_effectivePreset, m_effectivePreset.icons.basePath));
     }
 
     wireGlobalActions();
@@ -6555,6 +6627,8 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
             || m_iconStreamer.softLandingActive();
         m_steamGridDbBackdrop->setPreloadPaused(
             paceWindow && app().input().hasUserActivity());
+        // Hero decode finishes async — re-check contrast when art lands/clears.
+        updateHeroAwareChrome();
     }
 
     // Own borrowed folder peeks before IconStreamer overwrites those GPU slots
@@ -6886,8 +6960,8 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
                                              m_grid->allIcons());
             }
             m_sidebar.reloadAssets(app().gpu(), app().renderer(), SD_ASSETS,
-                                   resolveThemeAssetPath(m_effectivePreset,
-                                                         m_effectivePreset.icons.basePath));
+                                     resolveThemeAssetPath(m_effectivePreset,
+                                                           m_effectivePreset.icons.basePath));
             DebugLog::log("[init] deferred initial icon/sidebar uploads done");
         }
     }
@@ -7770,8 +7844,8 @@ void WiiUMenuApp::renderActionHintBar(nxui::Renderer& ren) {
     const float blockH = rows.size() * kHintCapH + (rows.size() - 1) * kHintRowGap;
     float y = 720.f - kHintEdgeY - blockH + (1.f - reveal) * 4.f;
 
-    const nxui::Color tint = m_theme.panelBase.withAlpha(
-        m_theme.mode == nxui::ThemeMode::Dark ? 0.30f : 0.24f);
+    const nxui::Color tint = m_homeChrome.panelBase.withAlpha(
+        m_homeChrome.mode == nxui::ThemeMode::Dark ? 0.30f : 0.24f);
 
     for (const auto& [first, last] : rows) {
         float rowW = 0.f;
@@ -7787,8 +7861,8 @@ void WiiUMenuApp::renderActionHintBar(nxui::Renderer& ren) {
             ren.drawRoundedRect({cap.x, cap.y + 3.f, cap.width, cap.height},
                                 nxui::Color(0.f, 0.f, 0.f, 0.14f * reveal), radius);
             ren.drawFrostedInset(cap, tint.withAlpha(tint.a * reveal),
-                                 m_theme.panelBorder.withAlpha(0.24f * reveal),
-                                 m_theme.panelHighlight.withAlpha(0.08f * reveal),
+                                 m_homeChrome.panelBorder.withAlpha(0.24f * reveal),
+                                 m_homeChrome.panelHighlight.withAlpha(0.08f * reveal),
                                  radius, 0.86f);
 
             const nxui::Vec2 iconSize = m_fontIcons.measure(c.icon);
@@ -7796,7 +7870,7 @@ void WiiUMenuApp::renderActionHintBar(nxui::Renderer& ren) {
             ren.drawText(c.icon,
                          {cap.x + kHintCapPadX,
                           cap.y + (kHintCapH - iconSize.y * kHintIconScale) * 0.5f},
-                         &m_fontIcons, m_theme.textPrimary.withAlpha(0.94f * reveal), kHintIconScale);
+                         &m_fontIcons, m_homeChrome.textPrimary.withAlpha(0.94f * reveal), kHintIconScale);
 
             const float textX = cap.x + kHintCapPadX + iconW + kHintIconGap;
             const float swap  = nxui::Easing::outCubic(std::clamp(c.swapT, 0.f, 1.f));
@@ -7808,7 +7882,7 @@ void WiiUMenuApp::renderActionHintBar(nxui::Renderer& ren) {
                              {textX - 7.f * swap,
                               cap.y + (kHintCapH - os.y * kHintTextScale) * 0.5f},
                              &m_fontSmall,
-                             m_theme.textSecondary.withAlpha(0.90f * reveal * (1.f - swap)),
+                             m_homeChrome.textSecondary.withAlpha(0.90f * reveal * (1.f - swap)),
                              kHintTextScale);
             }
             const nxui::Vec2 ls = m_fontSmall.measure(c.label);
@@ -7816,7 +7890,7 @@ void WiiUMenuApp::renderActionHintBar(nxui::Renderer& ren) {
                          {textX + 7.f * (1.f - swap),
                           cap.y + (kHintCapH - ls.y * kHintTextScale) * 0.5f},
                          &m_fontSmall,
-                         m_theme.textSecondary.withAlpha(0.90f * reveal * swap),
+                         m_homeChrome.textSecondary.withAlpha(0.90f * reveal * swap),
                          kHintTextScale);
             ren.popClipRect();
 
@@ -7888,11 +7962,11 @@ void WiiUMenuApp::renderActionHintPanel(nxui::Renderer& ren) {
 
     ren.drawRoundedRect({panel.x, panel.y + 4.f, panel.width, panel.height},
                         nxui::Color(0.f, 0.f, 0.f, 0.12f), kRadius);
-    const nxui::Color tint = m_theme.panelBase.withAlpha(
-        m_theme.mode == nxui::ThemeMode::Dark ? 0.22f : 0.18f);
+    const nxui::Color tint = m_homeChrome.panelBase.withAlpha(
+        m_homeChrome.mode == nxui::ThemeMode::Dark ? 0.22f : 0.18f);
     ren.drawFrostedInset(panel, tint,
-                        m_theme.panelBorder.withAlpha(0.26f),
-                        m_theme.panelHighlight.withAlpha(0.09f),
+                        m_homeChrome.panelBorder.withAlpha(0.26f),
+                        m_homeChrome.panelHighlight.withAlpha(0.09f),
                         kRadius, 0.86f);
 
     ren.pushClipRect(panel.shrunk(3.f));
@@ -7907,9 +7981,9 @@ void WiiUMenuApp::renderActionHintPanel(nxui::Renderer& ren) {
         const float labelY = y + (kRowH - labelSize.y * kTextScale) * 0.5f;
 
         ren.drawText(hint.icon, {iconX, iconY}, &m_fontIcons,
-                     m_theme.textPrimary.withAlpha(0.88f * reveal), kIconScale);
+                     m_homeChrome.textPrimary.withAlpha(0.88f * reveal), kIconScale);
         ren.drawText(hint.label, {labelX, labelY}, &m_fontSmall,
-                     m_theme.textSecondary.withAlpha(0.82f * reveal), kTextScale);
+                     m_homeChrome.textSecondary.withAlpha(0.82f * reveal), kTextScale);
         y += kRowH + kRowGap;
     }
     ren.popClipRect();

@@ -873,6 +873,7 @@ void WiiUMenuApp::startSteamGridDbScrape() {
         m_progressDialog->setCancellable(true, [this]() {
             cancelSteamGridDbScrape();
         });
+        raiseProgressDialogAboveOverlays();
         m_progressDialog->show(nxui::I18n::instance().tr(
             "settings.steamgriddb.download_title", "Downloading artwork"),
             nxui::I18n::instance().tr(
@@ -888,6 +889,31 @@ void WiiUMenuApp::cancelSteamGridDbScrape() {
     if (!m_steamGridDb.running())
         return;
     m_steamGridDb.requestCancel();
+    if (m_progressDialog)
+        m_progressDialog->updateState(nxui::I18n::instance().tr(
+            "settings.steamgriddb.cancelling", "Cancelling..."), -1.f);
+}
+
+void WiiUMenuApp::raiseProgressDialogAboveOverlays() {
+    if (!m_overlayLayer || !m_progressDialog)
+        return;
+    // Picker show() re-parents itself to the top of the overlay stack, which
+    // buries the download dialog. Keep progress on top while it is active.
+    m_overlayLayer->removeChild(m_progressDialog.get());
+    m_overlayLayer->addChild(m_progressDialog);
+}
+
+void WiiUMenuApp::cancelSteamGridDbApply() {
+    if (!m_steamGridDbApplyProgress)
+        return;
+    m_steamGridDbApplyProgress->cancelRequested.store(true);
+    {
+        std::lock_guard<std::mutex> lock(m_steamGridDbApplyProgress->mutex);
+        m_steamGridDbApplyProgress->message = nxui::I18n::instance().tr(
+            "settings.steamgriddb.cancelling", "Cancelling...");
+        m_steamGridDbApplyProgress->progress01 = -1.f;
+        ++m_steamGridDbApplyProgress->revision;
+    }
     if (m_progressDialog)
         m_progressDialog->updateState(nxui::I18n::instance().tr(
             "settings.steamgriddb.cancelling", "Cancelling..."), -1.f);
@@ -1084,19 +1110,26 @@ void WiiUMenuApp::applySteamGridDbCandidate(
     m_steamGridDbApplyProgressUiRevision = 0;
     if (m_progressDialog) {
         m_progressDialog->setTheme(&m_theme);
-        m_progressDialog->setCancellable(false);
+        m_progressDialog->setCancellable(true, [this]() {
+            cancelSteamGridDbApply();
+        });
+        raiseProgressDialogAboveOverlays();
         m_progressDialog->show(nxui::I18n::instance().tr(
             "settings.steamgriddb.download_title", "Downloading artwork"),
             progress->message, 0.f);
         focusManager().setFocus(m_progressDialog.get());
     }
     m_steamGridDbApplyFuture = std::async(std::launch::async, [browse, candidate, progress]() {
-        return SteamGridDbManager::applyCandidate(browse, candidate,
+        return SteamGridDbManager::applyCandidate(
+            browse, candidate,
             [progress](const std::string& message, float value) {
                 std::lock_guard<std::mutex> lock(progress->mutex);
                 progress->message = message;
                 progress->progress01 = value;
                 ++progress->revision;
+            },
+            [progress]() {
+                return progress->cancelRequested.load();
             });
     });
 }
@@ -1142,9 +1175,11 @@ void WiiUMenuApp::syncSteamGridDb() {
             m_steamGridDbApplyProgressUiRevision = revision;
             m_progressDialog->updateState(message, progress01);
         }
-        if (m_progressDialog && m_progressDialog->isActive()
-            && focusManager().current() != m_progressDialog.get())
-            focusManager().setFocus(m_progressDialog.get());
+        if (m_progressDialog && m_progressDialog->isActive()) {
+            raiseProgressDialogAboveOverlays();
+            if (focusManager().current() != m_progressDialog.get())
+                focusManager().setFocus(m_progressDialog.get());
+        }
     }
     if (m_steamGridDbApplyFuture.valid()
         && m_steamGridDbApplyFuture.wait_for(std::chrono::seconds(0))
@@ -1216,6 +1251,8 @@ void WiiUMenuApp::syncSteamGridDb() {
                             info.colorIndex = folder->colorIndex;
                             info.sizeIndex = folder->sizeIndex;
                             info.styleIndex = m_config.folderStyle;
+                            info.defaultViewIndex =
+                                std::clamp(m_config.folderDefaultView, 0, 2);
                             info.showCover = m_config.folderShowCover;
                             info.hasCustomIcon =
                                 SteamGridDbManager::hasIcon(result.titleId);
@@ -1260,19 +1297,24 @@ void WiiUMenuApp::syncSteamGridDb() {
         if (m_progressDialog) m_progressDialog->hide();
         m_steamGridDbApplyProgress.reset();
         m_steamGridDbApplyProgressUiRevision = 0;
+        auto toast = [&](const std::string& msg) {
+            if (m_gameOptions && m_gameOptions->isActive())
+                m_gameOptions->requestToast(msg, 2.6f);
+            else if (m_folderOptions && m_folderOptions->isActive())
+                m_folderOptions->requestToast(msg, 2.6f);
+            else if (m_settings) m_settings->requestToast(msg, 2.6f);
+        };
         if (result.success) {
             // Close the picker after a successful apply so the user lands back
             // on game/folder options with the new artwork visible.
             if (m_steamGridDbPicker && m_steamGridDbPicker->isActive())
                 m_steamGridDbPicker->hide();
-            auto toast = [&](const std::string& msg) {
-                if (m_gameOptions && m_gameOptions->isActive())
-                    m_gameOptions->requestToast(msg, 2.6f);
-                else if (m_folderOptions && m_folderOptions->isActive())
-                    m_folderOptions->requestToast(msg, 2.6f);
-                else if (m_settings) m_settings->requestToast(msg, 2.6f);
-            };
             if (!result.message.empty()) toast(result.message);
+        } else if (result.cancelled) {
+            toast(nxui::I18n::instance().tr(
+                "settings.steamgriddb.cancelled", "Artwork download cancelled."));
+            if (m_steamGridDbPicker && m_steamGridDbPicker->isActive())
+                focusManager().setFocus(m_steamGridDbPicker.get());
         } else if (m_steamGridDbPicker && m_steamGridDbPicker->isActive()) {
             m_steamGridDbPicker->setMessage(result.message, false);
             focusManager().setFocus(m_steamGridDbPicker.get());
@@ -1374,9 +1416,11 @@ void WiiUMenuApp::showFocusedSteamGridDbArtwork(bool forceReload) {
     if (!steamGridDbArtworkAllowedHere()) {
         m_steamGridDbBackdrop->setEnabled(false);
         m_steamGridDbBackdrop->showTitle(0, forceReload);
+        syncHeroBackdropPresentation();
         return;
     }
     m_steamGridDbBackdrop->setEnabled(true);
+    m_steamGridDbBackdrop->setLayoutMode(presentationLayoutMode());
 
     std::uint64_t titleId = 0;
     std::vector<std::uint64_t> nearbyTitleIds;
@@ -1410,6 +1454,7 @@ void WiiUMenuApp::showFocusedSteamGridDbArtwork(bool forceReload) {
         nearbyTitleIds.clear();
     m_steamGridDbBackdrop->setPreloadTitles(std::move(nearbyTitleIds));
     syncSteamGridDbLogoArea();
+    updateHeroAwareChrome();
 }
 
 void WiiUMenuApp::createGameOptions() {
@@ -2449,7 +2494,7 @@ void WiiUMenuApp::applyThemeResources(const ThemePreset& preset) {
     const std::string desiredSmallFontPath = smallFontExists ? smallFontPath : fallbackFontPath;
     const bool smallFontNeedsReload = forceResourceReload || m_loadedSmallFontPath != desiredSmallFontPath;
 
-    const std::string defaultGameCardPath = std::string(SD_ASSETS) + "/icons/gamecard.png";
+    const std::string defaultGameCardPath = std::string(SD_ASSETS) + "/icons/default/gamecard.png";
     const std::string gameCardPath = !themeIconsBase.empty() ? joinPath(themeIconsBase, "gamecard.png") : std::string();
     const bool gameCardExists = !gameCardPath.empty() && pathExists(gameCardPath);
     const std::string desiredGameCardPath = gameCardExists ? gameCardPath : defaultGameCardPath;
@@ -2659,8 +2704,112 @@ void WiiUMenuApp::retryPendingBackgroundImage() {
     m_backgroundImageRetryFrames = 2 << (m_backgroundImageRetryAttempts - 1);
 }
 
+void WiiUMenuApp::applyHomeChrome() {
+    const nxui::Theme& chrome = m_homeChrome;
+
+    if (m_clock) {
+        m_clock->setBaseColor(chrome.panelBase);
+        m_clock->setBorderColor(chrome.panelBorder);
+        m_clock->setHighlightColor(chrome.panelHighlight);
+        m_clock->setTextColor(chrome.textPrimary);
+        m_clock->setSecondaryTextColor(chrome.textSecondary);
+    }
+
+    if (m_battery) {
+        m_battery->setBaseColor(chrome.panelBase);
+        m_battery->setBorderColor(chrome.panelBorder);
+        m_battery->setHighlightColor(chrome.panelHighlight);
+        m_battery->setTextColor(chrome.textPrimary);
+    }
+
+    if (m_titlePill) {
+        m_titlePill->setBaseColor(chrome.panelBase.withAlpha(
+            chrome.mode == nxui::ThemeMode::Dark ? 0.90f : 0.86f));
+        m_titlePill->setBorderColor(chrome.panelBorder.withAlpha(0.84f));
+        m_titlePill->setHighlightColor(chrome.panelHighlight.withAlpha(0.42f));
+        m_titlePill->setTextColor(chrome.textPrimary);
+    }
+
+    if (m_pageIndicator) {
+        m_pageIndicator->setBaseColor(chrome.panelBase);
+        m_pageIndicator->setBorderColor(chrome.panelBorder);
+        m_pageIndicator->setHighlightColor(chrome.panelHighlight);
+        m_pageIndicator->setTheme(&m_homeChrome);
+    }
+    if (m_folderHeader) {
+        m_folderHeader->setBaseColor(chrome.panelBase);
+        m_folderHeader->setBorderColor(chrome.panelBorder);
+        m_folderHeader->setHighlightColor(chrome.panelHighlight);
+    }
+    if (m_folderHeaderLabel)
+        m_folderHeaderLabel->setTextColor(chrome.textPrimary);
+    if (m_profileLock)
+        m_profileLock->setTheme(&m_homeChrome);
+    if (m_layoutFlip)
+        m_layoutFlip->setTheme(&m_homeChrome);
+
+    m_sidebar.applyTheme(m_homeChrome);
+}
+
+void WiiUMenuApp::updateHeroAwareChrome(bool force) {
+    HeroChromeAdapt desired = HeroChromeAdapt::Off;
+    // Full-opacity heroes are single-row only; dimmed grid heroes leave chrome alone.
+    const bool fullHeroContext =
+        presentationLayoutMode() == AppLayoutMode::DynamicLine;
+
+    if (fullHeroContext && m_steamGridDbBackdrop
+        && m_steamGridDbBackdrop->hasDisplayedHero()) {
+        const float luma = m_steamGridDbBackdrop->displayedHeroLuminance();
+        if (luma >= 0.f) {
+            // Hysteresis avoids flicker when focus skims near-threshold heroes.
+            const float darkEnter = 0.42f;
+            const float darkExit = 0.50f;
+            const float lightEnter = 0.58f;
+            const float lightExit = 0.50f;
+            if (m_theme.mode == nxui::ThemeMode::Light) {
+                const float limit = (m_heroChromeAdapt == HeroChromeAdapt::ForceDark)
+                    ? darkExit : darkEnter;
+                if (luma < limit)
+                    desired = HeroChromeAdapt::ForceDark;
+            } else if (m_theme.mode == nxui::ThemeMode::Dark) {
+                const float limit = (m_heroChromeAdapt == HeroChromeAdapt::ForceLight)
+                    ? lightExit : lightEnter;
+                if (luma > limit)
+                    desired = HeroChromeAdapt::ForceLight;
+            }
+        }
+    }
+
+    if (!force && desired == m_heroChromeAdapt)
+        return;
+
+    m_heroChromeAdapt = desired;
+    if (desired == HeroChromeAdapt::ForceDark) {
+        m_homeChrome = nxui::Theme::dark();
+    } else if (desired == HeroChromeAdapt::ForceLight) {
+        m_homeChrome = nxui::Theme::light();
+    } else {
+        m_homeChrome = m_theme;
+    }
+    // Keep the user's cursor brand while chrome contrast flips.
+    m_homeChrome.cursorNormal = m_theme.cursorNormal;
+    m_homeChrome.cursorGlow = m_theme.cursorGlow;
+    m_homeChrome.cursorCornerRadius = m_theme.cursorCornerRadius;
+    m_homeChrome.cursorBorderWidth = m_theme.cursorBorderWidth;
+    applyHomeChrome();
+}
+
+void WiiUMenuApp::syncHeroBackdropPresentation() {
+    if (!m_steamGridDbBackdrop)
+        return;
+    m_steamGridDbBackdrop->setLayoutMode(presentationLayoutMode());
+    updateHeroAwareChrome(true);
+}
+
 void WiiUMenuApp::applyTheme() {
     DebugLog::log("[theme-apply] widget recolor start");
+    m_homeChrome = m_theme;
+    m_heroChromeAdapt = HeroChromeAdapt::Off;
     m_background->setAccentColor(m_theme.backgroundAccent);
     m_background->setSecondaryColor(m_theme.background);
     m_background->setShapeColor(m_theme.shapeColor);
@@ -2681,38 +2830,7 @@ void WiiUMenuApp::applyTheme() {
     m_cursor->setBorderWidth(m_theme.cursorBorderWidth);
     DebugLog::log("[theme-apply] widget recolor cursors done");
 
-    m_clock->setBaseColor(m_theme.panelBase);
-    m_clock->setBorderColor(m_theme.panelBorder);
-    m_clock->setHighlightColor(m_theme.panelHighlight);
-    m_clock->setTextColor(m_theme.textPrimary);
-    m_clock->setSecondaryTextColor(m_theme.textSecondary);
-
-    m_battery->setBaseColor(m_theme.panelBase);
-    m_battery->setBorderColor(m_theme.panelBorder);
-    m_battery->setHighlightColor(m_theme.panelHighlight);
-    m_battery->setTextColor(m_theme.textPrimary);
-
-    m_titlePill->setBaseColor(m_theme.panelBase.withAlpha(
-        m_theme.mode == nxui::ThemeMode::Dark ? 0.90f : 0.86f));
-    m_titlePill->setBorderColor(m_theme.panelBorder.withAlpha(0.84f));
-    m_titlePill->setHighlightColor(m_theme.panelHighlight.withAlpha(0.42f));
-    m_titlePill->setTextColor(m_theme.textPrimary);
-
-    m_pageIndicator->setBaseColor(m_theme.panelBase);
-    m_pageIndicator->setBorderColor(m_theme.panelBorder);
-    m_pageIndicator->setHighlightColor(m_theme.panelHighlight);
-    m_pageIndicator->setTheme(&m_theme);
-    if (m_folderHeader) {
-        m_folderHeader->setBaseColor(m_theme.panelBase);
-        m_folderHeader->setBorderColor(m_theme.panelBorder);
-        m_folderHeader->setHighlightColor(m_theme.panelHighlight);
-    }
-    if (m_folderHeaderLabel)
-        m_folderHeaderLabel->setTextColor(m_theme.textPrimary);
-    if (m_profileLock)
-        m_profileLock->setTheme(&m_theme);
-        if (m_layoutFlip)
-            m_layoutFlip->setTheme(&m_theme);
+    applyHomeChrome();
     if (m_profileCarousel)
         m_profileCarousel->setTheme(&m_theme);
     DebugLog::log("[theme-apply] widget recolor HUD done");
@@ -2748,7 +2866,8 @@ void WiiUMenuApp::applyTheme() {
     if (m_textEntry)
         m_textEntry->setTheme(&m_theme);
 
-    m_sidebar.applyTheme(m_theme);
+    // Re-evaluate hero contrast after a theme change (may re-apply chrome).
+    updateHeroAwareChrome(true);
     DebugLog::log("[theme-apply] widget recolor complete");
 }
 

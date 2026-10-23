@@ -284,10 +284,24 @@ void IconGrid::layoutLine() {
     nxui::Widget* prevFocused = m_focus.current();
     clearChildren();
 
+    // Grid folder edge-paging registers DLeft/DRight actions on column edges.
+    // In-place Grid→line morph reuses those icons; if the actions stick around
+    // they fire before custom nav and dead-end RIGHT on the old last column
+    // (e.g. title 5 in a 5×N folder).
+    auto clearEdgePagingActions = [](nxui::Widget& w) {
+        w.removeAction(static_cast<uint64_t>(nxui::Button::DLeft));
+        w.removeAction(static_cast<uint64_t>(nxui::Button::DRight));
+        w.removeAction(static_cast<uint64_t>(nxui::Button::LStickL));
+        w.removeAction(static_cast<uint64_t>(nxui::Button::LStickR));
+        w.removeAction(static_cast<uint64_t>(nxui::Button::RStickL));
+        w.removeAction(static_cast<uint64_t>(nxui::Button::RStickR));
+    };
+
     std::vector<nxui::Widget*> fItems;
     fItems.reserve(m_allIcons.size());
     for (size_t i = 0; i < m_allIcons.size(); ++i) {
         auto& icon = m_allIcons[i];
+        clearEdgePagingActions(*icon);
         int left = -1;
         for (int j = (int)i - 1; j >= 0; --j) {
             if (m_allIcons[(size_t)j] && m_allIcons[(size_t)j]->isFocusable()) {

@@ -26,6 +26,10 @@ public:
     // Needed whenever SteamGridDB settings change what is available.
     void invalidateArtworkCaches();
     void setLayoutMode(AppLayoutMode mode) { m_layoutMode = mode; }
+    // True when a hero texture is on-screen at meaningful opacity.
+    bool hasDisplayedHero() const;
+    // Average relative luminance of the current hero [0..1], or <0 if none.
+    float displayedHeroLuminance() const;
     // Screen-space band the logo is centred in (single-row mode only).
     void setLogoArea(const nxui::Rect& area) { m_logoArea = area; }
     void setShowLogo(bool show) { m_showLogo = show; }
@@ -48,6 +52,7 @@ private:
         std::uint64_t titleId = 0;
         bool hasHero = false;
         bool hasLogo = false;
+        float heroLuminance = -1.f;
     };
 
     struct DecodedImage {
@@ -62,6 +67,7 @@ private:
         std::uint64_t titleId = 0;
         std::uint64_t generation = 0;
         long decodeMilliseconds = 0;
+        float heroLuminance = -1.f;
     };
 
     struct DecodeState {
@@ -76,8 +82,10 @@ private:
 
     static DecodedImage decodeImage(const std::string& path, int outputWidth,
                                     int outputHeight, bool fill);
+    static float sampleLuminance(const DecodedImage& image);
     static nxui::Rect fillRect(const nxui::Texture& texture, const nxui::Rect& area);
     static nxui::Rect containRect(const nxui::Texture& texture, const nxui::Rect& area);
+    bool useFullHeroOpacity() const;
     void drawSet(nxui::Renderer& renderer, const ArtworkSet& set, float alpha) const;
     void startPendingDecode(std::uint64_t titleId);
     void beginCrossfade(int nextSet, std::uint64_t titleId);

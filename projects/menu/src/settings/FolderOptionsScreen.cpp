@@ -33,6 +33,7 @@ void FolderOptionsScreen::setFolder(const FolderInfo& info) {
     m_folder.sizeIndex = std::clamp(m_folder.sizeIndex, 0, 2);
     m_folder.styleIndex = std::clamp(m_folder.styleIndex, 0,
                                      switchu::folders::kFolderStyleCount - 1);
+    m_folder.defaultViewIndex = std::clamp(m_folder.defaultViewIndex, 0, 2);
     m_tabs.clear();
     m_cachedTabContentWidgets.clear();
     warmup();
@@ -44,6 +45,24 @@ void FolderOptionsScreen::buildTabs() {
 
     Tab appearance;
     appearance.name = i18n.tr("folder.appearance", "Appearance");
+
+    SettingItem defaultView;
+    defaultView.label = i18n.tr("folder.default_view", "Default folder view");
+    defaultView.description = i18n.tr(
+        "folder.default_view_desc",
+        "Layout used when any folder is opened.");
+    defaultView.type = ItemType::Selector;
+    defaultView.options = {
+        i18n.tr("folder.default_view_auto", "Auto"),
+        i18n.tr("folder.default_view_grid", "Grid"),
+        i18n.tr("folder.default_view_line", "Single-row"),
+    };
+    defaultView.intVal = m_folder.defaultViewIndex;
+    defaultView.onChange = [this](SettingItem& self) {
+        m_folder.defaultViewIndex = std::clamp(self.intVal, 0, 2);
+        if (m_defaultViewCb) m_defaultViewCb(m_folder.defaultViewIndex);
+    };
+    appearance.items.push_back(std::move(defaultView));
 
     SettingItem color;
     color.label = i18n.tr("folder.color", "Folder color");

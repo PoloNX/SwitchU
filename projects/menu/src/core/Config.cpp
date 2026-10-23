@@ -123,6 +123,8 @@ bool AppConfig::load() {
     readJsonOpt(j, "folderStyle", folderStyle);
     const bool hasShowCoverKey = j.find("folderShowCover") != j.end();
     readJsonOpt(j, "folderShowCover", folderShowCover);
+    readJsonOpt(j, "folderDefaultView", folderDefaultView);
+    folderDefaultView = std::clamp(folderDefaultView, 0, 2);
 
     if (musicVolume < 0.f) musicVolume = 0.f;
     if (musicVolume > 1.f) musicVolume = 1.f;
@@ -248,6 +250,7 @@ bool AppConfig::save() const {
     j["autoThemeGeoCity"] = autoThemeGeoCity;
     j["folderStyle"] = std::clamp(folderStyle, 0, switchu::folders::kFolderStyleCount - 1);
     j["folderShowCover"] = folderShowCover;
+    j["folderDefaultView"] = std::clamp(folderDefaultView, 0, 2);
 
     // Written beside the real file and swapped in, never over it. Truncating
     // the live config and then dying mid-write is how a crash used to reset

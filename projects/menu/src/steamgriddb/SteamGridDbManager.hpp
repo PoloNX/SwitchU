@@ -47,6 +47,7 @@ public:
 
     struct ApplyResult {
         bool success = false;
+        bool cancelled = false;
         std::uint64_t titleId = 0;
         ArtworkKind kind = ArtworkKind::None;
         std::string message;
@@ -90,9 +91,13 @@ public:
                                    const std::string& title, const std::string& query,
                                    ArtworkKind kind, long long gameId,
                                    const std::string& gameName);
+    /// Optional abort poll (e.g. progress-dialog Cancel) stops the download
+    /// between curl progress ticks; prepare/decode also checks between steps.
+    using AbortCheck = std::function<bool()>;
     static ApplyResult applyCandidate(const BrowseResult& browse,
                                       const Candidate& candidate,
-                                      const ProgressCallback& onProgress = {});
+                                      const ProgressCallback& onProgress = {},
+                                      const AbortCheck& shouldAbort = {});
     /// Clear cached art. Pass ArtworkKind::None to clear hero+logo+icon+poster.
     static bool clearArtwork(std::uint64_t titleId, ArtworkKind kind);
     static bool hasIcon(std::uint64_t titleId);

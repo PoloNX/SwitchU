@@ -42,21 +42,28 @@ ArtworkKindInfo kindInfo(SteamGridDbManager::ArtworkKind kind) {
     using Kind = SteamGridDbManager::ArtworkKind;
     switch (kind) {
     case Kind::Hero:
+        // Cap to ~1080p-class heroes (skip 3840x1240). UI cards use 640x360.
         return {"/heroes", "Hero", "hero", "selectedHeroId", "selectedHeroIndex",
-                "&mimes=image/png,image/jpeg", true, true, false, true, 1280, 720};
+                "&mimes=image/png,image/jpeg&dimensions=1920x620,1600x650",
+                true, true, false, true, 640, 360};
     case Kind::Logo:
+        // Logos have no SGDB dimension enum; PNG for alpha. UI uses 384x192.
         return {"/logos", "Logo", "logo", "selectedLogoId", "selectedLogoIndex",
-                "&mimes=image/png", true, false, false, true, 640, 180};
+                "&mimes=image/png", true, false, false, true, 384, 192};
     case Kind::Poster:
         // SteamGridDB "grids" — portrait covers only for SwitchU Poster tiles.
         // prepW/H are the IconStreamer fit box (see prepareFit), not letterboxed.
+        // Drop 660x930; 600x900 / 342x482 cover the 320x480 fit target.
         return {"/grids", "Poster", "poster", "selectedPosterId", "selectedPosterIndex",
-                "&mimes=image/png,image/jpeg&dimensions=600x900,660x930,342x482",
+                "&mimes=image/png,image/jpeg&dimensions=600x900,342x482",
                 true, false, true, true, 320, 480};
     case Kind::Icon:
     default:
+        // Icons are PNG-only on SGDB. Grid icons draw at 160px; prefer 256/512,
+        // keep 1024 so games without smaller uploads still appear (ranked down).
         return {"/icons", "Icon", "icon", "selectedIconId", "selectedIconIndex",
-                "&mimes=image/png", false, false, false, false, 0, 0};
+                "&mimes=image/png&dimensions=256,512,1024",
+                false, false, false, false, 0, 0};
     }
 }
 
@@ -244,9 +251,13 @@ void removeCachedArtwork(std::uint64_t titleId) {
     ec.clear();
     std::filesystem::remove(logo, ec);
     ec.clear();
-    std::filesystem::remove(hero + ".1280x720.rgba-cache", ec);
+    std::filesystem::remove(hero + ".640x360.rgba-cache", ec);
     ec.clear();
-    std::filesystem::remove(logo + ".640x180.rgba-cache", ec);
+    std::filesystem::remove(hero + ".1280x720.rgba-cache", ec); // legacy prep size
+    ec.clear();
+    std::filesystem::remove(logo + ".384x192.rgba-cache", ec);
+    ec.clear();
+    std::filesystem::remove(logo + ".640x180.rgba-cache", ec); // legacy prep size
     ec.clear();
     std::filesystem::remove(titleDirectory(titleId) + "/metadata.json", ec);
 }
@@ -579,11 +590,20 @@ SteamGridDbManager::BrowseResult SteamGridDbManager::browseGame(
 
 SteamGridDbManager::ApplyResult SteamGridDbManager::applyCandidate(
     const BrowseResult& browseResult, const Candidate& candidate,
-    const ProgressCallback& onProgress) {
+    const ProgressCallback& onProgress,
+    const AbortCheck& shouldAbort) {
     ApplyResult result;
     result.titleId = browseResult.titleId;
     result.kind = browseResult.kind;
+    auto aborted = [&]() {
+        return shouldAbort && shouldAbort();
+    };
     try {
+        if (aborted()) {
+            result.cancelled = true;
+            result.message = "Cancelled";
+            return result;
+        }
         const auto info = kindInfo(result.kind);
         const std::string destination = pathForKind(result.kind, result.titleId);
         std::error_code ec;
@@ -591,6 +611,12 @@ SteamGridDbManager::ApplyResult SteamGridDbManager::applyCandidate(
         if (info.prepareCache)
             removePreparedArtwork(result.kind, destination);
         if (onProgress) onProgress("Downloading artwork...", 0.02f);
+        DebugLog::log("[steamgriddb] apply start title=%016llX kind=%d url=%s %dx%d",
+                      static_cast<unsigned long long>(result.titleId),
+                      static_cast<int>(result.kind),
+                      candidate.url.c_str(),
+                      candidate.width,
+                      candidate.height);
         auto downloadProgress = [&](std::uint64_t downloaded, std::uint64_t total) {
             if (!onProgress) return;
             const float networkProgress = total > 0
@@ -598,15 +624,36 @@ SteamGridDbManager::ApplyResult SteamGridDbManager::applyCandidate(
                 : 0.f;
             onProgress("Downloading artwork...", 0.02f + networkProgress * 0.68f);
         };
-        if (candidate.url.empty()
-            || !saveBytes(destination,
-                          themeshop::http::getBytes(candidate.url, {}, downloadProgress)))
+        if (candidate.url.empty())
             throw std::runtime_error("Artwork download failed");
+        auto bytes = themeshop::http::getBytes(candidate.url, {}, downloadProgress, shouldAbort);
+        if (aborted()) {
+            result.cancelled = true;
+            result.message = "Cancelled";
+            DebugLog::log("[steamgriddb] apply cancelled during download title=%016llX",
+                          static_cast<unsigned long long>(result.titleId));
+            return result;
+        }
+        if (bytes.empty() || !saveBytes(destination, bytes))
+            throw std::runtime_error("Artwork download failed");
+        DebugLog::log("[steamgriddb] apply downloaded title=%016llX bytes=%zu",
+                      static_cast<unsigned long long>(result.titleId),
+                      bytes.size());
 
         if (info.prepareCache) {
+            if (aborted()) {
+                result.cancelled = true;
+                result.message = "Cancelled";
+                return result;
+            }
             if (onProgress) onProgress("Preparing artwork cache...", 0.74f);
             if (!prepareArtwork(result.kind, destination))
                 throw std::runtime_error("Artwork decode failed");
+        }
+        if (aborted()) {
+            result.cancelled = true;
+            result.message = "Cancelled";
+            return result;
         }
         if (onProgress) onProgress("Saving artwork...", 0.96f);
 
@@ -625,9 +672,19 @@ SteamGridDbManager::ApplyResult SteamGridDbManager::applyCandidate(
         result.success = true;
         result.message = std::string(info.label) + " applied";
         if (onProgress) onProgress(result.message, 1.f);
+        DebugLog::log("[steamgriddb] apply done title=%016llX kind=%d",
+                      static_cast<unsigned long long>(result.titleId),
+                      static_cast<int>(result.kind));
     } catch (const std::exception& ex) {
-        result.message = ex.what();
-        DebugLog::log("[steamgriddb] apply candidate failed: %s", ex.what());
+        if (aborted()) {
+            result.cancelled = true;
+            result.message = "Cancelled";
+            DebugLog::log("[steamgriddb] apply cancelled title=%016llX",
+                          static_cast<unsigned long long>(result.titleId));
+        } else {
+            result.message = ex.what();
+            DebugLog::log("[steamgriddb] apply candidate failed: %s", ex.what());
+        }
     }
     return result;
 }
@@ -720,11 +777,13 @@ bool SteamGridDbManager::clearArtwork(std::uint64_t titleId, ArtworkKind kind) {
 
     if (clearHero) {
         removeFile(heroPath(titleId));
-        removeFile(heroPath(titleId) + ".1280x720.rgba-cache");
+        removeFile(heroPath(titleId) + ".640x360.rgba-cache");
+        removeFile(heroPath(titleId) + ".1280x720.rgba-cache"); // legacy
     }
     if (clearLogo) {
         removeFile(logoPath(titleId));
-        removeFile(logoPath(titleId) + ".640x180.rgba-cache");
+        removeFile(logoPath(titleId) + ".384x192.rgba-cache");
+        removeFile(logoPath(titleId) + ".640x180.rgba-cache"); // legacy
     }
     if (clearIcon)
         removeFile(iconPath(titleId));

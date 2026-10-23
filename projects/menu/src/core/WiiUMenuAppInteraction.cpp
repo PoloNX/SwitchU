@@ -1588,6 +1588,7 @@ void WiiUMenuApp::showFolderContextMenu(std::uint32_t folderId) {
     info.colorIndex = folder->colorIndex;
     info.sizeIndex = folder->sizeIndex;
     info.styleIndex = m_config.folderStyle;
+    info.defaultViewIndex = std::clamp(m_config.folderDefaultView, 0, 2);
     info.showCover = m_config.folderShowCover;
     info.hasCustomIcon = SteamGridDbManager::hasIcon(folderTitleId(folderId));
     info.hasCustomPoster = SteamGridDbManager::hasPoster(folderTitleId(folderId));
@@ -1646,6 +1647,17 @@ void WiiUMenuApp::showFolderContextMenu(std::uint32_t folderId) {
         }
         applyFolderCoversToIcons();
     });
+    m_folderOptions->onDefaultViewChange([this](int viewIndex) {
+        const int clamped = std::clamp(viewIndex, 0, 2);
+        if (m_config.folderDefaultView == clamped)
+            return;
+        m_config.folderDefaultView = clamped;
+        if (m_configSaveFuture.valid())
+            m_configSaveFuture.wait();
+        m_configSaveFuture = m_threadPool.submit([config = m_config]() {
+            config.save();
+        });
+    });
     m_folderOptions->onCoverChange([this](bool showCover) {
         if (m_config.folderShowCover == showCover)
             return;
@@ -1672,6 +1684,7 @@ void WiiUMenuApp::showFolderContextMenu(std::uint32_t folderId) {
             info.colorIndex = folder->colorIndex;
             info.sizeIndex = folder->sizeIndex;
             info.styleIndex = m_config.folderStyle;
+            info.defaultViewIndex = std::clamp(m_config.folderDefaultView, 0, 2);
             info.showCover = m_config.folderShowCover;
             info.hasCustomIcon = SteamGridDbManager::hasIcon(folderTitleId(folderId));
             info.hasCustomPoster = SteamGridDbManager::hasPoster(folderTitleId(folderId));

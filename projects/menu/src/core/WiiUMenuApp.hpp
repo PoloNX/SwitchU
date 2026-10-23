@@ -150,6 +150,10 @@ private:
     void flipPageFromEdge(int dir);
     void requestOpenFolder(std::uint32_t folderId, std::uint64_t focusTitleId = 0);
     void openCapturedFolder();
+    // Applies folderDefaultView without writing appLayoutMode to config.
+    void applyFolderDefaultViewOnOpen();
+    // Restores HOME layout from config if open forced a temporary mode.
+    void restoreHomeLayoutAfterFolder();
     // `animated` plays the mirrored close (icons fly back into the tile, then
     // the root grid is rebuilt); otherwise the root grid is rebuilt right away.
     void closeFolder(bool preserveEditMode = false, bool animated = false);
@@ -245,6 +249,12 @@ private:
     // Layout the user still sees (grid stays up during poster prefetch).
     AppLayoutMode presentationLayoutMode() const;
     void applyTheme();
+    // Recolor HOME chrome (HUD / sidebars / hints) from m_homeChrome.
+    void applyHomeChrome();
+    // When full-opacity heroes fight the active theme, temporarily flip chrome
+    // contrast (light theme + dark hero → dark chrome, and vice versa).
+    void updateHeroAwareChrome(bool force = false);
+    void syncHeroBackdropPresentation();
     void applyThemeResources(const ThemePreset& preset);
     void retryPendingBackgroundImage();
     void applyUiLanguage();
@@ -448,6 +458,11 @@ private:
 
     GridModel    m_model;
     nxui::Theme  m_theme;
+    // HUD / sidebar / hint colors — usually mirrors m_theme, but may swap to
+    // Theme::dark()/light() while a full-opacity hero needs contrast.
+    nxui::Theme  m_homeChrome;
+    enum class HeroChromeAdapt : std::uint8_t { Off, ForceDark, ForceLight };
+    HeroChromeAdapt m_heroChromeAdapt = HeroChromeAdapt::Off;
     switchu::services::ClockService m_clockService;
     switchu::services::AutoThemeService m_autoTheme;
     float                    m_autoThemeCheckTimer = 0.f;
@@ -546,10 +561,14 @@ private:
 
     struct SteamGridDbApplyProgressShared {
         std::mutex mutex;
+        std::atomic<bool> cancelRequested{false};
         std::string message;
         float progress01 = 0.f;
         std::uint64_t revision = 0;
     };
+
+    void raiseProgressDialogAboveOverlays();
+    void cancelSteamGridDbApply();
 
     nxui::ThreadPool m_threadPool{2};
     SidebarManager  m_sidebar;
