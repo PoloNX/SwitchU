@@ -14,6 +14,11 @@ public:
     static ThemeShopScreen::Tab build(ThemeShopScreen& screen);
 };
 
+class IconsTab {
+public:
+    static ThemeShopScreen::Tab build(ThemeShopScreen& screen);
+};
+
 class OptionsTab {
 public:
     static ThemeShopScreen::Tab build(ThemeShopScreen& screen);

@@ -326,6 +326,11 @@ private:
     void reloadThemePresets();
     void refreshThemeShopState();
     std::vector<ThemeShopScreen::ThemeShopEntry> buildThemeShopEntries();
+    std::vector<ThemeShopScreen::ThemeShopEntry> buildIconPackEntries();
+    void applyIconPack(const std::string& packId);
+    void syncColourIconContrast();
+    void reloadSidebarIcons();
+    std::string resolveActiveIconGlyphPath(const char* fileName) const;
     void startThemePackageTransfer(const ThemeCatalogClient::Entry& entry, bool installMode);
     void syncThemePackageTransfer();
     void activateThemePreset(ThemePreset* preset, bool applyBundledSound);
@@ -700,3 +705,4 @@ private:
     static constexpr float kReturnFadeInDur = 0.22f;
     static constexpr float kTutorialStartupFadeDur = 0.34f;
 };
+

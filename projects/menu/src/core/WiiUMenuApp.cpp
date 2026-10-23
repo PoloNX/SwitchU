@@ -1,4 +1,5 @@
 #include "WiiUMenuApp.hpp"
+#include "icons/IconPackManager.hpp"
 #include <switchu/sd_commit.hpp>
 #include "widgets/GlossyIcon.hpp"
 #include "widgets/FolderPalette.hpp"
@@ -956,20 +957,20 @@ void WiiUMenuApp::loadResources() {
 
 void WiiUMenuApp::loadStaticTextures() {
     DebugLog::log("[init] loadResources: static textures");
-    std::string gameCardPath = std::string(SD_ASSETS) + "/icons/gamecard.png";
+    std::string gameCardPath = std::string(SD_ASSETS) + "/icons/default/gamecard.png";
     if (m_gameCardTex.loadFromFile(app().gpu(), app().renderer(), gameCardPath))
         m_loadedGameCardPath = gameCardPath;
 
     m_arrowTexLeft.loadFromFile(app().gpu(), app().renderer(),
-                                std::string(SD_ASSETS) + "/icons/page_arrow_left.png");
+                                std::string(SD_ASSETS) + "/icons/default/page_arrow_left.png");
     m_arrowTexRight.loadFromFile(app().gpu(), app().renderer(),
-                                 std::string(SD_ASSETS) + "/icons/page_arrow_right.png");
+                                 std::string(SD_ASSETS) + "/icons/default/page_arrow_right.png");
     m_batteryConsoleTex.loadFromFile(app().gpu(), app().renderer(),
-                                     std::string(SD_ASSETS) + "/icons/widget_battery_switch.png");
+                                     std::string(SD_ASSETS) + "/icons/default/widget_battery_switch.png");
     m_batteryJoyconLeftTex.loadFromFile(app().gpu(), app().renderer(),
-                                        std::string(SD_ASSETS) + "/icons/widget_battery_joycon_left.png");
+                                        std::string(SD_ASSETS) + "/icons/default/widget_battery_joycon_left.png");
     m_batteryJoyconRightTex.loadFromFile(app().gpu(), app().renderer(),
-                                         std::string(SD_ASSETS) + "/icons/widget_battery_joycon_right.png");
+                                         std::string(SD_ASSETS) + "/icons/default/widget_battery_joycon_right.png");
 }
 
 void WiiUMenuApp::loadProfiles(bool loadImmediately) {
@@ -4378,10 +4379,8 @@ void WiiUMenuApp::buildGrid() {
 
     m_sidebar.build(app().gpu(), app().renderer(), SD_ASSETS, sidebarActions);
     configureDynamicLineNavigation();
-    if (!fastReturn) {
-        m_sidebar.reloadAssets(app().gpu(), app().renderer(), SD_ASSETS,
-                               resolveThemeAssetPath(m_effectivePreset, m_effectivePreset.icons.basePath));
-    }
+    if (!fastReturn)
+        reloadSidebarIcons();
 
     wireGlobalActions();
     applyTheme();
@@ -5399,9 +5398,7 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
                                              app().gpu(), app().renderer(),
                                              m_grid->allIcons());
             }
-            m_sidebar.reloadAssets(app().gpu(), app().renderer(), SD_ASSETS,
-                                   resolveThemeAssetPath(m_effectivePreset,
-                                                         m_effectivePreset.icons.basePath));
+            reloadSidebarIcons();
             DebugLog::log("[init] deferred initial icon/sidebar uploads done");
         }
     }

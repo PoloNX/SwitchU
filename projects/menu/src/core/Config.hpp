@@ -1,6 +1,8 @@
 #pragma once
 #include "core/AppLayoutMode.hpp"
 #include <cstdint>
+#include <cmath>
+#include <unordered_map>
 #include <limits>
 #include <string>
 #include <utility>
@@ -51,7 +53,35 @@ struct AppConfig {
     // projections and never overwrite layout.json.
     int sortMode = 0;
     // A-Z / Recent also reorder applications that use a larger tile size.
-    bool sortLargeTiles = true;
+        bool sortLargeTiles = true;
+    // Colour HOME chrome icons: optional contrast follow (used with single-row heroes).
+    bool iconContrastAdapt = true;
+    // Per-pack Photoshop-style HSL adjust (0.5 pivots = leave original).
+    struct IconPackTint {
+        bool enabled = false;
+        float hue = 0.5f;
+        float sat = 0.5f;
+        float light = 0.5f;
+    };
+    std::unordered_map<std::string, IconPackTint> iconPackTints;
+
+    IconPackTint iconPackTintFor(const std::string& packId) const {
+        auto it = iconPackTints.find(packId.empty() ? "default" : packId);
+        if (it != iconPackTints.end())
+            return it->second;
+        return {};
+    }
+    void setIconPackTint(const std::string& packId, const IconPackTint& tint) {
+        const std::string id = packId.empty() ? "default" : packId;
+        if (!tint.enabled
+            && std::fabs(tint.hue - 0.5f) < 0.0005f
+            && std::fabs(tint.sat - 0.5f) < 0.0005f
+            && std::fabs(tint.light - 0.5f) < 0.0005f) {
+            iconPackTints.erase(id);
+            return;
+        }
+        iconPackTints[id] = tint;
+    }
     std::vector<std::pair<std::uint64_t, std::uint64_t>> lastOpened;
     std::uint64_t lastOpenedSequence = 0;
 
@@ -75,6 +105,9 @@ struct AppConfig {
     }
 
     std::string themePreset = "Default Light";
+    // HOME sidebar glyph pack under romfs:/icons/<id>/.
+    // Missing files fall back to the "default" pack.
+    std::string iconPack = "default";
     // See switchu::folders::kFolderStyle*. Applies to every folder tile.
     int folderStyle = 0;
     // First-game icon overlay. Ignored by Classic (the mosaic is the cover).
@@ -102,3 +135,4 @@ struct AppConfig {
     // settings file is missing or does not parse.
     static constexpr const char* kBackupPath = "sdmc:/config/SwitchU/settings.json.bak";
 };
+
