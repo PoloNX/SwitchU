@@ -88,12 +88,16 @@ bool IconGrid::isDynamicLineScrolling() const {
 
 void IconGrid::setDynamicLineUpTarget(nxui::Widget* target) {
     m_lineUpTarget = target;
-    if (m_layoutMode != AppLayoutMode::DynamicLine)
+    if (m_layoutMode == AppLayoutMode::DynamicLine) {
+        for (auto& icon : m_allIcons) {
+            if (icon)
+                icon->setCustomNavigation(nxui::FocusDirection::UP, m_lineUpTarget);
+        }
         return;
-    for (auto& icon : m_allIcons) {
-        if (icon)
-            icon->setCustomNavigation(nxui::FocusDirection::UP, m_lineUpTarget);
     }
+    // Grid: top-row UP falls back to the chrome hub (Change View) via layoutPage.
+    if (m_layoutMode == AppLayoutMode::Grid && !m_allIcons.empty())
+        layoutPage();
 }
 
 void IconGrid::setDynamicLineDownTarget(nxui::Widget* target) {
@@ -225,6 +229,10 @@ void IconGrid::bindGridNavigation(int start, int end) {
         if (!destination && gridDirection == GridNavigationDirection::Right &&
             item.column + std::max(1, item.columns) >= m_cols)
             destination = nearestSideTarget(source, m_gridRightTargets);
+        // Top of the page: land on Change View (chrome hub) instead of drifting
+        // to the user tile via spatial search.
+        if (!destination && gridDirection == GridNavigationDirection::Up)
+            destination = m_lineUpTarget;
         source.setCustomNavigation(focusDirection,
                                    destination);
     };
@@ -294,10 +302,14 @@ void IconGrid::layoutLine() {
                 break;
             }
         }
+        // Dead-end at the strip ends (self). nullptr would fall through to
+        // spatial nav and yank focus into the left/right sidebar chrome.
         icon->setCustomNavigation(nxui::FocusDirection::LEFT,
-                                  left >= 0 ? m_allIcons[(size_t)left].get() : nullptr);
+                                  left >= 0 ? m_allIcons[(size_t)left].get()
+                                            : icon.get());
         icon->setCustomNavigation(nxui::FocusDirection::RIGHT,
-                                  right >= 0 ? m_allIcons[(size_t)right].get() : nullptr);
+                                  right >= 0 ? m_allIcons[(size_t)right].get()
+                                             : icon.get());
         icon->setCustomNavigation(nxui::FocusDirection::UP, m_lineUpTarget);
         icon->setCustomNavigation(nxui::FocusDirection::DOWN, nullptr);
         addChild(icon);

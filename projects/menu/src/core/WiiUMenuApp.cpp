@@ -721,6 +721,33 @@ void WiiUMenuApp::updateLeaveSplashHandoff(float dt) {
                 m_grid->setLayoutMode(m_appLayoutMode, false);
                 configureDynamicLineNavigation();
             }
+            // Splash blocks focusRoot() the whole hold/fade. Re-pin a title
+            // when input returns so D-pad isn't stranded on chrome/spatial.
+            {
+                std::uint64_t pin = 0;
+                if (auto* cur = focusManager().current();
+                    cur && cur->tag() == "glossy_icon")
+                    pin = static_cast<GlossyIcon*>(cur)->titleId();
+                if (pin == 0 && m_grid) {
+                    const int idx = m_grid->focusedGlobalIndex();
+                    if (idx >= 0 && idx < m_model.count())
+                        pin = m_model.at(idx).titleId;
+                }
+                ensureHomeTitleFocus(pin);
+                if (m_appLayoutMode == AppLayoutMode::DynamicLine && m_grid) {
+                    for (auto& icon : m_grid->allIcons()) {
+                        if (icon)
+                            icon->forceVisible();
+                    }
+                }
+                updateCursor();
+                DebugLog::log("[focus] splash handoff pin=%016lX cur=%s gridIdx=%d",
+                              static_cast<unsigned long>(pin),
+                              focusManager().current()
+                                  ? focusManager().current()->tag().c_str()
+                                  : "<none>",
+                              m_grid ? m_grid->focusedGlobalIndex() : -1);
+            }
             // Soft-land then pace the deferred burst: tight streamer → widen →
             // paced hero preload → peeks last (logs showed all three dumping
             // together when the old 2s gate opened).
@@ -1124,7 +1151,8 @@ void WiiUMenuApp::restoreLayoutFlipFocusIfNeeded() {
     if (m_layoutTransition.kind != LayoutTransitionKind::Idle)
         return;
     placeLayoutFlipButton();
-    wireLayoutFlipNavigation();
+    // Rebuild strip neighbors (flip LEFT/RIGHT) after the morph settles.
+    wireProfileLockNavigation();
     if (m_layoutFlip->isVisible()) {
         focusManager().setFocus(m_layoutFlip.get());
         updateCursor();
@@ -1132,24 +1160,91 @@ void WiiUMenuApp::restoreLayoutFlipFocusIfNeeded() {
     m_retainLayoutFlipFocus = false;
 }
 
+void WiiUMenuApp::focusHomeGridFallback() {
+    if (!m_grid || m_navigator.route() != switchu::navigation::Route::Home)
+        return;
+    if (auto* target = m_grid->focusManager().current();
+        target && target->isFocusable() && target->isVisible()) {
+        focusManager().setFocus(target);
+        return;
+    }
+    for (int i = 0; i < static_cast<int>(m_grid->allIcons().size()); ++i) {
+        if (!m_grid->focusGlobalIndex(i, true))
+            continue;
+        if (auto* cur = m_grid->focusManager().current()) {
+            focusManager().setFocus(cur);
+            return;
+        }
+    }
+}
+
+std::uint64_t WiiUMenuApp::mostRecentlyOpenedTitleId() const {
+    std::uint64_t bestId = 0;
+    std::uint64_t bestSeq = 0;
+    for (const auto& entry : m_config.lastOpened) {
+        if (entry.second >= bestSeq && entry.first != 0) {
+            bestSeq = entry.second;
+            bestId = entry.first;
+        }
+    }
+    return bestId;
+}
+
+void WiiUMenuApp::ensureHomeTitleFocus(std::uint64_t preferredTitleId) {
+    if (!m_grid)
+        return;
+
+    auto focusOk = [this]() {
+        auto* cur = focusManager().current();
+        return cur && cur->isFocusable() && cur->isVisible()
+            && isCurrentFocusableWidget(cur);
+    };
+
+    if (preferredTitleId != 0 && focusTitle(preferredTitleId, true) && focusOk())
+        return;
+
+#ifdef SWITCHU_MENU
+    const std::uint64_t suspended = m_launcher.suspendedTitleId();
+    if (suspended != 0 && focusTitle(suspended, true) && focusOk())
+        return;
+#endif
+
+    const std::uint64_t recent = mostRecentlyOpenedTitleId();
+    if (recent != 0 && focusTitle(recent, true) && focusOk())
+        return;
+
+    if (auto* gridCur = m_grid->focusManager().current();
+        gridCur && gridCur->isFocusable()) {
+        focusManager().setFocus(gridCur);
+        if (focusOk())
+            return;
+    }
+
+    for (int i = 0; i < static_cast<int>(m_grid->allIcons().size()); ++i) {
+        if (m_grid->focusGlobalIndex(i, true)) {
+            if (auto* cur = m_grid->focusManager().current()) {
+                focusManager().setFocus(cur);
+                if (focusOk())
+                    return;
+            }
+        }
+    }
+    DebugLog::log("[focus] ensureHomeTitleFocus failed layout=%d",
+                  static_cast<int>(m_appLayoutMode));
+}
+
 void WiiUMenuApp::wireLayoutFlipNavigation() {
     if (!m_layoutFlip)
         return;
     auto* flip = m_layoutFlip.get();
+    // UP/DOWN only — LEFT/RIGHT neighbors are owned by wireProfileLockNavigation
+    // so this helper cannot clobber the chrome strip.
     flip->setCustomNavigation(nxui::FocusDirection::UP, flip);
-    flip->setCustomNavigation(nxui::FocusDirection::LEFT,
-                              m_profileLock
-                                  ? static_cast<nxui::Widget*>(m_profileLock.get())
-                                  : static_cast<nxui::Widget*>(flip));
-    flip->setCustomNavigation(nxui::FocusDirection::RIGHT, flip);
     flip->removeAction(static_cast<uint64_t>(nxui::Button::DDown));
     flip->removeAction(static_cast<uint64_t>(nxui::Button::LStickD));
     flip->removeAction(static_cast<uint64_t>(nxui::Button::RStickD));
     flip->addDirectionAction(nxui::FocusDirection::DOWN, [this]() {
-        if (!m_grid || m_navigator.route() != switchu::navigation::Route::Home)
-            return;
-        if (auto* target = m_grid->focusManager().current())
-            focusManager().setFocus(target);
+        focusHomeGridFallback();
     });
 }
 
@@ -1159,7 +1254,18 @@ void WiiUMenuApp::wireProfileLockNavigation() {
     auto* lock = m_profileLock.get();
     const bool dynamicLine = m_appLayoutMode == AppLayoutMode::DynamicLine;
     const auto& leftButtons = m_sidebar.leftButtons();
+    const auto& rightButtons = m_sidebar.rightButtons();
     auto* flip = (m_layoutFlip && m_layoutFlip->isVisible()) ? m_layoutFlip.get() : nullptr;
+    auto* battery = (m_battery && m_battery->isVisible()) ? m_battery.get() : nullptr;
+    nxui::Widget* firstLeft = leftButtons.empty() ? nullptr : leftButtons.front().get();
+    nxui::Widget* lastLeft = leftButtons.empty() ? nullptr : leftButtons.back().get();
+    nxui::Widget* firstRight = rightButtons.empty() ? nullptr : rightButtons.front().get();
+    nxui::Widget* lastRight = rightButtons.empty() ? nullptr : rightButtons.back().get();
+
+    // Change View is the chrome hub: titles jump here on UP in both layouts.
+    nxui::Widget* chromeUp = flip
+        ? static_cast<nxui::Widget*>(flip)
+        : static_cast<nxui::Widget*>(lock);
 
     lock->setCustomNavigation(nxui::FocusDirection::LEFT, lock);
     lock->setCustomNavigation(nxui::FocusDirection::UP, lock);
@@ -1168,34 +1274,99 @@ void WiiUMenuApp::wireProfileLockNavigation() {
     lock->removeAction(static_cast<uint64_t>(nxui::Button::LStickD));
     lock->removeAction(static_cast<uint64_t>(nxui::Button::RStickD));
 
+    if (battery) {
+        battery->setCustomNavigation(nxui::FocusDirection::UP, battery);
+        battery->setCustomNavigation(nxui::FocusDirection::RIGHT, battery);
+        battery->removeAction(static_cast<uint64_t>(nxui::Button::DDown));
+        battery->removeAction(static_cast<uint64_t>(nxui::Button::LStickD));
+        battery->removeAction(static_cast<uint64_t>(nxui::Button::RStickD));
+    }
+
+    wireLayoutFlipNavigation();
+
     if (dynamicLine) {
-        // Top strip: [profile] → [flip] → [left applets] …
-        nxui::Widget* first = leftButtons.empty() ? nullptr : leftButtons.front().get();
-        lock->setCustomNavigation(nxui::FocusDirection::RIGHT,
-                                  flip ? flip : (first ? first : lock));
-        if (flip)
-            flip->setCustomNavigation(nxui::FocusDirection::RIGHT, first ? first : flip);
+        // Strip: [profile] → [left…] → [flip] → [right…] → [battery]
+        nxui::Widget* lockRight = firstLeft
+            ? firstLeft
+            : (flip ? static_cast<nxui::Widget*>(flip)
+                    : (battery ? static_cast<nxui::Widget*>(battery)
+                               : static_cast<nxui::Widget*>(lock)));
+        lock->setCustomNavigation(nxui::FocusDirection::RIGHT, lockRight);
         m_sidebar.setDynamicLineProfileTarget(lock);
+
+        nxui::Widget* afterLeft = flip
+            ? static_cast<nxui::Widget*>(flip)
+            : (firstRight ? firstRight
+                          : (battery ? static_cast<nxui::Widget*>(battery) : lastLeft));
+        if (lastLeft && afterLeft)
+            lastLeft->setCustomNavigation(nxui::FocusDirection::RIGHT, afterLeft);
+
+        if (flip) {
+            flip->setCustomNavigation(nxui::FocusDirection::LEFT,
+                                      lastLeft ? lastLeft : static_cast<nxui::Widget*>(lock));
+            nxui::Widget* flipRight = firstRight
+                ? firstRight
+                : (battery ? static_cast<nxui::Widget*>(battery)
+                           : static_cast<nxui::Widget*>(flip));
+            flip->setCustomNavigation(nxui::FocusDirection::RIGHT, flipRight);
+            if (firstRight)
+                firstRight->setCustomNavigation(nxui::FocusDirection::LEFT, flip);
+        }
+
+        if (battery) {
+            nxui::Widget* batteryLeft = lastRight
+                ? lastRight
+                : (flip ? static_cast<nxui::Widget*>(flip)
+                        : static_cast<nxui::Widget*>(lock));
+            battery->setCustomNavigation(nxui::FocusDirection::LEFT, batteryLeft);
+            if (lastRight)
+                lastRight->setCustomNavigation(nxui::FocusDirection::RIGHT, battery);
+            battery->addDirectionAction(nxui::FocusDirection::DOWN, [this]() {
+                focusHomeGridFallback();
+            });
+        }
+
         lock->addDirectionAction(nxui::FocusDirection::DOWN, [this]() {
-            if (!m_grid || m_appLayoutMode != AppLayoutMode::DynamicLine
-                || m_navigator.route() != switchu::navigation::Route::Home)
-                return;
-            if (auto* target = m_grid->focusManager().current())
-                focusManager().setFocus(target);
+            focusHomeGridFallback();
         });
         if (m_grid)
-            m_grid->setDynamicLineUpTarget(lock);
+            m_grid->setDynamicLineUpTarget(chromeUp);
         m_sidebar.setDynamicLineUpTarget(nullptr);
     } else {
-        lock->setCustomNavigation(nxui::FocusDirection::RIGHT, flip ? flip : nullptr);
+        // Grid chrome: [profile] ↔ [flip] ↔ [battery]
+        // DOWN from profile → left column; DOWN from battery → right column.
         m_sidebar.setDynamicLineProfileTarget(nullptr);
-        // Grid mode: the tile sits right above the left applet column.
-        if (!leftButtons.empty()) {
-            lock->setCustomNavigation(nxui::FocusDirection::DOWN, leftButtons.front().get());
-            leftButtons.front()->setCustomNavigation(nxui::FocusDirection::UP, lock);
+        lock->setCustomNavigation(nxui::FocusDirection::RIGHT,
+                                  flip ? static_cast<nxui::Widget*>(flip)
+                                       : (battery ? static_cast<nxui::Widget*>(battery)
+                                                  : nullptr));
+        if (flip) {
+            flip->setCustomNavigation(nxui::FocusDirection::LEFT, lock);
+            flip->setCustomNavigation(nxui::FocusDirection::RIGHT,
+                                      battery ? static_cast<nxui::Widget*>(battery)
+                                              : static_cast<nxui::Widget*>(flip));
         }
+        if (battery) {
+            battery->setCustomNavigation(nxui::FocusDirection::LEFT,
+                                         flip ? static_cast<nxui::Widget*>(flip)
+                                              : static_cast<nxui::Widget*>(lock));
+            if (firstRight) {
+                battery->setCustomNavigation(nxui::FocusDirection::DOWN, firstRight);
+                firstRight->setCustomNavigation(nxui::FocusDirection::UP, battery);
+            } else {
+                battery->setCustomNavigation(nxui::FocusDirection::DOWN, nullptr);
+                battery->addDirectionAction(nxui::FocusDirection::DOWN, [this]() {
+                    focusHomeGridFallback();
+                });
+            }
+        }
+        if (firstLeft) {
+            lock->setCustomNavigation(nxui::FocusDirection::DOWN, firstLeft);
+            firstLeft->setCustomNavigation(nxui::FocusDirection::UP, lock);
+        }
+        if (m_grid)
+            m_grid->setDynamicLineUpTarget(chromeUp);
     }
-    wireLayoutFlipNavigation();
 }
 
 void WiiUMenuApp::loadNextProfile() {
@@ -3466,7 +3637,11 @@ void WiiUMenuApp::configureDynamicLineNavigation() {
         for (const auto& button : m_sidebar.rightButtons())
             rightTargets.push_back(button.get());
         m_grid->setGridSideTargets(std::move(leftTargets), std::move(rightTargets));
-        m_grid->setDynamicLineUpTarget(dynamicLine ? m_profileLock.get() : nullptr);
+        // Titles UP → Change View (fallback: user) in both layouts.
+        nxui::Widget* chromeUp = (m_layoutFlip && m_layoutFlip->isVisible())
+            ? static_cast<nxui::Widget*>(m_layoutFlip.get())
+            : static_cast<nxui::Widget*>(m_profileLock.get());
+        m_grid->setDynamicLineUpTarget(chromeUp);
         m_grid->setDynamicLineDownTarget(nullptr);
     }
 
@@ -5270,6 +5445,12 @@ void WiiUMenuApp::buildGrid() {
     m_battery->setCornerRadius(m_theme.cellCornerRadius);
     m_battery->setForceLiquidGlass(true);
     m_battery->setBlurEnabled(false);
+    m_battery->setOnActivate([this]() {
+        if (m_editMode || leaveSplashActive())
+            return;
+        m_audio.playSfx(Sfx::Activate);
+        openQuickSettings();
+    });
 
     m_profileLock = std::make_shared<ProfileLockButton>();
     m_profileLock->setSize(kProfileLockWidth, kProfileLockHeight);
@@ -5481,6 +5662,11 @@ void WiiUMenuApp::buildGrid() {
         // Placeholders cover progressively loaded artwork, so do not keep an
         // already usable HOME scene hidden behind the old opaque fade.
         m_returnFadeTimer = 0.f;
+    } else if (m_appLayoutMode == AppLayoutMode::DynamicLine) {
+        // Single-row hides the selection ring — an appear tween from scale 0
+        // makes boot look unfocused / unresponsive. Show tiles immediately.
+        for (auto& icon : m_grid->allIcons())
+            icon->forceVisible();
     } else {
         // The first visible page can animate again: the black-screen issue was
         // caused by a blocking GPU icon-upload wait, not by the appear tween.
@@ -5639,7 +5825,8 @@ void WiiUMenuApp::buildGrid() {
     m_topHud->addChild(m_battery);
     m_topHud->layout();
     placeLayoutFlipButton();
-    wireLayoutFlipNavigation();
+    // Flip/battery are visible only after HUD layout — rewire the full strip.
+    configureDynamicLineNavigation();
 
     m_leftSidebar = std::make_shared<nxui::Box>(nxui::Axis::COLUMN);
     m_leftSidebar->setTag("leftSidebar");
@@ -5757,38 +5944,42 @@ void WiiUMenuApp::buildGrid() {
         DebugLog::log("[leave] folder restore capture armed id=%u", folderId);
     }
 
-    // Leave-session restore already placed page/folder/focus to match the
-    // title splash. Calling focusTitle(suspended) afterward would reopen a
-    // folder under a mismatched root splash when returning from applets.
-    //
-    // Still, if the suspended title is already visible in the restored model,
-    // prefer it over a stale leave-session focus (fast title hops can capture
-    // the previous blue-ring target while the green pulse was already correct).
-    if (restoredLeaveSession) {
-        const std::uint64_t suspended = m_launcher.suspendedTitleId();
-        if (suspended != 0) {
-            const int idx = findTitleIndex(suspended);
-            if (idx >= 0 && m_grid->focusGlobalIndex(idx)) {
-                if (auto* focused = m_grid->focusManager().current())
-                    focusManager().setFocus(focused);
-            }
-        } else if (!focusManager().current()) {
-            if (auto* firstIcon = m_grid->focusManager().current())
-                focusManager().setFocus(firstIcon);
+    // Prefer suspended → leave-restored title → last opened → first tile.
+    // Always re-pin after the HUD/nav wire so chrome strip setup cannot leave
+    // D-pad on a spatial orphan.
+    {
+        std::uint64_t pin = 0;
+#ifdef SWITCHU_MENU
+        pin = m_launcher.suspendedTitleId();
+#endif
+        if (pin == 0 && restoredLeaveSession && m_grid) {
+            if (auto* cur = m_grid->focusManager().current();
+                cur && cur->tag() == "glossy_icon")
+                pin = static_cast<GlossyIcon*>(cur)->titleId();
         }
-    } else if (!focusTitle(m_launcher.suspendedTitleId())) {
-        if (auto* firstIcon = m_grid->focusManager().current())
-            focusManager().setFocus(firstIcon);
+        ensureHomeTitleFocus(pin);
     }
 #else
-    if (auto* firstIcon = m_grid->focusManager().current())
-        focusManager().setFocus(firstIcon);
+    ensureHomeTitleFocus(0);
 #endif
-    if (m_cursor && focusManager().current()) {
-        m_cursor->moveTo(focusManager().current()->focusRect().expanded(4.f), 0.f);
-        m_cursor->setVisible(true);
-    } else {
-        updateCursor();
+    if (m_appLayoutMode == AppLayoutMode::DynamicLine && m_grid) {
+        for (auto& icon : m_grid->allIcons()) {
+            if (icon)
+                icon->forceVisible();
+        }
+    }
+    updateCursor();
+    {
+        std::uint64_t focusedTid = 0;
+        if (auto* cur = focusManager().current();
+            cur && cur->tag() == "glossy_icon")
+            focusedTid = static_cast<GlossyIcon*>(cur)->titleId();
+        DebugLog::log("[focus] boot focus ready layout=%d cur=%s gridIdx=%d tid=%016lX",
+                      static_cast<int>(m_appLayoutMode),
+                      focusManager().current()
+                          ? focusManager().current()->tag().c_str() : "<none>",
+                      m_grid ? m_grid->focusedGlobalIndex() : -1,
+                      static_cast<unsigned long>(focusedTid));
     }
     showFocusedSteamGridDbArtwork();
     m_themeRenderDebugFrames = 12;
@@ -7429,6 +7620,10 @@ std::vector<WiiUMenuApp::ActionHint> WiiUMenuApp::buildActionHints() {
         }
         if (m_profileLock && m_profileLock.get() == cur)
             add(buttonGlyph(nxui::Button::A), i18n.tr("profilelock.choose", "Change profile"));
+        if (m_layoutFlip && m_layoutFlip.get() == cur)
+            add(buttonGlyph(nxui::Button::A), i18n.tr("hint.switch_layout", "Switch view"));
+        if (m_battery && m_battery.get() == cur)
+            add(buttonGlyph(nxui::Button::A), i18n.tr("quick_settings.title", "Quick Settings"));
     }
 
     if (m_navigator.route() == switchu::navigation::Route::Home && !m_editMode) {

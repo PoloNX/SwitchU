@@ -63,6 +63,10 @@ std::string WiiUMenuApp::accessibilityContextFor(nxui::Widget* w) const {
         if (btn.get() == w) return i18n.tr("accessibility.context.right_sidebar", "Right sidebar");
     if (m_profileLock && m_profileLock.get() == w)
         return i18n.tr("accessibility.context.user_profiles", "User profiles");
+    if (m_layoutFlip && m_layoutFlip.get() == w)
+        return i18n.tr("accessibility.context.main_menu", "Main menu");
+    if (m_battery && m_battery.get() == w)
+        return i18n.tr("accessibility.context.main_menu", "Main menu");
     return {};
 }
 
@@ -1125,6 +1129,18 @@ void WiiUMenuApp::wireFocusCallback() {
                 m_titlePill->setVisible(true);
                 return;
             }
+            if (m_layoutFlip && m_layoutFlip.get() == cur) {
+                m_titlePill->setText(nxui::I18n::instance().tr(
+                    "hint.switch_layout", "Switch view"));
+                m_titlePill->setVisible(true);
+                return;
+            }
+            if (m_battery && m_battery.get() == cur) {
+                m_titlePill->setText(nxui::I18n::instance().tr(
+                    "quick_settings.title", "Quick Settings"));
+                m_titlePill->setVisible(true);
+                return;
+            }
             m_titlePill->hideAnimated();
         } else {
             m_titlePill->hideAnimated();
@@ -1152,6 +1168,8 @@ bool WiiUMenuApp::isCurrentFocusableWidget(nxui::Widget* w) const {
     for (const auto& btn : m_sidebar.rightButtons())
         if (btn.get() == w) return w->isFocusable();
     if (m_profileLock && m_profileLock.get() == w) return w->isFocusable();
+    if (m_layoutFlip && m_layoutFlip.get() == w) return w->isFocusable();
+    if (m_battery && m_battery.get() == w) return w->isFocusable();
     if (m_grid)
         for (const auto& icon : m_grid->allIcons())
             if (icon.get() == w) return w->isFocusable();
@@ -2041,6 +2059,14 @@ void WiiUMenuApp::updateCursor() {
                 || (morphing && m_appLayoutMode == AppLayoutMode::DynamicLine));
         if (hideRingForLine) {
             m_cursor->setVisible(false);
+            // Ring is hidden on the carousel, but keep the invisible cursor
+            // parked on the centred tile. Otherwise the first chrome focus
+            // (Change View / battery) eases from the last grid-cell position.
+            if (m_grid->isDynamicLine() || morphing) {
+                const nxui::Rect lineFocus = m_grid->focusedDisplayRect();
+                if (lineFocus.width > 1.f && lineFocus.height > 1.f)
+                    m_cursor->moveTo(lineFocus.expanded(4.f), 0.f);
+            }
             if (m_grid->isDynamicLine())
                 syncSteamGridDbLogoArea();
             return;

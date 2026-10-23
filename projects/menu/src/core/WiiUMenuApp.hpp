@@ -121,6 +121,9 @@ private:
     void finishProfileLoading();
     void refreshProfileLockButton();
     void wireProfileLockNavigation();
+    void focusHomeGridFallback();
+    void ensureHomeTitleFocus(std::uint64_t preferredTitleId = 0);
+    std::uint64_t mostRecentlyOpenedTitleId() const;
     void createProfileCarousel();
     void openProfileCarousel();
     void setLockedProfile(std::optional<AccountUid> uid);

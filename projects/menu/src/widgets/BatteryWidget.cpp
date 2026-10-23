@@ -1,5 +1,6 @@
 #include "BatteryWidget.hpp"
 #include "BatteryDrawing.hpp"
+#include <nxui/core/I18n.hpp>
 #include <nxui/core/Renderer.hpp>
 #include <switch.h>
 #include <cstdio>
@@ -8,12 +9,35 @@
 
 using switchu::battery_drawing::drawLightningBolt;
 
+BatteryWidget::BatteryWidget() {
+    setTag("battery");
+    setFocusable(true);
+    setActivateOnFirstTouch(true);
+    refreshAccessibility();
+}
+
 void BatteryWidget::setBatteryStatus(uint32_t percentage, bool charging) {
     if (percentage > 100)
         percentage = 100;
     m_level = static_cast<float>(percentage) / 100.f;
     m_charging = charging;
     m_timer = 0.f;
+    refreshAccessibility();
+}
+
+void BatteryWidget::refreshAccessibility() {
+    auto& i18n = nxui::I18n::instance();
+    char buf[32];
+    if (m_level < 0.f)
+        std::snprintf(buf, sizeof(buf), "%s",
+                      i18n.tr("battery.label", "Battery").c_str());
+    else
+        std::snprintf(buf, sizeof(buf), "%s %d%%",
+                      i18n.tr("battery.label", "Battery").c_str(),
+                      static_cast<int>(m_level * 100.f + 0.5f));
+    setAccessibilityLabel(buf);
+    setAccessibilityRole(i18n.tr("accessibility.roles.button", "button"));
+    setAccessibilityHint(i18n.tr("battery.hint", "A to open Quick Settings."));
 }
 
 void BatteryWidget::onContentUpdate(float dt) {
