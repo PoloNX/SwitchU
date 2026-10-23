@@ -88,16 +88,177 @@ void normalizeToTintableMask(std::uint8_t* rgba, int w, int h, float meanLuma) {
     }
 }
 
+// Colour artwork → white×alpha *luminance* mask so multiply tint / B/W force
+// keeps internal shading and gradients instead of a flat silhouette.
+void buildColourCoverageMask(std::uint8_t* rgba, int w, int h) {
+    const std::size_t n = static_cast<std::size_t>(w) * static_cast<std::size_t>(h);
+    for (std::size_t i = 0; i < n; ++i) {
+        const std::size_t p = i * 4u;
+        const float r = rgba[p] / 255.f;
+        const float g = rgba[p + 1] / 255.f;
+        const float b = rgba[p + 2] / 255.f;
+        const float a = rgba[p + 3] / 255.f;
+        const float luma = 0.2126f * r + 0.7152f * g + 0.0722f * b;
+        // Mild lift so near-black ink still reads when tinted light, without
+        // flattening mid-tones into a solid plate.
+        const float ink = std::clamp(luma * 0.88f + 0.12f, 0.f, 1.f);
+        const float coverage = std::clamp(ink * a, 0.f, 1.f);
+        if (coverage <= 0.001f) {
+            rgba[p] = 0;
+            rgba[p + 1] = 0;
+            rgba[p + 2] = 0;
+            rgba[p + 3] = 0;
+        } else {
+            rgba[p] = 255;
+            rgba[p + 1] = 255;
+            rgba[p + 2] = 255;
+            rgba[p + 3] = static_cast<std::uint8_t>(coverage * 255.f + 0.5f);
+        }
+    }
+}
+
+void rgbToHsl(float r, float g, float b, float& h, float& s, float& l) {
+    const float mx = std::max({r, g, b});
+    const float mn = std::min({r, g, b});
+    l = (mx + mn) * 0.5f;
+    if (mx <= mn + 1e-6f) {
+        h = 0.f;
+        s = 0.f;
+        return;
+    }
+    const float d = mx - mn;
+    s = l > 0.5f ? d / (2.f - mx - mn) : d / (mx + mn);
+    if (mx == r)
+        h = (g - b) / d + (g < b ? 6.f : 0.f);
+    else if (mx == g)
+        h = (b - r) / d + 2.f;
+    else
+        h = (r - g) / d + 4.f;
+    h /= 6.f;
+}
+
+float hue2rgb(float p, float q, float t) {
+    if (t < 0.f) t += 1.f;
+    if (t > 1.f) t -= 1.f;
+    if (t < 1.f / 6.f) return p + (q - p) * 6.f * t;
+    if (t < 0.5f) return q;
+    if (t < 2.f / 3.f) return p + (q - p) * (2.f / 3.f - t) * 6.f;
+    return p;
+}
+
+void hslToRgb(float h, float s, float l, float& r, float& g, float& b) {
+    if (s <= 1e-6f) {
+        r = g = b = l;
+        return;
+    }
+    const float q = l < 0.5f ? l * (1.f + s) : l + s - l * s;
+    const float p = 2.f * l - q;
+    r = hue2rgb(p, q, h + 1.f / 3.f);
+    g = hue2rgb(p, q, h);
+    b = hue2rgb(p, q, h - 1.f / 3.f);
+}
+
+float adjustChannelPivot(float value, float pivot) {
+    // 0.5 = identity. Below desaturates/darkens toward 0; above pushes to 1.
+    pivot = std::clamp(pivot, 0.f, 1.f);
+    if (pivot <= 0.5f)
+        return value * (pivot * 2.f);
+    return value + (1.f - value) * ((pivot - 0.5f) * 2.f);
+}
+
+// Rotate every pixel's hue and pivot sat/light — keeps multi-colour artwork
+// multi-colour (Photoshop Hue/Saturation style), unlike a flat colorize.
+void applyHslAdjust(std::uint8_t* rgba, int w, int h, const HslAdjust& adj) {
+    if (!rgba || w <= 0 || h <= 0 || !adj.enabled)
+        return;
+    const float hueOff = std::clamp(adj.hue, 0.f, 1.f) - 0.5f;
+    const bool hueId = std::fabs(hueOff) < 0.0005f;
+    const bool satId = std::fabs(adj.sat - 0.5f) < 0.0005f;
+    const bool lightId = std::fabs(adj.light - 0.5f) < 0.0005f;
+    if (hueId && satId && lightId)
+        return;
+
+    const std::size_t n = static_cast<std::size_t>(w) * static_cast<std::size_t>(h);
+    for (std::size_t i = 0; i < n; ++i) {
+        const std::size_t p = i * 4u;
+        if (rgba[p + 3] < 8)
+            continue;
+        float r = rgba[p] / 255.f;
+        float g = rgba[p + 1] / 255.f;
+        float b = rgba[p + 2] / 255.f;
+        float h = 0.f, s = 0.f, l = 0.f;
+        rgbToHsl(r, g, b, h, s, l);
+        if (!hueId) {
+            h += hueOff;
+            h -= std::floor(h);
+        }
+        if (!satId)
+            s = std::clamp(adjustChannelPivot(s, adj.sat), 0.f, 1.f);
+        if (!lightId)
+            l = std::clamp(adjustChannelPivot(l, adj.light), 0.f, 1.f);
+        hslToRgb(h, s, l, r, g, b);
+        rgba[p] = static_cast<std::uint8_t>(std::clamp(r, 0.f, 1.f) * 255.f + 0.5f);
+        rgba[p + 1] = static_cast<std::uint8_t>(std::clamp(g, 0.f, 1.f) * 255.f + 0.5f);
+        rgba[p + 2] = static_cast<std::uint8_t>(std::clamp(b, 0.f, 1.f) * 255.f + 0.5f);
+    }
+}
+
 } // namespace
+
+ColourIconForce resolveColourIconContrast(float iconMeanLuma,
+                                          float backdropLuma,
+                                          ColourIconForce previous) {
+    // backdropLuma is the chrome strip (top of hero in single-row). Decide
+    // primarily from that plate: dark top → white, light top → black.
+    // iconMeanLuma should be the *displayed* colour (custom tint lightness
+    // when tinting) so dark blue on purple still forces white.
+    if (!(backdropLuma >= 0.f))
+        return ColourIconForce::None;
+
+    const bool haveIcon = (iconMeanLuma >= 0.f);
+    const float delta = haveIcon ? std::fabs(iconMeanLuma - backdropLuma) : 0.f;
+
+    // Dark icon/tint on a darkish plate never reads — force white even in the
+    // mid band (Metroid purple + indigo tint).
+    if (haveIcon && backdropLuma < 0.52f && iconMeanLuma < 0.46f && delta < 0.34f)
+        return ColourIconForce::White;
+    // Bright icon on a lightish plate → black.
+    if (haveIcon && backdropLuma > 0.50f && iconMeanLuma > 0.55f && delta < 0.34f)
+        return ColourIconForce::Black;
+
+    // Hysteresis on the strip thresholds so focus skims don't flicker.
+    const float darkEnter = (previous == ColourIconForce::White) ? 0.50f : 0.44f;
+    const float lightEnter = (previous == ColourIconForce::Black) ? 0.50f : 0.58f;
+
+    if (backdropLuma < darkEnter) {
+        // Dark chrome strip — prefer white. Keep colour only if the glyph is
+        // already clearly brighter than the plate.
+        if (haveIcon && iconMeanLuma > 0.62f && delta > 0.28f)
+            return ColourIconForce::None;
+        return ColourIconForce::White;
+    }
+    if (backdropLuma > lightEnter) {
+        // Light chrome strip — prefer black.
+        if (haveIcon && iconMeanLuma < 0.38f && delta > 0.28f)
+            return ColourIconForce::None;
+        return ColourIconForce::Black;
+    }
+    return ColourIconForce::None;
+}
 
 bool loadMaybeAdaptiveIcon(nxui::Texture& out,
                            nxui::GpuDevice& gpu,
                            nxui::Renderer& ren,
                            const std::string& path,
                            bool* outAdaptive,
-                           int maxSide) {
+                           int maxSide,
+                           float* outMeanLuma,
+                           nxui::Texture* outContrastMask,
+                           const HslAdjust* hslAdjust) {
     if (outAdaptive)
         *outAdaptive = false;
+    if (outMeanLuma)
+        *outMeanLuma = 0.5f;
 
     int w = 0, h = 0, ch = 0;
     std::uint8_t* data = stbi_load(path.c_str(), &w, &h, &ch, 4);
@@ -135,17 +296,55 @@ bool loadMaybeAdaptiveIcon(nxui::Texture& out,
     }
 
     const MonoStats mono = sampleMonochrome(owned, w, h);
-    if (mono.mono)
+    if (outMeanLuma)
+        *outMeanLuma = mono.meanLuma;
+
+    if (mono.mono) {
         normalizeToTintableMask(owned, w, h, mono.meanLuma);
-    if (outAdaptive)
-        *outAdaptive = mono.mono;
+        if (outAdaptive)
+            *outAdaptive = true;
+        const bool ok = out.loadFromPixels(gpu, ren, owned, w, h);
+        if (stbiOwned)
+            stbi_image_free(owned);
+        else
+            std::free(owned);
+        return ok;
+    }
+
+    // Colour path: bake chrome mask from original pixels, then optional HSL
+    // shift on the display copy (hue rotates all colours — multi-hue preserved).
+    std::vector<std::uint8_t> maskCopy;
+    if (outContrastMask) {
+        maskCopy.assign(owned, owned + static_cast<std::size_t>(w) * h * 4u);
+        buildColourCoverageMask(maskCopy.data(), w, h);
+    }
+    if (hslAdjust && hslAdjust->enabled)
+        applyHslAdjust(owned, w, h, *hslAdjust);
 
     const bool ok = out.loadFromPixels(gpu, ren, owned, w, h);
+    if (ok && outContrastMask && !maskCopy.empty())
+        outContrastMask->loadFromPixels(gpu, ren, maskCopy.data(), w, h);
+
     if (stbiOwned)
         stbi_image_free(owned);
     else
         std::free(owned);
     return ok;
+}
+
+bool probeIconLooksColour(const std::string& path) {
+    if (path.empty())
+        return false;
+    int w = 0, h = 0, ch = 0;
+    std::uint8_t* data = stbi_load(path.c_str(), &w, &h, &ch, 4);
+    if (!data || w <= 0 || h <= 0) {
+        if (data)
+            stbi_image_free(data);
+        return false;
+    }
+    const MonoStats stats = sampleMonochrome(data, w, h);
+    stbi_image_free(data);
+    return !stats.mono;
 }
 
 } // namespace switchu::icons

@@ -27,6 +27,8 @@ struct IconPackInfo {
     std::string directory;   // absolute/romfs path to the pack folder
     std::string previewPath; // baked 3×2 mosaic (may be empty until generated)
     bool isDefault = false;
+    // True when album.png (or first pack glyph) is full-colour artwork.
+    bool colourPack = false;
 };
 
 // `romfs:/icons` or `sdmc:/.../icons` root that contains pack subfolders.

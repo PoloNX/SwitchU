@@ -26,6 +26,24 @@ public:
         m_iconUsesColorArtwork = colorArt;
         syncIconTint();
     }
+    // Colour-pack contrast adapt (Theme > Options). Mask is white×alpha twin.
+    void setIconMeanLuma(float luma) { m_iconMeanLuma = luma; syncIconTint(); }
+    void setIconContrastMask(nxui::Texture* mask) {
+        m_iconContrastMask = mask;
+        syncIconTint();
+    }
+    // When true (single-row + hero), colour icons follow chrome textPrimary —
+    // same hero-aware light/dark flip as the rest of HOME.
+    void setColourContrastAdapt(bool enabled) {
+        m_colourContrastAdapt = enabled;
+        syncIconTint();
+    }
+    // Custom tint is baked into the glyph texture on reload; this flag is only
+    // used so chrome-follow can still win while a hero is up.
+    void setIconCustomTintEnabled(bool enabled) {
+        m_iconCustomTint = enabled;
+        syncIconTint();
+    }
     bool iconAdaptive() const { return m_iconAdaptive; }
     nxui::Texture* icon() const             { return m_icon; }
 
@@ -43,10 +61,15 @@ private:
     void syncIconTint();
 
     nxui::Texture* m_icon = nullptr;
+    nxui::Texture* m_iconContrastMask = nullptr;
     nxui::Color    m_iconTint = nxui::Color::white();
     nxui::Color    m_iconChromeTint = nxui::Color::white();
+    float          m_iconMeanLuma = 0.5f;
     bool           m_iconAdaptive = false;
     bool           m_iconUsesColorArtwork = false;
+    bool           m_colourContrastAdapt = false;
+    bool           m_iconCustomTint = false;
+    bool           m_drawContrastMask = false;
     bool           m_iconCircular = false;
     std::string    m_label;
     std::string    m_labelSource;
@@ -55,4 +78,3 @@ private:
     bool           m_useLabelKey = false;
     int            m_i18nListenerId = -1;
 };
-

@@ -18,6 +18,8 @@
 #include <nlohmann/json.hpp>
 #include <system_error>
 #include <utility>
+#include <unordered_map>
+#include <cmath>
 
 namespace {
 
@@ -1625,6 +1627,20 @@ void WiiUMenuApp::createThemeShop() {
     m_themeShop->setGridLayoutState(m_config.gridColumns, m_config.gridRows);
     m_themeShop->setActionHintStyleState(m_config.actionHintStyle);
     m_themeShop->setSortLargeTilesState(m_config.sortLargeTiles);
+    m_themeShop->setIconContrastAdaptState(m_config.iconContrastAdapt);
+    {
+        std::unordered_map<std::string, ThemeShopScreen::IconPackTintState> tints;
+        for (const auto& [packId, tint] : m_config.iconPackTints) {
+            ThemeShopScreen::IconPackTintState state;
+            state.enabled = tint.enabled;
+            state.hue = tint.hue;
+            state.sat = tint.sat;
+            state.light = tint.light;
+            tints[packId] = state;
+        }
+        m_themeShop->setIconPackTintState(tints);
+    }
+    m_themeShop->setInputSource(&app().input());
     refreshAutoThemeSummary();
     m_themeShop->setCursorMotionModeState(m_config.cursorMotionMode);
     m_themeShop->setPageTransitionModeState(m_config.pageTransitionMode);
@@ -1727,6 +1743,34 @@ void WiiUMenuApp::createThemeShop() {
         m_pendingNetConnect = true;
         if (m_themeShop) m_themeShop->hide();
         m_navigator.resetToHome();
+    });
+        m_themeShop->onIconContrastAdaptChange([this](bool enabled) {
+        if (m_config.iconContrastAdapt == enabled)
+            return;
+        m_config.iconContrastAdapt = enabled;
+        m_config.save();
+        syncColourIconContrast();
+    });
+    m_themeShop->onIconPackTintChange([this](const std::string& packId,
+                                             const ThemeShopScreen::IconPackTintState& tint) {
+        AppConfig::IconPackTint cfg;
+        cfg.enabled = tint.enabled;
+        cfg.hue = std::clamp(tint.hue, 0.f, 1.f);
+        cfg.sat = std::clamp(tint.sat, 0.f, 1.f);
+        cfg.light = std::clamp(tint.light, 0.f, 1.f);
+        const AppConfig::IconPackTint previous = m_config.iconPackTintFor(packId);
+        if (previous.enabled == cfg.enabled
+            && std::fabs(previous.hue - cfg.hue) < 0.0005f
+            && std::fabs(previous.sat - cfg.sat) < 0.0005f
+            && std::fabs(previous.light - cfg.light) < 0.0005f)
+            return;
+        m_config.setIconPackTint(packId, cfg);
+        m_config.save();
+        const std::string activeId = m_config.iconPack.empty()
+            ? switchu::icons::kDefaultPackId : m_config.iconPack;
+        const std::string id = packId.empty() ? switchu::icons::kDefaultPackId : packId;
+        if (id == activeId)
+            syncColourIconContrast();
     });
     m_themeShop->onIconPackApply([this](const std::string& packId) {
         applyIconPack(packId);
@@ -2076,15 +2120,14 @@ void WiiUMenuApp::reloadSidebarIcons() {
 
 void WiiUMenuApp::applyIconPack(const std::string& packId) {
     const std::string id = packId.empty() ? switchu::icons::kDefaultPackId : packId;
-    if (m_config.iconPack == id) {
-        refreshThemeShopState();
-        return;
+    const bool packChanged = m_config.iconPack != id;
+    if (packChanged) {
+        m_config.iconPack = id;
+        m_config.save();
     }
-
-    m_config.iconPack = id;
-    m_config.save();
-    DebugLog::log("[icon-pack] apply pack=%s", id.c_str());
+    DebugLog::log("[icon-pack] apply pack=%s changed=%d", id.c_str(), packChanged ? 1 : 0);
     reloadSidebarIcons();
+    syncColourIconContrast();
     refreshThemeShopState();
     if (m_themeShop)
         m_themeShop->requestToast(
@@ -2103,6 +2146,20 @@ void WiiUMenuApp::refreshThemeShopState() {
 
     m_themeShop->setTheme(&m_theme);
     m_themeShop->setMusicState(m_audio.isPlaying(), m_audio.volume(), m_audio.sfxVolume());
+    m_themeShop->setSortLargeTilesState(m_config.sortLargeTiles);
+    m_themeShop->setIconContrastAdaptState(m_config.iconContrastAdapt);
+    {
+        std::unordered_map<std::string, ThemeShopScreen::IconPackTintState> tints;
+        for (const auto& [packId, tint] : m_config.iconPackTints) {
+            ThemeShopScreen::IconPackTintState state;
+            state.enabled = tint.enabled;
+            state.hue = tint.hue;
+            state.sat = tint.sat;
+            state.light = tint.light;
+            tints[packId] = state;
+        }
+        m_themeShop->setIconPackTintState(tints);
+    }
     m_themeShop->setThemeShopState(buildThemeShopEntries(), activeId);
     m_themeShop->setIconPackState(buildIconPackEntries(), activePackId);
     m_themeShop->rebuildCurrentTab();
@@ -2869,3 +2926,31 @@ void WiiUMenuApp::syncSoftwareDeletion() {
     m_softwareDeleteTitle.clear();
     m_softwareDeleteClosesGameOptions = false;
 }
+
+void WiiUMenuApp::syncColourIconContrast() {
+    // Apply committed per-pack HSL to HOME sidebar. Full single-row hero
+    // chrome-follow lives on the posters stack; here we keep authored/tint.
+    const std::string activePackId = m_config.iconPack.empty()
+        ? switchu::icons::kDefaultPackId : m_config.iconPack;
+    const AppConfig::IconPackTint packTint = m_config.iconPackTintFor(activePackId);
+    switchu::icons::HslAdjust hsl;
+    hsl.enabled = packTint.enabled;
+    hsl.hue = std::clamp(packTint.hue, 0.f, 1.f);
+    hsl.sat = std::clamp(packTint.sat, 0.f, 1.f);
+    hsl.light = std::clamp(packTint.light, 0.f, 1.f);
+
+    const bool hslChanged =
+        m_sidebar.iconHslAdjust().enabled != hsl.enabled
+        || std::fabs(m_sidebar.iconHslAdjust().hue - hsl.hue) > 0.0005f
+        || std::fabs(m_sidebar.iconHslAdjust().sat - hsl.sat) > 0.0005f
+        || std::fabs(m_sidebar.iconHslAdjust().light - hsl.light) > 0.0005f;
+
+    m_sidebar.setIconHslAdjust(hsl);
+    m_sidebar.setColourIconContrast(false);
+
+    if (hslChanged) {
+        reloadSidebarIcons();
+        m_sidebar.setColourIconContrast(false);
+    }
+}
+

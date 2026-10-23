@@ -1,4 +1,5 @@
 #include "IconPackManager.hpp"
+#include "widgets/AdaptiveIconLoad.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -85,6 +86,7 @@ std::vector<IconPackInfo> discoverPacks(const std::string& assetsBase) {
         const fs::path preview = dir / "preview.png";
         if (fs::is_regular_file(preview, ec))
             info.previewPath = preview.generic_string();
+        info.colourPack = probeIconLooksColour((dir / "album.png").generic_string());
         packs.push_back(std::move(info));
     };
 
@@ -114,6 +116,7 @@ std::vector<IconPackInfo> discoverPacks(const std::string& assetsBase) {
         info.author = "Built-in";
         info.directory = root.generic_string();
         info.isDefault = true;
+        info.colourPack = probeIconLooksColour(join(root.generic_string(), "album.png"));
         packs.push_back(std::move(info));
     }
     return packs;
