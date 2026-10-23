@@ -109,6 +109,9 @@ bool AppConfig::load() {
         }
     }
     readJsonOpt(j, "themePreset", themePreset);
+    readJsonOpt(j, "iconPack", iconPack);
+    if (iconPack.empty())
+        iconPack = "default";
     readJsonOpt(j, "autoThemeMode", autoThemeMode);
     readJsonOpt(j, "autoThemeDayPreset", autoThemeDayPreset);
     readJsonOpt(j, "autoThemeNightPreset", autoThemeNightPreset);
@@ -233,6 +236,7 @@ bool AppConfig::save() const {
         j["lastOpened"] = std::move(opened);
     }
     j["themePreset"] = themePreset;
+    j["iconPack"] = iconPack.empty() ? "default" : iconPack;
     j["autoThemeMode"] = (autoThemeMode == "manual" || autoThemeMode == "geo") ? autoThemeMode : "off";
     j["autoThemeDayPreset"] = autoThemeDayPreset;
     j["autoThemeNightPreset"] = autoThemeNightPreset;

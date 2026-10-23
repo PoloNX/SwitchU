@@ -27,7 +27,8 @@ public:
 
     void reloadAssets(nxui::GpuDevice& gpu, nxui::Renderer& ren,
                       const std::string& assetsBase,
-                      const std::string& customIconsBase = std::string());
+                      const std::string& customIconsBase = std::string(),
+                      const std::string& iconPackId = std::string());
     void invalidateAssetsCache();
 
     void update(float dt, nxui::Widget* focusedWidget);
@@ -53,7 +54,8 @@ public:
 private:
     void loadAssets(nxui::GpuDevice& gpu, nxui::Renderer& ren,
                     const std::string& assetsBase,
-                    const std::string& customIconsBase);
+                    const std::string& customIconsBase,
+                    const std::string& iconPackId);
     void tryLoadAnimation(nxui::GpuDevice& gpu, nxui::Renderer& ren,
                           const std::string& webpPath, AppletButton* button,
                           nxui::Texture* staticIcon);
@@ -73,5 +75,6 @@ private:
     std::vector<AnimEntry> m_anims;
     std::string m_loadedAssetsBase;
     std::string m_loadedCustomIconsBase;
+    std::string m_loadedIconPackId;
     bool m_assetsLoaded = false;
 };

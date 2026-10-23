@@ -40,6 +40,13 @@ void AppletButton::refreshLocalizedLabel() {
     setAccessibilityLabel(m_label);
 }
 
+void AppletButton::syncIconTint() {
+    if (m_iconAdaptive && !m_iconUsesColorArtwork)
+        m_iconTint = m_iconChromeTint;
+    else
+        m_iconTint = nxui::Color::white();
+}
+
 void AppletButton::onContentRender(nxui::Renderer& ren) {
     if (!m_icon || !m_icon->valid()) return;
 
@@ -52,5 +59,5 @@ void AppletButton::onContentRender(nxui::Renderer& ren) {
     float iconCorner = m_iconCircular ? (iconSz * 0.5f) : (cornerRadius() - 4.f);
     ren.drawTextureRounded(m_icon, {ix, iy, iconSz, iconSz},
                            iconCorner,
-                           nxui::Color::white().withAlpha(m_opacity));
+                           m_iconTint.withAlpha(m_iconTint.a * m_opacity));
 }

@@ -1,4 +1,5 @@
 #include "WiiUMenuApp.hpp"
+#include "icons/IconPackManager.hpp"
 #include "themeshop/ThemePackageInstaller.hpp"
 #include "themeshop/ThemeHttp.hpp"
 #include "widgets/GlossyIcon.hpp"
@@ -1727,6 +1728,9 @@ void WiiUMenuApp::createThemeShop() {
         if (m_themeShop) m_themeShop->hide();
         m_navigator.resetToHome();
     });
+    m_themeShop->onIconPackApply([this](const std::string& packId) {
+        applyIconPack(packId);
+    });
     m_themeShop->onThemeShopApply([this](const std::string& presetId) {
         DebugLog::log("[theme-apply] request from Theme Shop: preset=%s", presetId.c_str());
         ThemePreset* preset = findPresetPtr(presetId);
@@ -2025,6 +2029,68 @@ std::vector<ThemeShopScreen::ThemeShopEntry> WiiUMenuApp::buildThemeShopEntries(
     return entries;
 }
 
+
+std::vector<ThemeShopScreen::ThemeShopEntry> WiiUMenuApp::buildIconPackEntries() {
+    std::vector<ThemeShopScreen::ThemeShopEntry> entries;
+    const std::string activeId = m_config.iconPack.empty()
+        ? switchu::icons::kDefaultPackId : m_config.iconPack;
+
+    for (const auto& pack : switchu::icons::discoverPacks(SD_ASSETS)) {
+        ThemeShopScreen::ThemeShopEntry entry;
+        entry.id = pack.id;
+        entry.name = pack.name;
+        entry.author = pack.author;
+        entry.version = "1.0.0";
+        entry.source = pack.isDefault ? "Built-in" : "Icon pack";
+        entry.coverPath = switchu::icons::ensurePackPreview(pack.directory);
+        if (entry.coverPath.empty())
+            entry.coverPath = pack.previewPath;
+        entry.active = (pack.id == activeId);
+        entry.removable = false;
+        entries.push_back(std::move(entry));
+    }
+    return entries;
+}
+
+std::string WiiUMenuApp::resolveActiveIconGlyphPath(const char* fileName) const {
+    const std::string packId = m_config.iconPack.empty()
+        ? switchu::icons::kDefaultPackId : m_config.iconPack;
+    const std::string customIconsBase =
+        resolveThemeAssetPath(m_effectivePreset, m_effectivePreset.icons.basePath);
+    if (!customIconsBase.empty()) {
+        const std::string customPath = joinPath(customIconsBase, fileName);
+        if (pathExists(customPath))
+            return customPath;
+    }
+    return switchu::icons::resolveGlyphPath(SD_ASSETS, packId, fileName);
+}
+
+void WiiUMenuApp::reloadSidebarIcons() {
+    const std::string customIconsBase =
+        resolveThemeAssetPath(m_effectivePreset, m_effectivePreset.icons.basePath);
+    const std::string packId = m_config.iconPack.empty()
+        ? switchu::icons::kDefaultPackId : m_config.iconPack;
+    m_sidebar.invalidateAssetsCache();
+    m_sidebar.reloadAssets(app().gpu(), app().renderer(), SD_ASSETS, customIconsBase, packId);
+}
+
+void WiiUMenuApp::applyIconPack(const std::string& packId) {
+    const std::string id = packId.empty() ? switchu::icons::kDefaultPackId : packId;
+    if (m_config.iconPack == id) {
+        refreshThemeShopState();
+        return;
+    }
+
+    m_config.iconPack = id;
+    m_config.save();
+    DebugLog::log("[icon-pack] apply pack=%s", id.c_str());
+    reloadSidebarIcons();
+    refreshThemeShopState();
+    if (m_themeShop)
+        m_themeShop->requestToast(
+            nxui::I18n::instance().tr("themeshop.icons.applied", "Icon pack applied."), 2.0f);
+}
+
 void WiiUMenuApp::refreshThemeShopState() {
     if (!m_themeShop) return;
 
@@ -2032,9 +2098,13 @@ void WiiUMenuApp::refreshThemeShopState() {
     std::string activeId = activePreset ? (activePreset->id.empty() ? activePreset->name : activePreset->id)
                                         : m_activePresetName;
 
+    const std::string activePackId = m_config.iconPack.empty()
+        ? switchu::icons::kDefaultPackId : m_config.iconPack;
+
     m_themeShop->setTheme(&m_theme);
     m_themeShop->setMusicState(m_audio.isPlaying(), m_audio.volume(), m_audio.sfxVolume());
     m_themeShop->setThemeShopState(buildThemeShopEntries(), activeId);
+    m_themeShop->setIconPackState(buildIconPackEntries(), activePackId);
     m_themeShop->rebuildCurrentTab();
 }
 
@@ -2314,7 +2384,7 @@ void WiiUMenuApp::applyThemeResources(const ThemePreset& preset) {
     const std::string desiredSmallFontPath = smallFontExists ? smallFontPath : fallbackFontPath;
     const bool smallFontNeedsReload = forceResourceReload || m_loadedSmallFontPath != desiredSmallFontPath;
 
-    const std::string defaultGameCardPath = std::string(SD_ASSETS) + "/icons/gamecard.png";
+    const std::string defaultGameCardPath = std::string(SD_ASSETS) + "/icons/default/gamecard.png";
     const std::string gameCardPath = !themeIconsBase.empty() ? joinPath(themeIconsBase, "gamecard.png") : std::string();
     const bool gameCardExists = !gameCardPath.empty() && pathExists(gameCardPath);
     const std::string desiredGameCardPath = gameCardExists ? gameCardPath : defaultGameCardPath;
@@ -2632,10 +2702,10 @@ void WiiUMenuApp::rebuildThemeFromColors() {
     DebugLog::log("[theme-apply] applyThemeResources done: preset=%s",
                   safeLogPath(m_effectivePreset.id.empty() ? m_effectivePreset.name : m_effectivePreset.id));
 
-    const std::string customIconsBase = resolveThemeAssetPath(m_effectivePreset, m_effectivePreset.icons.basePath);
-    DebugLog::log("[theme-apply] sidebar.reloadAssets start: customIcons=%s",
-                  safeLogPath(customIconsBase));
-    m_sidebar.reloadAssets(app().gpu(), app().renderer(), SD_ASSETS, customIconsBase);
+    DebugLog::log("[theme-apply] sidebar.reloadAssets start: pack=%s",
+                  m_config.iconPack.empty() ? switchu::icons::kDefaultPackId
+                                            : m_config.iconPack.c_str());
+    reloadSidebarIcons();
     DebugLog::log("[theme-apply] sidebar.reloadAssets done");
 
     DebugLog::log("[theme-apply] applyTheme start");

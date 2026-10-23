@@ -75,6 +75,9 @@ struct AppConfig {
     }
 
     std::string themePreset = "Default Light";
+    // HOME sidebar glyph pack under romfs:/icons/<id>/.
+    // Missing files fall back to the "default" pack.
+    std::string iconPack = "default";
     // See switchu::folders::kFolderStyle*. Applies to every folder tile.
     int folderStyle = 0;
     // First-game icon overlay. Ignored by Classic (the mosaic is the cover).

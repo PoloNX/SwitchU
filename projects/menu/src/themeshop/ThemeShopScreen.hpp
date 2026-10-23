@@ -15,6 +15,7 @@
 namespace themeshop::tabs {
 class InstalledTab;
 class CommunityTab;
+class IconsTab;
 class OptionsTab;
 }
 
@@ -52,6 +53,7 @@ public:
     void onPageTransitionModeChange(IntCb cb) { m_pageTransitionModeCb = std::move(cb); }
     void onNextTrack(VoidCb cb)          { m_nextTrackCb = std::move(cb); }
     void onThemeShopApply(StringCb cb)   { m_themeShopApplyCb = std::move(cb); }
+    void onIconPackApply(StringCb cb)    { m_iconPackApplyCb = std::move(cb); }
     void onThemeShopDelete(StringCb cb)  { m_themeShopDeleteCb = std::move(cb); }
     void onThemeShopDownload(StringCb cb) { m_themeShopDownloadCb = std::move(cb); }
     void onThemeShopDownloadInstall(StringCb cb) { m_themeShopDownloadInstallCb = std::move(cb); }
@@ -92,6 +94,8 @@ public:
 
     void setThemeShopState(const std::vector<ThemeShopEntry>& entries,
                            const std::string& activeId);
+    void setIconPackState(const std::vector<ThemeShopEntry>& entries,
+                          const std::string& activeId);
     void setPackageTransferState(const ThemeTransferState& state,
                                  std::string themeId,
                                  bool installMode);
@@ -104,7 +108,7 @@ public:
 
 protected:
     void buildTabs() override;
-    bool usesCustomContentLayout() const override { return m_tabIndex < 2; }
+    bool usesCustomContentLayout() const override { return m_tabIndex < 3; }
     void drawCustomContent(nxui::Renderer& ren, const nxui::Rect& panel, const nxui::Rect& content, float opacity) override;
     void updateCustomContent(float dt) override;
     bool handleCustomPressA() override;
@@ -124,6 +128,7 @@ protected:
 private:
     friend class themeshop::tabs::InstalledTab;
     friend class themeshop::tabs::CommunityTab;
+    friend class themeshop::tabs::IconsTab;
     friend class themeshop::tabs::OptionsTab;
 
     enum class PreviewPhase {
@@ -139,6 +144,8 @@ private:
         PreviewPhase phase = PreviewPhase::Idle;
         int failureCount = 0;
         bool cancelled = false;
+        bool adaptiveRequested = false; // load via AdaptiveIconLoad
+        bool adaptive = false;          // mono result → tint with chrome
         std::string url;
         std::vector<std::uint8_t> bytes;
         std::future<void> future;
@@ -172,6 +179,8 @@ private:
     bool pollCommunityCatalog();
     void syncCommunityCatalog(const ThemeCatalogClient::Snapshot& snapshot);
     bool isCommunityTab() const;
+    bool isIconsTab() const;
+    bool isInstalledTab() const;
     int currentEntryCount() const;
     int currentSelectedIndex() const;
     void setCurrentSelectedIndex(int idx);
@@ -202,7 +211,8 @@ private:
     const nxui::Texture* communityPreviewTexture(const ThemeCatalogClient::Entry& entry) const;
     PreviewPhase installedPreviewPhase(const std::string& previewPath) const;
     const nxui::Texture* installedPreviewTexture(const std::string& previewPath) const;
-    void primeInstalledPreview(const std::string& previewPath);
+    bool installedPreviewAdaptive(const std::string& previewPath) const;
+    void primeInstalledPreview(const std::string& previewPath, bool adaptiveLoad = false);
     void primeCommunityPreview(const std::string& previewPath);
     void primeCommunityPreview(const ThemeCatalogClient::Entry& entry);
     void primeVisibleCommunityPreviews();
@@ -222,6 +232,7 @@ private:
     IntCb m_pageTransitionModeCb;
     VoidCb m_nextTrackCb;
     StringCb m_themeShopApplyCb;
+    StringCb m_iconPackApplyCb;
     StringCb m_themeShopDeleteCb;
     StringCb m_themeShopDownloadCb;
     StringCb m_themeShopDownloadInstallCb;
@@ -242,6 +253,9 @@ private:
     std::vector<ThemeShopEntry> m_allThemeShopEntries;
     std::vector<ThemeShopEntry> m_themeShopEntries;
     std::string m_themeShopSelectedId;
+    std::vector<ThemeShopEntry> m_allIconPackEntries;
+    std::vector<ThemeShopEntry> m_iconPackEntries;
+    std::string m_iconPackSelectedId;
 
     nxui::ThreadPool* m_threadPool = nullptr;
     nxui::GpuDevice* m_gpu = nullptr;
@@ -271,6 +285,7 @@ private:
     nxui::AnimatedFloat m_detailFullscreenAnim{0.f};
     int m_installedScrollRow = 0;
     int m_communityScrollRow = 0;
+    int m_iconPackScrollRow = 0;
     int m_lastCustomTabIndex = -1;
     std::string m_lastPreviewPrimeKey;
     ThemeTouchTarget m_themeTouchTarget = ThemeTouchTarget::None;

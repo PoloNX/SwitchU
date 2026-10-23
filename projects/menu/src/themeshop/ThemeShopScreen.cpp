@@ -1,6 +1,7 @@
 #include "ThemeShopScreen.hpp"
 
 #include "ThemeHttp.hpp"
+#include "widgets/AdaptiveIconLoad.hpp"
 
 #include "core/DebugLog.hpp"
 
@@ -132,6 +133,29 @@ void ThemeShopScreen::setThemeShopState(const std::vector<ThemeShopEntry>& entri
         m_themeShopSelectedId = m_themeShopEntries.front().id;
 }
 
+void ThemeShopScreen::setIconPackState(const std::vector<ThemeShopEntry>& entries,
+                                       const std::string& activeId) {
+    m_allIconPackEntries = entries;
+    applySearchFilter();
+
+    auto hasId = [&](const std::string& id) {
+        return std::any_of(m_iconPackEntries.begin(), m_iconPackEntries.end(),
+                           [&](const ThemeShopEntry& entry) {
+                               return entry.id == id;
+                           });
+    };
+
+    if (m_iconPackEntries.empty()) {
+        m_iconPackSelectedId.clear();
+        return;
+    }
+
+    if (!hasId(m_iconPackSelectedId))
+        m_iconPackSelectedId = activeId;
+    if (!hasId(m_iconPackSelectedId))
+        m_iconPackSelectedId = m_iconPackEntries.front().id;
+}
+
 void ThemeShopScreen::setPackageTransferState(const ThemeTransferState& state,
                                               std::string themeId,
                                               bool installMode) {
@@ -146,6 +170,16 @@ void ThemeShopScreen::setPackageTransferState(const ThemeTransferState& state,
 }
 
 const ThemeShopScreen::ThemeShopEntry* ThemeShopScreen::selectedThemeShopEntry() const {
+    if (isIconsTab()) {
+        if (m_iconPackEntries.empty())
+            return nullptr;
+        for (const auto& entry : m_iconPackEntries) {
+            if (entry.id == m_iconPackSelectedId)
+                return &entry;
+        }
+        return &m_iconPackEntries.front();
+    }
+
     if (m_themeShopEntries.empty())
         return nullptr;
 
@@ -244,6 +278,13 @@ void ThemeShopScreen::applySearchFilter() {
             m_communityEntries.push_back(entry);
     }
 
+    m_iconPackEntries.clear();
+    m_iconPackEntries.reserve(m_allIconPackEntries.size());
+    for (const auto& entry : m_allIconPackEntries) {
+        if (matchesSearch(entry, needleLower))
+            m_iconPackEntries.push_back(entry);
+    }
+
     auto syncSelection = [](const auto& entries, std::string& selectedId) {
         auto hasId = [&](const std::string& id) {
             return std::any_of(entries.begin(), entries.end(), [&](const auto& entry) {
@@ -262,11 +303,14 @@ void ThemeShopScreen::applySearchFilter() {
 
     syncSelection(m_themeShopEntries, m_themeShopSelectedId);
     syncSelection(m_communityEntries, m_communitySelectedId);
+    syncSelection(m_iconPackEntries, m_iconPackSelectedId);
 
     if (m_themeShopEntries.empty())
         m_installedScrollRow = 0;
     if (m_communityEntries.empty())
         m_communityScrollRow = 0;
+    if (m_iconPackEntries.empty())
+        m_iconPackScrollRow = 0;
 }
 
 bool ThemeShopScreen::promptSearchQuery() {
@@ -379,7 +423,19 @@ const nxui::Texture* ThemeShopScreen::installedPreviewTexture(const std::string&
     return &it->second->texture;
 }
 
-void ThemeShopScreen::primeInstalledPreview(const std::string& previewPath) {
+bool ThemeShopScreen::installedPreviewAdaptive(const std::string& previewPath) const {
+    if (previewPath.empty())
+        return false;
+
+    auto it = m_installedPreviewCache.find(previewPath);
+    if (it == m_installedPreviewCache.end() || !it->second)
+        return false;
+
+    std::lock_guard<std::mutex> lk(it->second->mutex);
+    return it->second->adaptive && it->second->phase == PreviewPhase::Ready;
+}
+
+void ThemeShopScreen::primeInstalledPreview(const std::string& previewPath, bool adaptiveLoad) {
     if (!m_gpu || !m_renderer || previewPath.empty())
         return;
 
@@ -389,10 +445,12 @@ void ThemeShopScreen::primeInstalledPreview(const std::string& previewPath) {
 
     {
         std::lock_guard<std::mutex> lk(slot->mutex);
-        if (slot->url != previewPath) {
+        if (slot->url != previewPath || slot->adaptiveRequested != adaptiveLoad) {
             slot->url = previewPath;
+            slot->adaptiveRequested = adaptiveLoad;
             slot->phase = PreviewPhase::Idle;
             slot->failureCount = 0;
+            slot->adaptive = false;
             slot->texture = nxui::Texture();
         }
         if (slot->phase == PreviewPhase::Ready || slot->phase == PreviewPhase::Failed)
@@ -401,13 +459,24 @@ void ThemeShopScreen::primeInstalledPreview(const std::string& previewPath) {
     }
 
     nxui::Texture uploaded;
-    bool ok = uploaded.loadFromFile(*m_gpu, *m_renderer, previewPath, kCommunityPreviewMaxSide);
+    bool adaptive = false;
+    bool ok = false;
+    if (adaptiveLoad) {
+        ok = switchu::icons::loadMaybeAdaptiveIcon(uploaded, *m_gpu, *m_renderer,
+                                                   previewPath, &adaptive,
+                                                   kCommunityPreviewMaxSide);
+    } else {
+        ok = uploaded.loadFromFile(*m_gpu, *m_renderer, previewPath, kCommunityPreviewMaxSide);
+    }
+
     std::lock_guard<std::mutex> lk(slot->mutex);
     if (ok) {
         slot->texture = std::move(uploaded);
+        slot->adaptive = adaptive;
         slot->phase = PreviewPhase::Ready;
         slot->failureCount = 0;
     } else {
+        slot->adaptive = false;
         slot->phase = PreviewPhase::Failed;
         slot->failureCount += 1;
     }

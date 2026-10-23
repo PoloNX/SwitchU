@@ -453,19 +453,37 @@ void drawThemePreview(nxui::Renderer& ren,
                       const std::string& placeholderLabel,
                       bool loading,
                       float time,
-                      float opacity) {
+                      float opacity,
+                      bool adaptiveTint = false,
+                      bool iconPackGlass = false) {
     if (!theme)
         return;
 
     if (texture && texture->valid()) {
-        ren.drawRoundedRect(rect, theme->panelBase.withAlpha(0.14f * opacity), 14.f);
-        ren.drawRoundedRectOutline(rect, theme->panelBorder.withAlpha(0.18f * opacity), 14.f, 1.f);
-        nxui::Rect inner = {rect.x + 4.f, rect.y + 4.f, rect.width - 8.f, rect.height - 8.f};
-        ren.drawRoundedRect(inner, nxui::Color(0.f, 0.f, 0.f, 0.14f * opacity), 12.f);
+        nxui::Rect drawRect = rect;
+        if (iconPackGlass) {
+            // Little glass well inside the pack card — theme-coloured (no hard
+            // #1c1e25 plate). Glyphs keep alpha and sit on this glass.
+            const bool dark = theme->mode == nxui::ThemeMode::Dark;
+            const nxui::Color glassBase = theme->panelBase.withAlpha((dark ? 0.58f : 0.78f) * opacity);
+            const nxui::Color glassBorder = theme->panelBorder.withAlpha(0.36f * opacity);
+            const nxui::Color glassHighlight = theme->panelHighlight.withAlpha(0.16f * opacity);
+            ren.drawFrostedInset(rect, glassBase, glassBorder, glassHighlight, 14.f, opacity);
+            drawRect = {rect.x + 10.f, rect.y + 10.f, rect.width - 20.f, rect.height - 20.f};
+        } else {
+            // Theme screenshots keep a framed inset well.
+            ren.drawRoundedRect(rect, theme->panelBase.withAlpha(0.14f * opacity), 14.f);
+            ren.drawRoundedRectOutline(rect, theme->panelBorder.withAlpha(0.18f * opacity), 14.f, 1.f);
+            drawRect = {rect.x + 4.f, rect.y + 4.f, rect.width - 8.f, rect.height - 8.f};
+            ren.drawRoundedRect(drawRect, nxui::Color(0.f, 0.f, 0.f, 0.14f * opacity), 12.f);
+        }
+        nxui::Color tint = adaptiveTint
+            ? theme->textPrimary.withAlpha(theme->textPrimary.a * opacity)
+            : nxui::Color(1.f, 1.f, 1.f, opacity);
         ren.drawTextureRounded(texture,
-                               fitTextureRect(inner, texture),
-                               12.f,
-                               nxui::Color(1.f, 1.f, 1.f, opacity));
+                               fitTextureRect(drawRect, texture),
+                               iconPackGlass ? 10.f : 12.f,
+                               tint);
         return;
     }
 
@@ -488,8 +506,20 @@ bool ThemeShopScreen::isCommunityTab() const {
     return m_tabIndex == 1;
 }
 
+bool ThemeShopScreen::isIconsTab() const {
+    return m_tabIndex == 2;
+}
+
+bool ThemeShopScreen::isInstalledTab() const {
+    return m_tabIndex == 0;
+}
+
 int ThemeShopScreen::currentEntryCount() const {
-    return isCommunityTab() ? (int)m_communityEntries.size() : (int)m_themeShopEntries.size();
+    if (isCommunityTab())
+        return (int)m_communityEntries.size();
+    if (isIconsTab())
+        return (int)m_iconPackEntries.size();
+    return (int)m_themeShopEntries.size();
 }
 
 int ThemeShopScreen::currentSelectedIndex() const {
@@ -499,6 +529,13 @@ int ThemeShopScreen::currentSelectedIndex() const {
                 return i;
         }
         return m_communityEntries.empty() ? -1 : 0;
+    }
+    if (isIconsTab()) {
+        for (int i = 0; i < (int)m_iconPackEntries.size(); ++i) {
+            if (m_iconPackEntries[i].id == m_iconPackSelectedId)
+                return i;
+        }
+        return m_iconPackEntries.empty() ? -1 : 0;
     }
 
     for (int i = 0; i < (int)m_themeShopEntries.size(); ++i) {
@@ -516,6 +553,8 @@ void ThemeShopScreen::setCurrentSelectedIndex(int idx) {
     idx = std::clamp(idx, 0, count - 1);
     if (isCommunityTab())
         m_communitySelectedId = m_communityEntries[(size_t)idx].id;
+    else if (isIconsTab())
+        m_iconPackSelectedId = m_iconPackEntries[(size_t)idx].id;
     else
         m_themeShopSelectedId = m_themeShopEntries[(size_t)idx].id;
 }
@@ -529,7 +568,8 @@ int ThemeShopScreen::currentPage() const {
     int count = currentEntryCount();
     if (count <= 0)
         return 0;
-    int scrollRow = isCommunityTab() ? m_communityScrollRow : m_installedScrollRow;
+    int scrollRow = isCommunityTab() ? m_communityScrollRow
+                  : (isIconsTab() ? m_iconPackScrollRow : m_installedScrollRow);
     return std::clamp(scrollRow / kVisibleRows, 0, pageCount() - 1);
 }
 
@@ -552,7 +592,11 @@ void ThemeShopScreen::stepPage(int delta) {
 }
 
 int& ThemeShopScreen::currentScrollRowRef() {
-    return isCommunityTab() ? m_communityScrollRow : m_installedScrollRow;
+    if (isCommunityTab())
+        return m_communityScrollRow;
+    if (isIconsTab())
+        return m_iconPackScrollRow;
+    return m_installedScrollRow;
 }
 
 void ThemeShopScreen::ensureSelectionVisible() {
@@ -621,6 +665,8 @@ int ThemeShopScreen::detailButtonCount() const {
     const auto* entry = selectedThemeShopEntry();
     if (!entry)
         return 0;
+    if (isIconsTab())
+        return 1; // Apply only
     return entry->removable ? 2 : 1;
 }
 
@@ -666,9 +712,13 @@ void ThemeShopScreen::activateDetailButton(int buttonIndex) {
     bool removable = entry->removable;
     closeDetail();
     if (buttonIndex == 0) {
-        if (m_themeShopApplyCb)
+        if (isIconsTab()) {
+            if (m_iconPackApplyCb)
+                m_iconPackApplyCb(themeId);
+        } else if (m_themeShopApplyCb) {
             m_themeShopApplyCb(themeId);
-    } else if (buttonIndex == 1 && removable) {
+        }
+    } else if (buttonIndex == 1 && removable && !isIconsTab()) {
         if (m_themeShopDeleteCb)
             m_themeShopDeleteCb(themeId);
     }
@@ -1203,7 +1253,8 @@ int ThemeShopScreen::hitTestGridCard(const nxui::Rect& content, float x, float y
     if (count <= 0 || !layout.grid.contains(x, y))
         return -1;
 
-    int scrollRow = isCommunityTab() ? m_communityScrollRow : m_installedScrollRow;
+    int scrollRow = isCommunityTab() ? m_communityScrollRow
+                  : (isIconsTab() ? m_iconPackScrollRow : m_installedScrollRow);
     int start = scrollRow * kGridCols;
     int end = std::min(count, start + kGridCols * kVisibleRows);
     for (int i = start; i < end; ++i) {
@@ -1495,12 +1546,18 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
     layout.pageNextButton.y += slideOffset;
     layout.grid.y += slideOffset;
 
-    std::string title = isCommunityTab()
-        ? i18n.tr("themeshop.community.title", "Browse Community Themes")
-        : i18n.tr("themeshop.installed.title", "Installed Theme Library");
-    std::string subtitle = isCommunityTab()
-        ? i18n.tr("themeshop.community.subtitle", "A visual catalog, not a settings selector.")
-        : i18n.tr("themeshop.installed.subtitle", "Your local themes in a gallery layout.");
+    std::string title;
+    std::string subtitle;
+    if (isCommunityTab()) {
+        title = i18n.tr("themeshop.community.title", "Browse Community Themes");
+        subtitle = i18n.tr("themeshop.community.subtitle", "A visual catalog, not a settings selector.");
+    } else if (isIconsTab()) {
+        title = i18n.tr("themeshop.icons.title", "Icon Packs");
+        subtitle = i18n.tr("themeshop.icons.subtitle", "Switch sidebar icons on the fly.");
+    } else {
+        title = i18n.tr("themeshop.installed.title", "Installed Theme Library");
+        subtitle = i18n.tr("themeshop.installed.subtitle", "Your local themes in a gallery layout.");
+    }
 
     ren.drawText(title, {layout.header.x, layout.header.y + 2.f}, m_font,
                  m_theme->textPrimary.withAlpha(contentOpacity), 1.00f);
@@ -1682,12 +1739,16 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
             ? i18n.tr("themeshop.search.no_results", "No themes match this search.")
             : (isCommunityTab()
                 ? i18n.tr("themeshop.community.catalog_empty", "No published themes are listed in the catalog.")
-                : i18n.tr("themeshop.installed.empty", "No installed themes found."));
+                : (isIconsTab()
+                    ? i18n.tr("themeshop.icons.empty", "No icon packs found.")
+                    : i18n.tr("themeshop.installed.empty", "No installed themes found.")));
         std::string emptySubtitle = searchActive
             ? i18n.tr("themeshop.search.no_results_hint", "Press X or use Search to change or clear the filter.")
             : (isCommunityTab() && m_communityTransferState.hasFailed()
                 ? i18n.tr("themeshop.community.catalog_failed", "The catalog could not be fetched. Use Refresh to try again.")
-                : i18n.tr("themeshop.community.empty_hint", "Add themes to the repository and they will appear here."));
+                : (isIconsTab()
+                    ? i18n.tr("themeshop.icons.empty_hint", "Add folders under icons/ to create packs.")
+                    : i18n.tr("themeshop.community.empty_hint", "Add themes to the repository and they will appear here.")));
 
         nxui::Vec2 titleSize = measureTextCached(m_font, emptyTitle);
         ren.drawText(emptyTitle,
@@ -1733,6 +1794,7 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
         const nxui::Texture* previewTexture = nullptr;
         PreviewPhase previewPhase = PreviewPhase::Failed;
         bool previewRequested = false;
+        bool previewAdaptive = false;
         bool activeTheme = false;
 
         if (isCommunityTab()) {
@@ -1744,7 +1806,9 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
             previewPhase = communityPreviewPhase(entry);
             previewRequested = !entry.cover.empty();
         } else {
-            const auto& entry = m_themeShopEntries[(size_t)globalIndex];
+            const auto& entry = isIconsTab()
+                ? m_iconPackEntries[(size_t)globalIndex]
+                : m_themeShopEntries[(size_t)globalIndex];
             titleText = entry.name;
             std::string author = entry.author.empty()
                 ? i18n.tr("themeshop.community.author_unknown", "Unknown")
@@ -1754,9 +1818,10 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
             activeTheme = entry.active;
             previewRequested = !entry.coverPath.empty();
             if (previewRequested) {
-                primeInstalledPreview(entry.coverPath);
+                primeInstalledPreview(entry.coverPath, isIconsTab());
                 previewTexture = installedPreviewTexture(entry.coverPath);
                 previewPhase = installedPreviewPhase(entry.coverPath);
+                previewAdaptive = isIconsTab() && installedPreviewAdaptive(entry.coverPath);
             }
         }
 
@@ -1770,9 +1835,15 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
         bool previewLoading = previewPhase == PreviewPhase::Loading || previewPhase == PreviewPhase::Downloaded;
         std::string previewLabel = previewRequested
             ? (previewLoading
-                ? i18n.tr("themeshop.preview.loading", "Loading screenshot...")
-                : i18n.tr("themeshop.preview.unavailable", "Screenshot unavailable"))
-            : i18n.tr("themeshop.preview.missing", "No screenshot");
+                ? (isIconsTab()
+                    ? i18n.tr("themeshop.icons.preview_loading", "Loading preview...")
+                    : i18n.tr("themeshop.preview.loading", "Loading screenshot..."))
+                : (isIconsTab()
+                    ? i18n.tr("themeshop.icons.preview_unavailable", "Preview unavailable")
+                    : i18n.tr("themeshop.preview.unavailable", "Screenshot unavailable")))
+            : (isIconsTab()
+                ? i18n.tr("themeshop.icons.preview_missing", "No preview")
+                : i18n.tr("themeshop.preview.missing", "No screenshot"));
         drawThemePreview(ren,
                          m_smallFont,
                          m_theme,
@@ -1781,7 +1852,9 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
                          previewLabel,
                          previewLoading,
                          m_uiTime,
-                         rowOpacity);
+                         rowOpacity,
+                         previewAdaptive,
+                         isIconsTab());
 
         if (!versionText.empty()) {
             float chipWidth = std::max(74.f, std::min(108.f, 32.f + measureTextCached(m_smallFont, versionText).x * 0.64f));
@@ -1906,18 +1979,28 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
         detailSubtitle = entry->source.empty() ? author : (author + " - " + entry->source);
         detailInfoA = i18n.tr("themeshop.installed.status", "Status") + std::string(": ")
             + (entry->active ? i18n.tr("themeshop.installed.status_active", "Active") : i18n.tr("themeshop.installed.status_available", "Available"));
-        detailInfoB = i18n.tr("themeshop.installed.sound", "Bundled Sound Pack") + std::string(": ")
-            + (entry->soundPreset.empty() ? i18n.tr("themeshop.installed.sound_none", "None") : entry->soundPreset);
-        detailInfoC = entry->removable
-            ? i18n.tr("themeshop.installed.remove_hint", "This theme can be removed from the console.")
-            : i18n.tr("themeshop.installed.builtin_hint", "This is part of the built-in theme set.");
+        if (isIconsTab()) {
+            detailInfoB = i18n.tr("themeshop.icons.fallback", "Missing icons fall back to Default.");
+            detailInfoC = i18n.tr("themeshop.icons.apply_hint", "Apply to switch sidebar icons immediately.");
+        } else {
+            detailInfoB = i18n.tr("themeshop.installed.sound", "Bundled Sound Pack") + std::string(": ")
+                + (entry->soundPreset.empty() ? i18n.tr("themeshop.installed.sound_none", "None") : entry->soundPreset);
+            detailInfoC = entry->removable
+                ? i18n.tr("themeshop.installed.remove_hint", "This theme can be removed from the console.")
+                : i18n.tr("themeshop.installed.builtin_hint", "This is part of the built-in theme set.");
+        }
         detailPreviewRequested = !entry->coverPath.empty();
         if (detailPreviewRequested) {
-            primeInstalledPreview(entry->coverPath);
+            primeInstalledPreview(entry->coverPath, isIconsTab());
             detailPreviewTexture = installedPreviewTexture(entry->coverPath);
             detailPreviewPhase = installedPreviewPhase(entry->coverPath);
         }
     }
+
+    const bool detailPreviewAdaptive = isIconsTab()
+        && detailPreviewRequested
+        && selectedThemeShopEntry()
+        && installedPreviewAdaptive(selectedThemeShopEntry()->coverPath);
 
     bool detailPreviewLoading = detailPreviewPhase == PreviewPhase::Loading || detailPreviewPhase == PreviewPhase::Downloaded;
     std::string detailPreviewLabel = detailPreviewRequested
@@ -1933,7 +2016,9 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
                      detailPreviewLabel,
                      detailPreviewLoading,
                      m_uiTime,
-                     detailOpacity);
+                     detailOpacity,
+                     detailPreviewAdaptive,
+                     isIconsTab());
 
     if (isCommunityTab() && detailPreviewRequested) {
         auto previewButtons = detailPreviewControlRects(previewControls, preview, detailScreenshotTotal);
@@ -2054,7 +2139,9 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
                          detailPreviewLabel,
                          detailPreviewLoading,
                          m_uiTime,
-                         detailOpacity);
+                         detailOpacity,
+                         detailPreviewAdaptive,
+                         isIconsTab());
 
         drawActionButtonChip(ren,
                              m_smallFont,
@@ -2107,6 +2194,8 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
     if (isCommunityTab()) {
         buttonLabels.push_back(i18n.tr("themeshop.community.install", "Install"));
         buttonLabels.push_back(i18n.tr("themeshop.community.download_apply", "Download + Apply"));
+    } else if (isIconsTab()) {
+        buttonLabels.push_back(i18n.tr("themeshop.icons.apply", "Apply Icon Pack"));
     } else {
         buttonLabels.push_back(i18n.tr("themeshop.installed.apply", "Apply Theme"));
         const auto* entry = selectedThemeShopEntry();
