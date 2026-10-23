@@ -207,6 +207,35 @@ static constexpr int kViewPollIntervalTicks = 200;
 static constexpr int kViewPollAttempts = 6;
 static int  g_menuRelaunchCooldown = 0;
 static int  g_menuFastExitCount = 0;
+// MenuReady for the current Album holder session. Used to detect BadGfxInit /
+// early aborts that exit before the menu can talk to the daemon.
+static bool g_menuReadyThisSession = false;
+static int  g_menuGfxRelaunchTries = 0;
+static int  g_menuGfxRelaunchDelay = 0;
+static bool g_menuGfxRelaunchPending = false;
+// After a gfx relaunch, Album can stay "active" without MenuReady (black zombie).
+// Watchdog tears it down so we do not forward HOME forever into a dead holder.
+static bool g_menuGfxAwaitingReady = false;
+static int  g_menuGfxReadyWatchdog = 0;
+// Soft auto-retry is only for early exits WITHOUT a sticky gfx_fail marker.
+// A probe fail (viInitialize 0xF601) means vi is already wounded - auto-relaunch
+// was seen to hang then cascade into vi/omm. Hung MenuReady watchdog also never
+// schedules another open.
+static constexpr int kMenuGfxRelaunchMaxTries = 1;
+static constexpr int kMenuGfxRelaunchDelayTicksTry1 = 300; // ~3000ms before sole retry
+static constexpr int kMenuGfxReadyWatchdogTicks = 350; // ~3.5s awaiting MenuReady
+static constexpr uint64_t kMenuGfxWatchdogTerminateNs = 2'000'000'000ULL;
+// Early-exit window for soft retry when last_gfx_fail.txt is missing.
+static constexpr uint64_t kMenuEarlyExitNs = 10'000'000'000ULL;
+// Happy-path settle before Album launch. Idle stays snappy; suspended titles
+// get a short vi/layer quiet window. Longer settle is only on soft retry.
+static constexpr uint64_t kHomeMenuSettleNsIdle = 80'000'000ULL;        // ~80ms
+static constexpr uint64_t kHomeMenuSettleNsSuspended = 300'000'000ULL;  // ~300ms
+static constexpr uint64_t kHomeMenuGfxFailSettleNs = 2'500'000'000ULL; // 2.5s before sole relaunch
+static constexpr const char* kLastGfxFailPath = "sdmc:/config/SwitchU/last_gfx_fail.txt";
+static uint64_t g_lastMenuLaunchTick = 0;
+static uint64_t g_lastMenuLaunchSuspended = 0;
+static const char* g_lastMenuLaunchSource = "unknown";
 static s32      g_lastRecordCount = 0;
 static uint64_t g_lastRecordTids[1024] = {};
 static uint32_t g_lastViewFlags[1024]  = {};
@@ -815,6 +844,39 @@ static void logHomeState(const char* source, const char* stage) {
                           g_foregroundAppletActive ? 1 : 0);
 }
 
+static void noteMenuLaunch(const char* source) {
+    g_lastMenuLaunchTick = armGetSystemTick();
+    g_lastMenuLaunchSuspended = daemon::app::suspendedTitleId();
+    g_lastMenuLaunchSource = source ? source : "unknown";
+}
+
+static void clearLastGfxFailMarker() {
+    std::error_code ec;
+    std::filesystem::remove(kLastGfxFailPath, ec);
+}
+
+static bool readLastGfxFailMarker(char* stepOut, size_t stepCap, Result* rcOut) {
+    if (!stepOut || stepCap == 0 || !rcOut)
+        return false;
+    stepOut[0] = '\0';
+    *rcOut = 0;
+    FILE* f = std::fopen(kLastGfxFailPath, "r");
+    if (!f)
+        return false;
+    char line[128] = {};
+    const bool ok = std::fgets(line, sizeof(line), f) != nullptr;
+    std::fclose(f);
+    if (!ok)
+        return false;
+    unsigned rc = 0;
+    char step[64] = {};
+    if (std::sscanf(line, "step=%63s rc=0x%X", step, &rc) != 2)
+        return false;
+    std::snprintf(stepOut, stepCap, "%s", step);
+    *rcOut = static_cast<Result>(rc);
+    return true;
+}
+
 static bool takeForegroundFromRunningApp(const char* source) {
     if (!daemon::app::isRunning() || !daemon::app::hasForeground())
         return true;
@@ -853,6 +915,19 @@ static Result launchPendingHomeMenu() {
     switchu::FileLog::log(
         "[%s] HOME foreground acquired; launching MainMenu status.running=%d suspended=0x%016lX",
         source, status.app_running ? 1 : 0, status.suspended_app_id);
+    // Give VI a beat after the app loses foreground before Album creates a layer.
+    // Keep the happy path snappy; gfx-fail recovery uses a longer settle instead.
+    const uint64_t settleNs = (status.suspended_app_id != 0)
+        ? kHomeMenuSettleNsSuspended
+        : kHomeMenuSettleNsIdle;
+    switchu::FileLog::log("[%s] HOME settle_ms=%lu", source,
+                          static_cast<unsigned long>(settleNs / 1'000'000ULL));
+    svcSleepThread(settleNs);
+    g_menuReadyThisSession = false;
+    g_menuGfxRelaunchTries = 0;
+    g_menuGfxRelaunchPending = false;
+    g_menuRelaunchCooldown = 0;
+    noteMenuLaunch(source);
     const uint64_t launchStartedAt = armGetSystemTick();
     const Result rc = daemon::menu_la::launch(smi::MenuStartMode::MainMenu, status);
     const uint64_t launchDoneAt = armGetSystemTick();
@@ -980,6 +1055,11 @@ static void openMenuFromHome(const char* source) {
         switchu::FileLog::log("[%s] HOME requested while foreground applet active", source);
         g_pendingForegroundAppletHome = true;
     } else {
+        // Fresh HOME press: clear soft-recovery stop so the user can retry
+        // after a died-before-ready / hung-watchdog halt.
+        g_menuGfxRelaunchTries = 0;
+        g_menuGfxRelaunchPending = false;
+        g_menuRelaunchCooldown = 0;
         switchu::FileLog::log("[%s] HOME no app/menu active; launching MainMenu", source);
         Result menuRc = daemon::menu_la::launch(smi::MenuStartMode::MainMenu, buildSystemStatus());
         switchu::FileLog::log("[%s] HOME MainMenu launch rc=0x%X", source, menuRc);
@@ -1546,6 +1626,13 @@ static void handleMenuCommand() {
 
     case smi::SystemMessage::MenuReady:
         switchu::FileLog::log("[smi] menu ready");
+        g_menuReadyThisSession = true;
+        g_menuGfxRelaunchTries = 0;
+        g_menuGfxRelaunchDelay = 0;
+        g_menuGfxRelaunchPending = false;
+        g_menuGfxAwaitingReady = false;
+        g_menuGfxReadyWatchdog = 0;
+        clearLastGfxFailMarker();
         g_lastOperationFailure = {};
         g_batteryRefreshPending.store(true);
         shortenCatalogHold(kCatalogHoldAfterMenuReadyNs);
@@ -1799,12 +1886,64 @@ static void mainLoop() {
 
     if (g_menuRelaunchCooldown > 0)
         --g_menuRelaunchCooldown;
+    if (g_menuGfxRelaunchDelay > 0)
+        --g_menuGfxRelaunchDelay;
+    if (g_menuGfxAwaitingReady && g_menuGfxReadyWatchdog > 0)
+        --g_menuGfxReadyWatchdog;
+
+    // Gfx-relaunch zombie: holder alive, never reached MenuReady. Tear down and
+    // stop auto-opening Album - another launch here was seen to cascade into vi.
+    if (g_menuGfxAwaitingReady
+        && g_menuGfxReadyWatchdog == 0
+        && daemon::menu_la::hasHolder()
+        && !g_menuReadyThisSession
+        && !g_menuGfxRelaunchPending) {
+        const uint64_t suspended = daemon::app::suspendedTitleId();
+        switchu::FileLog::logCommit(
+            "[main] gfx ready watchdog; terminating hung menu try=%d/%d suspended=0x%016lX",
+            g_menuGfxRelaunchTries, kMenuGfxRelaunchMaxTries, suspended);
+        g_menuGfxAwaitingReady = false;
+        const Result termRc = daemon::menu_la::terminate(kMenuGfxWatchdogTerminateNs);
+        switchu::FileLog::logCommit("[main] gfx ready watchdog terminate rc=0x%X", termRc);
+        g_menuReadyThisSession = false;
+        g_menuGfxRelaunchPending = false;
+        if (g_menuGfxRelaunchTries < kMenuGfxRelaunchMaxTries)
+            g_menuGfxRelaunchTries = kMenuGfxRelaunchMaxTries;
+        if (g_menuRelaunchCooldown < 500)
+            g_menuRelaunchCooldown = 500;
+        switchu::FileLog::logCommit(
+            "[main] gfx ready watchdog; NOT relaunching after hang (tries=%d/%d) "
+            "press HOME again suspended=0x%016lX",
+            g_menuGfxRelaunchTries, kMenuGfxRelaunchMaxTries, suspended);
+        didWork = true;
+    }
 
     if (daemon::menu_la::checkFinished()) {
+        g_menuGfxAwaitingReady = false;
+        g_menuGfxReadyWatchdog = 0;
         const uint64_t runtimeNs = daemon::menu_la::lastRuntimeNs();
-        switchu::FileLog::log("[main] menu exited (reason=%d runtime=%lums)",
+        const bool sawReady = g_menuReadyThisSession;
+        g_menuReadyThisSession = false;
+        const uint64_t suspended = daemon::app::suspendedTitleId();
+        const unsigned long sinceLaunchMs = g_lastMenuLaunchTick
+            ? static_cast<unsigned long>(
+                  armTicksToNs(armGetSystemTick() - g_lastMenuLaunchTick) / 1'000'000ULL)
+            : 0UL;
+        char failStep[64] = {};
+        Result failRc = 0;
+        const bool haveGfxFail = !sawReady && readLastGfxFailMarker(failStep, sizeof(failStep), &failRc);
+        switchu::FileLog::logCommit(
+            "[main] menu exited (reason=%d runtime=%lums ready=%d suspended=0x%016lX "
+            "since_launch=%lums source=%s gfx_fail=%d step=%s rc=0x%X)",
             (int)daemon::menu_la::exitReason(),
-            static_cast<unsigned long>(runtimeNs / 1'000'000ULL));
+            static_cast<unsigned long>(runtimeNs / 1'000'000ULL),
+            sawReady ? 1 : 0,
+            suspended,
+            sinceLaunchMs,
+            g_lastMenuLaunchSource ? g_lastMenuLaunchSource : "unknown",
+            haveGfxFail ? 1 : 0,
+            haveGfxFail ? failStep : "-",
+            haveGfxFail ? failRc : 0);
         if (runtimeNs < 1'000'000'000ULL)
             ++g_menuFastExitCount;
         else
@@ -1814,6 +1953,90 @@ static void mainLoop() {
             switchu::FileLog::log("[main] menu fast-exit guard active count=%d cooldown=%d",
                                   g_menuFastExitCount, g_menuRelaunchCooldown);
             g_menuFastExitCount = 0;
+        }
+        // Exit before MenuReady:
+        // - Sticky gfx_fail (0xF601): do NOT auto-relaunch; press HOME again.
+        // - Early exit without marker: one soft auto-retry (often recovers).
+        // - Hung MenuReady path above never schedules another open.
+        const bool softRetryCandidate = !sawReady && !haveGfxFail
+            && runtimeNs < kMenuEarlyExitNs;
+        const bool stickyGfxFailStop = !sawReady && haveGfxFail;
+        if (softRetryCandidate
+            && g_menuRelaunchCooldown <= 0
+            && g_actionQueue.empty()
+            && !g_pendingHomeMenuLaunch
+            && !g_foregroundAppletActive
+            && !g_menuGfxRelaunchPending
+            && g_menuGfxRelaunchTries < kMenuGfxRelaunchMaxTries) {
+            ++g_menuGfxRelaunchTries;
+            g_menuGfxRelaunchDelay = kMenuGfxRelaunchDelayTicksTry1;
+            g_menuGfxRelaunchPending = true;
+            switchu::FileLog::logCommit(
+                "[main] menu died before ready; scheduling gfx relaunch try=%d/%d "
+                "delay_ticks=%d (~%dms) suspended=0x%016lX gfx_fail=0 runtime=%lums",
+                g_menuGfxRelaunchTries, kMenuGfxRelaunchMaxTries, g_menuGfxRelaunchDelay,
+                g_menuGfxRelaunchDelay * 10, suspended,
+                static_cast<unsigned long>(runtimeNs / 1'000'000ULL));
+        } else if (sawReady) {
+            g_menuGfxRelaunchTries = 0;
+            g_menuGfxRelaunchPending = false;
+        } else if (stickyGfxFailStop || softRetryCandidate) {
+            if (g_menuGfxRelaunchTries < kMenuGfxRelaunchMaxTries)
+                g_menuGfxRelaunchTries = kMenuGfxRelaunchMaxTries;
+            if (g_menuRelaunchCooldown < 500)
+                g_menuRelaunchCooldown = 500;
+            switchu::FileLog::logCommit(
+                "[main] menu died before ready; NOT relaunching "
+                "(sticky_gfx_fail=%d tries=%d/%d cooldown=%d pending_home=%d "
+                "fg_applet=%d actions=%zu step=%s rc=0x%X) press HOME again "
+                "suspended=0x%016lX",
+                stickyGfxFailStop ? 1 : 0,
+                g_menuGfxRelaunchTries, kMenuGfxRelaunchMaxTries, g_menuRelaunchCooldown,
+                g_pendingHomeMenuLaunch ? 1 : 0, g_foregroundAppletActive ? 1 : 0,
+                g_actionQueue.size(),
+                haveGfxFail ? failStep : "-",
+                haveGfxFail ? failRc : 0,
+                suspended);
+        } else if (!sawReady) {
+            if (g_menuRelaunchCooldown < 500)
+                g_menuRelaunchCooldown = 500;
+            switchu::FileLog::logCommit(
+                "[main] menu exited without ready; no gfx recovery "
+                "(runtime=%lums gfx_fail=0) suspended=0x%016lX",
+                static_cast<unsigned long>(runtimeNs / 1'000'000ULL), suspended);
+        }
+        didWork = true;
+    }
+
+    if (g_menuGfxRelaunchPending
+        && g_menuGfxRelaunchDelay == 0
+        && !daemon::menu_la::hasHolder()
+        && !g_pendingHomeMenuLaunch
+        && !g_foregroundAppletActive
+        && g_actionQueue.empty()
+        && g_menuRelaunchCooldown <= 0) {
+        g_menuGfxRelaunchPending = false;
+        switchu::FileLog::logCommit(
+            "[main] gfx relaunch firing try=%d/%d suspended=0x%016lX settle_ms=%lu",
+            g_menuGfxRelaunchTries, kMenuGfxRelaunchMaxTries,
+            daemon::app::suspendedTitleId(),
+            static_cast<unsigned long>(kHomeMenuGfxFailSettleNs / 1'000'000ULL));
+        g_menuReadyThisSession = false;
+        g_menuGfxAwaitingReady = false;
+        g_menuGfxReadyWatchdog = 0;
+        svcSleepThread(kHomeMenuGfxFailSettleNs);
+        noteMenuLaunch("gfx-relaunch");
+        const Result rc = daemon::menu_la::launch(smi::MenuStartMode::MainMenu,
+                                                  buildSystemStatus());
+        switchu::FileLog::logCommit("[main] gfx relaunch rc=0x%X", rc);
+        if (R_SUCCEEDED(rc)) {
+            g_menuGfxAwaitingReady = true;
+            g_menuGfxReadyWatchdog = kMenuGfxReadyWatchdogTicks;
+        } else {
+            switchu::FileLog::logCommit(
+                "[main] gfx relaunch failed; NOT retrying automatically "
+                "(tries=%d/%d) press HOME again",
+                g_menuGfxRelaunchTries, kMenuGfxRelaunchMaxTries);
         }
         didWork = true;
     }
@@ -1838,7 +2061,10 @@ static void mainLoop() {
 
     if (!didWork && g_menuRelaunchCooldown <= 0 && g_actionQueue.empty() &&
         !daemon::app::isRunning() && !daemon::menu_la::hasHolder() &&
-        !g_foregroundAppletActive) {
+        !g_foregroundAppletActive
+        && !g_menuGfxRelaunchPending
+        && !g_menuGfxAwaitingReady
+        && g_menuGfxRelaunchTries < kMenuGfxRelaunchMaxTries) {
         switchu::FileLog::log("[main] no app/menu active; relaunching menu");
         daemon::menu_la::launch(smi::MenuStartMode::MainMenu, buildSystemStatus());
     }
@@ -1848,12 +2074,17 @@ static bool mainLoopNeedsFastTick() {
     if (g_powerSequenceStarted.load())
         return false;
     if (shouldDeferViewPolling()) {
-        return g_menuRelaunchCooldown > 0 || !g_actionQueue.empty();
+        return g_menuRelaunchCooldown > 0 || g_menuGfxRelaunchDelay > 0
+            || g_menuGfxRelaunchPending || g_menuGfxAwaitingReady
+            || !g_actionQueue.empty();
     }
     return g_eventPollsRemaining > 0
         || g_appCatalogRefreshPending.load()
         || g_controlCacheRefreshPending.load()
         || g_menuRelaunchCooldown > 0
+        || g_menuGfxRelaunchDelay > 0
+        || g_menuGfxRelaunchPending
+        || g_menuGfxAwaitingReady
         || !g_actionQueue.empty();
 }
 
