@@ -3630,25 +3630,41 @@ void WiiUMenuApp::cycleSortMode() {
 
 void WiiUMenuApp::configureDynamicLineNavigation() {
     const bool dynamicLine = m_appLayoutMode == AppLayoutMode::DynamicLine;
+    const bool inFolder = (m_openFolderId != 0);
     m_sidebar.setDynamicLineLayout(dynamicLine);
     placeLayoutFlipButton();
 
     if (m_grid) {
+        // Folder chrome (top HUD / sidebars) is hidden — never wire titles into
+        // those widgets. Their own isVisible() flags stay true, so a custom UP
+        // to profile/battery would move the blue cursor along invisible chrome
+        // (notably after a grid → single-row flip inside a folder).
         std::vector<nxui::Widget*> leftTargets;
         std::vector<nxui::Widget*> rightTargets;
-        leftTargets.reserve(m_sidebar.leftButtons().size());
-        rightTargets.reserve(m_sidebar.rightButtons().size());
-        for (const auto& button : m_sidebar.leftButtons())
-            leftTargets.push_back(button.get());
-        for (const auto& button : m_sidebar.rightButtons())
-            rightTargets.push_back(button.get());
+        if (!inFolder) {
+            leftTargets.reserve(m_sidebar.leftButtons().size());
+            rightTargets.reserve(m_sidebar.rightButtons().size());
+            for (const auto& button : m_sidebar.leftButtons())
+                leftTargets.push_back(button.get());
+            for (const auto& button : m_sidebar.rightButtons())
+                rightTargets.push_back(button.get());
+        }
         m_grid->setGridSideTargets(std::move(leftTargets), std::move(rightTargets));
-        // Titles UP → Change View (fallback: user) in both layouts.
-        nxui::Widget* chromeUp = (m_layoutFlip && m_layoutFlip->isVisible())
-            ? static_cast<nxui::Widget*>(m_layoutFlip.get())
-            : static_cast<nxui::Widget*>(m_profileLock.get());
+        // Titles UP → Change View (fallback: user) on HOME only.
+        nxui::Widget* chromeUp = nullptr;
+        if (!inFolder) {
+            chromeUp = (m_layoutFlip && m_layoutFlip->isVisible())
+                ? static_cast<nxui::Widget*>(m_layoutFlip.get())
+                : static_cast<nxui::Widget*>(m_profileLock.get());
+        }
         m_grid->setDynamicLineUpTarget(chromeUp);
         m_grid->setDynamicLineDownTarget(nullptr);
+    }
+
+    if (inFolder) {
+        // No HOME chrome strip while a folder is open.
+        m_sidebar.setDynamicLineDownAction({});
+        return;
     }
 
     if (!dynamicLine) {
@@ -4334,6 +4350,8 @@ void WiiUMenuApp::openCapturedFolder() {
     applyDisplayModel(buildOpenFolderModel(m_openFolderId), openFocus,
                       zoom, appear, true);
     m_folderOpenFocusTitleId = 0;
+    // Drop HOME chrome UP / side targets now that HUD + sidebars are hidden.
+    configureDynamicLineNavigation();
     // Single-row mode scrolls by index instead of paging, so a freshly opened
     // folder must be pinned to its first item explicitly — otherwise the
     // carousel keeps the offset it had on the root grid.
