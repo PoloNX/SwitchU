@@ -26,7 +26,11 @@
     },
     "layout": {
       "grid": "Mode grille",
-      "dynamic_line": "Mode ligne dynamique"
+      "dynamic_line": "Mode ligne dynamique",
+      "dynamic_line_squares": "Vue ligne, vignettes carrées",
+      "flip_to_line": "Passer en vue ligne.",
+      "flip_to_posters": "Passer en vue ligne avec jaquettes.",
+      "flip_to_grid": "Passer en vue grille."
     },
     "roles": {
       "button": "bouton",

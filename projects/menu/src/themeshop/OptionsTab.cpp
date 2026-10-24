@@ -111,6 +111,23 @@ ThemeShopScreen::Tab themeshop::tabs::OptionsTab::build(ThemeShopScreen& screen)
 
     {
         SettingItem it;
+        it.label = i18n.tr("themeshop.options.icon_contrast", "Adaptive icon contrast");
+        it.description = i18n.tr(
+            "themeshop.options.icon_contrast_desc",
+            "In single-row with a hero, colour HOME icons follow the interface light/dark chrome. Without a hero they keep authored colours (or your custom tint).");
+        it.type = ItemType::Toggle;
+        it.boolVal = screen.m_iconContrastAdapt;
+        it.anim01 = it.boolVal ? 1.f : 0.f;
+        it.onChange = [&screen](SettingItem& self) {
+            screen.m_iconContrastAdapt = self.boolVal;
+            if (screen.m_iconContrastAdaptCb)
+                screen.m_iconContrastAdaptCb(self.boolVal);
+        };
+        t.items.push_back(std::move(it));
+    }
+
+    {
+        SettingItem it;
         it.label = i18n.tr("themeshop.options.action_hints", "Action Hints");
         it.description = i18n.tr("themeshop.options.action_hints_desc",
                                  "Choose how contextual controls appear in the bottom-right corner.");

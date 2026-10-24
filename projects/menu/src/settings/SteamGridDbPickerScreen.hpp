@@ -38,7 +38,8 @@ public:
     void wait();
     bool isActive() const { return m_active; }
     bool pickingGame() const { return m_pickingGame; }
-    const std::string& query() const { return m_result.query; }
+    /// Survives game-folder drill-down / setResult; source of truth for X Search.
+    const std::string& query() const { return m_searchQuery; }
     std::uint64_t titleId() const { return m_result.titleId; }
     SteamGridDbManager::ArtworkKind artworkKind() const { return m_result.kind; }
     const std::string& title() const { return m_result.title; }
@@ -77,7 +78,8 @@ private:
         std::uint64_t generation = 0;
     };
 
-    static DecodedImage decodePreview(const std::vector<std::uint8_t>& bytes);
+    static DecodedImage decodePreview(const std::vector<std::uint8_t>& bytes,
+                                      int maxW, int maxH);
     static nxui::Rect containRect(const nxui::Texture& texture, const nxui::Rect& area);
     void schedulePreviews();
     void schedulePreview(std::size_t index);
@@ -85,8 +87,13 @@ private:
     void activateSelection();
     void goBack();
     void showGameList(const std::vector<GameMatch>& matches);
+    void adjustZoom(int delta);
+    void previewCanvasSize(int& outW, int& outH) const;
+    void cardMetrics(float& outW, float& outH, float& outGapX, float& outGapY,
+                     int& outColumns, int& outRows) const;
     int gameListCount() const;
     int artworkCount() const;
+    int perPage() const;
     std::string kindLabel() const;
 
     nxui::GpuDevice& m_gpu;
@@ -96,12 +103,14 @@ private:
     nxui::Font* m_smallFont = nullptr;
     const nxui::Theme* m_theme = nullptr;
     BrowseResult m_result;
+    std::string m_searchQuery;
     std::vector<GameMatch> m_gameMatches;
     std::array<PreviewSlot, 18> m_slots;
     std::vector<std::future<void>> m_retiredFutures;
-    std::array<nxui::Rect, 12> m_visibleRects{};
+    std::array<nxui::Rect, 18> m_visibleRects{};
     std::uint64_t m_generation = 0;
     int m_selected = 0;
+    int m_zoomLevel = 2; // 0..4 (ZL/ZR); default mid
     bool m_active = false;
     bool m_loading = false;
     bool m_pickingGame = false;

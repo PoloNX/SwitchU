@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <nlohmann/json.hpp>
 #include <mutex>
@@ -95,9 +96,50 @@ bool AppConfig::load() {
     readJsonOpt(j, "steamGridDbShowInGrid", steamGridDbShowInGrid);
     readJsonOpt(j, "steamGridDbShowInDynamicLine", steamGridDbShowInDynamicLine);
     readJsonOpt(j, "steamGridDbShowInFolders", steamGridDbShowInFolders);
+    readJsonOpt(j, "steamGridDbShowPosterInDynamicLine", steamGridDbShowPosterInDynamicLine);
+    readJsonOpt(j, "steamGridDbShowLogoInDynamicLine", steamGridDbShowLogoInDynamicLine);
     readJsonOpt(j, "steamGridDbApiKey", steamGridDbApiKey);
     readJsonOpt(j, "sortMode", sortMode);
     readJsonOpt(j, "sortLargeTiles", sortLargeTiles);
+    readJsonOpt(j, "iconContrastAdapt", iconContrastAdapt);
+    iconPackTints.clear();
+    if (auto it = j.find("iconPackTints"); it != j.end() && it->is_object()) {
+        for (auto& [packId, value] : it->items()) {
+            if (!value.is_object() || packId.empty())
+                continue;
+            IconPackTint tint;
+            readJsonOpt(value, "enabled", tint.enabled);
+            readJsonOpt(value, "hue", tint.hue);
+            readJsonOpt(value, "sat", tint.sat);
+            readJsonOpt(value, "light", tint.light);
+            tint.hue = std::clamp(tint.hue, 0.f, 1.f);
+            tint.sat = std::clamp(tint.sat, 0.f, 1.f);
+            tint.light = std::clamp(tint.light, 0.f, 1.f);
+            iconPackTints[packId] = tint;
+        }
+    } else {
+        bool legacyEnabled = false;
+        float legacyHue = 0.5f, legacySat = 0.5f, legacyLight = 0.5f;
+        readJsonOpt(j, "iconCustomTint", legacyEnabled);
+        readJsonOpt(j, "iconTintHue", legacyHue);
+        readJsonOpt(j, "iconTintSat", legacySat);
+        readJsonOpt(j, "iconTintLight", legacyLight);
+        if (legacyEnabled
+            || std::fabs(legacyHue - 0.5f) > 0.0005f
+            || std::fabs(legacySat - 0.5f) > 0.0005f
+            || std::fabs(legacyLight - 0.5f) > 0.0005f) {
+            IconPackTint tint;
+            tint.enabled = legacyEnabled;
+            tint.hue = std::clamp(legacyHue, 0.f, 1.f);
+            tint.sat = std::clamp(legacySat, 0.f, 1.f);
+            tint.light = std::clamp(legacyLight, 0.f, 1.f);
+            std::string packId = "default";
+            readJsonOpt(j, "iconPack", packId);
+            if (packId.empty())
+                packId = "default";
+            iconPackTints[packId] = tint;
+        }
+    }
     readJsonOpt(j, "lastOpenedSequence", lastOpenedSequence);
     lastOpened.clear();
     if (auto it = j.find("lastOpened"); it != j.end() && it->is_object()) {
@@ -109,6 +151,9 @@ bool AppConfig::load() {
         }
     }
     readJsonOpt(j, "themePreset", themePreset);
+    readJsonOpt(j, "iconPack", iconPack);
+    if (iconPack.empty())
+        iconPack = "default";
     readJsonOpt(j, "autoThemeMode", autoThemeMode);
     readJsonOpt(j, "autoThemeDayPreset", autoThemeDayPreset);
     readJsonOpt(j, "autoThemeNightPreset", autoThemeNightPreset);
@@ -121,6 +166,8 @@ bool AppConfig::load() {
     readJsonOpt(j, "folderStyle", folderStyle);
     const bool hasShowCoverKey = j.find("folderShowCover") != j.end();
     readJsonOpt(j, "folderShowCover", folderShowCover);
+    readJsonOpt(j, "folderDefaultView", folderDefaultView);
+    folderDefaultView = std::clamp(folderDefaultView, 0, 2);
 
     if (musicVolume < 0.f) musicVolume = 0.f;
     if (musicVolume > 1.f) musicVolume = 1.f;
@@ -218,9 +265,26 @@ bool AppConfig::save() const {
     j["steamGridDbShowInGrid"] = steamGridDbShowInGrid;
     j["steamGridDbShowInDynamicLine"] = steamGridDbShowInDynamicLine;
     j["steamGridDbShowInFolders"] = steamGridDbShowInFolders;
+    j["steamGridDbShowPosterInDynamicLine"] = steamGridDbShowPosterInDynamicLine;
+    j["steamGridDbShowLogoInDynamicLine"] = steamGridDbShowLogoInDynamicLine;
     j["steamGridDbApiKey"] = steamGridDbApiKey;
     j["sortMode"] = std::clamp(sortMode, 0, 2);
     j["sortLargeTiles"] = sortLargeTiles;
+    j["iconContrastAdapt"] = iconContrastAdapt;
+    {
+        nlohmann::json tints = nlohmann::json::object();
+        for (const auto& [packId, tint] : iconPackTints) {
+            if (packId.empty())
+                continue;
+            tints[packId] = {
+                {"enabled", tint.enabled},
+                {"hue", std::clamp(tint.hue, 0.f, 1.f)},
+                {"sat", std::clamp(tint.sat, 0.f, 1.f)},
+                {"light", std::clamp(tint.light, 0.f, 1.f)},
+            };
+        }
+        j["iconPackTints"] = std::move(tints);
+    }
     j["lastOpenedSequence"] = lastOpenedSequence;
     {
         nlohmann::json opened = nlohmann::json::object();
@@ -233,6 +297,7 @@ bool AppConfig::save() const {
         j["lastOpened"] = std::move(opened);
     }
     j["themePreset"] = themePreset;
+    j["iconPack"] = iconPack.empty() ? "default" : iconPack;
     j["autoThemeMode"] = (autoThemeMode == "manual" || autoThemeMode == "geo") ? autoThemeMode : "off";
     j["autoThemeDayPreset"] = autoThemeDayPreset;
     j["autoThemeNightPreset"] = autoThemeNightPreset;
@@ -244,6 +309,7 @@ bool AppConfig::save() const {
     j["autoThemeGeoCity"] = autoThemeGeoCity;
     j["folderStyle"] = std::clamp(folderStyle, 0, switchu::folders::kFolderStyleCount - 1);
     j["folderShowCover"] = folderShowCover;
+    j["folderDefaultView"] = std::clamp(folderDefaultView, 0, 2);
 
     // Written beside the real file and swapped in, never over it. Truncating
     // the live config and then dying mid-write is how a crash used to reset

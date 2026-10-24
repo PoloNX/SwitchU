@@ -1,5 +1,6 @@
 #include "SelectionCursor.hpp"
 #include <nxui/core/Renderer.hpp>
+#include <algorithm>
 #include <cmath>
 
 
@@ -158,28 +159,22 @@ void SelectionCursor::onRender(nxui::Renderer& ren) {
 
     float wave = std::sin(m_time * m_waveSpeed) * 0.5f + 0.5f;
 
-    constexpr int BLOOM_LAYERS = 5;
-    constexpr float bloomExpand[] = {12.f, 9.f, 6.f, 4.f, 2.f};
-    constexpr float bloomAlpha[]  = {0.03f, 0.05f, 0.08f, 0.12f, 0.16f};
-    for (int i = 0; i < BLOOM_LAYERS; ++i) {
-        float expand = bloomExpand[i] * (1.f + 0.15f * wave);
-        nxui::Rect glowRect = r.expanded(expand);
-        float a = bloomAlpha[i] * m_opacity * (0.8f + 0.2f * wave);
-        nxui::Color gc = m_color.withAlpha(a);
-        ren.drawRoundedRect(glowRect, gc, cr + expand + 2.f);
-}
+    // Outline-only (no filled bloom) so folder/game art stays readable —
+    // same idea as the green suspended ring on GlossyIcon.
     if (arrival > 0.01f) {
-        // A short bloom ring gives the snap an arrival impulse while the
-        // cursor itself still teleports directly to its destination.
         ren.drawRoundedRectOutline(
             r.expanded(7.f * arrival),
-            m_color.withAlpha(0.30f * arrival * m_opacity),
+            m_color.withAlpha(0.28f * arrival * m_opacity),
             cr + 7.f * arrival, 2.f);
     }
-    nxui::Color mainC = m_color.withAlpha(m_opacity);
-    ren.drawRoundedRectOutline(r, mainC, cr, m_borderWidth);
+    const float outerAlpha = (0.35f + 0.20f * wave) * m_opacity;
+    ren.drawRoundedRectOutline(r.expanded(3.f),
+                               m_color.withAlpha(outerAlpha * 0.55f),
+                               cr + 3.f, m_borderWidth + 1.2f);
+    ren.drawRoundedRectOutline(r, m_color.withAlpha(m_opacity), cr, m_borderWidth);
 
     nxui::Rect inner = r.shrunk(m_borderWidth * 0.5f);
-    nxui::Color innerC = nxui::Color(0.3f, 0.85f, 1.f, 0.25f * m_opacity * (0.7f + 0.3f * wave));
-    ren.drawRoundedRectOutline(inner, innerC, cr - 2.f, 1.5f);
+    nxui::Color innerC = nxui::Color(0.3f, 0.85f, 1.f,
+                                     0.55f * m_opacity * (0.75f + 0.25f * wave));
+    ren.drawRoundedRectOutline(inner, innerC, std::max(1.f, cr - 2.f), 1.5f);
 }

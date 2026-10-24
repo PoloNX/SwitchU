@@ -26,7 +26,11 @@
     },
     "layout": {
       "grid": "Grid mode",
-      "dynamic_line": "Dynamic line mode"
+      "dynamic_line": "Dynamic line mode",
+      "dynamic_line_squares": "Single-row view, square tiles",
+      "flip_to_line": "Switch to single-row view.",
+      "flip_to_posters": "Switch to single-row poster view.",
+      "flip_to_grid": "Switch to grid view."
     },
     "roles": {
       "button": "button",

@@ -2,11 +2,14 @@
 
 #include "ThemeCatalogClient.hpp"
 #include "settings/TabbedOverlayScreen.hpp"
+#include "widgets/AdaptiveIconLoad.hpp"
 
+#include <nxui/core/Input.hpp>
 #include <nxui/core/Texture.hpp>
 
 #include <cstdint>
 #include <algorithm>
+#include <functional>
 #include <future>
 #include <memory>
 #include <mutex>
@@ -15,6 +18,7 @@
 namespace themeshop::tabs {
 class InstalledTab;
 class CommunityTab;
+class IconsTab;
 class OptionsTab;
 }
 
@@ -35,6 +39,10 @@ public:
         std::string coverPath;
         bool active = false;
         bool removable = false;
+        // Colour glyph pack (spectrum badge + custom tint controls in detail).
+        bool colourPack = false;
+        // Theme ships sidebar/chrome icons (Community/Installed badge).
+        bool hasIcons = false;
     };
 
     ThemeShopScreen();
@@ -47,11 +55,23 @@ public:
     void onGridRowsChange(IntCb cb)      { m_gridRowsCb = std::move(cb); }
     void onActionHintStyleChange(IntCb cb) { m_actionHintStyleCb = std::move(cb); }
     void onSortLargeTilesChange(BoolCb cb) { m_sortLargeTilesCb = std::move(cb); }
+    void onIconContrastAdaptChange(BoolCb cb) { m_iconContrastAdaptCb = std::move(cb); }
+    struct IconPackTintState {
+        bool enabled = false;
+        float hue = 0.5f;
+        float sat = 0.5f;
+        float light = 0.5f;
+    };
+    using IconPackTintCb = std::function<void(const std::string& packId, const IconPackTintState& tint)>;
+    void onIconPackTintChange(IconPackTintCb cb) { m_iconPackTintCb = std::move(cb); }
+    bool detailOpen() const { return m_detailOpen; }
+    void setInputSource(const nxui::Input* input) { m_input = input; }
     void onAutoThemeOpen(VoidCb cb) { m_autoThemeOpenCb = std::move(cb); }
     void onCursorMotionModeChange(IntCb cb) { m_cursorMotionModeCb = std::move(cb); }
     void onPageTransitionModeChange(IntCb cb) { m_pageTransitionModeCb = std::move(cb); }
     void onNextTrack(VoidCb cb)          { m_nextTrackCb = std::move(cb); }
     void onThemeShopApply(StringCb cb)   { m_themeShopApplyCb = std::move(cb); }
+    void onIconPackApply(StringCb cb)    { m_iconPackApplyCb = std::move(cb); }
     void onThemeShopDelete(StringCb cb)  { m_themeShopDeleteCb = std::move(cb); }
     void onThemeShopDownload(StringCb cb) { m_themeShopDownloadCb = std::move(cb); }
     void onThemeShopDownloadInstall(StringCb cb) { m_themeShopDownloadInstallCb = std::move(cb); }
@@ -69,6 +89,13 @@ public:
         m_gridRows = std::clamp(rows, 1, 5);
     }
     void setSortLargeTilesState(bool enabled) { m_sortLargeTiles = enabled; }
+    void setIconContrastAdaptState(bool enabled) { m_iconContrastAdapt = enabled; }
+    void setIconPackTintState(const std::unordered_map<std::string, IconPackTintState>& tints) {
+        m_iconPackTints = tints;
+    }
+    void invalidateIconPackPreviews();
+    // Persist draft tint (Theme Shop → config/HOME). Call before Apply.
+    void commitDraftIconPackTint();
     void setActionHintStyleState(const std::string& style) {
         m_actionHintStyle = style == "panel" ? 0 : 1;
     }
@@ -92,6 +119,8 @@ public:
 
     void setThemeShopState(const std::vector<ThemeShopEntry>& entries,
                            const std::string& activeId);
+    void setIconPackState(const std::vector<ThemeShopEntry>& entries,
+                          const std::string& activeId);
     void setPackageTransferState(const ThemeTransferState& state,
                                  std::string themeId,
                                  bool installMode);
@@ -104,7 +133,7 @@ public:
 
 protected:
     void buildTabs() override;
-    bool usesCustomContentLayout() const override { return m_tabIndex < 2; }
+    bool usesCustomContentLayout() const override { return m_tabIndex < 3; }
     void drawCustomContent(nxui::Renderer& ren, const nxui::Rect& panel, const nxui::Rect& content, float opacity) override;
     void updateCustomContent(float dt) override;
     bool handleCustomPressA() override;
@@ -124,6 +153,7 @@ protected:
 private:
     friend class themeshop::tabs::InstalledTab;
     friend class themeshop::tabs::CommunityTab;
+    friend class themeshop::tabs::IconsTab;
     friend class themeshop::tabs::OptionsTab;
 
     enum class PreviewPhase {
@@ -139,10 +169,15 @@ private:
         PreviewPhase phase = PreviewPhase::Idle;
         int failureCount = 0;
         bool cancelled = false;
+        bool adaptiveRequested = false; // load via AdaptiveIconLoad
+        bool adaptive = false;          // mono result → tint with chrome
+        bool hasContrastMask = false;   // colour pack coverage twin for chrome follow
+        std::uint32_t hslKey = 0;       // custom-tint fingerprint for cache reuse
         std::string url;
         std::vector<std::uint8_t> bytes;
         std::future<void> future;
         nxui::Texture texture;
+        nxui::Texture contrastMask;
     };
 
     enum class ThemeTouchTarget {
@@ -154,12 +189,20 @@ private:
         GridCard,
         DetailPreviewControl,
         DetailButton,
+        DetailTintToggle,
+        DetailTintHue,
+        DetailTintSat,
+        DetailTintLight,
         FullscreenPreview,
         DetailBackdrop,
     };
 
     enum class DetailFocusArea {
         Preview,
+        TintToggle,
+        TintHue,
+        TintSat,
+        TintLight,
         Buttons,
     };
 
@@ -172,6 +215,8 @@ private:
     bool pollCommunityCatalog();
     void syncCommunityCatalog(const ThemeCatalogClient::Snapshot& snapshot);
     bool isCommunityTab() const;
+    bool isIconsTab() const;
+    bool isInstalledTab() const;
     int currentEntryCount() const;
     int currentSelectedIndex() const;
     void setCurrentSelectedIndex(int idx);
@@ -200,9 +245,48 @@ private:
     PreviewPhase communityPreviewPhase(const ThemeCatalogClient::Entry& entry) const;
     const nxui::Texture* communityPreviewTexture(const std::string& previewPath) const;
     const nxui::Texture* communityPreviewTexture(const ThemeCatalogClient::Entry& entry) const;
-    PreviewPhase installedPreviewPhase(const std::string& previewPath) const;
-    const nxui::Texture* installedPreviewTexture(const std::string& previewPath) const;
-    void primeInstalledPreview(const std::string& previewPath);
+    std::string installedPreviewCacheKey(const std::string& previewPath,
+                                         bool adaptiveLoad,
+                                         const std::string& iconPackId,
+                                         const switchu::icons::HslAdjust* hslOverride = nullptr) const;
+    PreviewPhase installedPreviewPhase(const std::string& previewPath,
+                                       bool adaptiveLoad = false,
+                                       const std::string& iconPackId = {},
+                                       const switchu::icons::HslAdjust* hslOverride = nullptr) const;
+    const nxui::Texture* installedPreviewTexture(const std::string& previewPath,
+                                                 bool adaptiveLoad = false,
+                                                 const std::string& iconPackId = {},
+                                                 const switchu::icons::HslAdjust* hslOverride = nullptr) const;
+    bool installedPreviewAdaptive(const std::string& previewPath,
+                                  bool adaptiveLoad = false,
+                                  const std::string& iconPackId = {},
+                                  const switchu::icons::HslAdjust* hslOverride = nullptr) const;
+    const nxui::Texture* installedPreviewContrastMask(const std::string& previewPath,
+                                                      bool adaptiveLoad = false,
+                                                      const std::string& iconPackId = {},
+                                                      const switchu::icons::HslAdjust* hslOverride = nullptr) const;
+    void primeInstalledPreview(const std::string& previewPath,
+                               bool adaptiveLoad = false,
+                               const std::string& iconPackId = {},
+                               const switchu::icons::HslAdjust* hslOverride = nullptr);
+    bool selectedIconPackIsColour() const;
+    IconPackTintState iconPackTintFor(const std::string& packId) const;
+    IconPackTintState& selectedIconPackTint();
+    const IconPackTintState& selectedIconPackTint() const;
+    bool selectedIconCustomTint() const { return selectedIconPackTint().enabled; }
+    void beginIconPackTintDraft();
+    void discardIconPackTintDraft();
+    void setIconCustomTintEnabled(bool enabled);
+    void setIconTintHue(float hue01);
+    void setIconTintSat(float sat01);
+    void setIconTintLight(float light01);
+    void nudgeIconTintHue(float delta);
+    void nudgeIconTintSat(float delta);
+    void nudgeIconTintLight(float delta);
+    void emitIconPackTint(const std::string& packId, const IconPackTintState& tint);
+    switchu::icons::HslAdjust hslAdjustForPack(const std::string& packId) const;
+    switchu::icons::HslAdjust hslAdjustFromTint(const IconPackTintState& tint) const;
+    void updateTintSliderAnalog(float dt);
     void primeCommunityPreview(const std::string& previewPath);
     void primeCommunityPreview(const ThemeCatalogClient::Entry& entry);
     void primeVisibleCommunityPreviews();
@@ -217,11 +301,14 @@ private:
     IntCb m_gridRowsCb;
     IntCb m_actionHintStyleCb;
     BoolCb m_sortLargeTilesCb;
+    BoolCb m_iconContrastAdaptCb;
+    IconPackTintCb m_iconPackTintCb;
     VoidCb m_autoThemeOpenCb;
     IntCb m_cursorMotionModeCb;
     IntCb m_pageTransitionModeCb;
     VoidCb m_nextTrackCb;
     StringCb m_themeShopApplyCb;
+    StringCb m_iconPackApplyCb;
     StringCb m_themeShopDeleteCb;
     StringCb m_themeShopDownloadCb;
     StringCb m_themeShopDownloadInstallCb;
@@ -235,6 +322,15 @@ private:
     int m_gridRows = 3;
     int m_actionHintStyle = 1;
     bool m_sortLargeTiles = true;
+    bool m_iconContrastAdapt = true;
+    // Committed tints (match config / HOME / Icons grid cards).
+    std::unordered_map<std::string, IconPackTintState> m_iconPackTints;
+    // Live HSL edit while the detail sheet is open — preview only until Apply.
+    bool m_draftTintActive = false;
+    std::string m_draftTintPackId;
+    IconPackTintState m_draftTint;
+    float m_tintSliderHoldTime = 0.f;
+    const nxui::Input* m_input = nullptr;
     std::string m_autoThemeSummary;
     int m_cursorMotionMode = 0;
     int m_pageTransitionMode = 0;
@@ -242,6 +338,9 @@ private:
     std::vector<ThemeShopEntry> m_allThemeShopEntries;
     std::vector<ThemeShopEntry> m_themeShopEntries;
     std::string m_themeShopSelectedId;
+    std::vector<ThemeShopEntry> m_allIconPackEntries;
+    std::vector<ThemeShopEntry> m_iconPackEntries;
+    std::string m_iconPackSelectedId;
 
     nxui::ThreadPool* m_threadPool = nullptr;
     nxui::GpuDevice* m_gpu = nullptr;
@@ -271,6 +370,7 @@ private:
     nxui::AnimatedFloat m_detailFullscreenAnim{0.f};
     int m_installedScrollRow = 0;
     int m_communityScrollRow = 0;
+    int m_iconPackScrollRow = 0;
     int m_lastCustomTabIndex = -1;
     std::string m_lastPreviewPrimeKey;
     ThemeTouchTarget m_themeTouchTarget = ThemeTouchTarget::None;

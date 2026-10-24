@@ -30,13 +30,27 @@ public:
                            float cellW, float cellH,
                            float padX, float padY);
 
-    void setLayoutMode(AppLayoutMode mode);
+    // animate=false snaps immediately (boot / rebuild). animate=true plays the
+    // grid ↔ single-row morph used when the user toggles layout.
+    void setLayoutMode(AppLayoutMode mode, bool animate = true);
     AppLayoutMode layoutMode() const { return m_layoutMode; }
     bool isDynamicLine() const { return m_layoutMode == AppLayoutMode::DynamicLine; }
     bool isDynamicLineScrolling() const;
     bool isLayoutMorphing() const { return m_layoutMorphing; }
+    // After a model rebuild remaps global indices (compact line ↔ padded grid),
+    // re-anchor morph page + line scroll to the focused title so the cursor and
+    // tiles blend into the correct grid cells.
+    void rebindLayoutMorphAnchor();
     void setDynamicLineUpTarget(nxui::Widget* target);
     void setDynamicLineDownTarget(nxui::Widget* target);
+    // When true, single-row may use per-tile Poster frames (apps with poster.img).
+    void setLinePosterAspect(bool enabled) {
+        if (m_linePosterAspect == enabled) return;
+        m_linePosterAspect = enabled;
+        m_lineLayoutCacheCount = -1;
+    }
+    bool linePosterAspect() const { return m_linePosterAspect; }
+    void invalidateLineLayout() { m_lineLayoutCacheCount = -1; }
 
     void setPage(int page);
     int  currentPage()  const { return m_page; }
@@ -59,7 +73,8 @@ public:
                             std::vector<nxui::Widget*> right);
 
     int focusedGlobalIndex() const;
-    bool focusGlobalIndex(int idx, bool instant = false);
+    // durationSec < 0 uses the default line scroll; ignored when instant.
+    bool focusGlobalIndex(int idx, bool instant = false, float durationSec = -1.f);
     bool swapSlots(int a, int b);
 
     void startAppearAnimation(const IconAppearOptions& opt = IconAppearOptions{});
@@ -138,6 +153,7 @@ private:
     static constexpr float kLayoutMorphDuration = 0.40f;
     nxui::Widget* m_lineUpTarget = nullptr;
     nxui::Widget* m_lineDownTarget = nullptr;
+    bool m_linePosterAspect = false;
     std::vector<nxui::Widget*> m_gridLeftTargets;
     std::vector<nxui::Widget*> m_gridRightTargets;
 

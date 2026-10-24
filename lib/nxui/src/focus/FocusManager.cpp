@@ -370,6 +370,11 @@ bool FocusManager::handleTouch(const Input& input, Widget* root) {
                         root->collectFocusable(focusables);
                         m_items = focusables;
                         changeFocusTo(m_touchTarget);
+                        if (m_touchTarget->activateOnFirstTouch()) {
+                            constexpr uint64_t kA = static_cast<uint64_t>(Button::A);
+                            if (!m_touchTarget->fireAction(kA))
+                                m_touchTarget->activate();
+                        }
                     } else {
                         constexpr uint64_t kA = static_cast<uint64_t>(Button::A);
                         if (!m_touchTarget->fireAction(kA))

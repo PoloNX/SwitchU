@@ -4,6 +4,7 @@
 #include <nxui/core/Renderer.hpp>
 #include <nxui/core/Texture.hpp>
 #include <algorithm>
+#include <array>
 
 namespace switchu::folders {
 namespace {
@@ -152,19 +153,104 @@ void drawCoverPlaceholder(nxui::Renderer& ren, const nxui::Rect& photo,
 
 void drawCoverPhoto(nxui::Renderer& ren, const nxui::Rect& photo, float radius,
                     const nxui::Texture* cover, const nxui::Color& accent,
-                    float opacity) {
-    if (cover)
+                    float opacity, bool posterAspect) {
+    if (!cover) {
+        drawCoverPlaceholder(ren, photo, accent, radius, opacity);
+        return;
+    }
+    // Square icons in a tall frame: contain. Near-matching aspects: fill.
+    const float texW = static_cast<float>(std::max(1, cover->width()));
+    const float texH = static_cast<float>(std::max(1, cover->height()));
+    const float texAspect = texW / texH;
+    const float photoAspect = photo.width / std::max(1.f, photo.height);
+    const bool contain = posterAspect && std::abs(texAspect - photoAspect) > 0.18f;
+    if (!contain) {
         ren.drawTextureRounded(cover, photo, radius,
                                nxui::Color::white().withAlpha(opacity));
-    else
-        drawCoverPlaceholder(ren, photo, accent, radius, opacity);
+        return;
+    }
+    ren.drawRoundedRect(photo, nxui::Color(0.06f, 0.08f, 0.11f, 0.90f * opacity), radius);
+    float drawW = photo.width;
+    float drawH = drawW / texAspect;
+    if (drawH > photo.height) {
+        drawH = photo.height;
+        drawW = drawH * texAspect;
+    }
+    const nxui::Rect fitted{
+        photo.x + (photo.width - drawW) * 0.5f,
+        photo.y + (photo.height - drawH) * 0.5f,
+        drawW, drawH};
+    ren.drawTextureRounded(cover, fitted, std::max(4.f, radius * 0.7f),
+                           nxui::Color::white().withAlpha(opacity));
 }
 
-nxui::Rect coverPhotoRect(const nxui::Rect& host, float topPad, float bottomPad) {
+nxui::Rect coverPhotoRect(const nxui::Rect& host, float topPad, float bottomPad,
+                          bool posterAspect) {
+    const float availH = std::max(18.f, host.height - topPad - bottomPad);
+    if (posterAspect) {
+        // Inset custom folder poster so style chrome stays visible.
+        float photoW = host.width * 0.90f;
+        float photoH = photoW * 1.5f;
+        if (photoH > availH) {
+            photoH = availH;
+            photoW = std::min(host.width * 0.90f, photoH / 1.5f);
+        }
+        photoW = std::max(18.f, photoW);
+        photoH = std::max(18.f, photoH);
+        return {host.x + (host.width - photoW) * 0.5f, host.y + topPad, photoW, photoH};
+    }
     float side = std::min(host.width, host.height) * 0.62f;
-    side = std::min(side, std::max(18.f, host.height - topPad - bottomPad));
+    side = std::min(side, availH);
     side = std::max(18.f, side);
     return {host.x + (host.width - side) * 0.5f, host.y + topPad, side, side};
+}
+
+void drawPeekGrid(nxui::Renderer& ren, const nxui::Rect& host,
+                  const std::array<nxui::Texture*, kFolderPeekMax>& peeks,
+                  int peekCount, const nxui::Color& accent, float scale,
+                  float opacity) {
+    if (peekCount <= 0 || host.width < 8.f || host.height < 8.f)
+        return;
+    constexpr int kCols = 2;
+    constexpr int kRows = 3;
+    const float s = scale;
+    // Equal margin on all sides; size cells to the remaining box.
+    const float margin = std::max(6.f, std::min(host.width, host.height) * 0.08f);
+    const float gap = std::max(3.f, margin * 0.45f);
+    const float innerW = std::max(8.f, host.width - margin * 2.f);
+    const float innerH = std::max(8.f, host.height - margin * 2.f);
+    const float cell = std::min((innerW - gap * (kCols - 1)) / static_cast<float>(kCols),
+                                (innerH - gap * (kRows - 1)) / static_cast<float>(kRows));
+    const float gridW = cell * kCols + gap * (kCols - 1);
+    const float gridH = cell * kRows + gap * (kRows - 1);
+    const float originX = host.x + (host.width - gridW) * 0.5f;
+    const float originY = host.y + (host.height - gridH) * 0.5f;
+    const float rad = std::max(4.f, cell * 0.16f);
+    for (int i = 0; i < kCols * kRows; ++i) {
+        const int col = i % kCols;
+        const int row = i / kCols;
+        const nxui::Rect cellRect{
+            originX + col * (cell + gap),
+            originY + row * (cell + gap),
+            cell, cell};
+        ren.drawRoundedRect({cellRect.x + 1.2f * s, cellRect.y + 1.6f * s,
+                             cellRect.width, cellRect.height},
+                            nxui::Color(0.02f, 0.04f, 0.06f, 0.35f * opacity), rad);
+        if (i < peekCount) {
+            if (const auto* tex = peeks[static_cast<std::size_t>(i)];
+                tex && tex->valid()) {
+                ren.drawTextureRounded(tex, cellRect, rad,
+                                       nxui::Color::white().withAlpha(opacity));
+            } else {
+                ren.drawRoundedRect(cellRect, accent.withAlpha(0.50f * opacity), rad);
+            }
+        } else {
+            ren.drawRoundedRect(cellRect, accent.withAlpha(0.18f * opacity), rad);
+        }
+        ren.drawRoundedRectOutline(cellRect,
+                                   nxui::Color::white().withAlpha(0.22f * opacity),
+                                   rad, 1.15f * s);
+    }
 }
 
 } // namespace
@@ -181,13 +267,27 @@ void drawFolderStyle(const FolderStyleDrawArgs& args) {
     const float shellRadius = args.radius;
     const nxui::Rect inner = shell.shrunk(1.f * s);
     const float innerRadius = std::max(8.f, shellRadius - 1.f * s);
+    const bool poster = args.posterAspect;
     const float sliceH = std::max(4.f, shell.height * 0.09f);
     const ThemeShell theme = themeShell(args.themeMode, opacity);
     const int style = std::clamp(args.styleIndex, 0, kFolderStyleCount - 1);
-    const bool named = args.drawName && args.font && args.title && !args.title->empty();
+    // Single-row uses the title pill below — skip in-tile names.
+    const bool named = !poster && args.drawName && args.font && args.title
+        && !args.title->empty();
     const nxui::Texture* cover = (args.cover && args.cover->valid()) ? args.cover : nullptr;
-    const bool useCover = folderShouldShowCover(style, args.showCover) &&
-                          (cover || args.schematicPlaceholder);
+    const bool peekComposite = args.coverIsPeekComposite && cover;
+    int peekCount = std::clamp(args.peekCoverCount, 0, kFolderPeekMax);
+    for (int i = 0; i < peekCount; ++i) {
+        if (!args.peekCovers[static_cast<std::size_t>(i)]
+            || !args.peekCovers[static_cast<std::size_t>(i)]->valid()) {
+            peekCount = i;
+            break;
+        }
+    }
+    const bool hasArt = cover || args.schematicPlaceholder || peekCount > 0 || peekComposite;
+    const bool useCover = hasArt && (
+        (style != kFolderStyleClassic && folderShouldShowCover(style, args.showCover))
+        || (poster && (cover || peekCount > 0 || peekComposite)));
 
     auto drawCenteredName = [&](bool halo, float preferred, float minScale, float yBias) {
         if (!named)
@@ -218,6 +318,45 @@ void drawFolderStyle(const FolderStyleDrawArgs& args) {
             ren.drawText(*args.title, pos, args.font, theme.title, fit.scale);
     };
 
+    // Shared art fill: custom poster, 2x2 peeks, or single cover / placeholder.
+    auto drawArtInHost = [&](const nxui::Rect& host, float topPad, float bottomPad) {
+        if (args.coverIsFolderPoster && cover) {
+            const nxui::Rect photo = coverPhotoRect(host, topPad, bottomPad, true);
+            drawCoverPhoto(ren, photo, std::max(6.f, photo.width * 0.12f),
+                           cover, accent, opacity, true);
+            return;
+        }
+        if (poster && peekComposite) {
+            // Same content band as drawPeekGrid; mosaic margins are baked in.
+            const float side = std::max(4.f, 6.f * s);
+            const nxui::Rect content{
+                host.x + side,
+                host.y + topPad,
+                std::max(8.f, host.width - side * 2.f),
+                std::max(18.f, host.height - topPad - bottomPad)};
+            const float rad = std::max(6.f, std::min(content.width, content.height) * 0.06f);
+            ren.drawTextureRounded(cover, content, rad,
+                                   nxui::Color::white().withAlpha(opacity));
+            return;
+        }
+        if (poster && peekCount > 0) {
+            // Stay below/above style chrome; equal margin is applied inside drawPeekGrid.
+            const float side = std::max(4.f, 6.f * s);
+            const nxui::Rect content{
+                host.x + side,
+                host.y + topPad,
+                std::max(8.f, host.width - side * 2.f),
+                std::max(18.f, host.height - topPad - bottomPad)};
+            drawPeekGrid(ren, content, args.peekCovers, peekCount, accent, s, opacity);
+            return;
+        }
+        if (cover || args.schematicPlaceholder) {
+            const nxui::Rect photo = coverPhotoRect(host, topPad, bottomPad, poster);
+            drawCoverPhoto(ren, photo, std::max(6.f, photo.width * 0.16f),
+                           cover, accent, opacity, poster);
+        }
+    };
+
     if (style == kFolderStyleClassic) {
         const nxui::Color plateWash =
             accent.withAlpha((theme.light ? 0.10f : 0.14f) * opacity);
@@ -225,14 +364,19 @@ void drawFolderStyle(const FolderStyleDrawArgs& args) {
         ren.drawRoundedRect(shell, plateWash, shellRadius);
         ren.drawRoundedRectOutline(shell.shrunk(1.f * s), theme.outline,
                                    std::max(8.f, shellRadius - 1.f * s), 1.5f * s);
-        drawNineGrid(ren, shell, accent, s, opacity);
-        if (named) {
-            const FittedTitle fit = measureTitle(args.font, *args.title,
-                                                 std::max(8.f, shell.width - 6.f * s),
-                                                 1.05f * s, 0.38f * s);
-            const nxui::Vec2 pos{shell.x + (shell.width - fit.width) * 0.5f,
-                                 shell.y + (shell.height - fit.height) * 0.5f};
-            drawHaloTitle(ren, args.font, *args.title, pos, fit.scale, s, opacity);
+        if (poster && (peekCount > 0 || peekComposite
+                       || (args.coverIsFolderPoster && cover))) {
+            drawArtInHost(inner.shrunk(8.f * s), 0.f, 0.f);
+        } else {
+            drawNineGrid(ren, shell, accent, s, opacity);
+            if (named) {
+                const FittedTitle fit = measureTitle(args.font, *args.title,
+                                                     std::max(8.f, shell.width - 6.f * s),
+                                                     1.05f * s, 0.38f * s);
+                const nxui::Vec2 pos{shell.x + (shell.width - fit.width) * 0.5f,
+                                     shell.y + (shell.height - fit.height) * 0.5f};
+                drawHaloTitle(ren, args.font, *args.title, pos, fit.scale, s, opacity);
+            }
         }
         if (args.focused)
             drawFocus(ren, shell, shellRadius, accent, s, opacity);
@@ -258,10 +402,11 @@ void drawFolderStyle(const FolderStyleDrawArgs& args) {
         if (useCover) {
             const nxui::Rect host = body.shrunk(6.f * s);
             const float bottomPad = named ? 20.f * s : 8.f * s;
-            const nxui::Rect photo = coverPhotoRect(host, 4.f * s, bottomPad);
-            drawCoverPhoto(ren, photo, std::max(6.f, photo.width * 0.16f),
-                           cover, accent, opacity);
-            drawCoverName(body, photo, true);
+            drawArtInHost(host, 4.f * s, bottomPad);
+            if (named && !poster && !peekCount) {
+                const nxui::Rect photo = coverPhotoRect(host, 4.f * s, bottomPad, false);
+                drawCoverName(body, photo, true);
+            }
         } else if (named) {
             const FittedTitle fit = measureTitle(args.font, *args.title,
                                                  std::max(8.f, body.width - 18.f * s),
@@ -308,19 +453,20 @@ void drawFolderStyle(const FolderStyleDrawArgs& args) {
         const float bottomPad = style == kFolderStyleLabel
             ? sliceH + (named ? 18.f * s : 8.f * s)
             : (named ? 20.f * s : 8.f * s);
-        const nxui::Rect photo = coverPhotoRect(inner, topPad, bottomPad);
-        drawCoverPhoto(ren, photo, std::max(6.f, photo.width * 0.16f),
-                       cover, accent, opacity);
-        if (style == kFolderStyleLabel && named) {
-            const FittedTitle fit = measureTitle(args.font, *args.title,
-                                                 std::max(8.f, shell.width - 18.f * s),
-                                                 0.78f * s, 0.38f * s);
-            const float nameY = std::min(photo.bottom() + 3.f * s,
-                                         shell.bottom() - sliceH - fit.height - 3.f * s);
-            const nxui::Vec2 pos{shell.x + (shell.width - fit.width) * 0.5f, nameY};
-            ren.drawText(*args.title, pos, args.font, theme.title, fit.scale);
-        } else {
-            drawCoverName(shell, photo, true);
+        drawArtInHost(inner, topPad, bottomPad);
+        if (named && !poster && cover && peekCount == 0) {
+            const nxui::Rect photo = coverPhotoRect(inner, topPad, bottomPad, false);
+            if (style == kFolderStyleLabel) {
+                const FittedTitle fit = measureTitle(args.font, *args.title,
+                                                     std::max(8.f, shell.width - 18.f * s),
+                                                     0.78f * s, 0.38f * s);
+                const float nameY = std::min(photo.bottom() + 3.f * s,
+                                             shell.bottom() - sliceH - fit.height - 3.f * s);
+                const nxui::Vec2 pos{shell.x + (shell.width - fit.width) * 0.5f, nameY};
+                ren.drawText(*args.title, pos, args.font, theme.title, fit.scale);
+            } else {
+                drawCoverName(shell, photo, true);
+            }
         }
         if (args.focused)
             drawFocus(ren, shell, shellRadius, accent, s, opacity);

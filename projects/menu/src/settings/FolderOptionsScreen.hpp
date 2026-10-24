@@ -13,8 +13,11 @@ public:
         int colorIndex = 0;
         int sizeIndex = 1;
         int styleIndex = 0;
+        // 0 = Auto, 1 = Grid, 2 = Single-row. Global for all folders.
+        int defaultViewIndex = 0;
         bool showCover = false;
         bool hasCustomIcon = false;
+        bool hasCustomPoster = false;
         nxui::Texture* cover = nullptr;
     };
 
@@ -27,13 +30,18 @@ public:
     void onColorChange(IntCb cb) { m_colorCb = std::move(cb); }
     void onSizeChange(IntCb cb) { m_sizeCb = std::move(cb); }
     void onStyleChange(IntCb cb) { m_styleCb = std::move(cb); }
+    void onDefaultViewChange(IntCb cb) { m_defaultViewCb = std::move(cb); }
     void onCoverChange(BoolCb cb) { m_coverCb = std::move(cb); }
     void onCustomIconSelect(VoidCb cb) { m_customIconSelectCb = std::move(cb); }
     void onCustomIconClear(VoidCb cb) { m_customIconClearCb = std::move(cb); }
+    void onCustomPosterSelect(VoidCb cb) { m_customPosterSelectCb = std::move(cb); }
+    void onCustomPosterClear(VoidCb cb) { m_customPosterClearCb = std::move(cb); }
 
 protected:
     void buildTabs() override;
-    float overlayHeaderHeight() const override { return 132.f; }
+    // Matches top/bottom panel padding (~24–30): preview sits at y+24 (92 tall),
+    // content starts at kInnerPad + headerH. 110 leaves ~24px under the preview.
+    float overlayHeaderHeight() const override { return 110.f; }
     float overlayTabWidth() const override { return 250.f; }
     void drawOverlayHeader(nxui::Renderer& ren, const nxui::Rect& panel,
                            float opacity) override;
@@ -46,7 +54,10 @@ private:
     IntCb m_colorCb;
     IntCb m_sizeCb;
     IntCb m_styleCb;
+    IntCb m_defaultViewCb;
     BoolCb m_coverCb;
     VoidCb m_customIconSelectCb;
     VoidCb m_customIconClearCb;
+    VoidCb m_customPosterSelectCb;
+    VoidCb m_customPosterClearCb;
 };

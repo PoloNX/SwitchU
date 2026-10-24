@@ -1,4 +1,5 @@
 #include "WiiUMenuApp.hpp"
+#include "icons/IconPackManager.hpp"
 #include "themeshop/ThemePackageInstaller.hpp"
 #include "themeshop/ThemeHttp.hpp"
 #include "widgets/GlossyIcon.hpp"
@@ -17,6 +18,8 @@
 #include <nlohmann/json.hpp>
 #include <system_error>
 #include <utility>
+#include <unordered_map>
+#include <cmath>
 
 namespace {
 
@@ -251,7 +254,8 @@ void WiiUMenuApp::createSettings() {
                                     !m_config.steamGridDbApiKey.empty(),
                                     m_config.steamGridDbShowInGrid,
                                     m_config.steamGridDbShowInDynamicLine,
-                                    m_config.steamGridDbShowInFolders);
+                                    m_config.steamGridDbShowInFolders,
+                                    m_config.steamGridDbShowLogoInDynamicLine);
 
     m_settings->onNavigateSfx([this]() { m_audio.playSfx(Sfx::Navigate); });
     m_settings->onActivateSfx([this]() { m_audio.playSfx(Sfx::Activate); });
@@ -460,6 +464,8 @@ void WiiUMenuApp::createSettings() {
             if (enabled) showFocusedSteamGridDbArtwork(true);
             else m_steamGridDbBackdrop->showTitle(0, true);
         }
+        syncSteamGridDbLogoArea();
+        syncSingleRowPosterPresentation(true);
     });
     m_settings->onSteamGridDbViewFlagsChange([this](bool grid, bool line, bool folders) {
         m_config.steamGridDbShowInGrid = grid;
@@ -475,6 +481,11 @@ void WiiUMenuApp::createSettings() {
                                               && steamGridDbArtworkAllowedHere());
         }
         showFocusedSteamGridDbArtwork(true);
+    });
+    m_settings->onSteamGridDbLogoInLineChange([this](bool enabled) {
+        m_config.steamGridDbShowLogoInDynamicLine = enabled;
+        m_config.save();
+        syncSteamGridDbLogoArea();
     });
     m_settings->onSteamGridDbApiKeyRequest([this]() {
         editSteamGridDbApiKey();
@@ -622,7 +633,8 @@ void WiiUMenuApp::editSteamGridDbApiKey() {
                                              !value.empty(),
                                              m_config.steamGridDbShowInGrid,
                                              m_config.steamGridDbShowInDynamicLine,
-                                             m_config.steamGridDbShowInFolders);
+                                             m_config.steamGridDbShowInFolders,
+                                             m_config.steamGridDbShowLogoInDynamicLine);
             m_settings->refreshCurrentTabWidgets();
             m_settings->requestToast(value.empty()
                 ? nxui::I18n::instance().tr("settings.steamgriddb.key_cleared", "API key cleared.")
@@ -857,6 +869,7 @@ void WiiUMenuApp::startSteamGridDbScrape() {
         m_progressDialog->setCancellable(true, [this]() {
             cancelSteamGridDbScrape();
         });
+        raiseProgressDialogAboveOverlays();
         m_progressDialog->show(nxui::I18n::instance().tr(
             "settings.steamgriddb.download_title", "Downloading artwork"),
             nxui::I18n::instance().tr(
@@ -877,6 +890,31 @@ void WiiUMenuApp::cancelSteamGridDbScrape() {
             "settings.steamgriddb.cancelling", "Cancelling..."), -1.f);
 }
 
+void WiiUMenuApp::raiseProgressDialogAboveOverlays() {
+    if (!m_overlayLayer || !m_progressDialog)
+        return;
+    // Picker show() re-parents itself to the top of the overlay stack, which
+    // buries the download dialog. Keep progress on top while it is active.
+    m_overlayLayer->removeChild(m_progressDialog.get());
+    m_overlayLayer->addChild(m_progressDialog);
+}
+
+void WiiUMenuApp::cancelSteamGridDbApply() {
+    if (!m_steamGridDbApplyProgress)
+        return;
+    m_steamGridDbApplyProgress->cancelRequested.store(true);
+    {
+        std::lock_guard<std::mutex> lock(m_steamGridDbApplyProgress->mutex);
+        m_steamGridDbApplyProgress->message = nxui::I18n::instance().tr(
+            "settings.steamgriddb.cancelling", "Cancelling...");
+        m_steamGridDbApplyProgress->progress01 = -1.f;
+        ++m_steamGridDbApplyProgress->revision;
+    }
+    if (m_progressDialog)
+        m_progressDialog->updateState(nxui::I18n::instance().tr(
+            "settings.steamgriddb.cancelling", "Cancelling..."), -1.f);
+}
+
 void WiiUMenuApp::openSteamGridDbPicker(GameOptionsScreen::ArtworkKind kind,
                                         const std::string& requestedQuery) {
     if (!m_gameOptions || m_gameOptionsTitleId == 0) return;
@@ -889,8 +927,14 @@ void WiiUMenuApp::openSteamGridDbPicker(GameOptionsScreen::ArtworkKind kind,
             break;
         }
     }
-    openSteamGridDbPickerForTitle(m_gameOptionsTitleId, title, kind,
-                                  requestedQuery.empty() ? defaultQuery : requestedQuery);
+    // Prefer an explicit query, else the per-title saved search, else the
+    // English/display title — so Hero/Logo/Icon/Poster share one search.
+    std::string query = requestedQuery;
+    if (query.empty())
+        query = SteamGridDbManager::savedSearchQuery(m_gameOptionsTitleId);
+    if (query.empty())
+        query = defaultQuery;
+    openSteamGridDbPickerForTitle(m_gameOptionsTitleId, title, kind, query);
 }
 
 void WiiUMenuApp::openSteamGridDbPickerForTitle(std::uint64_t titleId,
@@ -898,12 +942,12 @@ void WiiUMenuApp::openSteamGridDbPickerForTitle(std::uint64_t titleId,
                                                 GameOptionsScreen::ArtworkKind kind,
                                                 const std::string& requestedQuery) {
     if (titleId == 0) return;
+    auto toast = [&](const std::string& msg) {
+        if (m_gameOptions && m_gameOptions->isActive()) m_gameOptions->requestToast(msg);
+        else if (m_folderOptions && m_folderOptions->isActive()) m_folderOptions->requestToast(msg);
+        else if (m_settings) m_settings->requestToast(msg);
+    };
     if (m_config.steamGridDbApiKey.empty()) {
-        auto toast = [&](const std::string& msg) {
-            if (m_gameOptions && m_gameOptions->isActive()) m_gameOptions->requestToast(msg);
-            else if (m_folderOptions && m_folderOptions->isActive()) m_folderOptions->requestToast(msg);
-            else if (m_settings) m_settings->requestToast(msg);
-        };
         toast(nxui::I18n::instance().tr(
             "settings.steamgriddb.need_key", "Configure an API key first."));
         return;
@@ -913,25 +957,40 @@ void WiiUMenuApp::openSteamGridDbPickerForTitle(std::uint64_t titleId,
         managerKind = SteamGridDbManager::ArtworkKind::Logo;
     else if (kind == GameOptionsScreen::ArtworkKind::Icon)
         managerKind = SteamGridDbManager::ArtworkKind::Icon;
+    else if (kind == GameOptionsScreen::ArtworkKind::Poster)
+        managerKind = SteamGridDbManager::ArtworkKind::Poster;
 
-    if (title.empty() || m_steamGridDbBrowseFuture.valid()
-        || m_steamGridDbApplyFuture.valid() || m_steamGridDb.running()) {
-        auto toast = [&](const std::string& msg) {
-            if (m_gameOptions && m_gameOptions->isActive()) m_gameOptions->requestToast(msg);
-            else if (m_folderOptions && m_folderOptions->isActive()) m_folderOptions->requestToast(msg);
-            else if (m_settings) m_settings->requestToast(msg);
-        };
+    // Apply / scrape still block; an in-flight browse is abandoned so X Search
+    // from inside a match folder can always return to a fresh top-level list.
+    if (m_steamGridDbApplyFuture.valid() || m_steamGridDb.running()) {
         toast(nxui::I18n::instance().tr(
             "settings.steamgriddb.already_running", "A SteamGridDB operation is already running."));
         return;
     }
-    const std::string query = requestedQuery.empty() ? title : requestedQuery;
+    std::string query = requestedQuery;
+    if (query.empty())
+        query = SteamGridDbManager::savedSearchQuery(titleId);
+    if (query.empty())
+        query = title;
+    if (query.empty()) {
+        toast(nxui::I18n::instance().tr(
+            "settings.steamgriddb.need_query", "Enter a search name first."));
+        return;
+    }
+    SteamGridDbManager::saveSearchQuery(titleId, query);
+    ++m_steamGridDbBrowseGeneration;
+    m_steamGridDbBrowseFutureGeneration = m_steamGridDbBrowseGeneration;
+    // Park any in-flight browse so X Search from a match folder can start a
+    // fresh top-level list without blocking the UI thread on the old request.
+    if (m_steamGridDbBrowseFuture.valid())
+        m_steamGridDbRetiredBrowses.push_back(std::move(m_steamGridDbBrowseFuture));
     m_gameOptionsTitleId = titleId;
     if (m_overlayLayer && m_steamGridDbPicker) {
         m_overlayLayer->removeChild(m_steamGridDbPicker.get());
         m_overlayLayer->addChild(m_steamGridDbPicker);
     }
-    m_steamGridDbPicker->showLoading(titleId, title, query, managerKind);
+    // Top-level browse — never preserve a drilled-in game folder.
+    m_steamGridDbPicker->showLoading(titleId, title, query, managerKind, false);
     focusManager().setFocus(m_steamGridDbPicker.get());
     m_steamGridDbBrowseFuture = std::async(std::launch::async,
         [apiKey = m_config.steamGridDbApiKey, titleId, title, query, managerKind]() {
@@ -947,6 +1006,8 @@ void WiiUMenuApp::clearSteamGridDbArtwork(std::uint64_t titleId,
         managerKind = SteamGridDbManager::ArtworkKind::Logo;
     else if (kind == GameOptionsScreen::ArtworkKind::Icon)
         managerKind = SteamGridDbManager::ArtworkKind::Icon;
+    else if (kind == GameOptionsScreen::ArtworkKind::Poster)
+        managerKind = SteamGridDbManager::ArtworkKind::Poster;
 
     const bool removed = SteamGridDbManager::clearArtwork(titleId, managerKind);
     auto& i18n = nxui::I18n::instance();
@@ -954,11 +1015,34 @@ void WiiUMenuApp::clearSteamGridDbArtwork(std::uint64_t titleId,
         ? i18n.tr("game.steamgriddb.cleared", "SteamGridDB artwork cleared.")
         : i18n.tr("game.steamgriddb.nothing_to_clear", "No SteamGridDB artwork to clear.");
 
-    if (managerKind == SteamGridDbManager::ArtworkKind::Icon && m_grid) {
+    if ((managerKind == SteamGridDbManager::ArtworkKind::Icon
+         || managerKind == SteamGridDbManager::ArtworkKind::Poster) && m_grid) {
         m_folderCoverCache.erase(titleId);
-        m_iconStreamer.reloadTitle(titleId, m_grid->currentPage(),
-                                   m_grid->iconsPerPage(),
-                                   app().gpu(), app().renderer(), m_grid->allIcons());
+        m_folderPeekCache.erase(titleId);
+        m_folderPeekBorrowed.erase(titleId);
+        if (titleId >= kFolderTitleIdPrefix)
+            invalidateFolderPeekComposite(static_cast<std::uint32_t>(
+                titleId & 0xFFFFFFFFu));
+        else
+            invalidateFolderPeekCompositesForTitle(titleId);
+        const bool preferPoster = preferSingleRowPosters();
+        const bool isFolderArt = titleId >= kFolderTitleIdPrefix;
+        if (managerKind == SteamGridDbManager::ArtworkKind::Poster) {
+            for (const auto& icon : m_grid->allIcons()) {
+                if (!icon || icon->titleId() != titleId) continue;
+                // Folders stay tall in single-row poster mode even without art.
+                if (icon->entryKind() == GridEntryKind::Folder)
+                    icon->setPosterFrame(preferPoster);
+                else
+                    icon->setPosterFrame(false);
+            }
+            m_grid->invalidateLineLayout();
+        }
+        if (!isFolderArt) {
+            m_iconStreamer.reloadTitle(titleId, m_grid->currentPage(),
+                                       m_grid->iconsPerPage(),
+                                       app().gpu(), app().renderer(), m_grid->allIcons());
+        }
         applyFolderCoversToIcons();
         // Sync-load the post-clear icon so Game Options header updates immediately
         // instead of waiting for the async grid streamer (same approach as folders).
@@ -978,7 +1062,8 @@ void WiiUMenuApp::clearSteamGridDbArtwork(std::uint64_t titleId,
         const bool hasLogo = std::filesystem::exists(
             SteamGridDbManager::logoPath(titleId), ec);
         m_gameOptions->refreshArtworkPresence(
-            hasHero, hasLogo, SteamGridDbManager::hasIcon(titleId));
+            hasHero, hasLogo, SteamGridDbManager::hasIcon(titleId),
+            SteamGridDbManager::hasPoster(titleId));
         m_gameOptions->requestToast(msg, 2.6f);
     } else if (m_folderOptions && m_folderOptions->isActive())
         m_folderOptions->requestToast(msg, 2.6f);
@@ -990,15 +1075,22 @@ void WiiUMenuApp::editSteamGridDbPickerQuery() {
     const auto mappedKind = kind == SteamGridDbManager::ArtworkKind::Logo
         ? GameOptionsScreen::ArtworkKind::Logo
         : kind == SteamGridDbManager::ArtworkKind::Icon
-            ? GameOptionsScreen::ArtworkKind::Icon : GameOptionsScreen::ArtworkKind::Hero;
+            ? GameOptionsScreen::ArtworkKind::Icon
+            : kind == SteamGridDbManager::ArtworkKind::Poster
+                ? GameOptionsScreen::ArtworkKind::Poster
+                : GameOptionsScreen::ArtworkKind::Hero;
     const std::uint64_t titleId = m_steamGridDbPicker->titleId();
     const std::string title = m_steamGridDbPicker->title();
-    requestTextEntry("SteamGridDB", "Search name", m_steamGridDbPicker->query(),
+    // Prefer the picker's live search string (survives match-folder drill-in).
+    const std::string initial = !m_steamGridDbPicker->query().empty()
+        ? m_steamGridDbPicker->query()
+        : SteamGridDbManager::savedSearchQuery(titleId);
+    requestTextEntry("SteamGridDB", "Search name", initial,
         128, false, [this, mappedKind, titleId, title](const std::string& value) {
             if (value.empty() || titleId == 0)
                 return;
-            // Re-search for the same title (game or folder pseudo-id), not only
-            // whatever Game Options last set.
+            SteamGridDbManager::saveSearchQuery(titleId, value);
+            // Always top-level browse — exits any match folder and refreshes the list.
             openSteamGridDbPickerForTitle(titleId, title, mappedKind, value);
         });
 }
@@ -1014,30 +1106,53 @@ void WiiUMenuApp::applySteamGridDbCandidate(
     m_steamGridDbApplyProgressUiRevision = 0;
     if (m_progressDialog) {
         m_progressDialog->setTheme(&m_theme);
-        m_progressDialog->setCancellable(false);
+        m_progressDialog->setCancellable(true, [this]() {
+            cancelSteamGridDbApply();
+        });
+        raiseProgressDialogAboveOverlays();
         m_progressDialog->show(nxui::I18n::instance().tr(
             "settings.steamgriddb.download_title", "Downloading artwork"),
             progress->message, 0.f);
         focusManager().setFocus(m_progressDialog.get());
     }
     m_steamGridDbApplyFuture = std::async(std::launch::async, [browse, candidate, progress]() {
-        return SteamGridDbManager::applyCandidate(browse, candidate,
+        return SteamGridDbManager::applyCandidate(
+            browse, candidate,
             [progress](const std::string& message, float value) {
                 std::lock_guard<std::mutex> lock(progress->mutex);
                 progress->message = message;
                 progress->progress01 = value;
                 ++progress->revision;
+            },
+            [progress]() {
+                return progress->cancelRequested.load();
             });
     });
 }
 
 void WiiUMenuApp::syncSteamGridDb() {
+    for (auto it = m_steamGridDbRetiredBrowses.begin();
+         it != m_steamGridDbRetiredBrowses.end();) {
+        if (it->valid()
+            && it->wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+            it->get(); // discard abandoned browse
+            it = m_steamGridDbRetiredBrowses.erase(it);
+        } else {
+            ++it;
+        }
+    }
     if (m_steamGridDbBrowseFuture.valid()
         && m_steamGridDbBrowseFuture.wait_for(std::chrono::seconds(0))
             == std::future_status::ready) {
+        const std::uint64_t futureGen = m_steamGridDbBrowseFutureGeneration;
         auto result = m_steamGridDbBrowseFuture.get();
+        // Abandon results from a browse that X Search already replaced.
+        if (futureGen != m_steamGridDbBrowseGeneration)
+            return;
         if (m_steamGridDbPicker && m_steamGridDbPicker->isActive()
             && m_steamGridDbPicker->titleId() == result.titleId) {
+            if (result.query.empty())
+                result.query = m_steamGridDbPicker->query();
             m_steamGridDbPicker->setResult(std::move(result));
             focusManager().setFocus(m_steamGridDbPicker.get());
         }
@@ -1056,9 +1171,11 @@ void WiiUMenuApp::syncSteamGridDb() {
             m_steamGridDbApplyProgressUiRevision = revision;
             m_progressDialog->updateState(message, progress01);
         }
-        if (m_progressDialog && m_progressDialog->isActive()
-            && focusManager().current() != m_progressDialog.get())
-            focusManager().setFocus(m_progressDialog.get());
+        if (m_progressDialog && m_progressDialog->isActive()) {
+            raiseProgressDialogAboveOverlays();
+            if (focusManager().current() != m_progressDialog.get())
+                focusManager().setFocus(m_progressDialog.get());
+        }
     }
     if (m_steamGridDbApplyFuture.valid()
         && m_steamGridDbApplyFuture.wait_for(std::chrono::seconds(0))
@@ -1081,14 +1198,34 @@ void WiiUMenuApp::syncSteamGridDb() {
                 m_recentWidgetLogo.reset();
                 m_recentWidgetIcon.reset();
             }
-            if (result.kind == SteamGridDbManager::ArtworkKind::Icon && m_grid) {
+            if ((result.kind == SteamGridDbManager::ArtworkKind::Icon
+                 || result.kind == SteamGridDbManager::ArtworkKind::Poster) && m_grid) {
                 m_folderCoverCache.erase(result.titleId);
-                m_iconStreamer.reloadTitle(result.titleId, m_grid->currentPage(),
-                                           m_grid->iconsPerPage(), app().gpu(),
-                                           app().renderer(), m_grid->allIcons());
-                // Folder custom covers: enable Show cover and refresh tiles.
-                if (result.titleId >= kFolderTitleIdPrefix) {
-                    if (!m_config.folderShowCover) {
+                m_folderPeekCache.erase(result.titleId);
+                m_folderPeekBorrowed.erase(result.titleId);
+                const bool preferPoster = preferSingleRowPosters();
+                const bool isFolderArt = result.titleId >= kFolderTitleIdPrefix;
+                for (const auto& icon : m_grid->allIcons()) {
+                    if (!icon || icon->titleId() != result.titleId) continue;
+                    if (icon->entryKind() == GridEntryKind::Folder)
+                        icon->setPosterFrame(preferPoster);
+                    else if (icon->entryKind() == GridEntryKind::Application)
+                        icon->setPosterFrame(
+                            preferPoster
+                            && SteamGridDbManager::hasPoster(result.titleId));
+                    break;
+                }
+                m_grid->invalidateLineLayout();
+                if (!isFolderArt) {
+                    m_iconStreamer.reloadTitle(result.titleId, m_grid->currentPage(),
+                                               m_grid->iconsPerPage(), app().gpu(),
+                                               app().renderer(), m_grid->allIcons());
+                }
+                // Folder custom icon/poster: refresh cover tiles (+ enable Show
+                // cover when applying an icon so grid/cover styles can use it).
+                if (isFolderArt) {
+                    if (result.kind == SteamGridDbManager::ArtworkKind::Icon
+                        && !m_config.folderShowCover) {
                         m_config.folderShowCover = true;
                         if (m_configSaveFuture.valid())
                             m_configSaveFuture.wait();
@@ -1110,13 +1247,21 @@ void WiiUMenuApp::syncSteamGridDb() {
                             info.colorIndex = folder->colorIndex;
                             info.sizeIndex = folder->sizeIndex;
                             info.styleIndex = m_config.folderStyle;
+                            info.defaultViewIndex =
+                                std::clamp(m_config.folderDefaultView, 0, 2);
                             info.showCover = m_config.folderShowCover;
-                            info.hasCustomIcon = true;
-                            info.cover = folderCoverTexture(result.titleId);
+                            info.hasCustomIcon =
+                                SteamGridDbManager::hasIcon(result.titleId);
+                            info.hasCustomPoster =
+                                SteamGridDbManager::hasPoster(result.titleId);
+                            const auto coverId = resolveFolderCoverTitleId(
+                                *folder, preferPoster);
+                            info.cover = folderCoverTexture(coverId, preferPoster);
                             m_folderOptions->setFolder(info);
                         }
                     }
                 } else {
+                    invalidateFolderPeekCompositesForTitle(result.titleId);
                     applyFolderCoversToIcons();
                 }
             } else {
@@ -1135,7 +1280,8 @@ void WiiUMenuApp::syncSteamGridDb() {
                 const bool hasLogo = std::filesystem::exists(
                     SteamGridDbManager::logoPath(result.titleId), ec);
                 m_gameOptions->refreshArtworkPresence(
-                    hasHero, hasLogo, SteamGridDbManager::hasIcon(result.titleId));
+                    hasHero, hasLogo, SteamGridDbManager::hasIcon(result.titleId),
+                    SteamGridDbManager::hasPoster(result.titleId));
                 if (result.kind == SteamGridDbManager::ArtworkKind::Icon
                     && result.titleId < kFolderTitleIdPrefix) {
                     // Load from disk immediately - grid reloadTitle is async and
@@ -1147,19 +1293,24 @@ void WiiUMenuApp::syncSteamGridDb() {
         if (m_progressDialog) m_progressDialog->hide();
         m_steamGridDbApplyProgress.reset();
         m_steamGridDbApplyProgressUiRevision = 0;
+        auto toast = [&](const std::string& msg) {
+            if (m_gameOptions && m_gameOptions->isActive())
+                m_gameOptions->requestToast(msg, 2.6f);
+            else if (m_folderOptions && m_folderOptions->isActive())
+                m_folderOptions->requestToast(msg, 2.6f);
+            else if (m_settings) m_settings->requestToast(msg, 2.6f);
+        };
         if (result.success) {
             // Close the picker after a successful apply so the user lands back
             // on game/folder options with the new artwork visible.
             if (m_steamGridDbPicker && m_steamGridDbPicker->isActive())
                 m_steamGridDbPicker->hide();
-            auto toast = [&](const std::string& msg) {
-                if (m_gameOptions && m_gameOptions->isActive())
-                    m_gameOptions->requestToast(msg, 2.6f);
-                else if (m_folderOptions && m_folderOptions->isActive())
-                    m_folderOptions->requestToast(msg, 2.6f);
-                else if (m_settings) m_settings->requestToast(msg, 2.6f);
-            };
             if (!result.message.empty()) toast(result.message);
+        } else if (result.cancelled) {
+            toast(nxui::I18n::instance().tr(
+                "settings.steamgriddb.cancelled", "Artwork download cancelled."));
+            if (m_steamGridDbPicker && m_steamGridDbPicker->isActive())
+                focusManager().setFocus(m_steamGridDbPicker.get());
         } else if (m_steamGridDbPicker && m_steamGridDbPicker->isActive()) {
             m_steamGridDbPicker->setMessage(result.message, false);
             focusManager().setFocus(m_steamGridDbPicker.get());
@@ -1203,13 +1354,20 @@ void WiiUMenuApp::syncSteamGridDb() {
         if (m_steamGridDbBackdrop)
             m_steamGridDbBackdrop->invalidateArtworkCaches();
         showFocusedSteamGridDbArtwork(true);
-        if (state.selectedKind == SteamGridDbManager::ArtworkKind::Icon && state.matched > 0
-            && m_grid) {
+        const bool preferPosterTiles =
+            m_appLayoutMode == AppLayoutMode::DynamicLine
+            && m_config.steamGridDbEnabled
+            && m_config.steamGridDbShowPosterInDynamicLine;
+        if (state.matched > 0 && m_grid
+            && (state.selectedKind == SteamGridDbManager::ArtworkKind::Icon
+                || state.selectedKind == SteamGridDbManager::ArtworkKind::Poster
+                || preferPosterTiles)) {
             // forceReload releases the pool texture used by the panel header;
             // detach it first so the overlay never renders a stale pointer.
             if (m_gameOptions) m_gameOptions->setGameIcon(nullptr);
-            m_iconStreamer.forceReload(m_grid->currentPage(), m_grid->iconsPerPage(),
-                                       app().gpu(), app().renderer(), m_grid->allIcons());
+            // Also re-mark per-tile Poster frames so new poster.img files get
+            // tall cells immediately (without a grid ↔ single-row toggle).
+            syncSingleRowPosterPresentation(true);
         }
         if (state.selectedKind != SteamGridDbManager::ArtworkKind::None
             && m_gameOptions && m_gameOptions->isActive()) {
@@ -1229,12 +1387,22 @@ void WiiUMenuApp::syncSteamGridDb() {
     }
 }
 
+AppLayoutMode WiiUMenuApp::presentationLayoutMode() const {
+    // During prefetch the logical mode is already single-row, but tiles and
+    // hero must keep the previous arrangement until the morph commits.
+    if (m_layoutTransition.kind == LayoutTransitionKind::PrefetchThenMorph)
+        return m_layoutTransition.visualMode;
+    if (m_grid)
+        return m_grid->layoutMode();
+    return m_appLayoutMode;
+}
+
 bool WiiUMenuApp::steamGridDbArtworkAllowedHere() const {
     if (!m_config.steamGridDbEnabled)
         return false;
     if (m_openFolderId != 0)
         return m_config.steamGridDbShowInFolders;
-    if (m_appLayoutMode == AppLayoutMode::DynamicLine)
+    if (presentationLayoutMode() == AppLayoutMode::DynamicLine)
         return m_config.steamGridDbShowInDynamicLine;
     return m_config.steamGridDbShowInGrid;
 }
@@ -1244,9 +1412,11 @@ void WiiUMenuApp::showFocusedSteamGridDbArtwork(bool forceReload) {
     if (!steamGridDbArtworkAllowedHere()) {
         m_steamGridDbBackdrop->setEnabled(false);
         m_steamGridDbBackdrop->showTitle(0, forceReload);
+        syncHeroBackdropPresentation();
         return;
     }
     m_steamGridDbBackdrop->setEnabled(true);
+    m_steamGridDbBackdrop->setLayoutMode(presentationLayoutMode());
 
     std::uint64_t titleId = 0;
     std::vector<std::uint64_t> nearbyTitleIds;
@@ -1274,7 +1444,13 @@ void WiiUMenuApp::showFocusedSteamGridDbArtwork(bool forceReload) {
     // Zero is meaningful: it clears artwork when focus moves to a folder,
     // an empty slot or any non-application widget.
     m_steamGridDbBackdrop->showTitle(titleId, forceReload);
+    // After layout morph, skip neighbour hero/logo warm for a beat so HOME
+    // stays responsive; focused title still updates above.
+    if (m_deferBackdropPreloadSec > 0.f)
+        nearbyTitleIds.clear();
     m_steamGridDbBackdrop->setPreloadTitles(std::move(nearbyTitleIds));
+    syncSteamGridDbLogoArea();
+    updateHeroAwareChrome();
 }
 
 void WiiUMenuApp::createGameOptions() {
@@ -1624,6 +1800,20 @@ void WiiUMenuApp::createThemeShop() {
     m_themeShop->setGridLayoutState(m_config.gridColumns, m_config.gridRows);
     m_themeShop->setActionHintStyleState(m_config.actionHintStyle);
     m_themeShop->setSortLargeTilesState(m_config.sortLargeTiles);
+    m_themeShop->setIconContrastAdaptState(m_config.iconContrastAdapt);
+    {
+        std::unordered_map<std::string, ThemeShopScreen::IconPackTintState> tints;
+        for (const auto& [packId, tint] : m_config.iconPackTints) {
+            ThemeShopScreen::IconPackTintState state;
+            state.enabled = tint.enabled;
+            state.hue = tint.hue;
+            state.sat = tint.sat;
+            state.light = tint.light;
+            tints[packId] = state;
+        }
+        m_themeShop->setIconPackTintState(tints);
+    }
+    m_themeShop->setInputSource(&app().input());
     refreshAutoThemeSummary();
     m_themeShop->setCursorMotionModeState(m_config.cursorMotionMode);
     m_themeShop->setPageTransitionModeState(m_config.pageTransitionMode);
@@ -1726,6 +1916,37 @@ void WiiUMenuApp::createThemeShop() {
         m_pendingNetConnect = true;
         if (m_themeShop) m_themeShop->hide();
         m_navigator.resetToHome();
+    });
+        m_themeShop->onIconContrastAdaptChange([this](bool enabled) {
+        if (m_config.iconContrastAdapt == enabled)
+            return;
+        m_config.iconContrastAdapt = enabled;
+        m_config.save();
+        syncColourIconContrast();
+    });
+    m_themeShop->onIconPackTintChange([this](const std::string& packId,
+                                             const ThemeShopScreen::IconPackTintState& tint) {
+        AppConfig::IconPackTint cfg;
+        cfg.enabled = tint.enabled;
+        cfg.hue = std::clamp(tint.hue, 0.f, 1.f);
+        cfg.sat = std::clamp(tint.sat, 0.f, 1.f);
+        cfg.light = std::clamp(tint.light, 0.f, 1.f);
+        const AppConfig::IconPackTint previous = m_config.iconPackTintFor(packId);
+        if (previous.enabled == cfg.enabled
+            && std::fabs(previous.hue - cfg.hue) < 0.0005f
+            && std::fabs(previous.sat - cfg.sat) < 0.0005f
+            && std::fabs(previous.light - cfg.light) < 0.0005f)
+            return;
+        m_config.setIconPackTint(packId, cfg);
+        m_config.save();
+        const std::string activeId = m_config.iconPack.empty()
+            ? switchu::icons::kDefaultPackId : m_config.iconPack;
+        const std::string id = packId.empty() ? switchu::icons::kDefaultPackId : packId;
+        if (id == activeId)
+            syncColourIconContrast();
+    });
+    m_themeShop->onIconPackApply([this](const std::string& packId) {
+        applyIconPack(packId);
     });
     m_themeShop->onThemeShopApply([this](const std::string& presetId) {
         DebugLog::log("[theme-apply] request from Theme Shop: preset=%s", presetId.c_str());
@@ -2019,10 +2240,114 @@ std::vector<ThemeShopScreen::ThemeShopEntry> WiiUMenuApp::buildThemeShopEntries(
         entry.coverPath = installedThemePreviewPath(preset);
         entry.active = (entry.id == activeId);
         entry.removable = (preset.source != ThemePresetSource::BuiltIn);
+        {
+            const std::string iconsDir = resolveThemeAssetPath(preset, preset.icons.basePath);
+            entry.hasIcons = switchu::icons::iconDirLooksUsable(iconsDir);
+        }
         entries.push_back(std::move(entry));
     }
 
     return entries;
+}
+
+
+std::string WiiUMenuApp::resolvedIconPackId() const {
+    const std::string configured = m_config.iconPack.empty()
+        ? switchu::icons::kDefaultPackId : m_config.iconPack;
+    // Normalize legacy theme:package:<id> ids to theme:<folder>.
+    const std::string normalized = switchu::icons::isThemePackId(configured)
+        ? switchu::icons::makeThemePackId(configured)
+        : configured;
+    const std::string dir = switchu::icons::resolvePackIconsDirectory(SD_ASSETS, normalized);
+    if (dir.empty()) {
+        // Log once per distinct id — resolvedIconPackId is hit every frame.
+        static std::string s_lastFailed;
+        if (s_lastFailed != normalized) {
+            s_lastFailed = normalized;
+            DebugLog::log("[icon-pack] resolve failed pack=%s (configured=%s); healing to default",
+                          normalized.c_str(), configured.c_str());
+        }
+        return switchu::icons::kDefaultPackId;
+    }
+    return normalized;
+}
+
+std::string WiiUMenuApp::iconsDirectoryForPack(const std::string& packId) const {
+    const std::string id = switchu::icons::isThemePackId(packId)
+        ? switchu::icons::makeThemePackId(packId) : packId;
+    if (!switchu::icons::isThemePackId(id))
+        return {};
+    return switchu::icons::resolvePackIconsDirectory(SD_ASSETS, id);
+}
+
+std::vector<ThemeShopScreen::ThemeShopEntry> WiiUMenuApp::buildIconPackEntries() {
+    std::vector<ThemeShopScreen::ThemeShopEntry> entries;
+    const std::string activeId = resolvedIconPackId();
+
+    auto addPack = [&](const switchu::icons::IconPackInfo& pack) {
+        ThemeShopScreen::ThemeShopEntry entry;
+        entry.id = pack.id;
+        entry.name = pack.name;
+        entry.author = pack.author;
+        entry.version = "1.0.0";
+        entry.source = pack.fromTheme ? "Theme"
+            : (pack.isDefault ? "Built-in" : "Icon pack");
+        entry.coverPath = switchu::icons::ensurePackPreview(pack.directory, pack.id);
+        entry.active = (pack.id == activeId);
+        entry.removable = false;
+        entry.colourPack = pack.colourPack;
+        entries.push_back(std::move(entry));
+    };
+
+    for (const auto& pack : switchu::icons::discoverPacks(SD_ASSETS))
+        addPack(pack);
+    // Theme icon folders are discovered from disk the same way as SD packs.
+    for (const auto& pack : switchu::icons::discoverThemePacks())
+        addPack(pack);
+    return entries;
+}
+
+std::string WiiUMenuApp::resolveActiveIconGlyphPath(const char* fileName) const {
+    return switchu::icons::resolveGlyphPath(SD_ASSETS, resolvedIconPackId(), fileName);
+}
+
+void WiiUMenuApp::reloadSidebarIcons() {
+    const std::string packId = resolvedIconPackId();
+    // Theme packs resolve to their on-disk icons dir; SD packs leave this empty
+    // and SidebarManager loads from icons/<packId>/ via packId.
+    const std::string customIconsBase = iconsDirectoryForPack(packId);
+    const std::string fallbackPackId = switchu::icons::isThemePackId(packId)
+        ? switchu::icons::kDefaultPackId : packId;
+    DebugLog::log("[icon-pack] reload pack=%s custom=%s fallback=%s",
+                  packId.c_str(),
+                  customIconsBase.empty() ? "<empty>" : customIconsBase.c_str(),
+                  fallbackPackId.c_str());
+    m_sidebar.invalidateAssetsCache();
+    m_sidebar.reloadAssets(app().gpu(), app().renderer(), SD_ASSETS, customIconsBase, fallbackPackId);
+    // The layout-flip chrome button uses the same pack, so refresh it too.
+    if (m_layoutFlip)
+        m_layoutFlip->ensureIcon(app().gpu(), app().renderer(),
+                                 resolveActiveIconGlyphPath(switchu::icons::kChangeViewFile));
+}
+
+void WiiUMenuApp::applyIconPack(const std::string& packId) {
+    std::string id = packId.empty() ? switchu::icons::kDefaultPackId : packId;
+    if (switchu::icons::isThemePackId(id))
+        id = switchu::icons::makeThemePackId(id);
+    const bool packChanged = m_config.iconPack != id;
+    if (packChanged) {
+        m_config.iconPack = id;
+        m_config.save();
+    }
+    DebugLog::log("[icon-pack] apply pack=%s changed=%d", id.c_str(), packChanged ? 1 : 0);
+    // Always rebake HOME chrome so Apply also commits a live tint edit on the
+    // already-active pack.
+    reloadSidebarIcons();
+    syncColourIconContrast();
+    refreshThemeShopState();
+    if (m_themeShop)
+        m_themeShop->requestToast(
+            nxui::I18n::instance().tr("themeshop.icons.applied", "Icon pack applied."), 2.0f);
 }
 
 void WiiUMenuApp::refreshThemeShopState() {
@@ -2032,9 +2357,32 @@ void WiiUMenuApp::refreshThemeShopState() {
     std::string activeId = activePreset ? (activePreset->id.empty() ? activePreset->name : activePreset->id)
                                         : m_activePresetName;
 
+    // Normalize legacy theme:package:* ids without clobbering a valid selection.
+    const std::string activePackId = resolvedIconPackId();
+    if (m_config.iconPack != activePackId && switchu::icons::isThemePackId(m_config.iconPack)
+        && activePackId != switchu::icons::kDefaultPackId) {
+        m_config.iconPack = activePackId;
+        m_config.save();
+    }
+
     m_themeShop->setTheme(&m_theme);
     m_themeShop->setMusicState(m_audio.isPlaying(), m_audio.volume(), m_audio.sfxVolume());
+    m_themeShop->setSortLargeTilesState(m_config.sortLargeTiles);
+    m_themeShop->setIconContrastAdaptState(m_config.iconContrastAdapt);
+    {
+        std::unordered_map<std::string, ThemeShopScreen::IconPackTintState> tints;
+        for (const auto& [packId, tint] : m_config.iconPackTints) {
+            ThemeShopScreen::IconPackTintState state;
+            state.enabled = tint.enabled;
+            state.hue = tint.hue;
+            state.sat = tint.sat;
+            state.light = tint.light;
+            tints[packId] = state;
+        }
+        m_themeShop->setIconPackTintState(tints);
+    }
     m_themeShop->setThemeShopState(buildThemeShopEntries(), activeId);
+    m_themeShop->setIconPackState(buildIconPackEntries(), activePackId);
     m_themeShop->rebuildCurrentTab();
 }
 
@@ -2054,6 +2402,30 @@ void WiiUMenuApp::activateThemePreset(ThemePreset* preset, bool applyBundledSoun
     m_activeColors = preset->colors;
     m_activeMode = preset->mode;
     m_config.themePreset = m_activePresetName;
+
+    // Themes that ship icons become the active Icons-library pack (overrideable).
+    {
+        std::string folder;
+        if (!preset->installPath.empty()) {
+            const auto pos = preset->installPath.find_last_of("/\\");
+            folder = (pos == std::string::npos)
+                ? preset->installPath
+                : preset->installPath.substr(pos + 1);
+        }
+        if (folder.empty())
+            folder = presetRef;
+        const std::string themePackId = switchu::icons::makeThemePackId(folder);
+        const std::string themeIconsDir =
+            switchu::icons::resolvePackIconsDirectory(SD_ASSETS, themePackId);
+        if (!themeIconsDir.empty()) {
+            if (m_config.iconPack != themePackId) {
+                m_config.iconPack = themePackId;
+                DebugLog::log("[icon-pack] theme apply selected pack=%s dir=%s",
+                              themePackId.c_str(), themeIconsDir.c_str());
+            }
+        }
+    }
+    m_config.save();
 
     DebugLog::log("[theme-apply] rebuildThemeFromColors start: preset=%s", presetRef.c_str());
     rebuildThemeFromColors();
@@ -2314,7 +2686,7 @@ void WiiUMenuApp::applyThemeResources(const ThemePreset& preset) {
     const std::string desiredSmallFontPath = smallFontExists ? smallFontPath : fallbackFontPath;
     const bool smallFontNeedsReload = forceResourceReload || m_loadedSmallFontPath != desiredSmallFontPath;
 
-    const std::string defaultGameCardPath = std::string(SD_ASSETS) + "/icons/gamecard.png";
+    const std::string defaultGameCardPath = std::string(SD_ASSETS) + "/icons/default/gamecard.png";
     const std::string gameCardPath = !themeIconsBase.empty() ? joinPath(themeIconsBase, "gamecard.png") : std::string();
     const bool gameCardExists = !gameCardPath.empty() && pathExists(gameCardPath);
     const std::string desiredGameCardPath = gameCardExists ? gameCardPath : defaultGameCardPath;
@@ -2524,8 +2896,112 @@ void WiiUMenuApp::retryPendingBackgroundImage() {
     m_backgroundImageRetryFrames = 2 << (m_backgroundImageRetryAttempts - 1);
 }
 
+void WiiUMenuApp::applyHomeChrome() {
+    const nxui::Theme& chrome = m_homeChrome;
+
+    if (m_clock) {
+        m_clock->setBaseColor(chrome.panelBase);
+        m_clock->setBorderColor(chrome.panelBorder);
+        m_clock->setHighlightColor(chrome.panelHighlight);
+        m_clock->setTextColor(chrome.textPrimary);
+        m_clock->setSecondaryTextColor(chrome.textSecondary);
+    }
+
+    if (m_battery) {
+        m_battery->setBaseColor(chrome.panelBase);
+        m_battery->setBorderColor(chrome.panelBorder);
+        m_battery->setHighlightColor(chrome.panelHighlight);
+        m_battery->setTextColor(chrome.textPrimary);
+    }
+
+    if (m_titlePill) {
+        m_titlePill->setBaseColor(chrome.panelBase.withAlpha(
+            chrome.mode == nxui::ThemeMode::Dark ? 0.90f : 0.86f));
+        m_titlePill->setBorderColor(chrome.panelBorder.withAlpha(0.84f));
+        m_titlePill->setHighlightColor(chrome.panelHighlight.withAlpha(0.42f));
+        m_titlePill->setTextColor(chrome.textPrimary);
+    }
+
+    if (m_pageIndicator) {
+        m_pageIndicator->setBaseColor(chrome.panelBase);
+        m_pageIndicator->setBorderColor(chrome.panelBorder);
+        m_pageIndicator->setHighlightColor(chrome.panelHighlight);
+        m_pageIndicator->setTheme(&m_homeChrome);
+    }
+    if (m_folderHeader) {
+        m_folderHeader->setBaseColor(chrome.panelBase);
+        m_folderHeader->setBorderColor(chrome.panelBorder);
+        m_folderHeader->setHighlightColor(chrome.panelHighlight);
+    }
+    if (m_folderHeaderLabel)
+        m_folderHeaderLabel->setTextColor(chrome.textPrimary);
+    if (m_profileLock)
+        m_profileLock->setTheme(&m_homeChrome);
+    if (m_layoutFlip)
+        m_layoutFlip->setTheme(&m_homeChrome);
+
+    m_sidebar.applyTheme(m_homeChrome);
+}
+
+void WiiUMenuApp::updateHeroAwareChrome(bool force) {
+    HeroChromeAdapt desired = HeroChromeAdapt::Off;
+    // Full-opacity heroes are single-row only; dimmed grid heroes leave chrome alone.
+    const bool fullHeroContext =
+        presentationLayoutMode() == AppLayoutMode::DynamicLine;
+
+    if (fullHeroContext && m_steamGridDbBackdrop
+        && m_steamGridDbBackdrop->hasDisplayedHero()) {
+        const float luma = m_steamGridDbBackdrop->displayedHeroLuminance();
+        if (luma >= 0.f) {
+            // Hysteresis avoids flicker when focus skims near-threshold heroes.
+            const float darkEnter = 0.42f;
+            const float darkExit = 0.50f;
+            const float lightEnter = 0.58f;
+            const float lightExit = 0.50f;
+            if (m_theme.mode == nxui::ThemeMode::Light) {
+                const float limit = (m_heroChromeAdapt == HeroChromeAdapt::ForceDark)
+                    ? darkExit : darkEnter;
+                if (luma < limit)
+                    desired = HeroChromeAdapt::ForceDark;
+            } else if (m_theme.mode == nxui::ThemeMode::Dark) {
+                const float limit = (m_heroChromeAdapt == HeroChromeAdapt::ForceLight)
+                    ? lightExit : lightEnter;
+                if (luma > limit)
+                    desired = HeroChromeAdapt::ForceLight;
+            }
+        }
+    }
+
+    if (!force && desired == m_heroChromeAdapt)
+        return;
+
+    m_heroChromeAdapt = desired;
+    if (desired == HeroChromeAdapt::ForceDark) {
+        m_homeChrome = nxui::Theme::dark();
+    } else if (desired == HeroChromeAdapt::ForceLight) {
+        m_homeChrome = nxui::Theme::light();
+    } else {
+        m_homeChrome = m_theme;
+    }
+    // Keep the user's cursor brand while chrome contrast flips.
+    m_homeChrome.cursorNormal = m_theme.cursorNormal;
+    m_homeChrome.cursorGlow = m_theme.cursorGlow;
+    m_homeChrome.cursorCornerRadius = m_theme.cursorCornerRadius;
+    m_homeChrome.cursorBorderWidth = m_theme.cursorBorderWidth;
+    applyHomeChrome();
+}
+
+void WiiUMenuApp::syncHeroBackdropPresentation() {
+    if (!m_steamGridDbBackdrop)
+        return;
+    m_steamGridDbBackdrop->setLayoutMode(presentationLayoutMode());
+    updateHeroAwareChrome(true);
+}
+
 void WiiUMenuApp::applyTheme() {
     DebugLog::log("[theme-apply] widget recolor start");
+    m_homeChrome = m_theme;
+    m_heroChromeAdapt = HeroChromeAdapt::Off;
     m_background->setAccentColor(m_theme.backgroundAccent);
     m_background->setSecondaryColor(m_theme.background);
     m_background->setShapeColor(m_theme.shapeColor);
@@ -2546,36 +3022,7 @@ void WiiUMenuApp::applyTheme() {
     m_cursor->setBorderWidth(m_theme.cursorBorderWidth);
     DebugLog::log("[theme-apply] widget recolor cursors done");
 
-    m_clock->setBaseColor(m_theme.panelBase);
-    m_clock->setBorderColor(m_theme.panelBorder);
-    m_clock->setHighlightColor(m_theme.panelHighlight);
-    m_clock->setTextColor(m_theme.textPrimary);
-    m_clock->setSecondaryTextColor(m_theme.textSecondary);
-
-    m_battery->setBaseColor(m_theme.panelBase);
-    m_battery->setBorderColor(m_theme.panelBorder);
-    m_battery->setHighlightColor(m_theme.panelHighlight);
-    m_battery->setTextColor(m_theme.textPrimary);
-
-    m_titlePill->setBaseColor(m_theme.panelBase.withAlpha(
-        m_theme.mode == nxui::ThemeMode::Dark ? 0.90f : 0.86f));
-    m_titlePill->setBorderColor(m_theme.panelBorder.withAlpha(0.84f));
-    m_titlePill->setHighlightColor(m_theme.panelHighlight.withAlpha(0.42f));
-    m_titlePill->setTextColor(m_theme.textPrimary);
-
-    m_pageIndicator->setBaseColor(m_theme.panelBase);
-    m_pageIndicator->setBorderColor(m_theme.panelBorder);
-    m_pageIndicator->setHighlightColor(m_theme.panelHighlight);
-    m_pageIndicator->setTheme(&m_theme);
-    if (m_folderHeader) {
-        m_folderHeader->setBaseColor(m_theme.panelBase);
-        m_folderHeader->setBorderColor(m_theme.panelBorder);
-        m_folderHeader->setHighlightColor(m_theme.panelHighlight);
-    }
-    if (m_folderHeaderLabel)
-        m_folderHeaderLabel->setTextColor(m_theme.textPrimary);
-    if (m_profileLock)
-        m_profileLock->setTheme(&m_theme);
+    applyHomeChrome();
     if (m_profileCarousel)
         m_profileCarousel->setTheme(&m_theme);
     DebugLog::log("[theme-apply] widget recolor HUD done");
@@ -2611,7 +3058,8 @@ void WiiUMenuApp::applyTheme() {
     if (m_textEntry)
         m_textEntry->setTheme(&m_theme);
 
-    m_sidebar.applyTheme(m_theme);
+    // Re-evaluate hero contrast after a theme change (may re-apply chrome).
+    updateHeroAwareChrome(true);
     DebugLog::log("[theme-apply] widget recolor complete");
 }
 
@@ -2632,10 +3080,10 @@ void WiiUMenuApp::rebuildThemeFromColors() {
     DebugLog::log("[theme-apply] applyThemeResources done: preset=%s",
                   safeLogPath(m_effectivePreset.id.empty() ? m_effectivePreset.name : m_effectivePreset.id));
 
-    const std::string customIconsBase = resolveThemeAssetPath(m_effectivePreset, m_effectivePreset.icons.basePath);
-    DebugLog::log("[theme-apply] sidebar.reloadAssets start: customIcons=%s",
-                  safeLogPath(customIconsBase));
-    m_sidebar.reloadAssets(app().gpu(), app().renderer(), SD_ASSETS, customIconsBase);
+    DebugLog::log("[theme-apply] sidebar.reloadAssets start: pack=%s",
+                  m_config.iconPack.empty() ? switchu::icons::kDefaultPackId
+                                            : m_config.iconPack.c_str());
+    reloadSidebarIcons();
     DebugLog::log("[theme-apply] sidebar.reloadAssets done");
 
     DebugLog::log("[theme-apply] applyTheme start");
@@ -2689,6 +3137,24 @@ void WiiUMenuApp::deletePreset(const std::string& presetId) {
     if (!soundPreset.empty() && m_config.soundPreset == soundPreset) {
         m_config.soundPreset = "wiiu";
         changeSoundPreset(m_config.soundPreset);
+    }
+
+    {
+        std::string folder = idToDelete;
+        if (!installPath.empty()) {
+            const auto pos = installPath.find_last_of("/\\");
+            folder = (pos == std::string::npos) ? installPath : installPath.substr(pos + 1);
+        }
+        const std::string themePackId = switchu::icons::makeThemePackId(folder);
+        const std::string legacyPackId = switchu::icons::makeThemePackId(idToDelete);
+        if ((!themePackId.empty() && m_config.iconPack == themePackId)
+            || (!legacyPackId.empty() && m_config.iconPack == legacyPackId)
+            || (switchu::icons::isThemePackId(m_config.iconPack)
+                && switchu::icons::themeFolderFromPackId(m_config.iconPack) == folder)) {
+            m_config.iconPack = switchu::icons::kDefaultPackId;
+            m_config.save();
+            DebugLog::log("[icon-pack] theme removed; pack reset to default");
+        }
     }
 
     if (deletingActive) {
@@ -2799,3 +3265,35 @@ void WiiUMenuApp::syncSoftwareDeletion() {
     m_softwareDeleteTitle.clear();
     m_softwareDeleteClosesGameOptions = false;
 }
+
+void WiiUMenuApp::syncColourIconContrast() {
+    // Apply committed per-pack HSL to HOME sidebar. Full single-row hero
+    // chrome-follow lives on the posters stack; here we keep authored/tint.
+    const std::string activePackId = m_config.iconPack.empty()
+        ? switchu::icons::kDefaultPackId : m_config.iconPack;
+    const AppConfig::IconPackTint packTint = m_config.iconPackTintFor(activePackId);
+    switchu::icons::HslAdjust hsl;
+    hsl.enabled = packTint.enabled;
+    hsl.hue = std::clamp(packTint.hue, 0.f, 1.f);
+    hsl.sat = std::clamp(packTint.sat, 0.f, 1.f);
+    hsl.light = std::clamp(packTint.light, 0.f, 1.f);
+
+    const bool hslChanged =
+        m_sidebar.iconHslAdjust().enabled != hsl.enabled
+        || std::fabs(m_sidebar.iconHslAdjust().hue - hsl.hue) > 0.0005f
+        || std::fabs(m_sidebar.iconHslAdjust().sat - hsl.sat) > 0.0005f
+        || std::fabs(m_sidebar.iconHslAdjust().light - hsl.light) > 0.0005f;
+
+    m_sidebar.setIconHslAdjust(hsl);
+    // The Theme > Options toggle is the single source of truth: when it is on,
+    // colour packs follow the chrome; when off they keep their authored pixels.
+    const bool adapt = m_config.iconContrastAdapt;
+    const bool adaptChanged = m_sidebar.colourIconContrast() != adapt;
+    m_sidebar.setColourIconContrast(adapt);
+
+    if (hslChanged || adaptChanged) {
+        reloadSidebarIcons();
+        m_sidebar.setColourIconContrast(adapt);
+    }
+}
+

@@ -10,6 +10,7 @@
 #include "widgets/SelectionCursor.hpp"
 #include "widgets/WaraWaraBackground.hpp"
 #include "widgets/DateTimeWidget.hpp"
+#include "widgets/LayoutFlipButton.hpp"
 #include "widgets/BatteryWidget.hpp"
 #include "widgets/TitlePillWidget.hpp"
 #include "core/AudioManager.hpp"
@@ -38,6 +39,7 @@
 #include "themeshop/ThemeShopScreen.hpp"
 #include "core/Config.hpp"
 #include "core/FolderStore.hpp"
+#include "core/FolderPeekComposite.hpp"
 #include "core/WidgetStore.hpp"
 #include "core/ThemePreset.hpp"
 #include "core/LeaveFrameCache.hpp"
@@ -56,6 +58,7 @@
 #include <nxui/widgets/Box.hpp>
 #include <nxui/widgets/GlassPanel.hpp>
 #include <nxui/widgets/Label.hpp>
+#include <chrono>
 #include <cstdint>
 #include <memory>
 #include <vector>
@@ -65,6 +68,7 @@
 #include <utility>
 #include <functional>
 #include <unordered_map>
+#include <unordered_set>
 #include <switch.h>
 #ifdef SWITCHU_MENU
 #include <switchu/smi_protocol.hpp>
@@ -117,6 +121,9 @@ private:
     void finishProfileLoading();
     void refreshProfileLockButton();
     void wireProfileLockNavigation();
+    void focusHomeGridFallback();
+    void ensureHomeTitleFocus(std::uint64_t preferredTitleId = 0);
+    std::uint64_t mostRecentlyOpenedTitleId() const;
     void createProfileCarousel();
     void openProfileCarousel();
     void setLockedProfile(std::optional<AccountUid> uid);
@@ -125,7 +132,17 @@ private:
     GridModel buildOpenFolderModel(std::uint32_t folderId) const;
     void applyDisplayModel(GridModel model, std::uint64_t focusId, bool animate,
                            const IconAppearOptions& appear = {},
-                           bool instantFocus = false);
+                           bool instantFocus = false,
+                           bool morphLayout = false);
+    // Shared tail of applyDisplayModel (reconcile → setup → focus). Used by the
+    // one-shot path and by the chunked single-row commit after icons are built.
+    void completeDisplayModelApply(std::vector<std::shared_ptr<GlossyIcon>> icons,
+                                   std::vector<std::uint64_t> titleIds,
+                                   std::uint64_t focusId, bool animate,
+                                   const IconAppearOptions& appear,
+                                   bool instantFocus, bool morphLayout);
+    void prepareRetainedImagePins(const GridModel& newModel);
+    std::shared_ptr<GlossyIcon> makeDisplayIcon(const AppEntry& entry);
     nxui::Rect folderTileRect(std::uint32_t folderId) const;
     void snapCursorToFocus();
     void syncEditJiggle();
@@ -133,6 +150,10 @@ private:
     void flipPageFromEdge(int dir);
     void requestOpenFolder(std::uint32_t folderId, std::uint64_t focusTitleId = 0);
     void openCapturedFolder();
+    // Applies folderDefaultView without writing appLayoutMode to config.
+    void applyFolderDefaultViewOnOpen();
+    // Restores HOME layout from config if open forced a temporary mode.
+    void restoreHomeLayoutAfterFolder();
     // `animated` plays the mirrored close (icons fly back into the tile, then
     // the root grid is rebuilt); otherwise the root grid is rebuilt right away.
     void closeFolder(bool preserveEditMode = false, bool animated = false);
@@ -225,7 +246,15 @@ private:
     void syncSteamGridDb();
     void showFocusedSteamGridDbArtwork(bool forceReload = false);
     bool steamGridDbArtworkAllowedHere() const;
+    // Layout the user still sees (grid stays up during poster prefetch).
+    AppLayoutMode presentationLayoutMode() const;
     void applyTheme();
+    // Recolor HOME chrome (HUD / sidebars / hints) from m_homeChrome.
+    void applyHomeChrome();
+    // When full-opacity heroes fight the active theme, temporarily flip chrome
+    // contrast (light theme + dark hero → dark chrome, and vice versa).
+    void updateHeroAwareChrome(bool force = false);
+    void syncHeroBackdropPresentation();
     void applyThemeResources(const ThemePreset& preset);
     void retryPendingBackgroundImage();
     void applyUiLanguage();
@@ -274,6 +303,8 @@ private:
     nxui::Rect deletePageButtonRect() const;
     void kickPageArrow(int dir);
     bool flipPage(int dir);
+    // Single-row: jump by grid page size (same local cell when possible).
+    bool flipDynamicLinePage(int dir);
     bool addPageAvailable();
     bool currentPageEmpty() const;
     bool deletePageAvailable() const;
@@ -294,8 +325,41 @@ private:
     void closeActiveOverlays(bool closeFolders = true);
     void handleTouch();
     std::shared_ptr<GlossyIcon> makeIcon(const AppEntry& entry);
-    nxui::Texture* folderCoverTexture(std::uint64_t titleId);
-    void applyFolderCoversToIcons();
+    nxui::Texture* folderCoverTexture(std::uint64_t titleId, bool preferPoster = false);
+    /// Small square icon for folder peek stacks (never loads posters).
+    /// When allowBorrow is true, may return a live IconStreamer/grid texture
+    /// (tracked in m_folderPeekBorrowed) to avoid sync decode on morph commit.
+    nxui::Texture* folderPeekTexture(std::uint64_t titleId, bool allowBorrow = true);
+    /// GPU texture already resident on an Application tile, if any.
+    nxui::Texture* findResidentAppTexture(std::uint64_t titleId) const;
+    /// Decode borrowed peeks into m_folderPeekCache (budgeted) so streamer
+    /// poster swaps cannot overwrite folder stacks mid-display.
+    int promoteBorrowedFolderPeeks(int maxPromotions);
+    std::uint64_t resolveFolderCoverTitleId(const switchu::folders::Folder& folder,
+                                            bool preferPoster) const;
+    bool preferSingleRowPosters() const;
+    // centerIndex < 0 or radius < 0 → all folders; otherwise only nearby slots
+    // (used by slim layout morph so commit stays cheap).
+    void applyFolderCoversToIcons(int centerIndex = -1, int radius = -1);
+    bool folderTileNeedsArt(int index) const;
+    void markFolderCoverFilled(int index);
+    void ensureFolderCoverFillDoneSize();
+    /// Sync-fill the focused folder (and optional neighbours) when peeks are empty.
+    void warmFolderPeeksAroundFocus(int radius = 0);
+    /// At splash handoff: disk-attach nearby composites, queue-bake the rest.
+    void warmFolderCompositesEarly();
+    int nextFolderCoverFillIndex(int focus) const;
+    /// Grid: on first/last page, ZL/ZR snaps to start/end of the current row.
+    bool snapGridRowEdge(int dir);
+    nxui::Texture* folderPeekCompositeTexture(std::uint32_t folderId);
+    void requestFolderPeekCompositeBake(std::uint32_t folderId);
+    void pumpFolderPeekComposites();
+    void invalidateFolderPeekComposite(std::uint32_t folderId);
+    void invalidateFolderPeekCompositesForTitle(std::uint64_t titleId);
+    /// Drop cache and re-queue bake/attach for one folder tile.
+    void refreshFolderPeekComposite(std::uint32_t folderId);
+    void attachFolderPeekComposite(GlossyIcon& icon, std::uint32_t folderId,
+                                   nxui::Texture* composite);
     void wireFocusCallback();
     void wireGlobalActions();
     void toggleAccessibilitySpeech();
@@ -326,6 +390,13 @@ private:
     void reloadThemePresets();
     void refreshThemeShopState();
     std::vector<ThemeShopScreen::ThemeShopEntry> buildThemeShopEntries();
+    std::vector<ThemeShopScreen::ThemeShopEntry> buildIconPackEntries();
+    std::string resolvedIconPackId() const;
+    std::string iconsDirectoryForPack(const std::string& packId) const;
+    void applyIconPack(const std::string& packId);
+    void syncColourIconContrast();
+    void reloadSidebarIcons();
+    std::string resolveActiveIconGlyphPath(const char* fileName) const;
     void startThemePackageTransfer(const ThemeCatalogClient::Entry& entry, bool installMode);
     void syncThemePackageTransfer();
     void activateThemePreset(ThemePreset* preset, bool applyBundledSound);
@@ -365,6 +436,19 @@ private:
 
     void toggleAppLayoutMode();
     void setAppLayoutMode(AppLayoutMode mode);
+    // Keeps the Change View button's three-way hint in sync with the view.
+    void syncLayoutFlipState();
+    // Tall Poster tiles + icon loader preference for single-row only.
+    void syncSingleRowPosterPresentation(bool forceReloadIcons = false);
+    bool preferPosterForMode(AppLayoutMode mode) const;
+    void beginLayoutArtPrefetch();
+    void beginVisibleArtWait();
+    void commitPendingLayoutVisuals();
+    // Grid→single-row slim morph: reuse icons, no completeDisplayModelApply /
+    // neighbor art burst. False → full rebuild (edit / line→grid / mismatch).
+    bool tryCommitInPlaceLayoutMorph(std::uint64_t focused);
+    void updateLayoutTransition(float dt);
+    void layoutPrefetchWindow(int& page, int& pageSize) const;
     void configureDynamicLineNavigation();
     void cycleSortMode();
     std::string sortModeLabel() const;
@@ -383,6 +467,11 @@ private:
 
     GridModel    m_model;
     nxui::Theme  m_theme;
+    // HUD / sidebar / hint colors — usually mirrors m_theme, but may swap to
+    // Theme::dark()/light() while a full-opacity hero needs contrast.
+    nxui::Theme  m_homeChrome;
+    enum class HeroChromeAdapt : std::uint8_t { Off, ForceDark, ForceLight };
+    HeroChromeAdapt m_heroChromeAdapt = HeroChromeAdapt::Off;
     switchu::services::ClockService m_clockService;
     switchu::services::AutoThemeService m_autoTheme;
     float                    m_autoThemeCheckTimer = 0.f;
@@ -407,6 +496,7 @@ private:
     std::shared_ptr<IconGrid>          m_grid;
     std::shared_ptr<SelectionCursor>   m_cursor;
     std::shared_ptr<DateTimeWidget>    m_clock;
+    std::shared_ptr<LayoutFlipButton>  m_layoutFlip;
     std::shared_ptr<BatteryWidget>     m_battery;
     std::shared_ptr<TitlePillWidget>   m_titlePill;
     std::shared_ptr<PageIndicator>     m_pageIndicator;
@@ -457,6 +547,7 @@ private:
     AccessibilityManager m_accessibility;
     std::future<void>    m_audioFuture;
     std::future<void>    m_configSaveFuture;
+    bool                 m_configSaveDeferred = false;
     std::future<void>    m_themeDeleteFuture;
     bool                 m_audioStarted = false;
     bool  m_audioPlaybackRestorePending = false;
@@ -479,10 +570,14 @@ private:
 
     struct SteamGridDbApplyProgressShared {
         std::mutex mutex;
+        std::atomic<bool> cancelRequested{false};
         std::string message;
         float progress01 = 0.f;
         std::uint64_t revision = 0;
     };
+
+    void raiseProgressDialogAboveOverlays();
+    void cancelSteamGridDbApply();
 
     nxui::ThreadPool m_threadPool{2};
     SidebarManager  m_sidebar;
@@ -529,7 +624,31 @@ private:
     std::vector<uint64_t> m_layoutSlots;
     std::unordered_map<std::uint64_t, switchu::widgets::WidgetSize> m_gameSizes;
     bool m_layoutDirty = false;
-    std::unordered_map<std::uint64_t, std::unique_ptr<nxui::Texture>> m_folderCoverCache;
+    struct FolderCoverCacheEntry {
+        std::unique_ptr<nxui::Texture> texture;
+        bool preferPoster = false;
+    };
+    std::unordered_map<std::uint64_t, FolderCoverCacheEntry> m_folderCoverCache;
+    std::unordered_map<std::uint64_t, std::unique_ptr<nxui::Texture>> m_folderPeekCache;
+    // Baked 2×3 folder mosaics (GPU), keyed by folderId.
+    std::unordered_map<std::uint32_t, std::unique_ptr<nxui::Texture>> m_folderPeekCompositeCache;
+    struct FolderPeekCompositeBakeState {
+        std::uint32_t folderId = 0;
+        switchu::folders::Folder folderSnapshot{};
+        switchu::folders::peek_composite::BakedImage image;
+        std::atomic<bool> cancelled{false};
+        bool failed = false;
+        long elapsedMs = 0;
+    };
+    struct PendingFolderPeekCompositeBake {
+        std::shared_ptr<FolderPeekCompositeBakeState> state;
+        std::future<void> future;
+    };
+    std::vector<PendingFolderPeekCompositeBake> m_pendingFolderPeekComposites;
+    std::unordered_set<std::uint32_t> m_folderPeekCompositeBakeQueued;
+    // titleIds whose peek pointers currently alias a streamer/grid Texture
+    // (not owned by m_folderPeekCache). Must be promoted before art swaps.
+    std::unordered_set<std::uint64_t> m_folderPeekBorrowed;
     switchu::folders::FolderStore m_folderStore;
     switchu::widgets::WidgetStore m_widgetStore;
     std::uint64_t m_recentWidgetAssetTitleId = 0;
@@ -592,6 +711,51 @@ private:
     bool m_folderOriginStale = false;
     bool m_gridSliding = false;
 
+    // Prefetch correct icon/poster art, then morph (or reveal).
+    enum class LayoutTransitionKind : std::uint8_t {
+        Idle,
+        PrefetchThenMorph,
+        WaitForVisibleArt,
+    };
+    struct LayoutTransitionState {
+        LayoutTransitionKind kind = LayoutTransitionKind::Idle;
+        AppLayoutMode visualMode = AppLayoutMode::Grid;
+        std::uint64_t focusId = 0;
+        bool editing = false;
+        float elapsed = 0.f;
+        // Prefetch finished / fit-cache armed — ready to morph.
+        bool commitNextFrame = false;
+    };
+    LayoutTransitionState m_layoutTransition{};
+    // Focused title only — neighbours lazy-load after the morph.
+    static constexpr float kLayoutArtPrefetchTimeout = 0.70f;
+    bool m_pendingNeighborArtBurst = false;
+    // Spread remaining folder peek/cover decodes across frames after morph.
+    bool m_pendingFolderCoverFill = false;
+    int m_pendingFolderCoverNext = 0; // legacy linear cursor (unused by outward fill)
+    // Folders within this radius of focus were already warmed; fill skips them.
+    // Negative = warm nothing yet (fill every folder, including focus).
+    int m_pendingFolderCoverSkipRadius = 4;
+    // Per-slot "already applied" so outward fill + focus-warm do not redo work
+    // (including empty folders that legitimately have zero peeks).
+    std::vector<std::uint8_t> m_folderCoverFillDone;
+    int m_lastFolderPeekWarmFocus = -1;
+    // Fast-return: arm folder peek fill after leave-splash handoff, not in buildGrid.
+    bool m_armFolderCoverFillAfterSplash = false;
+    // Extra frames after splash before peeks start (keeps first input frames free).
+    int m_folderCoverFillDelayFrames = 0;
+    // Keep D-pad/touch focus on the flip control across a view toggle.
+    bool m_retainLayoutFlipFocus = false;
+    void placeLayoutFlipButton();
+    void wireLayoutFlipNavigation();
+    void restoreLayoutFlipFocusIfNeeded();
+    // Cursor snap when a layout morph just finished (index remap safety).
+    bool m_wasLayoutMorphing = false;
+    // Suppress neighbour hero/logo preload until morph + a beat of input settle.
+    float m_deferBackdropPreloadSec = 0.f;
+    // After HOME return: keep paced hero prefetch for a few seconds past defer.
+    float m_returnPreloadPaceSec = 0.f;
+
     int  m_touchHitIndex     = -1;
     bool m_touchOnFocused    = false;
     bool m_touchEditDragActive = false;
@@ -607,6 +771,9 @@ private:
     AppConfig m_config;
     SteamGridDbManager m_steamGridDb;
     std::future<SteamGridDbManager::BrowseResult> m_steamGridDbBrowseFuture;
+    std::vector<std::future<SteamGridDbManager::BrowseResult>> m_steamGridDbRetiredBrowses;
+    std::uint64_t m_steamGridDbBrowseGeneration = 0;
+    std::uint64_t m_steamGridDbBrowseFutureGeneration = 0;
     std::future<SteamGridDbManager::ApplyResult> m_steamGridDbApplyFuture;
     std::shared_ptr<SteamGridDbApplyProgressShared> m_steamGridDbApplyProgress;
     std::uint64_t m_steamGridDbApplyProgressUiRevision = 0;
@@ -700,3 +867,4 @@ private:
     static constexpr float kReturnFadeInDur = 0.22f;
     static constexpr float kTutorialStartupFadeDur = 0.34f;
 };
+
