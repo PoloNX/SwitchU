@@ -613,6 +613,10 @@ void ThemeShopScreen::beginIconPackTintDraft() {
 }
 
 void ThemeShopScreen::discardIconPackTintDraft() {
+    // Remember draft (toggle + sliders) in Theme Shop when closing with B.
+    // Do not emit to HOME chrome - that still waits for Apply.
+    if (m_draftTintActive && !m_draftTintPackId.empty())
+        m_iconPackTints[m_draftTintPackId] = m_draftTint;
     m_draftTintActive = false;
     m_draftTintPackId.clear();
     m_draftTint = {};

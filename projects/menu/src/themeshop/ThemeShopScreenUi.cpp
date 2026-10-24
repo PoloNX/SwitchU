@@ -803,16 +803,9 @@ void ThemeShopScreen::openDetail() {
     m_detailButtonIndex = 0;
     m_detailScreenshotIndex = 0;
     m_detailPreviewButtonIndex = 0;
-    // Community gallery OR any Installed/Icons cover can open fullscreen.
-    const bool hasPreview = isCommunityTab()
-        ? detailScreenshotCount() > 0
-        : (selectedThemeShopEntry() && !selectedThemeShopEntry()->coverPath.empty());
-    // Colour icon packs: land on Custom tint first. Starting on Preview made Up/Down
-    // bounce Preview <-> Apply and skip the tint controls entirely.
-    if (isIconsTab() && selectedIconPackIsColour())
-        m_detailFocusArea = DetailFocusArea::TintToggle;
-    else
-        m_detailFocusArea = hasPreview ? DetailFocusArea::Preview : DetailFocusArea::Buttons;
+    // Always land on Apply. Icons: Up → tint, Left → preview. Installed /
+    // Community: Up → preview. Down from preview/tint returns here.
+    m_detailFocusArea = DetailFocusArea::Buttons;
     m_focusArea = FocusArea::Content;
 
     beginIconPackTintDraft();
@@ -1288,11 +1281,10 @@ bool ThemeShopScreen::handleCustomNavUp() {
             ? detailScreenshotCount() > 0
             : (selectedThemeShopEntry() && !selectedThemeShopEntry()->coverPath.empty());
         if (selectedIconPackIsColour()) {
-            // Tint chain owns the middle of the sheet. Preview sits above TintToggle;
-            // Apply sits below TintLight. Never jump Buttons -> Preview (skipped tint).
+            // Apply Up → Tint toggle; Left reaches Preview. Sliders stay on
+            // Right from the toggle / Up through hue→sat→light when already in them.
             if (m_detailFocusArea == DetailFocusArea::Buttons) {
-                m_detailFocusArea = selectedIconCustomTint() ? DetailFocusArea::TintLight
-                                                    : DetailFocusArea::TintToggle;
+                m_detailFocusArea = DetailFocusArea::TintToggle;
                 if (m_navSfxCb) m_navSfxCb();
             } else if (m_detailFocusArea == DetailFocusArea::TintLight) {
                 m_detailFocusArea = DetailFocusArea::TintSat;
@@ -1356,12 +1348,10 @@ bool ThemeShopScreen::handleCustomNavDown() {
     if (m_detailFullscreen)
         return true;
     if (m_detailOpen) {
-        if (m_detailFocusArea == DetailFocusArea::Preview) {
-            if (selectedIconPackIsColour()) {
-                m_detailFocusArea = DetailFocusArea::TintToggle;
-                if (m_navSfxCb) m_navSfxCb();
-                return true;
-            }
+        // Preview and Tint toggle both drop to Apply (sliders stay via Right
+        // from the toggle / Up through the tint chain).
+        if (m_detailFocusArea == DetailFocusArea::Preview
+            || m_detailFocusArea == DetailFocusArea::TintToggle) {
             if (detailButtonCount() > 0) {
                 m_detailFocusArea = DetailFocusArea::Buttons;
                 if (m_navSfxCb) m_navSfxCb();
@@ -1369,11 +1359,7 @@ bool ThemeShopScreen::handleCustomNavDown() {
             }
         }
         if (selectedIconPackIsColour()) {
-            if (m_detailFocusArea == DetailFocusArea::TintToggle) {
-                m_detailFocusArea = selectedIconCustomTint() ? DetailFocusArea::TintHue
-                                                    : DetailFocusArea::Buttons;
-                if (m_navSfxCb) m_navSfxCb();
-            } else if (m_detailFocusArea == DetailFocusArea::TintHue) {
+            if (m_detailFocusArea == DetailFocusArea::TintHue) {
                 m_detailFocusArea = DetailFocusArea::TintSat;
                 if (m_navSfxCb) m_navSfxCb();
             } else if (m_detailFocusArea == DetailFocusArea::TintSat) {
@@ -1434,7 +1420,14 @@ bool ThemeShopScreen::handleCustomNavLeft() {
         }
 
         if (m_detailFocusArea == DetailFocusArea::TintToggle) {
-            setIconCustomTintEnabled(false);
+            // Prefer returning to the preview over clearing the toggle; A toggles on/off.
+            const bool canPreview = selectedThemeShopEntry()
+                && !selectedThemeShopEntry()->coverPath.empty();
+            if (canPreview) {
+                m_detailFocusArea = DetailFocusArea::Preview;
+            } else {
+                setIconCustomTintEnabled(false);
+            }
             if (m_navSfxCb) m_navSfxCb();
             return true;
         }
@@ -1450,6 +1443,17 @@ bool ThemeShopScreen::handleCustomNavLeft() {
         }
         if (m_detailFocusArea == DetailFocusArea::TintLight) {
             nudgeIconTintLight(-1.f / 20.f);
+            if (m_navSfxCb) m_navSfxCb();
+            return true;
+        }
+
+        // Icons: Left from Apply → pack preview.
+        if (m_detailFocusArea == DetailFocusArea::Buttons
+            && m_detailButtonIndex == 0
+            && isIconsTab()
+            && selectedThemeShopEntry()
+            && !selectedThemeShopEntry()->coverPath.empty()) {
+            m_detailFocusArea = DetailFocusArea::Preview;
             if (m_navSfxCb) m_navSfxCb();
             return true;
         }
@@ -1510,6 +1514,22 @@ bool ThemeShopScreen::handleCustomNavRight() {
             int before = m_detailScreenshotIndex;
             stepDetailScreenshot(1);
             if (before != m_detailScreenshotIndex && m_navSfxCb) m_navSfxCb();
+            return true;
+        }
+        // Icons: Preview Right -> Custom tint (when the pack supports it).
+        if (isIconsTab() && m_detailFocusArea == DetailFocusArea::Preview
+            && selectedIconPackIsColour()) {
+            m_detailFocusArea = DetailFocusArea::TintToggle;
+            if (m_navSfxCb) m_navSfxCb();
+            return true;
+        }
+        // Icons: Apply Right stays on buttons; colour packs also allow
+        // Apply → Tint when only one primary action is focused.
+        if (isIconsTab() && m_detailFocusArea == DetailFocusArea::Buttons
+            && m_detailButtonIndex + 1 >= detailButtonCount()
+            && selectedIconPackIsColour()) {
+            m_detailFocusArea = DetailFocusArea::TintToggle;
+            if (m_navSfxCb) m_navSfxCb();
             return true;
         }
 
