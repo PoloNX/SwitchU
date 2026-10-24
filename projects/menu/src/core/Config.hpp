@@ -48,8 +48,7 @@ struct AppConfig {
     bool  steamGridDbShowInDynamicLine = true;
     bool  steamGridDbShowInFolders = true;
     // Tall SteamGridDB portrait covers (Poster) on the single-row carousel only.
-    // Driven by the Change View button (grid -> posters -> squares), not by a
-    // settings toggle.
+    // Settings → SteamGridDB toggle; Change View stays grid ↔ single-row.
     bool  steamGridDbShowPosterInDynamicLine = true;
     // Logo overlay above / beside the single-row carousel.
     bool  steamGridDbShowLogoInDynamicLine = true;
@@ -60,9 +59,9 @@ struct AppConfig {
     int sortMode = 0;
     // A-Z / Recent also reorder applications that use a larger tile size.
     bool sortLargeTiles = true;
-    // Colour HOME chrome icons: optional contrast follow (used with single-row heroes).
-    // Off by default so a fresh install shows each pack's authored artwork.
-    bool iconContrastAdapt = false;
+    // Colour HOME chrome icons follow single-row hero light/dark chrome when on
+    // (Theme > Options). Default on — matches pre-PoloNX enjoyment.
+    bool iconContrastAdapt = true;
     // Per-pack Photoshop-style HSL adjust (0.5 pivots = leave original).
     struct IconPackTint {
         bool enabled = false;

@@ -1,5 +1,4 @@
 #include "AppletButton.hpp"
-#include "AdaptiveIconLoad.hpp"
 #include <nxui/core/Renderer.hpp>
 #include <algorithm>
 
@@ -54,23 +53,14 @@ void AppletButton::syncIconTint() {
         return;
     }
 
-    // Adaptive contrast (Theme > Options): keep the pack's authored colours
-    // unless the glyph would be lost against the chrome plate behind it.
+    // Theme > Options > Adaptive icon contrast: when armed (single-row + hero),
+    // colour packs follow HOME chrome textPrimary — same light/dark flip as
+    // mono glyphs. Off / no hero keeps authored (or custom-tint) pixels.
     if (m_colourContrastAdapt && m_iconContrastMask && m_iconContrastMask->valid()
         && !m_iconAdaptive) {
-        const nxui::Color plate = baseColor();
-        const float plateLuma =
-            0.2126f * plate.r + 0.7152f * plate.g + 0.0722f * plate.b;
-        const switchu::icons::ColourIconForce force =
-            switchu::icons::resolveColourIconContrast(m_iconMeanLuma, plateLuma, m_lastForce);
-        m_lastForce = force;
-        if (force != switchu::icons::ColourIconForce::None) {
-            m_drawContrastMask = true;
-            m_iconTint = (force == switchu::icons::ColourIconForce::White)
-                ? nxui::Color::white()
-                : nxui::Color(0.04f, 0.04f, 0.05f, 1.f);
-            return;
-        }
+        m_drawContrastMask = true;
+        m_iconTint = m_iconChromeTint;
+        return;
     }
 
     // Custom tint is baked into the colour texture via HSL adjust on load —

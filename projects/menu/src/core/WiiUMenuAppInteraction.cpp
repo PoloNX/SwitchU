@@ -2088,33 +2088,30 @@ void WiiUMenuApp::updateCursor() {
         const bool movingLineFocus = m_grid
                                   && (m_grid->isDynamicLine() || morphing)
                                   && cur->tag() == "glossy_icon";
-        // Single-row (and morphing into it): the centred tile is the focus cue —
-        // hide the blue selection ring on titles. Keep it for chrome / grid.
-        const bool hideRingForLine = m_grid && cur->tag() == "glossy_icon"
-            && !m_editMode
-            && (m_grid->isDynamicLine()
-                || (morphing && m_appLayoutMode == AppLayoutMode::DynamicLine));
-        if (hideRingForLine) {
-            m_cursor->setVisible(false);
-            // Ring is hidden on the carousel, but keep the invisible cursor
-            // parked on the centred tile. Otherwise the first chrome focus
-            // (Change View / battery) eases from the last grid-cell position.
-            if (m_grid->isDynamicLine() || morphing) {
-                const nxui::Rect lineFocus = m_grid->focusedDisplayRect();
-                if (lineFocus.width > 1.f && lineFocus.height > 1.f)
-                    m_cursor->moveTo(lineFocus.expanded(4.f), 0.f);
-            }
-            if (m_grid->isDynamicLine())
-                syncSteamGridDbLogoArea();
-            return;
-        }
+        // Single-row keeps the outline ring: centred scale alone is not a
+        // focus cue (chrome above can own focus while a tile stays large).
         nxui::Rect fr = movingLineFocus
             ? m_grid->focusedDisplayRect()
             : cur->focusRect();
+        float corner = m_theme.cursorCornerRadius;
         if (m_editMode && m_editGhostIcon && m_grid) {
             fr = m_grid->gridSpanRect(m_editTargetIndex,
                                       m_editGhostIcon->gridSpanColumns(),
                                       m_editGhostIcon->gridSpanRows());
+        } else if (movingLineFocus) {
+            // GlossyIcon also applies focusScale at draw time; without it the
+            // blue ring sits inside tall posters (especially folder covers).
+            auto* icon = static_cast<GlossyIcon*>(cur);
+            const float fs = icon->focusScaleValue();
+            if (fs > 1.001f) {
+                const float w = fr.width * fs;
+                const float h = fr.height * fs;
+                fr.x += (fr.width - w) * 0.5f;
+                fr.y += (fr.height - h) * 0.5f;
+                fr.width = w;
+                fr.height = h;
+            }
+            corner = icon->cornerRadius();
         }
         // The app carousel already owns the motion curve; attaching the ring
         // directly avoids a second easing curve that would visibly lag behind.
@@ -2123,7 +2120,13 @@ void WiiUMenuApp::updateCursor() {
         const bool carouselScrolling = movingLineFocus
                                     && (morphing || m_grid->isDynamicLineScrolling());
         const float dur = (carouselScrolling || morphJustEnded) ? 0.f : 0.2f;
-        m_cursor->moveTo(fr.expanded(4.f), dur);
+        if (movingLineFocus) {
+            // Card rect only — SelectionCursor expands outward like the green
+            // suspended ring (no pre-pad that insets into poster art).
+            m_cursor->moveTo(fr, corner, dur);
+        } else {
+            m_cursor->moveTo(fr.expanded(4.f), dur);
+        }
         m_cursor->setVisible(true);
         if (m_grid && m_grid->isDynamicLine())
             syncSteamGridDbLogoArea();

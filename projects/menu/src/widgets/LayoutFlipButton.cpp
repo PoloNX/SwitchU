@@ -37,10 +37,10 @@ void LayoutFlipButton::setTheme(const nxui::Theme* theme) {
     setHighlightColor(theme->panelHighlight);
 }
 
-void LayoutFlipButton::setFlipTarget(FlipTarget target) {
-    if (m_flipTarget == target)
+void LayoutFlipButton::setSingleRowActive(bool singleRow) {
+    if (m_singleRow == singleRow)
         return;
-    m_flipTarget = target;
+    m_singleRow = singleRow;
     refreshAccessibility();
 }
 
@@ -51,27 +51,43 @@ void LayoutFlipButton::ensureIcon(nxui::GpuDevice& gpu, nxui::Renderer& ren,
     m_iconLoadAttempted = true;
     m_iconPath = path;
     m_icon = nxui::Texture();
+    m_iconContrastMask = nxui::Texture();
+    m_iconAdaptive = false;
     if (path.empty())
         return;
-    m_icon.loadFromFile(gpu, ren, path, 128);
+    float meanLuma = 0.5f;
+    if (!switchu::icons::loadMaybeAdaptiveIcon(m_icon, gpu, ren, path,
+                                               &m_iconAdaptive, 128,
+                                               &meanLuma, &m_iconContrastMask,
+                                               m_hslAdjust.enabled ? &m_hslAdjust : nullptr)) {
+        m_iconAdaptive = false;
+        return;
+    }
+    m_iconMeanLuma = meanLuma;
+}
+
+void LayoutFlipButton::reloadIcon(nxui::GpuDevice& gpu, nxui::Renderer& ren,
+                                  const std::string& path) {
+    m_iconLoadAttempted = false;
+    m_iconAdaptive = false;
+    ensureIcon(gpu, ren, path);
+}
+
+void LayoutFlipButton::setColourIconContrast(bool enabled) {
+    m_colourContrastAdapt = enabled;
+}
+
+void LayoutFlipButton::setIconHslAdjust(const switchu::icons::HslAdjust& adj) {
+    m_hslAdjust = adj;
 }
 
 void LayoutFlipButton::refreshAccessibility() {
     auto& i18n = nxui::I18n::instance();
     setAccessibilityLabel(i18n.tr("hint.switch_layout", "Switch view"));
     setAccessibilityRole(i18n.tr("accessibility.roles.button", "button"));
-    switch (m_flipTarget) {
-        case FlipTarget::Grid:
-            setAccessibilityHint(i18n.tr("layout.flip_to_line", "Switch to single-row view."));
-            break;
-        case FlipTarget::LineSquares:
-            setAccessibilityHint(i18n.tr("layout.flip_to_posters",
-                                         "Switch to single-row poster view."));
-            break;
-        case FlipTarget::LinePosters:
-            setAccessibilityHint(i18n.tr("layout.flip_to_grid", "Switch to grid view."));
-            break;
-    }
+    setAccessibilityHint(m_singleRow
+        ? i18n.tr("layout.flip_to_grid", "Switch to grid view.")
+        : i18n.tr("layout.flip_to_line", "Switch to single-row view."));
 }
 
 void LayoutFlipButton::drawFallbackIcon(nxui::Renderer& ren, const nxui::Color& ink) {
@@ -112,19 +128,38 @@ void LayoutFlipButton::drawFallbackIcon(nxui::Renderer& ren, const nxui::Color& 
     }
 }
 
-void LayoutFlipButton::onContentRender(nxui::Renderer& ren) {
+void LayoutFlipButton::resolveDrawStyle(nxui::Color& ink,
+                                        const nxui::Texture*& tex) const {
     const float a = opacity();
-    // White+alpha masks tint cleanly: dark themes → light icons, light → dark.
-    const nxui::Color ink = m_theme
-        ? m_theme->textPrimary.withAlpha(0.92f * a)
-        : nxui::Color::white().withAlpha(0.92f * a);
+    tex = m_icon.valid() ? &m_icon : nullptr;
 
-    if (m_icon.valid()) {
+    if (m_iconAdaptive && m_theme) {
+        ink = m_theme->textPrimary.withAlpha(0.92f * a);
+        return;
+    }
+
+    // Single-row + hero: follow HOME chrome like mono glyphs.
+    if (m_colourContrastAdapt && !m_iconAdaptive && m_iconContrastMask.valid() && m_theme) {
+        tex = &m_iconContrastMask;
+        ink = m_theme->textPrimary.withAlpha(0.92f * a);
+        return;
+    }
+
+    // Custom tint is baked into m_icon via HSL adjust on load.
+    ink = nxui::Color::white().withAlpha(0.92f * a);
+}
+
+void LayoutFlipButton::onContentRender(nxui::Renderer& ren) {
+    nxui::Color ink = nxui::Color::white();
+    const nxui::Texture* tex = nullptr;
+    resolveDrawStyle(ink, tex);
+
+    if (tex && tex->valid()) {
         nxui::Rect c = glassContentRect();
         const float edge = std::min(c.width, c.height) * 0.92f;
         const float cx = c.x + c.width * 0.5f;
         const float cy = c.y + c.height * 0.5f;
-        ren.drawTexture(&m_icon,
+        ren.drawTexture(tex,
                         {cx - edge * 0.5f, cy - edge * 0.5f, edge, edge},
                         ink);
         return;
