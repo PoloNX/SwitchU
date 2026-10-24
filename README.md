@@ -95,11 +95,11 @@ Build outputs are generated under `build/cross/aarch64/<mode>/`.
 - [x] Add Wii U-style folders
 - [ ] Improve theme shop UI and metadata
 - [ ] Add eshop and news applet  
-- [ ] Add a setting to switch the theme based on the time of day  
+- [x] Add a setting to switch the theme based on the time of day  
 - [x] Add a steamgriddb integration to get game banners and backgrounds  
 - [ ] Replace temporary icons with polished assets
-- [ ] Add more animations inspired by Wii U
-- [ ] Improve localization coverage
+- [x] Add more animations inspired by Wii U
+- [x] Improve localization coverage
 
 ## Help me
 

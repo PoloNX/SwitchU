@@ -909,8 +909,8 @@ static Result launchPendingHomeMenu() {
     g_pendingHomeMenuSource = nullptr;
     g_pendingHomeMenuStartedAt = 0;
 
-    // Enjoyment: keep #161's "close non-retail forwarders on HOME" undone so
-    // homebrew/forwarders suspend and can be resumed like before.
+    // Restore pre-#161 HOME behaviour: suspended homebrew/forwarders stay
+    // suspended and can be resumed instead of being force-closed on HOME.
     const auto status = buildSystemStatus();
     switchu::FileLog::log(
         "[%s] HOME foreground acquired; launching MainMenu status.running=%d suspended=0x%016lX",

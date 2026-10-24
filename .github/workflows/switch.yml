@@ -40,6 +40,21 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Get Atmosphere-libs revision
+        id: atmo_rev
+        shell: bash
+        run: echo "sha=$(git -C lib/Atmosphere-libs rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Atmosphere-libs cache
+        if: matrix.variant == 'sysmodule'
+        id: atmo-cache
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            lib/Atmosphere-libs/libstratosphere/lib
+            build/.stamps/libstratosphere
+          key: atmosphere-libs-v2-${{ steps.atmo_rev.outputs.sha }}
+
       - name: Install system dependencies
         shell: bash
         run: |
@@ -77,6 +92,15 @@ jobs:
 
       - name: Build SwitchU
         run: xmake -vD --root
+
+      - name: Save Atmosphere-libs cache
+        if: matrix.variant == 'sysmodule' && github.ref == 'refs/heads/master' && steps.atmo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: |
+            lib/Atmosphere-libs/libstratosphere/lib
+            build/.stamps/libstratosphere
+          key: atmosphere-libs-v2-${{ steps.atmo_rev.outputs.sha }}
 
       - name: Package install layout
         run: xmake install -o "dist/${{ matrix.variant }}/${{ matrix.mode }}" --root
