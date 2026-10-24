@@ -41,6 +41,8 @@ public:
         bool removable = false;
         // Colour glyph pack (spectrum badge + custom tint controls in detail).
         bool colourPack = false;
+        // Theme ships sidebar/chrome icons (Community/Installed badge).
+        bool hasIcons = false;
     };
 
     ThemeShopScreen();

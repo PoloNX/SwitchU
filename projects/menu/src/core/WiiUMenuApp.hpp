@@ -327,6 +327,8 @@ private:
     void refreshThemeShopState();
     std::vector<ThemeShopScreen::ThemeShopEntry> buildThemeShopEntries();
     std::vector<ThemeShopScreen::ThemeShopEntry> buildIconPackEntries();
+    std::string resolvedIconPackId() const;
+    std::string iconsDirectoryForPack(const std::string& packId) const;
     void applyIconPack(const std::string& packId);
     void syncColourIconContrast();
     void reloadSidebarIcons();

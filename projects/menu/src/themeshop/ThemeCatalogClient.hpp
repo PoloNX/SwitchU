@@ -23,6 +23,7 @@ public:
         std::string manifest;
         std::string cover;
         std::vector<std::string> screenshots;
+        bool hasIcons = false;
     };
 
     struct Snapshot {

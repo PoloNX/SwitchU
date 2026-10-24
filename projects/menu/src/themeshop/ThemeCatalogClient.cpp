@@ -135,6 +135,48 @@ void ensureCoverFirst(ThemeCatalogClient::Entry& entry) {
     }
 }
 
+
+bool jsonDeclaresIcons(const nlohmann::json& manifest) {
+    auto iconsOf = [](const nlohmann::json& node) -> bool {
+        if (!node.is_object() && !node.is_string())
+            return false;
+        if (node.is_string())
+            return !node.get<std::string>().empty();
+        for (const char* key : {"basePath", "base_path", "path", "base", "directory", "dir"}) {
+            auto it = node.find(key);
+            if (it != node.end() && it->is_string() && !it->get<std::string>().empty())
+                return true;
+        }
+        auto filesIt = node.find("files");
+        if (filesIt != node.end() && filesIt->is_array() && !filesIt->empty())
+            return true;
+        return false;
+    };
+
+    auto iconsIt = manifest.find("icons");
+    if (iconsIt != manifest.end() && iconsOf(*iconsIt))
+        return true;
+    auto themeIt = manifest.find("theme");
+    if (themeIt != manifest.end() && themeIt->is_object()) {
+        auto themeIcons = themeIt->find("icons");
+        if (themeIcons != themeIt->end() && iconsOf(*themeIcons))
+            return true;
+    }
+    return false;
+}
+
+bool manifestDeclaresIcons(const std::string& catalogUrl, const ThemeCatalogClient::Entry& entry) {
+    if (entry.manifest.empty())
+        return false;
+    std::size_t slash = catalogUrl.find_last_of('/');
+    if (slash == std::string::npos)
+        return false;
+    const std::string manifestUrl = catalogUrl.substr(0, slash + 1) + trimSlashes(entry.manifest);
+    const std::string manifestText = themeshop::http::getText(manifestUrl);
+    nlohmann::json manifest = nlohmann::json::parse(manifestText);
+    return jsonDeclaresIcons(manifest);
+}
+
 struct PreviewData {
     std::string cover;
     std::vector<std::string> screenshots;
@@ -307,6 +349,14 @@ ThemeCatalogClient::Snapshot ThemeCatalogClient::loadCatalog(const std::string& 
         readStringOpt(item, "screenshot", screenshot);
         appendUniqueString(entry.screenshots, screenshot);
 
+        // Catalog may advertise icons; otherwise peek theme.json (rare today).
+        if (item.contains("hasIcons") && item["hasIcons"].is_boolean())
+            entry.hasIcons = item["hasIcons"].get<bool>();
+        else if (item.contains("has_icons") && item["has_icons"].is_boolean())
+            entry.hasIcons = item["has_icons"].get<bool>();
+        else if (item.contains("icons"))
+            entry.hasIcons = jsonDeclaresIcons(item);
+
         if (entry.id.empty() || entry.name.empty())
             continue;
         if (entry.manifest.empty())
@@ -320,6 +370,15 @@ ThemeCatalogClient::Snapshot ThemeCatalogClient::loadCatalog(const std::string& 
                     appendUniqueString(entry.screenshots, std::move(screenshotPath));
             } catch (const std::exception& ex) {
                 DebugLog::log("[themeshop] manifest preview fallback failed for %s: %s",
+                              entry.id.c_str(),
+                              ex.what());
+            }
+        }
+        if (!entry.hasIcons && !entry.manifest.empty()) {
+            try {
+                entry.hasIcons = manifestDeclaresIcons(url, entry);
+            } catch (const std::exception& ex) {
+                DebugLog::log("[themeshop] icon detect failed for %s: %s",
                               entry.id.c_str(),
                               ex.what());
             }

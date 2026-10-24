@@ -907,6 +907,14 @@ void ThemeShopScreen::updateCustomContent(float dt) {
     if (!usesCustomContentLayout())
         return;
 
+    // ZL/ZR (and L/R) flip pages like HOME — Installed / Community / Icons.
+    if (m_input && m_showing && !m_detailOpen && pageCount() > 1) {
+        if (m_input->isDown(nxui::Button::ZL) || m_input->isDown(nxui::Button::L))
+            stepPage(-1);
+        else if (m_input->isDown(nxui::Button::ZR) || m_input->isDown(nxui::Button::R))
+            stepPage(1);
+    }
+
     m_detailSheetAnim.update(std::min(dt, 0.03f));
     m_detailFullscreenAnim.update(std::min(dt, 0.03f));
 
@@ -2140,6 +2148,7 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
         bool previewAdaptive = false;
         bool activeTheme = false;
 
+        bool showIconsBadge = false;
         if (isCommunityTab()) {
             const auto& entry = m_communityEntries[(size_t)globalIndex];
             titleText = entry.name;
@@ -2148,6 +2157,7 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
             previewTexture = communityPreviewTexture(entry);
             previewPhase = communityPreviewPhase(entry);
             previewRequested = !entry.cover.empty();
+            showIconsBadge = entry.hasIcons;
         } else {
             const auto& entry = isIconsTab()
                 ? m_iconPackEntries[(size_t)globalIndex]
@@ -2160,6 +2170,7 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
             versionText = entry.version;
             activeTheme = entry.active;
             previewRequested = !entry.coverPath.empty();
+            showIconsBadge = !isIconsTab() && entry.hasIcons;
             if (previewRequested) {
                 const std::string packId = isIconsTab() ? entry.id : std::string{};
                 primeInstalledPreview(entry.coverPath, isIconsTab(), packId);
@@ -2230,13 +2241,24 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
                      0.66f);
         }
 
-        const bool showSpectrumBadge = isIconsTab() && !isCommunityTab()
+                const bool showSpectrumBadge = isIconsTab() && !isCommunityTab()
             && m_iconPackEntries[(size_t)globalIndex].colourPack;
         constexpr float kSpectrumBadgeW = 40.f;
         constexpr float kSpectrumBadgeH = 14.f;
         constexpr float kSpectrumBadgeGap = 8.f;
-        const float titleMaxW = showSpectrumBadge
-            ? std::max(40.f, card.width - 18.f - kSpectrumBadgeW - kSpectrumBadgeGap)
+        const std::string iconsBadgeLabel = i18n.tr("themeshop.badge.icons", "Icons");
+        const float iconsBadgeW = showIconsBadge
+            ? std::max(58.f, std::min(86.f, 28.f + measureTextCached(m_smallFont, iconsBadgeLabel).x * 0.62f))
+            : 0.f;
+        constexpr float kIconsBadgeH = 22.f;
+        constexpr float kIconsBadgeGap = 8.f;
+        float titleReserve = 0.f;
+        if (showSpectrumBadge)
+            titleReserve += kSpectrumBadgeW + kSpectrumBadgeGap;
+        if (showIconsBadge)
+            titleReserve += iconsBadgeW + kIconsBadgeGap;
+        const float titleMaxW = titleReserve > 0.f
+            ? std::max(40.f, card.width - 18.f - titleReserve)
             : (card.width - 18.f);
         std::string titleFitted = ellipsize(m_font, titleText, titleMaxW, 0.86f);
         const float titleY = preview.bottom() + 10.f;
@@ -2245,18 +2267,35 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
                      m_font,
                      m_theme->textPrimary.withAlpha(rowOpacity),
                      0.86f);
+        float badgeX = card.x + 10.f + measureTextCached(m_font, titleFitted).x * 0.86f + kSpectrumBadgeGap;
+        const float titleH = measureTextCached(m_font, titleFitted).y * 0.86f;
         if (showSpectrumBadge) {
-            const float titleW = measureTextCached(m_font, titleFitted).x * 0.86f;
-            const float titleH = measureTextCached(m_font, titleFitted).y * 0.86f;
             nxui::Rect spectrum = {
-                card.x + 10.f + titleW + kSpectrumBadgeGap,
+                badgeX,
                 titleY + std::max(0.f, (titleH - kSpectrumBadgeH) * 0.5f),
                 kSpectrumBadgeW,
                 kSpectrumBadgeH
             };
             drawSpectrumBadge(ren, spectrum, rowOpacity);
+            badgeX = spectrum.right() + kIconsBadgeGap;
         }
-        std::string subtitleFitted = ellipsize(m_smallFont, subtitleText, card.width - 18.f, 0.76f);
+        if (showIconsBadge) {
+            nxui::Rect iconsChip = {
+                showSpectrumBadge ? badgeX : (card.x + 10.f + measureTextCached(m_font, titleFitted).x * 0.86f + kIconsBadgeGap),
+                titleY + std::max(0.f, (titleH - kIconsBadgeH) * 0.5f),
+                iconsBadgeW,
+                kIconsBadgeH
+            };
+            drawChip(ren,
+                     m_smallFont,
+                     iconsChip,
+                     iconsBadgeLabel,
+                     nxui::Color(0.12f, 0.28f, 0.48f, 0.38f),
+                     nxui::Color(0.45f, 0.72f, 1.f, 0.48f),
+                     m_theme->textPrimary,
+                     rowOpacity,
+                     0.62f);
+        }std::string subtitleFitted = ellipsize(m_smallFont, subtitleText, card.width - 18.f, 0.76f);
         ren.drawText(subtitleFitted,
                      {card.x + 10.f, card.bottom() - 30.f},
                      m_smallFont,
