@@ -773,8 +773,17 @@ void ThemeShopScreen::primeInstalledPreview(const std::string& previewPath,
 
     {
         std::lock_guard<std::mutex> lk(slot->mutex);
-        if (slot->url != previewPath || slot->adaptiveRequested != adaptiveLoad
-            || slot->hslKey != hslKey || slot->maxSide != decodeSide) {
+        const bool identityChanged = slot->url != previewPath
+            || slot->adaptiveRequested != adaptiveLoad
+            || slot->hslKey != hslKey;
+        // Never downgrade a Ready/in-flight higher-res decode (grid 512 after
+        // fullscreen 720 was thrashing waitIdle every open/close).
+        const bool needsUpgrade = !identityChanged
+            && decodeSide > slot->maxSide
+            && (slot->phase == PreviewPhase::Ready
+                || slot->phase == PreviewPhase::Failed
+                || slot->phase == PreviewPhase::Idle);
+        if (identityChanged || needsUpgrade) {
             slot->url = previewPath;
             slot->adaptiveRequested = adaptiveLoad;
             slot->hslKey = hslKey;
@@ -791,6 +800,8 @@ void ThemeShopScreen::primeInstalledPreview(const std::string& previewPath,
             slot->future = std::future<void>();
             slot->texture = nxui::Texture();
             slot->contrastMask = nxui::Texture();
+        } else if (slot->maxSide < decodeSide) {
+            slot->maxSide = decodeSide;
         }
         if (slot->phase == PreviewPhase::Ready || slot->phase == PreviewPhase::Failed
             || slot->phase == PreviewPhase::Loading || slot->phase == PreviewPhase::Downloaded)
@@ -1061,7 +1072,10 @@ void ThemeShopScreen::trimInstalledPreviewCache() {
         }
     }
 
-    for (auto it = m_installedPreviewCache.begin(); it != m_installedPreviewCache.end();) {
+    constexpr int kMaxDropsPerCall = 2;
+    int erased = 0;
+    for (auto it = m_installedPreviewCache.begin();
+         it != m_installedPreviewCache.end() && erased < kMaxDropsPerCall; ) {
         if (retain.find(it->first) != retain.end()) {
             ++it;
             continue;
@@ -1081,6 +1095,7 @@ void ThemeShopScreen::trimInstalledPreviewCache() {
             it->second->contrastMask = nxui::Texture();
         }
         it = m_installedPreviewCache.erase(it);
+        ++erased;
     }
 }
 
@@ -1341,11 +1356,12 @@ void ThemeShopScreen::trimCommunityPreviewCache() {
     if (m_communityPreviewCache.empty())
         return;
 
-    // Soft LRU: keep a generous Ready set so selection changes don't thrash
-    // GPU uploads (that hitch is what felt like "a little lag" while browsing).
-    // Still prefer the visible page ±1, then fill remaining budget with other Ready slots.
-    // Keep one page of GPU textures on Community; free all when away (Installed needs room).
-    const std::size_t kMaxReadyCommunityPreviews = isCommunityTab() ? 12u : 0u;
+    // Soft LRU: keep a wide Ready set on Community so page flips don't
+    // waitIdle-thrash. Away from Community, drip-release (1-2/frame) so tab
+    // cycling stays smooth instead of nuking the whole cache at once.
+    const std::size_t kMaxReadyCommunityPreviews = isCommunityTab() ? 28u : 0u;
+    // Texture::~Texture waitIdle's - never drop more than a couple per tick.
+    const int kMaxDropsPerCall = isCommunityTab() ? 2 : 2;
 
     std::unordered_set<std::string> preferred;
     auto prefer = [&](const std::string& previewPath) {
@@ -1355,9 +1371,9 @@ void ThemeShopScreen::trimCommunityPreviewCache() {
     };
 
     if (isCommunityTab()) {
-        const int start = std::max(0, m_communityScrollRow * kCommunityPreviewGridCols);
+        const int start = std::max(0, (m_communityScrollRow - 1) * kCommunityPreviewGridCols);
         const int end = std::min((int)m_communityEntries.size(),
-                                 (m_communityScrollRow + 2) * kCommunityPreviewGridCols);
+                                 (m_communityScrollRow + 3) * kCommunityPreviewGridCols);
         for (int i = start; i < end; ++i)
             prefer(m_communityEntries[(size_t)i].cover);
 
@@ -1366,13 +1382,11 @@ void ThemeShopScreen::trimCommunityPreviewCache() {
             prefer(selected->cover);
             if (m_detailOpen) {
                 prefer(currentDetailCommunityPreviewPath());
-                for (const auto& shot : selected->screenshots)
-                    prefer(shot);
+                // Pin only the visible screenshot, not the whole gallery.
             }
         }
     }
 
-    // Count Ready / pin preferred.
     std::size_t readyCount = 0;
     for (const auto& entry : m_communityPreviewCache) {
         if (!entry.second) continue;
@@ -1383,10 +1397,11 @@ void ThemeShopScreen::trimCommunityPreviewCache() {
     if (readyCount <= kMaxReadyCommunityPreviews)
         return;
 
-    // Drop non-preferred Ready textures until under budget. Never cancel in-flight.
     int erased = 0;
     for (auto it = m_communityPreviewCache.begin();
-         it != m_communityPreviewCache.end() && readyCount > kMaxReadyCommunityPreviews; ) {
+         it != m_communityPreviewCache.end()
+             && readyCount > kMaxReadyCommunityPreviews
+             && erased < kMaxDropsPerCall; ) {
         if (preferred.find(it->first) != preferred.end()) {
             ++it;
             continue;
@@ -1421,8 +1436,8 @@ void ThemeShopScreen::trimCommunityPreviewCache() {
     }
 
     if (erased > 0) {
-        DebugLog::log("[themeshop] preview cache soft-trim: erased=%d size=%zu",
-                      erased, m_communityPreviewCache.size());
+        DebugLog::log("[themeshop] preview cache soft-trim: erased=%d size=%zu ready=%zu",
+                      erased, m_communityPreviewCache.size(), readyCount);
     }
 }
 void ThemeShopScreen::syncCommunityCatalog(const ThemeCatalogClient::Snapshot& snapshot) {

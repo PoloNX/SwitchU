@@ -388,6 +388,8 @@ private:
     std::uint64_t m_communityRevision = 0;
     bool m_detailOpen = false;
     bool m_detailFullscreen = false;
+    // Snap blue ring to grid selection after detail close (no Apply->card lerp).
+    bool m_snapGridFocus = false;
     ContentFocusArea m_contentFocusArea = ContentFocusArea::Grid;
     DetailFocusArea m_detailFocusArea = DetailFocusArea::Buttons;
     int m_headerButtonIndex = 0;

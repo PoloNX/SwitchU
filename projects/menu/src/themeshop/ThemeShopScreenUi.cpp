@@ -821,6 +821,9 @@ void ThemeShopScreen::closeDetail() {
     m_detailSheetAnim.set(0.f, 0.16f, nxui::Easing::outCubic);
     m_detailFullscreen = false;
     m_detailFullscreenAnim.setImmediate(0.f);
+    // Avoid lerping the blue ring from the detail Apply button through the
+    // bottom-left card before settling on the real selection.
+    m_snapGridFocus = true;
     m_detailFocusArea = DetailFocusArea::Buttons;
     m_detailButtonIndex = 0;
     m_detailPreviewButtonIndex = 0;
@@ -958,9 +961,8 @@ void ThemeShopScreen::updateCustomContent(float dt) {
         m_lastCustomTabIndex = m_tabIndex;
         m_contentFocusArea = ContentFocusArea::Grid;
         closeDetail();
-        // Drop Community GPU textures when leaving that tab so Defaults can upload.
-        if (!isCommunityTab())
-            clearCommunityPreviewCache();
+        // Don't clearCommunityPreviewCache() here - nuking every texture waitIdle's
+        // and is the major hitch when cycling past Community. Soft-trim drips below.
     }
 
     if (currentEntryCount() <= 0) {
@@ -968,10 +970,6 @@ void ThemeShopScreen::updateCustomContent(float dt) {
             m_focusArea = FocusArea::Tabs;
         currentScrollRowRef() = 0;
         closeDetail();
-        if (isCommunityTab()) {
-            clearCommunityPreviewCache();
-            m_lastPreviewPrimeKey.clear();
-        }
         return;
     }
 
@@ -993,11 +991,11 @@ void ThemeShopScreen::updateCustomContent(float dt) {
             + "|" + std::to_string(m_detailOpen ? 1 : 0)
             + "|" + std::to_string(m_detailScreenshotIndex);
         if (primeKey != m_lastPreviewPrimeKey) {
-            // Trim only when page/detail set changes - not every focus nudge.
+            // Trim only when scroll changes - not every detail open/close
+            // (open/close was soft-trim thrashing covers <-> screenshots).
             const bool pageChanged = m_lastPreviewPrimeKey.empty()
                 || primeKey.find('|') == std::string::npos
                 || ([&]() {
-                       // Compare scroll row field (3rd segment).
                        auto field = [](const std::string& s, int idx) -> std::string {
                            std::size_t start = 0;
                            for (int i = 0; i < idx; ++i) {
@@ -1008,8 +1006,7 @@ void ThemeShopScreen::updateCustomContent(float dt) {
                            std::size_t p = s.find('|', start);
                            return s.substr(start, p == std::string::npos ? std::string::npos : p - start);
                        };
-                       return field(primeKey, 2) != field(m_lastPreviewPrimeKey, 2)
-                           || field(primeKey, 3) != field(m_lastPreviewPrimeKey, 3);
+                       return field(primeKey, 2) != field(m_lastPreviewPrimeKey, 2);
                    })();
             m_lastPreviewPrimeKey = std::move(primeKey);
             if (pageChanged)
@@ -1017,8 +1014,13 @@ void ThemeShopScreen::updateCustomContent(float dt) {
         }
         // Always re-attempt primes so Idle slots can start when a download slot frees.
         primeVisibleCommunityPreviews();
-    } else if (isInstalledTab() || isIconsTab()) {
-        trimInstalledPreviewCache();
+    } else {
+        // Away from Community: drip-release GPU textures so Installed/Icons can upload
+        // without a one-frame waitIdle storm.
+        if (!m_communityPreviewCache.empty())
+            trimCommunityPreviewCache();
+        if (isInstalledTab() || isIconsTab())
+            trimInstalledPreviewCache();
     }
 
     updateTintSliderAnalog(dt);
@@ -2195,6 +2197,8 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
     int end = std::min(count, start + kGridCols * kVisibleRows);
     int selected = std::max(0, currentSelectedIndex());
     float reveal = std::clamp(m_tabReveal.value(), 0.f, 1.f);
+    const float gridDetailT = std::clamp(m_detailSheetAnim.value(), 0.f, 1.f);
+    const bool gridFocusLive = !m_detailOpen && gridDetailT <= 0.01f;
 
     for (int globalIndex = start; globalIndex < end; ++globalIndex) {
         int localIndex = globalIndex - start;
@@ -2377,12 +2381,20 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
                      m_theme->textSecondary.withAlpha(0.92f * rowOpacity),
                      0.76f);
 
-        if (!m_detailOpen && m_focusArea == FocusArea::Content && m_contentFocusArea == ContentFocusArea::Grid && cardSelected) {
-            m_focusCursor.moveTo(card.expanded(2.f), 22.f, 0.08f);
+        // Hold grid focus until the detail close anim finishes, then snap once.
+        // Mid-close updates let the fading sheet steal the ring back to Apply.
+        if (gridFocusLive
+            && m_focusArea == FocusArea::Content && m_contentFocusArea == ContentFocusArea::Grid
+            && cardSelected) {
+            const float dur = m_snapGridFocus ? 0.f : 0.08f;
+            m_focusCursor.moveTo(card.expanded(2.f), 22.f, dur);
+            if (m_snapGridFocus)
+                m_snapGridFocus = false;
         }
     }
 
-    if (!m_detailOpen && m_focusArea == FocusArea::Content && m_contentFocusArea == ContentFocusArea::Header) {
+    if (gridFocusLive
+        && m_focusArea == FocusArea::Content && m_contentFocusArea == ContentFocusArea::Header) {
         auto headerButtons = headerButtonRects(layout, isCommunityTab());
         if (!headerButtons.empty()) {
             int headerIndex = std::clamp(m_headerButtonIndex, 0, (int)headerButtons.size() - 1);
@@ -2584,7 +2596,7 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
                      0.68f);
         }
 
-        if (m_detailFocusArea == DetailFocusArea::Preview) {
+        if (m_detailOpen && m_detailFocusArea == DetailFocusArea::Preview) {
             m_focusCursor.moveTo(preview.expanded(4.f), 20.f, 0.08f);
         }
     }
@@ -2658,13 +2670,13 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
                                    });
         }
 
-        if (m_detailFocusArea == DetailFocusArea::TintToggle) {
+        if (m_detailOpen && m_detailFocusArea == DetailFocusArea::TintToggle) {
             m_focusCursor.moveTo(tintLayout.togglePill.expanded(6.f), 18.f, 0.08f);
-        } else if (m_detailFocusArea == DetailFocusArea::TintHue && selectedIconCustomTint()) {
+        } else if (m_detailOpen && m_detailFocusArea == DetailFocusArea::TintHue && selectedIconCustomTint()) {
             m_focusCursor.moveTo(tintLayout.hueTrack.expanded(8.f), 18.f, 0.08f);
-        } else if (m_detailFocusArea == DetailFocusArea::TintSat && selectedIconCustomTint()) {
+        } else if (m_detailOpen && m_detailFocusArea == DetailFocusArea::TintSat && selectedIconCustomTint()) {
             m_focusCursor.moveTo(tintLayout.satTrack.expanded(8.f), 18.f, 0.08f);
-        } else if (m_detailFocusArea == DetailFocusArea::TintLight && selectedIconCustomTint()) {
+        } else if (m_detailOpen && m_detailFocusArea == DetailFocusArea::TintLight && selectedIconCustomTint()) {
             m_focusCursor.moveTo(tintLayout.lightTrack.expanded(8.f), 18.f, 0.08f);
         } else if (m_detailFocusArea == DetailFocusArea::TintHue
                    || m_detailFocusArea == DetailFocusArea::TintSat
@@ -2810,7 +2822,8 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
                      0.70f);
         }
 
-        m_focusCursor.moveTo(fullscreen.close.expanded(2.f), 20.f, 0.08f);
+        if (m_detailOpen)
+            m_focusCursor.moveTo(fullscreen.close.expanded(2.f), 20.f, 0.08f);
         return;
     }
 
@@ -2856,7 +2869,10 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
         || m_detailFocusArea == DetailFocusArea::TintHue
         || m_detailFocusArea == DetailFocusArea::TintSat
         || m_detailFocusArea == DetailFocusArea::TintLight;
-    if (!(m_detailFocusArea == DetailFocusArea::Preview && detailPreviewRequested)
+    // Only drive the ring while detail is actually open - during the close
+    // anim the grid snap (above) owns focus so we don't jump Apply -> card.
+    if (m_detailOpen
+        && !(m_detailFocusArea == DetailFocusArea::Preview && detailPreviewRequested)
         && !tintFocus
         && !buttons.empty() && !disableCommunityButtons) {
         m_focusCursor.moveTo(buttons[(size_t)std::clamp(m_detailButtonIndex, 0, (int)buttons.size() - 1)].expanded(2.f),
