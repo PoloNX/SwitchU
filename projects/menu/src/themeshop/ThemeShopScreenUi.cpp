@@ -807,7 +807,12 @@ void ThemeShopScreen::openDetail() {
     const bool hasPreview = isCommunityTab()
         ? detailScreenshotCount() > 0
         : (selectedThemeShopEntry() && !selectedThemeShopEntry()->coverPath.empty());
-    m_detailFocusArea = hasPreview ? DetailFocusArea::Preview : DetailFocusArea::Buttons;
+    // Colour icon packs: land on Custom tint first. Starting on Preview made Up/Down
+    // bounce Preview <-> Apply and skip the tint controls entirely.
+    if (isIconsTab() && selectedIconPackIsColour())
+        m_detailFocusArea = DetailFocusArea::TintToggle;
+    else
+        m_detailFocusArea = hasPreview ? DetailFocusArea::Preview : DetailFocusArea::Buttons;
     m_focusArea = FocusArea::Content;
 
     beginIconPackTintDraft();
@@ -1282,12 +1287,9 @@ bool ThemeShopScreen::handleCustomNavUp() {
         const bool canFocusPreview = isCommunityTab()
             ? detailScreenshotCount() > 0
             : (selectedThemeShopEntry() && !selectedThemeShopEntry()->coverPath.empty());
-        if (canFocusPreview && m_detailFocusArea == DetailFocusArea::Buttons) {
-            m_detailFocusArea = DetailFocusArea::Preview;
-            if (m_navSfxCb) m_navSfxCb();
-            return true;
-        }
         if (selectedIconPackIsColour()) {
+            // Tint chain owns the middle of the sheet. Preview sits above TintToggle;
+            // Apply sits below TintLight. Never jump Buttons -> Preview (skipped tint).
             if (m_detailFocusArea == DetailFocusArea::Buttons) {
                 m_detailFocusArea = selectedIconCustomTint() ? DetailFocusArea::TintLight
                                                     : DetailFocusArea::TintToggle;
@@ -1301,7 +1303,13 @@ bool ThemeShopScreen::handleCustomNavUp() {
             } else if (m_detailFocusArea == DetailFocusArea::TintHue) {
                 m_detailFocusArea = DetailFocusArea::TintToggle;
                 if (m_navSfxCb) m_navSfxCb();
+            } else if (m_detailFocusArea == DetailFocusArea::TintToggle && canFocusPreview) {
+                m_detailFocusArea = DetailFocusArea::Preview;
+                if (m_navSfxCb) m_navSfxCb();
             }
+        } else if (canFocusPreview && m_detailFocusArea == DetailFocusArea::Buttons) {
+            m_detailFocusArea = DetailFocusArea::Preview;
+            if (m_navSfxCb) m_navSfxCb();
         }
         return true;
     }
@@ -1348,10 +1356,17 @@ bool ThemeShopScreen::handleCustomNavDown() {
     if (m_detailFullscreen)
         return true;
     if (m_detailOpen) {
-        if (m_detailFocusArea == DetailFocusArea::Preview && detailButtonCount() > 0) {
-            m_detailFocusArea = DetailFocusArea::Buttons;
-            if (m_navSfxCb) m_navSfxCb();
-            return true;
+        if (m_detailFocusArea == DetailFocusArea::Preview) {
+            if (selectedIconPackIsColour()) {
+                m_detailFocusArea = DetailFocusArea::TintToggle;
+                if (m_navSfxCb) m_navSfxCb();
+                return true;
+            }
+            if (detailButtonCount() > 0) {
+                m_detailFocusArea = DetailFocusArea::Buttons;
+                if (m_navSfxCb) m_navSfxCb();
+                return true;
+            }
         }
         if (selectedIconPackIsColour()) {
             if (m_detailFocusArea == DetailFocusArea::TintToggle) {
