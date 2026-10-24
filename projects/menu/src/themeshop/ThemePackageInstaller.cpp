@@ -33,7 +33,7 @@ struct GitHubRepoSource {
     std::string rawRoot;
 };
 
-struct RemoteFile {
+struct PackageFile {
     std::string relativePath;
     std::string downloadUrl;
 };
@@ -254,9 +254,9 @@ bool parseRawGitHubUrl(const std::string& url, GitHubRepoSource& out) {
     return !(out.owner.empty() || out.repo.empty() || out.ref.empty());
 }
 
-std::vector<RemoteFile> listThemeFilesFromTree(const GitHubRepoSource& repo,
+std::vector<PackageFile> listThemeFilesFromTree(const GitHubRepoSource& repo,
                                                const std::string& themePath) {
-    std::vector<RemoteFile> files;
+    std::vector<PackageFile> files;
 
     const std::string apiUrl = "https://api.github.com/repos/" + repo.owner + "/" + repo.repo
         + "/git/trees/" + urlEncodeComponent(repo.ref) + "?recursive=1";
@@ -306,7 +306,7 @@ std::vector<RemoteFile> listThemeFilesFromTree(const GitHubRepoSource& repo,
 void listThemeFilesFromContentsRecursive(const GitHubRepoSource& repo,
                                          const std::string& rootPath,
                                          const std::string& currentPath,
-                                         std::vector<RemoteFile>& files) {
+                                         std::vector<PackageFile>& files) {
     const std::string apiUrl = "https://api.github.com/repos/" + repo.owner + "/" + repo.repo
         + "/contents/" + urlEncodePath(currentPath) + "?ref=" + urlEncodeComponent(repo.ref);
     const std::string body = themeshop::http::getText(apiUrl, {
@@ -357,9 +357,9 @@ void listThemeFilesFromContentsRecursive(const GitHubRepoSource& repo,
     }
 }
 
-std::vector<RemoteFile> listThemeFilesFromContents(const GitHubRepoSource& repo,
+std::vector<PackageFile> listThemeFilesFromContents(const GitHubRepoSource& repo,
                                                    const std::string& themePath) {
-    std::vector<RemoteFile> files;
+    std::vector<PackageFile> files;
 
     listThemeFilesFromContentsRecursive(repo, trimSlashes(themePath), trimSlashes(themePath), files);
     return files;
@@ -465,11 +465,11 @@ void collectManifestAssets(const nlohmann::json& root, std::vector<std::string>&
     }
 }
 
-std::vector<RemoteFile> listThemeFiles(const std::string& catalogUrl,
+std::vector<PackageFile> listThemeFiles(const std::string& catalogUrl,
                                        const std::string& themePath,
                                        const std::string& manifestPath,
                                        const ThemeCatalogClient::Entry& entry) {
-    std::vector<RemoteFile> files;
+    std::vector<PackageFile> files;
 
     GitHubRepoSource repo;
     if (parseRawGitHubUrl(catalogUrl, repo)) {
@@ -488,7 +488,7 @@ std::vector<RemoteFile> listThemeFiles(const std::string& catalogUrl,
     }
 
     auto hasRelativePath = [&](const std::string& relativePath) {
-        return std::any_of(files.begin(), files.end(), [&](const RemoteFile& file) {
+        return std::any_of(files.begin(), files.end(), [&](const PackageFile& file) {
             return file.relativePath == relativePath;
         });
     };
@@ -559,7 +559,7 @@ std::vector<RemoteFile> listThemeFiles(const std::string& catalogUrl,
     for (const auto& screenshot : entry.screenshots)
         addPreviewFile(screenshot);
 
-    std::sort(files.begin(), files.end(), [](const RemoteFile& lhs, const RemoteFile& rhs) {
+    std::sort(files.begin(), files.end(), [](const PackageFile& lhs, const PackageFile& rhs) {
         bool lhsManifest = lhs.relativePath == "theme.json";
         bool rhsManifest = rhs.relativePath == "theme.json";
         if (lhsManifest != rhsManifest)
@@ -585,6 +585,36 @@ void writeFileBinary(const std::string& path, const std::string& data) {
 }
 
 } // namespace
+
+std::vector<ThemePackageInstaller::RemoteFile>
+ThemePackageInstaller::listRemoteFolder(const std::string& catalogUrl,
+                                        const std::string& folderPath) {
+    std::vector<RemoteFile> files;
+    GitHubRepoSource repo;
+    if (!parseRawGitHubUrl(catalogUrl, repo))
+        return files;
+
+    const std::string folder = trimSlashes(folderPath);
+    try {
+        for (const auto& file : listThemeFilesFromTree(repo, folder))
+            files.push_back({file.relativePath, file.downloadUrl});
+    } catch (const std::exception& ex) {
+        DebugLog::log("[remote] tree listing failed for %s: %s", folder.c_str(), ex.what());
+    }
+    if (files.empty()) {
+        try {
+            for (const auto& file : listThemeFilesFromContents(repo, folder))
+                files.push_back({file.relativePath, file.downloadUrl});
+        } catch (const std::exception& ex) {
+            DebugLog::log("[remote] contents listing failed for %s: %s", folder.c_str(), ex.what());
+        }
+    }
+
+    std::sort(files.begin(), files.end(), [](const RemoteFile& lhs, const RemoteFile& rhs) {
+        return lhs.relativePath < rhs.relativePath;
+    });
+    return files;
+}
 
 std::string ThemePackageInstaller::destinationRootFor(const std::string& themeId, Mode mode) {
     (void)mode;
@@ -618,7 +648,7 @@ ThemePackageInstaller::Result ThemePackageInstaller::run(const std::string& cata
     if (!ensureDirectoryRecursive(result.destinationPath))
         throw std::runtime_error("Failed to prepare destination: " + result.destinationPath);
 
-    std::vector<RemoteFile> files = listThemeFiles(catalogUrl, themePath, manifestPath, entry);
+    const std::vector<PackageFile> files = listThemeFiles(catalogUrl, themePath, manifestPath, entry);
     if (files.empty())
         throw std::runtime_error("Theme package contains no downloadable files");
 

@@ -43,6 +43,13 @@ public:
         bool colourPack = false;
         // Theme ships sidebar/chrome icons (Community/Installed badge).
         bool hasIcons = false;
+        // Icon packs: present on the console / shipped with SwitchU / online.
+        bool installed = true;
+        bool builtin = false;
+        bool catalog = false;
+        // Remote preview for catalog packs that are not installed yet.
+        std::string coverUrl;
+        std::string description;
     };
 
     ThemeShopScreen();
@@ -72,6 +79,11 @@ public:
     void onNextTrack(VoidCb cb)          { m_nextTrackCb = std::move(cb); }
     void onThemeShopApply(StringCb cb)   { m_themeShopApplyCb = std::move(cb); }
     void onIconPackApply(StringCb cb)    { m_iconPackApplyCb = std::move(cb); }
+    void onIconPackDownload(StringCb cb) { m_iconPackDownloadCb = std::move(cb); }
+    void onIconPackDownloadApply(StringCb cb) { m_iconPackDownloadApplyCb = std::move(cb); }
+    void onIconPackDelete(StringCb cb)   { m_iconPackDeleteCb = std::move(cb); }
+    // Catalog icons finished (re)loading; the app rebuilds the pack list.
+    void onIconCatalogUpdated(VoidCb cb) { m_iconCatalogUpdatedCb = std::move(cb); }
     void onThemeShopDelete(StringCb cb)  { m_themeShopDeleteCb = std::move(cb); }
     void onThemeShopDownload(StringCb cb) { m_themeShopDownloadCb = std::move(cb); }
     void onThemeShopDownloadInstall(StringCb cb) { m_themeShopDownloadInstallCb = std::move(cb); }
@@ -127,6 +139,9 @@ public:
     const ThemeShopEntry* selectedThemeShopEntry() const;
     const ThemeCatalogClient::Entry* selectedCommunityThemeEntry() const;
     const ThemeCatalogClient::Entry* findCommunityThemeEntry(const std::string& themeId) const;
+    const std::vector<ThemeCatalogClient::IconEntry>& catalogIconEntries() const {
+        return m_catalogIconEntries;
+    }
     const std::string& communityCatalogUrl() const {
         return m_catalogClient.catalogUrl();
     }
@@ -309,6 +324,10 @@ private:
     VoidCb m_nextTrackCb;
     StringCb m_themeShopApplyCb;
     StringCb m_iconPackApplyCb;
+    StringCb m_iconPackDownloadCb;
+    StringCb m_iconPackDownloadApplyCb;
+    StringCb m_iconPackDeleteCb;
+    VoidCb m_iconCatalogUpdatedCb;
     StringCb m_themeShopDeleteCb;
     StringCb m_themeShopDownloadCb;
     StringCb m_themeShopDownloadInstallCb;
@@ -352,6 +371,7 @@ private:
     std::unordered_map<std::string, std::shared_ptr<PreviewImageState>> m_installedPreviewCache;
     std::vector<ThemeCatalogClient::Entry> m_allCommunityEntries;
     std::vector<ThemeCatalogClient::Entry> m_communityEntries;
+    std::vector<ThemeCatalogClient::IconEntry> m_catalogIconEntries;
     std::string m_communitySelectedId;
     std::string m_packageTransferThemeId;
     bool m_packageTransferInstallMode = false;

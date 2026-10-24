@@ -1041,6 +1041,14 @@ void ThemeShopScreen::syncCommunityCatalog(const ThemeCatalogClient::Snapshot& s
     m_communityTransferState = snapshot.loading;
     m_allCommunityEntries = snapshot.entries;
     m_communityRevision = snapshot.revision;
+    const bool iconsChanged = m_catalogIconEntries.size() != snapshot.icons.size()
+        || !std::equal(m_catalogIconEntries.begin(), m_catalogIconEntries.end(),
+                       snapshot.icons.begin(),
+                       [](const ThemeCatalogClient::IconEntry& lhs,
+                          const ThemeCatalogClient::IconEntry& rhs) {
+                           return lhs.id == rhs.id && lhs.version == rhs.version;
+                       });
+    m_catalogIconEntries = snapshot.icons;
 
     std::unordered_set<std::string> validUrls;
     for (const auto& entry : m_allCommunityEntries) {
@@ -1076,4 +1084,9 @@ void ThemeShopScreen::syncCommunityCatalog(const ThemeCatalogClient::Snapshot& s
 
     if (!hasId(m_communitySelectedId))
         m_communitySelectedId = m_communityEntries.front().id;
+
+    // The Icons tab lists catalog packs too, so let the app rebuild it once the
+    // icon list actually changed (install/remove/refresh).
+    if (iconsChanged && m_iconCatalogUpdatedCb)
+        m_iconCatalogUpdatedCb();
 }

@@ -784,6 +784,24 @@
       "missing": "Aucune capture",
       "prev": "Préc.",
       "next": "Suiv."
+    },
+    "icons": {
+      "title": "Packs d'icônes",
+      "subtitle": "Changez les icônes à la volée.",
+      "apply": "Appliquer le pack",
+      "remove": "Supprimer le pack",
+      "remove_confirm": "Supprimer ce pack d'icônes de la console ?",
+      "remove_failed": "Impossible de supprimer ce pack.",
+      "removed": "Pack d'icônes supprimé.",
+      "installed": "Pack d'icônes installé.",
+      "status_online": "Disponible en ligne",
+      "download_hint": "Installez pour télécharger ce pack sur la console.",
+      "remove_hint": "Pack téléchargé : il peut être retiré de la console.",
+      "dialog_title": "Téléchargement du pack",
+      "prepare_download": "Préparation du téléchargement...",
+      "finalize_download": "Finalisation de l'installation...",
+      "fallback": "Les icônes manquantes reprennent celles de Default.",
+      "apply_hint": "Appliquez pour changer les icônes tout de suite."
     }
   },
   "page": {

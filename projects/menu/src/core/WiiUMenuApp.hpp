@@ -399,6 +399,13 @@ private:
     std::string resolveActiveIconGlyphPath(const char* fileName) const;
     void startThemePackageTransfer(const ThemeCatalogClient::Entry& entry, bool installMode);
     void syncThemePackageTransfer();
+    // Icon shop: installs a catalog pack (reusing the theme transfer slot).
+    void startIconPackTransfer(const ThemeCatalogClient::IconEntry& entry, bool applyAfter);
+    const ThemeCatalogClient::IconEntry* findCatalogIconEntry(const std::string& packId) const;
+    void removeIconPack(const std::string& packId);
+    // Older theme packages ship assets/icons; move them into the shared icon
+    // directory so they behave exactly like a downloaded pack.
+    void extractThemeIconPack(const std::string& packId, const std::string& themeRoot);
     void activateThemePreset(ThemePreset* preset, bool applyBundledSound);
     void applyAutoThemeConfig();
     void evaluateAutoTheme(bool force);
@@ -564,6 +571,7 @@ private:
         ThemeTransferState state;
         std::string themeId;
         bool installMode = false;
+        bool isIconPack = false;
         std::string destinationPath;
         std::uint64_t revision = 0;
     };

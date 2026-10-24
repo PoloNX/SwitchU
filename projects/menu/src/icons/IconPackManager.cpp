@@ -180,6 +180,26 @@ std::vector<IconPackInfo> discoverPacks(const std::string& assetsBase) {
     for (const auto& dir : others)
         addPack(dir.filename().string(), dir);
 
+    // Packs downloaded into the SD directory (always writable, even when the
+    // built-ins were read from romfs).
+    const std::string sdRoot = kInstalledPacksDir;
+    if (sdRoot != root.generic_string() && fs::is_directory(sdRoot, ec)) {
+        std::vector<fs::path> sdPacks;
+        for (fs::directory_iterator it(sdRoot, ec); !ec && it != fs::directory_iterator(); it.increment(ec)) {
+            if (it->is_directory(ec))
+                sdPacks.push_back(it->path());
+        }
+        std::sort(sdPacks.begin(), sdPacks.end());
+        for (const auto& dir : sdPacks) {
+            const std::string id = dir.filename().string();
+            const bool known = std::any_of(packs.begin(), packs.end(),
+                [&](const IconPackInfo& pack) { return pack.id == id; });
+            if (known)
+                continue;
+            addPack(id, dir);
+        }
+    }
+
     if (packs.empty() && pathExists(join(root.generic_string(), "album.png"))) {
         IconPackInfo info;
         info.id = kDefaultPackId;
@@ -264,7 +284,12 @@ std::string resolvePackIconsDirectory(const std::string& assetsBase, const std::
         return {};
     }
     const std::string dir = packDirectory(assetsBase, id);
-    return pathExists(dir) ? dir : std::string{};
+    if (pathExists(dir))
+        return dir;
+    // Downloaded packs live on the SD card even when the built-ins come from
+    // romfs (homebrew build).
+    const std::string sdDir = join(kInstalledPacksDir, id);
+    return pathExists(sdDir) ? sdDir : std::string{};
 }
 
 std::string ensurePackPreview(const std::string& packDir, const std::string& packId) {

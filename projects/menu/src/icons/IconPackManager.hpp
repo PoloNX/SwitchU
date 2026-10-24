@@ -15,6 +15,10 @@ inline constexpr char kThemePackPrefix[] = "theme:";
 inline constexpr std::size_t kThemePackPrefixLen = sizeof(kThemePackPrefix) - 1; // 6
 inline constexpr const char* kInstalledThemesDir = "sdmc:/config/SwitchU/themes";
 
+// Writable pack directory on the SD card. Downloaded packs land here even in
+// the homebrew build, where the built-in packs are read from romfs.
+inline constexpr const char* kInstalledPacksDir = "sdmc:/switch/SwitchU/icons";
+
 // Pack glyphs live under romfs:/icons/<pack>/. Shared chrome (page arrows,
 // batteries, gamecard) ships in default/; music/ stays at icons root.
 inline constexpr const char* kPackGlyphFiles[] = {

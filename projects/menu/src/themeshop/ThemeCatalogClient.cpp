@@ -287,8 +287,10 @@ void ThemeCatalogClient::refresh(nxui::ThreadPool& pool) {
         }
 
         std::lock_guard<std::mutex> lk(m_mutex);
-        if (loaded.loading.isReady())
+        if (loaded.loading.isReady()) {
             m_entries = std::move(loaded.entries);
+            m_icons = std::move(loaded.icons);
+        }
         m_loading = loaded.loading;
         ++m_revision;
     });
@@ -310,6 +312,7 @@ ThemeCatalogClient::Snapshot ThemeCatalogClient::snapshot() const {
     Snapshot snapshot;
     snapshot.loading = m_loading;
     snapshot.entries = m_entries;
+    snapshot.icons = m_icons;
     snapshot.revision = m_revision;
     return snapshot;
 }
@@ -324,6 +327,52 @@ ThemeCatalogClient::Snapshot ThemeCatalogClient::loadCatalog(const std::string& 
         root = nlohmann::json::parse(body);
     } catch (const std::exception& ex) {
         throw std::runtime_error(std::string("Invalid catalog JSON: ") + ex.what());
+    }
+
+    // Icon packs are optional so catalogs published before the icon shop keep
+    // working unchanged.
+    if (auto iconsIt = root.find("icons"); iconsIt != root.end() && iconsIt->is_array()) {
+        for (const auto& item : *iconsIt) {
+            if (!item.is_object())
+                continue;
+
+            IconEntry icon;
+            readStringOpt(item, "id", icon.id);
+            readStringOpt(item, "name", icon.name);
+            readStringOpt(item, "author", icon.author);
+            readStringOpt(item, "version", icon.version);
+            readStringOpt(item, "description", icon.description);
+            readStringOpt(item, "path", icon.path);
+            readStringOpt(item, "manifest", icon.manifest);
+            readStringOpt(item, "cover", icon.cover);
+            readStringOpt(item, "theme", icon.theme);
+            if (item.contains("builtin") && item["builtin"].is_boolean())
+                icon.builtin = item["builtin"].get<bool>();
+            if (item.contains("colour") && item["colour"].is_boolean())
+                icon.colour = item["colour"].get<bool>();
+
+            if (icon.id.empty())
+                continue;
+            if (icon.name.empty())
+                icon.name = icon.id;
+            if (icon.path.empty())
+                icon.path = "icons/" + icon.id;
+            if (icon.manifest.empty())
+                icon.manifest = icon.path + "/pack.json";
+            if (icon.cover.empty())
+                icon.cover = icon.path + "/preview.png";
+
+            snapshot.icons.push_back(std::move(icon));
+        }
+
+        std::sort(snapshot.icons.begin(), snapshot.icons.end(),
+                  [](const IconEntry& lhs, const IconEntry& rhs) {
+            if (lhs.builtin != rhs.builtin)
+                return lhs.builtin; // built-ins first, like the console list
+            if (lhs.name != rhs.name)
+                return lhs.name < rhs.name;
+            return lhs.id < rhs.id;
+        });
     }
 
     auto themesIt = root.find("themes");

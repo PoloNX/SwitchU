@@ -841,8 +841,11 @@ int ThemeShopScreen::detailButtonCount() const {
     const auto* entry = selectedThemeShopEntry();
     if (!entry)
         return 0;
-    if (isIconsTab())
-        return 1; // Apply only
+    if (isIconsTab()) {
+        if (!entry->installed)
+            return 2; // Install / Download + Apply
+        return entry->removable ? 2 : 1; // Apply [/ Remove]
+    }
     return entry->removable ? 2 : 1;
 }
 
@@ -886,18 +889,34 @@ void ThemeShopScreen::activateDetailButton(int buttonIndex) {
 
     std::string themeId = entry->id;
     bool removable = entry->removable;
-    // Commit draft tint before closing so Apply publishes HSL + HOME chrome.
-    if (buttonIndex == 0 && isIconsTab())
-        commitDraftIconPackTint();
-    closeDetail();
-    if (buttonIndex == 0) {
-        if (isIconsTab()) {
+
+    if (isIconsTab()) {
+        if (!entry->installed) {
+            // Catalog pack: install it, optionally applying right away.
+            closeDetail();
+            StringCb& cb = (buttonIndex == 1) ? m_iconPackDownloadApplyCb : m_iconPackDownloadCb;
+            if (cb)
+                cb(themeId);
+            return;
+        }
+        // Commit draft tint before closing so Apply publishes HSL + HOME chrome.
+        if (buttonIndex == 0)
+            commitDraftIconPackTint();
+        closeDetail();
+        if (buttonIndex == 0) {
             if (m_iconPackApplyCb)
                 m_iconPackApplyCb(themeId);
-        } else if (m_themeShopApplyCb) {
-            m_themeShopApplyCb(themeId);
+        } else if (buttonIndex == 1 && removable && m_iconPackDeleteCb) {
+            m_iconPackDeleteCb(themeId);
         }
-    } else if (buttonIndex == 1 && removable && !isIconsTab()) {
+        return;
+    }
+
+    closeDetail();
+    if (buttonIndex == 0) {
+        if (m_themeShopApplyCb)
+            m_themeShopApplyCb(themeId);
+    } else if (buttonIndex == 1 && removable) {
         if (m_themeShopDeleteCb)
             m_themeShopDeleteCb(themeId);
     }
@@ -2169,9 +2188,14 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
             subtitleText = entry.source.empty() ? author : (author + " - " + entry.source);
             versionText = entry.version;
             activeTheme = entry.active;
-            previewRequested = !entry.coverPath.empty();
+            previewRequested = !entry.coverPath.empty() || !entry.coverUrl.empty();
             showIconsBadge = !isIconsTab() && entry.hasIcons;
-            if (previewRequested) {
+            if (previewRequested && !entry.coverUrl.empty()) {
+                // Catalog pack that is not on the console yet: fetch the cover.
+                primeCommunityPreview(entry.coverUrl);
+                previewTexture = communityPreviewTexture(entry.coverUrl);
+                previewPhase = communityPreviewPhase(entry.coverUrl);
+            } else if (previewRequested) {
                 const std::string packId = isIconsTab() ? entry.id : std::string{};
                 primeInstalledPreview(entry.coverPath, isIconsTab(), packId);
                 previewTexture = installedPreviewTexture(entry.coverPath, isIconsTab(), packId);
@@ -2334,7 +2358,10 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
     dialog = scaledRect(dialog, 0.96f + 0.04f * detailT);
     drawFrostedInsetPanel(ren, m_theme, dialog, 24.f, detailOpacity, 1.4f);
 
-    const bool showIconTintControls = isIconsTab() && selectedIconPackIsColour();
+    // Tint only applies to packs that live on the console.
+    const auto* tintEntry = isIconsTab() ? selectedThemeShopEntry() : nullptr;
+    const bool showIconTintControls = isIconsTab() && selectedIconPackIsColour()
+        && tintEntry && tintEntry->installed;
     nxui::Rect preview = showIconTintControls
         ? colourIconPreviewBounds(dialog)
         : detailPreviewRect(dialog);
@@ -2384,11 +2411,22 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
             ? i18n.tr("themeshop.community.author_unknown", "Unknown")
             : entry->author;
         detailSubtitle = entry->source.empty() ? author : (author + " - " + entry->source);
+        const std::string statusText = entry->active
+            ? i18n.tr("themeshop.installed.status_active", "Active")
+            : (entry->installed
+                ? i18n.tr("themeshop.installed.status_available", "Available")
+                : i18n.tr("themeshop.icons.status_online", "Available online"));
         detailInfoA = i18n.tr("themeshop.installed.status", "Status") + std::string(": ")
-            + (entry->active ? i18n.tr("themeshop.installed.status_active", "Active") : i18n.tr("themeshop.installed.status_available", "Available"));
+            + statusText;
         if (isIconsTab()) {
-            detailInfoB = i18n.tr("themeshop.icons.fallback", "Missing icons fall back to Default.");
-            detailInfoC = i18n.tr("themeshop.icons.apply_hint", "Apply to switch sidebar icons immediately.");
+            detailInfoB = entry->description.empty()
+                ? i18n.tr("themeshop.icons.fallback", "Missing icons fall back to Default.")
+                : entry->description;
+            detailInfoC = entry->installed
+                ? i18n.tr("themeshop.icons.apply_hint", "Apply to switch sidebar icons immediately.")
+                : i18n.tr("themeshop.icons.download_hint", "Install to download this pack to the console.");
+            if (entry->removable)
+                detailInfoC = i18n.tr("themeshop.icons.remove_hint", "Downloaded pack: it can be removed from the console.");
         } else {
             detailInfoB = i18n.tr("themeshop.installed.sound", "Bundled Sound Pack") + std::string(": ")
                 + (entry->soundPreset.empty() ? i18n.tr("themeshop.installed.sound_none", "None") : entry->soundPreset);
@@ -2396,8 +2434,12 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
                 ? i18n.tr("themeshop.installed.remove_hint", "This theme can be removed from the console.")
                 : i18n.tr("themeshop.installed.builtin_hint", "This is part of the built-in theme set.");
         }
-        detailPreviewRequested = !entry->coverPath.empty();
-        if (detailPreviewRequested) {
+        detailPreviewRequested = !entry->coverPath.empty() || !entry->coverUrl.empty();
+        if (detailPreviewRequested && !entry->coverUrl.empty()) {
+            primeCommunityPreview(entry->coverUrl);
+            detailPreviewTexture = communityPreviewTexture(entry->coverUrl);
+            detailPreviewPhase = communityPreviewPhase(entry->coverUrl);
+        } else if (detailPreviewRequested) {
             const std::string packId = isIconsTab() ? entry->id : std::string{};
             // Detail uses draft HSL; Icons grid keeps the committed preview.
             switchu::icons::HslAdjust draftHsl;
@@ -2718,7 +2760,15 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
         buttonLabels.push_back(i18n.tr("themeshop.community.install", "Install"));
         buttonLabels.push_back(i18n.tr("themeshop.community.download_apply", "Download + Apply"));
     } else if (isIconsTab()) {
-        buttonLabels.push_back(i18n.tr("themeshop.icons.apply", "Apply Icon Pack"));
+        const auto* entry = selectedThemeShopEntry();
+        if (entry && !entry->installed) {
+            buttonLabels.push_back(i18n.tr("themeshop.community.install", "Install"));
+            buttonLabels.push_back(i18n.tr("themeshop.community.download_apply", "Download + Apply"));
+        } else {
+            buttonLabels.push_back(i18n.tr("themeshop.icons.apply", "Apply Icon Pack"));
+            if (entry && entry->removable)
+                buttonLabels.push_back(i18n.tr("themeshop.icons.remove", "Remove Icon Pack"));
+        }
     } else {
         buttonLabels.push_back(i18n.tr("themeshop.installed.apply", "Apply Theme"));
         const auto* entry = selectedThemeShopEntry();

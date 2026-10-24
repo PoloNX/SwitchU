@@ -818,6 +818,24 @@
       "missing": "No screenshot",
       "prev": "Prev",
       "next": "Next"
+    },
+    "icons": {
+      "title": "Icon Packs",
+      "subtitle": "Switch on the fly.",
+      "apply": "Apply Icon Pack",
+      "remove": "Remove Icon Pack",
+      "remove_confirm": "Delete this icon pack from the console?",
+      "remove_failed": "Could not remove this icon pack.",
+      "removed": "Icon pack removed.",
+      "installed": "Icon pack installed.",
+      "status_online": "Available online",
+      "download_hint": "Install to download this pack to the console.",
+      "remove_hint": "Downloaded pack: it can be removed from the console.",
+      "dialog_title": "Downloading Icon Pack",
+      "prepare_download": "Preparing icon pack download...",
+      "finalize_download": "Finishing icon pack install...",
+      "fallback": "Missing icons fall back to Default.",
+      "apply_hint": "Apply to switch sidebar icons immediately."
     }
   },
   "page": {
