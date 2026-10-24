@@ -26,9 +26,19 @@ public:
     // Needed whenever SteamGridDB settings change what is available.
     void invalidateArtworkCaches();
     void setLayoutMode(AppLayoutMode mode) { m_layoutMode = mode; }
+    // True when a hero texture is on-screen at meaningful opacity.
+    bool hasDisplayedHero() const;
+    // Average relative luminance of the current hero [0..1], or <0 if none.
+    float displayedHeroLuminance() const;
     // Screen-space band the logo is centred in (single-row mode only).
     void setLogoArea(const nxui::Rect& area) { m_logoArea = area; }
+    void setShowLogo(bool show) { m_showLogo = show; }
     void setPreloadTitles(std::vector<std::uint64_t> titleIds);
+    // Pace neighbour hero/logo warm so return soft-land does not dump a burst
+    // of 3.6MB SD reads the moment defer expires. 0 = as soon as free.
+    void setPreloadMinInterval(float seconds);
+    void setPreloadPaused(bool paused);
+    bool isArtworkBusy() const;
     void showTitle(std::uint64_t titleId, bool forceReload = false);
 
 protected:
@@ -42,6 +52,7 @@ private:
         std::uint64_t titleId = 0;
         bool hasHero = false;
         bool hasLogo = false;
+        float heroLuminance = -1.f;
     };
 
     struct DecodedImage {
@@ -56,6 +67,7 @@ private:
         std::uint64_t titleId = 0;
         std::uint64_t generation = 0;
         long decodeMilliseconds = 0;
+        float heroLuminance = -1.f;
     };
 
     struct DecodeState {
@@ -70,8 +82,10 @@ private:
 
     static DecodedImage decodeImage(const std::string& path, int outputWidth,
                                     int outputHeight, bool fill);
+    static float sampleLuminance(const DecodedImage& image);
     static nxui::Rect fillRect(const nxui::Texture& texture, const nxui::Rect& area);
     static nxui::Rect containRect(const nxui::Texture& texture, const nxui::Rect& area);
+    bool useFullHeroOpacity() const;
     void drawSet(nxui::Renderer& renderer, const ArtworkSet& set, float alpha) const;
     void startPendingDecode(std::uint64_t titleId);
     void beginCrossfade(int nextSet, std::uint64_t titleId);
@@ -94,10 +108,14 @@ private:
     std::vector<DecodedArtwork> m_decodedCache;
     int m_uploadStage = 0;
     bool m_waitForGpuBeforeUpload = false;
+    float m_preloadMinInterval = 0.f;
+    float m_preloadGapSec = 0.f;
+    bool m_preloadPaused = false;
     AppLayoutMode m_layoutMode = AppLayoutMode::Grid;
     // Band the logo is centred in while single-row mode is active. The app
     // raises it above the folder title bubble when a folder is open.
     nxui::Rect m_logoArea{370.f, 149.f, 540.f, 150.f};
+    bool m_showLogo = true;
     bool m_showPreviousDuringCrossfade = false;
     nxui::AnimatedFloat m_fade{1.f};
     nxui::AnimatedFloat m_artworkOpacity{1.f};

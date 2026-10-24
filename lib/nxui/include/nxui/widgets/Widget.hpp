@@ -112,6 +112,11 @@ public:
     void setFrameworkTouchEnabled(bool enabled) { m_frameworkTouchEnabled = enabled; }
     bool frameworkTouchEnabled() const { return m_frameworkTouchEnabled; }
 
+    /// When true, the first touch that focuses this widget also activates it
+    /// (avoids tap-to-focus then tap-to-activate for toolbar controls).
+    void setActivateOnFirstTouch(bool enabled) { m_activateOnFirstTouch = enabled; }
+    bool activateOnFirstTouch() const { return m_activateOnFirstTouch; }
+
     void setTag(const std::string& t) { m_tag = t; }
     const std::string& tag() const    { return m_tag; }
 
@@ -165,6 +170,7 @@ protected:
 
     bool m_focusable = false;
     bool m_frameworkTouchEnabled = true;
+    bool m_activateOnFirstTouch = false;
     std::string m_tag;
     std::string m_accessibilityLabel;
     std::string m_accessibilityHint;

@@ -174,7 +174,9 @@ void registerEntries(std::vector<PendingApp>& apps,
                      GridModel& model,
                      IconStreamer& streamer) {
     streamer.init((int)apps.size());
-    streamer.setIconDataLoader(AppListLoader::loadIconData);
+    streamer.setIconDataLoader([](uint64_t titleId) {
+        return AppListLoader::loadIconData(titleId, false);
+    });
     for (int i = 0; i < (int)apps.size(); ++i) {
         auto& p = apps[i];
         streamer.setTitleId(i, p.kind == GridEntryKind::Application ? p.titleId : 0);
@@ -316,21 +318,24 @@ void AppListLoader::fetchApps(std::vector<PendingApp>& output, bool prefetchIcon
 }
 
 
-std::vector<uint8_t> AppListLoader::loadIconData(uint64_t titleId) {
+std::vector<uint8_t> AppListLoader::loadIconData(uint64_t titleId, bool preferPoster) {
     std::vector<uint8_t> iconData;
     if (titleId == 0)
         return iconData;
 
 #ifdef SWITCHU_MENU
-    {
-        std::ifstream custom(SteamGridDbManager::iconPath(titleId), std::ios::binary);
-        if (custom.is_open()) {
-            iconData.assign(std::istreambuf_iterator<char>(custom),
-                            std::istreambuf_iterator<char>());
-            if (!iconData.empty())
-                return iconData;
-        }
-    }
+    auto readFile = [](const std::string& path, std::vector<uint8_t>& out) -> bool {
+        std::ifstream custom(path, std::ios::binary);
+        if (!custom.is_open())
+            return false;
+        out.assign(std::istreambuf_iterator<char>(custom),
+                   std::istreambuf_iterator<char>());
+        return !out.empty();
+    };
+    if (preferPoster && readFile(SteamGridDbManager::posterPath(titleId), iconData))
+        return iconData;
+    if (readFile(SteamGridDbManager::iconPath(titleId), iconData))
+        return iconData;
     iconData = switchu::control_cache::readIcon(titleId);
 #endif
 

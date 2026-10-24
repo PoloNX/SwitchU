@@ -30,10 +30,12 @@ void GameOptionsScreen::setGame(const GameInfo& info) {
     warmup();
 }
 
-void GameOptionsScreen::refreshArtworkPresence(bool hasHero, bool hasLogo, bool hasIcon) {
+void GameOptionsScreen::refreshArtworkPresence(bool hasHero, bool hasLogo, bool hasIcon,
+                                               bool hasPoster) {
     m_game.hasHeroArt = hasHero;
     m_game.hasLogoArt = hasLogo;
     m_game.hasIconArt = hasIcon;
+    m_game.hasPosterArt = hasPoster;
     if (!m_active && !m_animating)
         return;
     const int tab = m_tabIndex;
@@ -154,6 +156,10 @@ void GameOptionsScreen::buildTabs() {
                       "game.steamgriddb.logo_desc",
                       "Choose a logo.",
                       ArtworkKind::Logo, m_game.hasLogoArt);
+    addArtworkActions("game.steamgriddb.poster", "Poster",
+                      "game.steamgriddb.poster_desc",
+                      "Tall cover for the single-row carousel.",
+                      ArtworkKind::Poster, m_game.hasPosterArt);
     addArtworkActions("game.steamgriddb.icon", "Replacement icon",
                       "game.steamgriddb.icon_desc",
                       "Choose an icon.",

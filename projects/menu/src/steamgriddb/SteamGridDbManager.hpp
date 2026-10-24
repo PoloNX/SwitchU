@@ -13,7 +13,7 @@
 class SteamGridDbManager {
 public:
     using ProgressCallback = std::function<void(const std::string&, float)>;
-    enum class ArtworkKind { None, Hero, Logo, Icon };
+    enum class ArtworkKind { None, Hero, Logo, Icon, Poster };
 
     struct Candidate {
         long long id = 0;
@@ -47,6 +47,7 @@ public:
 
     struct ApplyResult {
         bool success = false;
+        bool cancelled = false;
         std::uint64_t titleId = 0;
         ArtworkKind kind = ArtworkKind::None;
         std::string message;
@@ -90,17 +91,27 @@ public:
                                    const std::string& title, const std::string& query,
                                    ArtworkKind kind, long long gameId,
                                    const std::string& gameName);
+    /// Optional abort poll (e.g. progress-dialog Cancel) stops the download
+    /// between curl progress ticks; prepare/decode also checks between steps.
+    using AbortCheck = std::function<bool()>;
     static ApplyResult applyCandidate(const BrowseResult& browse,
                                       const Candidate& candidate,
-                                      const ProgressCallback& onProgress = {});
-    /// Clear cached art. Pass ArtworkKind::None to clear hero+logo+icon.
+                                      const ProgressCallback& onProgress = {},
+                                      const AbortCheck& shouldAbort = {});
+    /// Clear cached art. Pass ArtworkKind::None to clear hero+logo+icon+poster.
     static bool clearArtwork(std::uint64_t titleId, ArtworkKind kind);
     static bool hasIcon(std::uint64_t titleId);
+    static bool hasPoster(std::uint64_t titleId);
+
+    /// Per-title SteamGridDB search string shared by Hero/Logo/Icon/Poster.
+    static std::string savedSearchQuery(std::uint64_t titleId);
+    static void saveSearchQuery(std::uint64_t titleId, const std::string& query);
 
     static constexpr const char* kCacheRoot = "sdmc:/config/SwitchU/steamgriddb";
     static std::string heroPath(std::uint64_t titleId);
     static std::string logoPath(std::uint64_t titleId);
     static std::string iconPath(std::uint64_t titleId);
+    static std::string posterPath(std::uint64_t titleId);
     static bool hasArtwork(std::uint64_t titleId);
 
 private:

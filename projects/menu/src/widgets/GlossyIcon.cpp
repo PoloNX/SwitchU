@@ -475,6 +475,10 @@ void GlossyIcon::copyWidgetPresentationFrom(GlossyIcon& source) {
     m_folderStyleIndex = source.m_folderStyleIndex;
     m_folderShowCover = source.m_folderShowCover;
     m_folderCover = source.m_folderCover;
+    m_folderCoverIsPoster = source.m_folderCoverIsPoster;
+    m_folderPeekComposite = source.m_folderPeekComposite;
+    m_folderPeeks = source.m_folderPeeks;
+    m_folderPeekCount = source.m_folderPeekCount;
     m_folderCoverTitleId = source.m_folderCoverTitleId;
     m_themeMode = source.m_themeMode;
     m_widgetType = source.m_widgetType;
@@ -950,7 +954,7 @@ void GlossyIcon::onContentRender(nxui::Renderer& ren) {
     if (m_entryKind == GridEntryKind::Folder) {
         const int style = m_folderStyleIndex;
         const bool mosaic = style == switchu::folders::kFolderStyleClassic;
-        const float inset = (mosaic ? 10.f : 8.f) * s;
+        const float inset = (m_posterFrame ? 6.f : (mosaic ? 10.f : 8.f)) * s;
         switchu::folders::FolderStyleDrawArgs args;
         args.renderer = &ren;
         args.bounds = r.shrunk(inset);
@@ -963,9 +967,15 @@ void GlossyIcon::onContentRender(nxui::Renderer& ren) {
         args.font = m_font;
         args.title = &m_title;
         args.cover = m_folderCover;
+        args.peekCovers = m_folderPeeks;
+        args.peekCoverCount = m_folderPeekCount;
         args.showCover = m_folderShowCover;
         args.focused = m_focused;
-        args.drawName = true;
+        // Single-row already shows the folder name in the title pill.
+        args.drawName = !m_posterFrame;
+        args.posterAspect = m_posterFrame;
+        args.coverIsFolderPoster = m_folderCoverIsPoster;
+        args.coverIsPeekComposite = m_folderPeekComposite;
         switchu::folders::drawFolderStyle(args);
         return;
     }
@@ -1056,6 +1066,22 @@ void GlossyIcon::onContentRender(nxui::Renderer& ren) {
 
     float inset = 8.f * s;
     nxui::Rect texRect = r.shrunk(inset);
+    // Contain-fit: square icons stay square inside tall Poster tiles instead
+    // of stretching to fill the 2:3 cell.
+    if (m_tex->width() > 0 && m_tex->height() > 0 && texRect.width > 0.f
+        && texRect.height > 0.f) {
+        const float texAspect = (float)m_tex->width() / (float)m_tex->height();
+        const float boxAspect = texRect.width / texRect.height;
+        if (texAspect > boxAspect) {
+            const float h = texRect.width / texAspect;
+            texRect.y += (texRect.height - h) * 0.5f;
+            texRect.height = h;
+        } else if (texAspect < boxAspect) {
+            const float w = texRect.height * texAspect;
+            texRect.x += (texRect.width - w) * 0.5f;
+            texRect.width = w;
+        }
+    }
     nxui::Color iconTint = nxui::Color::white().withAlpha(m_opacity);
     if (m_notLaunchable) {
         iconTint.r = 0.80f;

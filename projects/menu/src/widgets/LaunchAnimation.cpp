@@ -23,8 +23,18 @@ void LaunchAnimation::start(const nxui::Rect& from, const nxui::Texture* tex, fl
     m_doneCalled   = false;
     m_postLaunchHold = false;
 
-    float side = std::min(from.width, from.height) * 1.8f;
-    m_target = {(1280 - side) * 0.5f, (720 - side) * 0.5f, side, side};
+    // Keep the source aspect (square icons stay square; posters stay 2:3).
+    // Posters get a larger zoom so they can cover the clock and title caption.
+    const bool poster = from.height > from.width * 1.15f;
+    const float zoomScale = poster ? 2.55f : 1.8f;
+    const float maxW = 1280.f * (poster ? 0.42f : 0.55f);
+    const float maxH = 720.f * (poster ? 0.92f : 0.72f);
+    float tw = std::max(1.f, from.width) * zoomScale;
+    float th = std::max(1.f, from.height) * zoomScale;
+    const float fit = std::min(1.f, std::min(maxW / tw, maxH / th));
+    tw *= fit;
+    th *= fit;
+    m_target = {(1280.f - tw) * 0.5f, (720.f - th) * 0.5f, tw, th};
 }
 
 void LaunchAnimation::startResume(nxui::VoidCallback onDone) {

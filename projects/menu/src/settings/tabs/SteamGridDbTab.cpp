@@ -61,12 +61,50 @@ SettingsScreen::Tab settings::tabs::SteamGridDbTab::build(SettingsScreen& screen
                   screen.m_steamGridDbShowInGrid);
     addViewToggle("settings.steamgriddb.show_line", "Show on single-row menu",
                   "settings.steamgriddb.show_line_desc",
-                  "Hero and logo behind the single-row carousel.",
+                  "Hero backdrop behind the single-row carousel.",
                   screen.m_steamGridDbShowInDynamicLine);
     addViewToggle("settings.steamgriddb.show_folders", "Show inside folders",
                   "settings.steamgriddb.show_folders_desc",
                   "Artwork while browsing games inside an open folder.",
                   screen.m_steamGridDbShowInFolders);
+
+    SettingItem poster;
+    poster.type = ItemType::Toggle;
+    poster.label = i18n.tr("settings.steamgriddb.show_poster_line",
+                           "Show Poster artwork in single-row view");
+    poster.description = i18n.tr("settings.steamgriddb.show_poster_line_desc",
+        "Use tall SteamGridDB covers on the carousel. Grid layout stays on icons.");
+    poster.boolVal = screen.m_steamGridDbShowPosterInDynamicLine;
+    poster.anim01 = poster.boolVal ? 1.f : 0.f;
+    poster.indentLevel = 1;
+    poster.enabled = screen.m_steamGridDbEnabled;
+    poster.onChange = [&screen](SettingItem& self) {
+        if (!screen.m_steamGridDbEnabled)
+            return;
+        screen.m_steamGridDbShowPosterInDynamicLine = self.boolVal;
+        if (screen.m_steamGridDbPosterInLineCb)
+            screen.m_steamGridDbPosterInLineCb(self.boolVal);
+    };
+    tab.items.push_back(std::move(poster));
+
+    SettingItem logo;
+    logo.type = ItemType::Toggle;
+    logo.label = i18n.tr("settings.steamgriddb.show_logo_line",
+                         "Show logo in single-row view");
+    logo.description = i18n.tr("settings.steamgriddb.show_logo_line_desc",
+        "Game logo above the carousel. Turn off to keep only the hero and covers.");
+    logo.boolVal = screen.m_steamGridDbShowLogoInDynamicLine;
+    logo.anim01 = logo.boolVal ? 1.f : 0.f;
+    logo.indentLevel = 1;
+    logo.enabled = screen.m_steamGridDbEnabled;
+    logo.onChange = [&screen](SettingItem& self) {
+        if (!screen.m_steamGridDbEnabled)
+            return;
+        screen.m_steamGridDbShowLogoInDynamicLine = self.boolVal;
+        if (screen.m_steamGridDbLogoInLineCb)
+            screen.m_steamGridDbLogoInLineCb(self.boolVal);
+    };
+    tab.items.push_back(std::move(logo));
 
     SettingItem apiKey;
     apiKey.type = ItemType::Action;
@@ -85,7 +123,7 @@ SettingsScreen::Tab settings::tabs::SteamGridDbTab::build(SettingsScreen& screen
     scan.label = i18n.tr("settings.steamgriddb.scan", "Search artwork for missing assets");
     scan.buttonLabel = i18n.tr("button.search", "Search");
     scan.description = i18n.tr("settings.steamgriddb.scan_desc",
-        "Retrieve hero and logo for titles that are missing art.");
+        "Retrieve hero, logo, and poster for titles that are missing art.");
     scan.onChange = [&screen](SettingItem&) {
         if (screen.m_steamGridDbRunning) {
             screen.requestToast(nxui::I18n::instance().tr(
@@ -103,15 +141,15 @@ SettingsScreen::Tab settings::tabs::SteamGridDbTab::build(SettingsScreen& screen
 
     tab.onUpdate = [](SettingsScreen::Tab& current, TabbedOverlayScreen& base) {
         auto& owner = static_cast<SettingsScreen&>(base);
-        // Section, master, 3 nested view toggles, API key, scan
-        if (current.items.size() < 7) return;
+        // Section, master, 3 view toggles, poster, logo, API key, scan
+        if (current.items.size() < 9) return;
 
-        for (int i = 2; i <= 4; ++i) {
+        for (int i = 2; i <= 6; ++i) {
             current.items[static_cast<std::size_t>(i)].enabled = owner.m_steamGridDbEnabled;
             current.items[static_cast<std::size_t>(i)].indentLevel = 1;
         }
 
-        auto& key = current.items[5];
+        auto& key = current.items[7];
         key.description = owner.m_steamGridDbHasApiKey
             ? nxui::I18n::instance().tr("settings.steamgriddb.api_key_set", "Configured (hidden)")
             : nxui::I18n::instance().tr("settings.steamgriddb.api_key_missing", "Not configured");

@@ -32,6 +32,12 @@ public:
     // Prepare icon metadata for all apps after the app list has been fetched.
     void init(int appCount);
     void setIconDataLoader(IconDataLoader loader);
+    // Prefer tall Poster files vs square icons. When the preference flips,
+    // compressed bytes are dropped and loaded GPU textures are marked stale so
+    // the next onPageChanged() can swap art in place without blanking tiles.
+    // Returns true when the preference actually changed.
+    bool setPreferPosterArt(bool preferPoster);
+    bool preferPosterArt() const { return m_preferPosterArt; }
     void setThreadPool(nxui::ThreadPool* pool) { m_threadPool = pool; }
     void setTitleId(int appIndex, uint64_t titleId);
     void setIconData(int appIndex, std::vector<uint8_t> compressed);
@@ -64,9 +70,30 @@ public:
     // per frame. Reverts to the normal limits by itself.
     void startBurst(float seconds);
 
+    // After splash handoff: keep single-row neighbor warming tight, then widen
+    // gradually so radius does not jump 2→4 in one frame. Reverts by itself.
+    void startSoftLanding(float tightSeconds, int tightRadius = 2,
+                          float widenSeconds = 0.f, int widenRadius = 3);
+    bool softLandingActive() const { return inSoftLanding(); }
+
+    // Off-screen art prefetch for layout transitions: decode destination art
+    // (poster or icon) by titleId without touching textures already shown on
+    // tiles. pumpShadowPrefetch() uploads a few GPU textures per frame so the
+    // loader animation keeps running; installShadowPrefetch() only attaches.
+    void cancelShadowPrefetch();
+    void startShadowPrefetch(bool preferPoster,
+                             const std::vector<std::uint64_t>& titleIds,
+                             IconDataLoader loader);
+    void pumpShadowPrefetch(nxui::GpuDevice& gpu, nxui::Renderer& ren);
+    bool shadowPrefetchReady() const;
+    void installShadowPrefetch(
+        const std::vector<std::shared_ptr<GlossyIcon>>& allIcons);
+
     // Release everything (textures + compressed data).
     void clear();
     void cancelPending();
+    // Drop in-flight decodes except one title (keep focused art during morph).
+    void cancelPendingExcept(std::uint64_t keepTitleId);
 
     // Keep internal compressed data and loaded-slot mappings aligned when
     // app entries are swapped in the grid model.
@@ -99,10 +126,30 @@ private:
     // data. App icons are otherwise fetched on demand and released after upload.
     std::vector<std::vector<uint8_t>> m_compressed;
     std::vector<uint64_t> m_titleIds;
+    // Per-app: GPU slot still shows the previous art kind and needs a swap-in.
+    std::vector<uint8_t> m_artStale;
+    bool m_preferPosterArt = false;
     IconDataLoader m_iconLoader;
     nxui::ThreadPool* m_threadPool = nullptr;
     std::vector<PendingDecode> m_pendingDecodes;
     std::vector<uint64_t> m_failedTitleIds;
+
+    struct ShadowPrefetchEntry {
+        std::uint64_t titleId = 0;
+        DecodedIcon decoded;
+        std::unique_ptr<nxui::Texture> texture;
+        bool failed = false;
+        bool decodedReady = false;
+        bool uploaded = false;
+        std::shared_ptr<DecodeState> state;
+        std::future<void> future;
+    };
+    std::vector<ShadowPrefetchEntry> m_shadowPrefetch;
+    bool m_shadowPreferPoster = false;
+    static constexpr int kShadowUploadsPerPump = 1;
+
+    void softInvalidateArt();
+    bool isArtStale(int appIndex) const;
 
     // Pool of reusable GPU textures.
     struct TexSlot {
@@ -123,6 +170,7 @@ private:
 
     static constexpr int kPageCacheRadius = 4;
     static constexpr int kGridPageCacheRadius = 1;
+    // Base decode cap per side; portraits may use up to 2× / 3× (see decodeIconData).
     static constexpr int kIconSize        = 160;
     static constexpr int kUploadsPerFrame = 1;
     static constexpr int kMaxPendingDecodes = 4;
@@ -130,5 +178,26 @@ private:
     static constexpr int kBurstMaxPendingDecodes = 8;
     std::chrono::steady_clock::time_point m_burstUntil{};
     bool inBurst() const { return std::chrono::steady_clock::now() < m_burstUntil; }
+    std::chrono::steady_clock::time_point m_softLandingUntil{};
+    std::chrono::steady_clock::time_point m_softLandingWidenUntil{};
+    int m_softLandingRadius = kPageCacheRadius;
+    int m_softLandingWidenRadius = kPageCacheRadius;
+    bool inSoftLanding() const {
+        const auto now = std::chrono::steady_clock::now();
+        return now < m_softLandingUntil || now < m_softLandingWidenUntil;
+    }
+    int pageCacheRadius() const {
+        const auto now = std::chrono::steady_clock::now();
+        auto clampRadius = [](int radius) {
+            if (radius <= 0)
+                return 0;
+            return radius < kPageCacheRadius ? radius : kPageCacheRadius;
+        };
+        if (now < m_softLandingUntil)
+            return clampRadius(m_softLandingRadius);
+        if (now < m_softLandingWidenUntil)
+            return clampRadius(m_softLandingWidenRadius);
+        return kPageCacheRadius;
+    }
     static constexpr std::uint64_t kGpuImageReserve = 4u * 1024u * 1024u;
 };

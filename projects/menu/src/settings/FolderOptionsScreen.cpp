@@ -33,6 +33,7 @@ void FolderOptionsScreen::setFolder(const FolderInfo& info) {
     m_folder.sizeIndex = std::clamp(m_folder.sizeIndex, 0, 2);
     m_folder.styleIndex = std::clamp(m_folder.styleIndex, 0,
                                      switchu::folders::kFolderStyleCount - 1);
+    m_folder.defaultViewIndex = std::clamp(m_folder.defaultViewIndex, 0, 2);
     m_tabs.clear();
     m_cachedTabContentWidgets.clear();
     warmup();
@@ -44,6 +45,24 @@ void FolderOptionsScreen::buildTabs() {
 
     Tab appearance;
     appearance.name = i18n.tr("folder.appearance", "Appearance");
+
+    SettingItem defaultView;
+    defaultView.label = i18n.tr("folder.default_view", "Default folder view");
+    defaultView.description = i18n.tr(
+        "folder.default_view_desc",
+        "Layout used when any folder is opened.");
+    defaultView.type = ItemType::Selector;
+    defaultView.options = {
+        i18n.tr("folder.default_view_auto", "Auto"),
+        i18n.tr("folder.default_view_grid", "Grid"),
+        i18n.tr("folder.default_view_line", "Single-row"),
+    };
+    defaultView.intVal = m_folder.defaultViewIndex;
+    defaultView.onChange = [this](SettingItem& self) {
+        m_folder.defaultViewIndex = std::clamp(self.intVal, 0, 2);
+        if (m_defaultViewCb) m_defaultViewCb(m_folder.defaultViewIndex);
+    };
+    appearance.items.push_back(std::move(defaultView));
 
     SettingItem color;
     color.label = i18n.tr("folder.color", "Folder color");
@@ -139,6 +158,26 @@ void FolderOptionsScreen::buildTabs() {
         if (m_customIconSelectCb) m_customIconSelectCb();
     };
     appearance.items.push_back(std::move(customIcon));
+
+    SettingItem customPoster;
+    customPoster.label = i18n.tr("folder.custom_poster", "Custom poster");
+    customPoster.buttonLabel = i18n.tr("button.select", "Select");
+    if (m_folder.hasCustomPoster) {
+        customPoster.secondaryButtonLabel = i18n.tr("button.clear_x", "×");
+        customPoster.onSecondary = [this](SettingItem&) {
+            if (m_customPosterClearCb) m_customPosterClearCb();
+        };
+    }
+    customPoster.description = m_folder.hasCustomPoster
+        ? i18n.tr("folder.custom_poster_set_desc",
+                  "SteamGridDB poster is active for this folder in single-row view.")
+        : i18n.tr("folder.custom_poster_desc",
+                  "Search SteamGridDB for a tall poster (single-row view).");
+    customPoster.type = ItemType::Action;
+    customPoster.onChange = [this](SettingItem&) {
+        if (m_customPosterSelectCb) m_customPosterSelectCb();
+    };
+    appearance.items.push_back(std::move(customPoster));
     m_tabs.push_back(std::move(appearance));
 
     Tab management;

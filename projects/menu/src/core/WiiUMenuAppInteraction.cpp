@@ -63,6 +63,10 @@ std::string WiiUMenuApp::accessibilityContextFor(nxui::Widget* w) const {
         if (btn.get() == w) return i18n.tr("accessibility.context.right_sidebar", "Right sidebar");
     if (m_profileLock && m_profileLock.get() == w)
         return i18n.tr("accessibility.context.user_profiles", "User profiles");
+    if (m_layoutFlip && m_layoutFlip.get() == w)
+        return i18n.tr("accessibility.context.main_menu", "Main menu");
+    if (m_battery && m_battery.get() == w)
+        return i18n.tr("accessibility.context.main_menu", "Main menu");
     return {};
 }
 
@@ -641,6 +645,7 @@ bool WiiUMenuApp::commitEditModePlacement() {
             folder->titleIds = visibleOrder;
             if (!saveFoldersOrReport("move_single_row"))
                 return false;
+            refreshFolderPeekComposite(m_openFolderId);
         } else {
             const std::unordered_set<std::uint64_t> visibleIds(
                 visibleOrder.begin(), visibleOrder.end());
@@ -887,6 +892,7 @@ bool WiiUMenuApp::activateEditModeTarget() {
             // current render, so the moved tile must already be gone from it.
             // Focus lands on the folder tile, the anchor the folder returns to.
             applyDisplayModel(buildRootFolderModel(), folderTitleId(folderId), false);
+            refreshFolderPeekComposite(folderId);
             requestOpenFolder(folderId);
             return true;
         }
@@ -904,6 +910,7 @@ bool WiiUMenuApp::activateEditModeTarget() {
                                       static_cast<std::size_t>(target)) ||
             !saveFoldersOrReport("place_in_folder"))
             return false;
+        refreshFolderPeekComposite(targetFolderId);
 
         if (m_editOriginFolderId == 0 && m_editOriginRootSlot >= 0 &&
             m_editOriginRootSlot < static_cast<int>(m_layoutSlots.size())) {
@@ -923,6 +930,7 @@ bool WiiUMenuApp::activateEditModeTarget() {
         if (!m_folderStore.removeTitle(m_editOriginFolderId, m_editHeldTitleId) ||
             !saveFoldersOrReport("move_out_of_folder"))
             return false;
+        refreshFolderPeekComposite(m_editOriginFolderId);
         const std::uint64_t titleId = m_editHeldTitleId;
         m_layoutSlots[static_cast<std::size_t>(target)] = titleId;
         m_layoutDirty = true;
@@ -1064,6 +1072,14 @@ void WiiUMenuApp::wireFocusCallback() {
                     m_iconStreamer.onPageChanged(focusedIndex, 1,
                                                  app().gpu(), app().renderer(),
                                                  m_grid->allIcons());
+                    // Blank albums: fill peeks as soon as the user lands on a
+                    // folder (focus first; ±1 once soft-land gates are open).
+                    if (preferSingleRowPosters()
+                        && focusedIndex < m_model.count()
+                        && m_model.at(focusedIndex).isFolder()) {
+                        m_lastFolderPeekWarmFocus = focusedIndex;
+                        warmFolderPeeksAroundFocus(1);
+                    }
                 }
             }
             if (m_steamGridDbBackdrop && icon->titleId() != 0
@@ -1113,6 +1129,18 @@ void WiiUMenuApp::wireFocusCallback() {
                 m_titlePill->setVisible(true);
                 return;
             }
+            if (m_layoutFlip && m_layoutFlip.get() == cur) {
+                m_titlePill->setText(nxui::I18n::instance().tr(
+                    "hint.switch_layout", "Switch view"));
+                m_titlePill->setVisible(true);
+                return;
+            }
+            if (m_battery && m_battery.get() == cur) {
+                m_titlePill->setText(nxui::I18n::instance().tr(
+                    "quick_settings.title", "Quick Settings"));
+                m_titlePill->setVisible(true);
+                return;
+            }
             m_titlePill->hideAnimated();
         } else {
             m_titlePill->hideAnimated();
@@ -1140,6 +1168,8 @@ bool WiiUMenuApp::isCurrentFocusableWidget(nxui::Widget* w) const {
     for (const auto& btn : m_sidebar.rightButtons())
         if (btn.get() == w) return w->isFocusable();
     if (m_profileLock && m_profileLock.get() == w) return w->isFocusable();
+    if (m_layoutFlip && m_layoutFlip.get() == w) return w->isFocusable();
+    if (m_battery && m_battery.get() == w) return w->isFocusable();
     if (m_grid)
         for (const auto& icon : m_grid->allIcons())
             if (icon.get() == w) return w->isFocusable();
@@ -1176,8 +1206,15 @@ bool WiiUMenuApp::focusTitle(uint64_t titleId, bool instantFocus) {
         return false;
 
     if (m_grid->currentPage() != oldPage || titleId != 0) {
-        m_iconStreamer.onPageChanged(m_grid->currentPage(), m_grid->iconsPerPage(),
-                                     app().gpu(), app().renderer(),
+        // iconsPerPage() stays cols×rows even in single-row — use pageSize=1
+        // so we only warm the focused tile ± neighbours, not a whole grid page.
+        int page = m_grid->currentPage();
+        int pageSize = std::max(1, m_grid->iconsPerPage());
+        if (m_appLayoutMode == AppLayoutMode::DynamicLine) {
+            page = std::max(0, m_grid->focusedGlobalIndex());
+            pageSize = 1;
+        }
+        m_iconStreamer.onPageChanged(page, pageSize, app().gpu(), app().renderer(),
                                      m_grid->allIcons());
     }
 
@@ -1482,6 +1519,7 @@ void WiiUMenuApp::showGameContextMenu(GlossyIcon* icon) {
         game.hasLogoArt = std::filesystem::exists(
             SteamGridDbManager::logoPath(titleId), ec);
         game.hasIconArt = SteamGridDbManager::hasIcon(titleId);
+        game.hasPosterArt = SteamGridDbManager::hasPoster(titleId);
     }
     m_gameOptions->setGame(game);
     m_gameOptions->onMove([this]() {
@@ -1550,12 +1588,13 @@ void WiiUMenuApp::showFolderContextMenu(std::uint32_t folderId) {
     info.colorIndex = folder->colorIndex;
     info.sizeIndex = folder->sizeIndex;
     info.styleIndex = m_config.folderStyle;
+    info.defaultViewIndex = std::clamp(m_config.folderDefaultView, 0, 2);
     info.showCover = m_config.folderShowCover;
     info.hasCustomIcon = SteamGridDbManager::hasIcon(folderTitleId(folderId));
-    const std::uint64_t coverTitleId = info.hasCustomIcon
-        ? folderTitleId(folderId)
-        : switchu::folders::firstCoverTitleId(*folder);
-    info.cover = folderCoverTexture(coverTitleId);
+    info.hasCustomPoster = SteamGridDbManager::hasPoster(folderTitleId(folderId));
+    const std::uint64_t coverTitleId = resolveFolderCoverTitleId(
+        *folder, preferSingleRowPosters());
+    info.cover = folderCoverTexture(coverTitleId, preferSingleRowPosters());
     m_folderOptions->setFolder(info);
     m_folderOptions->onOpen([this, folderId]() {
         if (m_folderOptions) m_folderOptions->hide();
@@ -1581,6 +1620,7 @@ void WiiUMenuApp::showFolderContextMenu(std::uint32_t folderId) {
         }
         if (m_openFolderId == folderId && m_pageIndicator)
             m_pageIndicator->setActiveColor(switchu::folders::colorForIndex(colorIndex));
+        refreshFolderPeekComposite(folderId);
     });
     m_folderOptions->onSizeChange([this, folderId](int sizeIndex) {
         if (!m_folderStore.setSizeIndex(folderId, sizeIndex))
@@ -1607,6 +1647,17 @@ void WiiUMenuApp::showFolderContextMenu(std::uint32_t folderId) {
         }
         applyFolderCoversToIcons();
     });
+    m_folderOptions->onDefaultViewChange([this](int viewIndex) {
+        const int clamped = std::clamp(viewIndex, 0, 2);
+        if (m_config.folderDefaultView == clamped)
+            return;
+        m_config.folderDefaultView = clamped;
+        if (m_configSaveFuture.valid())
+            m_configSaveFuture.wait();
+        m_configSaveFuture = m_threadPool.submit([config = m_config]() {
+            config.save();
+        });
+    });
     m_folderOptions->onCoverChange([this](bool showCover) {
         if (m_config.folderShowCover == showCover)
             return;
@@ -1623,30 +1674,43 @@ void WiiUMenuApp::showFolderContextMenu(std::uint32_t folderId) {
         openSteamGridDbPickerForTitle(pseudo, name,
                                       GameOptionsScreen::ArtworkKind::Icon, name);
     });
-    m_folderOptions->onCustomIconClear([this, folderId]() {
-        const std::uint64_t pseudo = folderTitleId(folderId);
-        clearSteamGridDbArtwork(pseudo, GameOptionsScreen::ArtworkKind::Icon);
-        // Refresh folder options state + cover textures.
-        if (m_folderOptions) {
-            FolderOptionsScreen::FolderInfo info = {};
-            if (const auto* folder = m_folderStore.find(folderId)) {
-                info.id = folder->id;
-                info.name = folder->name;
-                info.itemCount = static_cast<int>(folder->titleCount());
-                info.colorIndex = folder->colorIndex;
-                info.sizeIndex = folder->sizeIndex;
-                info.styleIndex = m_config.folderStyle;
-                info.showCover = m_config.folderShowCover;
-                info.hasCustomIcon = false;
-                info.cover = folderCoverTexture(
-                    switchu::folders::firstCoverTitleId(*folder));
-                m_folderOptions->setFolder(info);
-            }
+    auto refreshFolderOptionsAfterArt = [this, folderId]() {
+        if (!m_folderOptions) return;
+        FolderOptionsScreen::FolderInfo info = {};
+        if (const auto* folder = m_folderStore.find(folderId)) {
+            info.id = folder->id;
+            info.name = folder->name;
+            info.itemCount = static_cast<int>(folder->titleCount());
+            info.colorIndex = folder->colorIndex;
+            info.sizeIndex = folder->sizeIndex;
+            info.styleIndex = m_config.folderStyle;
+            info.defaultViewIndex = std::clamp(m_config.folderDefaultView, 0, 2);
+            info.showCover = m_config.folderShowCover;
+            info.hasCustomIcon = SteamGridDbManager::hasIcon(folderTitleId(folderId));
+            info.hasCustomPoster = SteamGridDbManager::hasPoster(folderTitleId(folderId));
+            const std::uint64_t coverId = resolveFolderCoverTitleId(
+                *folder, preferSingleRowPosters());
+            info.cover = folderCoverTexture(coverId, preferSingleRowPosters());
+            m_folderOptions->setFolder(info);
         }
         if (m_openFolderId == 0)
             applyDisplayModel(buildRootFolderModel(), folderTitleId(folderId), false);
         else
             applyFolderCoversToIcons();
+    };
+    m_folderOptions->onCustomIconClear([this, folderId, refreshFolderOptionsAfterArt]() {
+        clearSteamGridDbArtwork(folderTitleId(folderId),
+                                GameOptionsScreen::ArtworkKind::Icon);
+        refreshFolderOptionsAfterArt();
+    });
+    m_folderOptions->onCustomPosterSelect([this, folderId, name]() {
+        openSteamGridDbPickerForTitle(folderTitleId(folderId), name,
+                                      GameOptionsScreen::ArtworkKind::Poster, name);
+    });
+    m_folderOptions->onCustomPosterClear([this, folderId, refreshFolderOptionsAfterArt]() {
+        clearSteamGridDbArtwork(folderTitleId(folderId),
+                                GameOptionsScreen::ArtworkKind::Poster);
+        refreshFolderOptionsAfterArt();
     });
     m_folderOptions->onDelete([this, folderId, name]() {
         auto& local = nxui::I18n::instance();
@@ -1656,6 +1720,7 @@ void WiiUMenuApp::showFolderContextMenu(std::uint32_t folderId) {
                        {
                            {local.tr("button.cancel", "Cancel"), {}, true},
                            {local.tr("button.delete", "Delete"), [this, folderId]() {
+                               invalidateFolderPeekComposite(folderId);
                                m_folderStore.remove(folderId);
                                if (!saveFoldersOrReport("delete")) return;
                                const auto pseudo = folderTitleId(folderId);
@@ -1974,13 +2039,15 @@ void WiiUMenuApp::handleSystemAction(SysAction a) {
 #endif
 
 void WiiUMenuApp::updateCursor() {
+    if (!m_cursor)
+        return;
     if (m_contextMenu && m_contextMenu->isActive()) {
-        if (m_cursor) m_cursor->setVisible(false);
+        m_cursor->setVisible(false);
         return;
     }
     if ((m_grid && m_grid->isTransitioning()) ||
         (m_folderZoom && m_folderZoom->isPlaying())) {
-        if (m_cursor) m_cursor->setVisible(false); // it would sit at the landing spot
+        m_cursor->setVisible(false); // it would sit at the landing spot
         return;
     }
     if (m_navigator.route() != switchu::navigation::Route::Home ||
@@ -1992,9 +2059,31 @@ void WiiUMenuApp::updateCursor() {
     auto* cur = focusManager().current();
     if (cur) {
         const bool morphing = m_grid && m_grid->isLayoutMorphing();
+        const bool morphJustEnded = m_wasLayoutMorphing && !morphing;
+        m_wasLayoutMorphing = morphing;
         const bool movingLineFocus = m_grid
                                   && (m_grid->isDynamicLine() || morphing)
                                   && cur->tag() == "glossy_icon";
+        // Single-row (and morphing into it): the centred tile is the focus cue —
+        // hide the blue selection ring on titles. Keep it for chrome / grid.
+        const bool hideRingForLine = m_grid && cur->tag() == "glossy_icon"
+            && !m_editMode
+            && (m_grid->isDynamicLine()
+                || (morphing && m_appLayoutMode == AppLayoutMode::DynamicLine));
+        if (hideRingForLine) {
+            m_cursor->setVisible(false);
+            // Ring is hidden on the carousel, but keep the invisible cursor
+            // parked on the centred tile. Otherwise the first chrome focus
+            // (Change View / battery) eases from the last grid-cell position.
+            if (m_grid->isDynamicLine() || morphing) {
+                const nxui::Rect lineFocus = m_grid->focusedDisplayRect();
+                if (lineFocus.width > 1.f && lineFocus.height > 1.f)
+                    m_cursor->moveTo(lineFocus.expanded(4.f), 0.f);
+            }
+            if (m_grid->isDynamicLine())
+                syncSteamGridDbLogoArea();
+            return;
+        }
         nxui::Rect fr = movingLineFocus
             ? m_grid->focusedDisplayRect()
             : cur->focusRect();
@@ -2005,11 +2094,17 @@ void WiiUMenuApp::updateCursor() {
         }
         // The app carousel already owns the motion curve; attaching the ring
         // directly avoids a second easing curve that would visibly lag behind.
+        // Snap after morph so a remapped grid cell never eases in from the
+        // carousel's far-right ghost position.
         const bool carouselScrolling = movingLineFocus
                                     && (morphing || m_grid->isDynamicLineScrolling());
-        m_cursor->moveTo(fr.expanded(4.f), carouselScrolling ? 0.f : 0.2f);
+        const float dur = (carouselScrolling || morphJustEnded) ? 0.f : 0.2f;
+        m_cursor->moveTo(fr.expanded(4.f), dur);
         m_cursor->setVisible(true);
+        if (m_grid && m_grid->isDynamicLine())
+            syncSteamGridDbLogoArea();
     } else {
+        m_wasLayoutMorphing = false;
         m_cursor->setVisible(false);
     }
 }
