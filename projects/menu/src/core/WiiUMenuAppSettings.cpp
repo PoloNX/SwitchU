@@ -2151,10 +2151,6 @@ void WiiUMenuApp::reloadSidebarIcons() {
                   fallbackPackId.c_str());
     m_sidebar.invalidateAssetsCache();
     m_sidebar.reloadAssets(app().gpu(), app().renderer(), SD_ASSETS, customIconsBase, fallbackPackId);
-    if (m_layoutFlip) {
-        m_layoutFlip->reloadIcon(app().gpu(), app().renderer(),
-                                 resolveActiveIconGlyphPath(switchu::icons::kChangeViewFile));
-    }
 }
 
 void WiiUMenuApp::applyIconPack(const std::string& packId) {
