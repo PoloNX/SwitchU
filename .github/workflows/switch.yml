@@ -40,6 +40,17 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Install system dependencies
+        shell: bash
+        run: |
+          if command -v sudo >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get -y install curl gcc g++ zip zstd
+          else
+            apt-get update
+            apt-get -y install curl gcc g++ zip zstd
+          fi
+
       - name: Get Atmosphere-libs revision
         id: atmo_rev
         shell: bash
@@ -53,18 +64,7 @@ jobs:
           path: |
             lib/Atmosphere-libs/libstratosphere/lib
             build/.stamps/libstratosphere
-          key: atmosphere-libs-v2-${{ steps.atmo_rev.outputs.sha }}
-
-      - name: Install system dependencies
-        shell: bash
-        run: |
-          if command -v sudo >/dev/null 2>&1; then
-            sudo apt-get update
-            sudo apt-get -y install curl gcc g++ zip zstd
-          else
-            apt-get update
-            apt-get -y install curl gcc g++ zip zstd
-          fi
+          key: atmosphere-libs-v3-${{ steps.atmo_rev.outputs.sha }}
 
       - name: Set xmake env
         run: echo "XMAKE_GLOBALDIR=${{ runner.workspace }}/xmake-global" >> "$GITHUB_ENV"
@@ -100,7 +100,7 @@ jobs:
           path: |
             lib/Atmosphere-libs/libstratosphere/lib
             build/.stamps/libstratosphere
-          key: atmosphere-libs-v2-${{ steps.atmo_rev.outputs.sha }}
+          key: atmosphere-libs-v3-${{ steps.atmo_rev.outputs.sha }}
 
       - name: Package install layout
         run: xmake install -o "dist/${{ matrix.variant }}/${{ matrix.mode }}" --root
