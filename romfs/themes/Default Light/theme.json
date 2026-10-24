@@ -5,9 +5,21 @@
   "theme": {
     "mode": "light",
     "colors": {
-      "background": [0.625, 0.3333, 0.94],
-      "backgroundAccent": [0.6167, 0.7143, 0.93],
-      "shapes": [0.6111, 1.0, 0.91]
+      "background": [
+        0.625,
+        0.3333,
+        0.94
+      ],
+      "backgroundAccent": [
+        0.6167,
+        0.7143,
+        0.93
+      ],
+      "shapes": [
+        0.6111,
+        1.0,
+        0.91
+      ]
     },
     "background": {
       "opacity": 0.14
@@ -15,5 +27,11 @@
   },
   "audio": {
     "preset": "wiiu"
-  }
+  },
+  "preview": {
+    "screenshots": [
+      "media/screenshots/00.png"
+    ]
+  },
+  "cover": "media/screenshots/00.png"
 }

@@ -450,7 +450,7 @@ void drawSpectrumBadge(nxui::Renderer& ren, const nxui::Rect& rect, float opacit
         return;
     const float radius = std::min(4.f, rect.height * 0.35f);
     ren.drawRoundedRect(rect, nxui::Color(0.f, 0.f, 0.f, 0.28f * opacity), radius);
-    // Four solid swatches — clearer than a fine rainbow gradient.
+    // Four solid swatches - clearer than a fine rainbow gradient.
     static const nxui::Color kSwatches[4] = {
         nxui::Color(0.92f, 0.28f, 0.32f, 1.f),
         nxui::Color(0.98f, 0.78f, 0.18f, 1.f),
@@ -630,7 +630,7 @@ void drawThemePreview(nxui::Renderer& ren,
     if (texture && texture->valid()) {
         nxui::Rect drawRect = rect;
         if (iconPackGlass) {
-            // Little glass well inside the pack card — theme-coloured (no hard
+            // Little glass well inside the pack card - theme-coloured (no hard
             // #1c1e25 plate). Glyphs keep alpha and sit on this glass.
             const bool dark = theme->mode == nxui::ThemeMode::Dark;
             const nxui::Color glassBase = theme->panelBase.withAlpha((dark ? 0.58f : 0.78f) * opacity);
@@ -803,9 +803,11 @@ void ThemeShopScreen::openDetail() {
     m_detailButtonIndex = 0;
     m_detailScreenshotIndex = 0;
     m_detailPreviewButtonIndex = 0;
-    m_detailFocusArea = (isCommunityTab() && detailScreenshotCount() > 0)
-        ? DetailFocusArea::Preview
-        : DetailFocusArea::Buttons;
+    // Community gallery OR any Installed/Icons cover can open fullscreen.
+    const bool hasPreview = isCommunityTab()
+        ? detailScreenshotCount() > 0
+        : (selectedThemeShopEntry() && !selectedThemeShopEntry()->coverPath.empty());
+    m_detailFocusArea = hasPreview ? DetailFocusArea::Preview : DetailFocusArea::Buttons;
     m_focusArea = FocusArea::Content;
 
     beginIconPackTintDraft();
@@ -926,7 +928,7 @@ void ThemeShopScreen::updateCustomContent(float dt) {
     if (!usesCustomContentLayout())
         return;
 
-    // ZL/ZR (and L/R) flip pages like HOME — Installed / Community / Icons.
+    // ZL/ZR (and L/R) flip pages like HOME - Installed / Community / Icons.
     if (m_input && m_showing && !m_detailOpen && pageCount() > 1) {
         if (m_input->isDown(nxui::Button::ZL) || m_input->isDown(nxui::Button::L))
             stepPage(-1);
@@ -946,10 +948,8 @@ void ThemeShopScreen::updateCustomContent(float dt) {
 
     if (isCommunityTab())
         syncFinishedCommunityPreviewLoads();
-    else {
-        clearCommunityPreviewCache();
-        m_lastPreviewPrimeKey.clear();
-    }
+    if (isInstalledTab() || isIconsTab())
+        syncFinishedInstalledPreviewLoads();
 
     int headerButtonCount = isCommunityTab() ? 2 : 1;
     m_headerButtonIndex = std::clamp(m_headerButtonIndex, 0, std::max(0, headerButtonCount - 1));
@@ -958,6 +958,9 @@ void ThemeShopScreen::updateCustomContent(float dt) {
         m_lastCustomTabIndex = m_tabIndex;
         m_contentFocusArea = ContentFocusArea::Grid;
         closeDetail();
+        // Drop Community GPU textures when leaving that tab so Defaults can upload.
+        if (!isCommunityTab())
+            clearCommunityPreviewCache();
     }
 
     if (currentEntryCount() <= 0) {
@@ -990,13 +993,32 @@ void ThemeShopScreen::updateCustomContent(float dt) {
             + "|" + std::to_string(m_detailOpen ? 1 : 0)
             + "|" + std::to_string(m_detailScreenshotIndex);
         if (primeKey != m_lastPreviewPrimeKey) {
+            // Trim only when page/detail set changes - not every focus nudge.
+            const bool pageChanged = m_lastPreviewPrimeKey.empty()
+                || primeKey.find('|') == std::string::npos
+                || ([&]() {
+                       // Compare scroll row field (3rd segment).
+                       auto field = [](const std::string& s, int idx) -> std::string {
+                           std::size_t start = 0;
+                           for (int i = 0; i < idx; ++i) {
+                               std::size_t p = s.find('|', start);
+                               if (p == std::string::npos) return {};
+                               start = p + 1;
+                           }
+                           std::size_t p = s.find('|', start);
+                           return s.substr(start, p == std::string::npos ? std::string::npos : p - start);
+                       };
+                       return field(primeKey, 2) != field(m_lastPreviewPrimeKey, 2)
+                           || field(primeKey, 3) != field(m_lastPreviewPrimeKey, 3);
+                   })();
             m_lastPreviewPrimeKey = std::move(primeKey);
-            trimCommunityPreviewCache();
-            primeVisibleCommunityPreviews();
+            if (pageChanged)
+                trimCommunityPreviewCache();
         }
-    } else if (isCommunityTab()) {
-        clearCommunityPreviewCache();
-        m_lastPreviewPrimeKey.clear();
+        // Always re-attempt primes so Idle slots can start when a download slot frees.
+        primeVisibleCommunityPreviews();
+    } else if (isInstalledTab() || isIconsTab()) {
+        trimInstalledPreviewCache();
     }
 
     updateTintSliderAnalog(dt);
@@ -1023,7 +1045,7 @@ bool ThemeShopScreen::handleCustomPressA() {
 
     if (!m_detailOpen && m_contentFocusArea == ContentFocusArea::Header) {
         if (isCommunityTab() && m_headerButtonIndex == 0) {
-            refreshCommunityCatalog();
+            refreshCommunityCatalog(true);
         } else {
             promptSearchQuery();
         }
@@ -1050,7 +1072,9 @@ bool ThemeShopScreen::handleCustomPressA() {
             return true;
         }
 
-        if (isCommunityTab() && m_detailFocusArea == DetailFocusArea::Preview && detailScreenshotCount() > 0) {
+        if (m_detailFocusArea == DetailFocusArea::Preview
+            && (isCommunityTab() ? detailScreenshotCount() > 0
+                                 : (selectedThemeShopEntry() && !selectedThemeShopEntry()->coverPath.empty()))) {
             m_detailFullscreen = true;
             m_detailFullscreenAnim.set(1.f, 0.18f, nxui::Easing::outCubic);
             if (m_activateSfxCb) m_activateSfxCb();
@@ -1253,7 +1277,10 @@ bool ThemeShopScreen::handleCustomNavUp() {
     if (m_detailFullscreen)
         return true;
     if (m_detailOpen) {
-        if (isCommunityTab() && m_detailFocusArea == DetailFocusArea::Buttons && detailScreenshotCount() > 0) {
+        const bool canFocusPreview = isCommunityTab()
+            ? detailScreenshotCount() > 0
+            : (selectedThemeShopEntry() && !selectedThemeShopEntry()->coverPath.empty());
+        if (canFocusPreview && m_detailFocusArea == DetailFocusArea::Buttons) {
             m_detailFocusArea = DetailFocusArea::Preview;
             if (m_navSfxCb) m_navSfxCb();
             return true;
@@ -1319,7 +1346,7 @@ bool ThemeShopScreen::handleCustomNavDown() {
     if (m_detailFullscreen)
         return true;
     if (m_detailOpen) {
-        if (isCommunityTab() && m_detailFocusArea == DetailFocusArea::Preview && detailButtonCount() > 0) {
+        if (m_detailFocusArea == DetailFocusArea::Preview && detailButtonCount() > 0) {
             m_detailFocusArea = DetailFocusArea::Buttons;
             if (m_navSfxCb) m_navSfxCb();
             return true;
@@ -1577,13 +1604,28 @@ bool ThemeShopScreen::handleCustomTouch(nxui::Input& input, const nxui::Rect&, c
     auto pageNextHit = [&](float x, float y) {
         return pageCount() > 1 && makeGridLayout(content).pageNextButton.contains(x, y);
     };
+    auto installedHasCover = [&]() {
+        const auto* entry = selectedThemeShopEntry();
+        return entry && !entry->coverPath.empty();
+    };
+    auto detailPreviewInteractCount = [&]() {
+        if (isCommunityTab())
+            return detailScreenshotCount();
+        return installedHasCover() ? 1 : 0;
+    };
     auto detailPreviewHitIndex = [&](float x, float y) {
-        if (!isCommunityTab() || !m_detailOpen)
+        if (!m_detailOpen)
+            return -1;
+        const int count = detailPreviewInteractCount();
+        if (count <= 0)
             return -1;
 
-        DetailPreviewControls controls = detailPreviewControls(detailPreviewRect(detailDialogRect(content)));
-        nxui::Rect previewRect = detailPreviewRect(detailDialogRect(content));
-        auto rects = detailPreviewControlRects(controls, previewRect, detailScreenshotCount());
+        nxui::Rect dialog = detailDialogRect(content);
+        nxui::Rect previewRect = isIconsTab() && selectedIconPackIsColour()
+            ? colourIconPreviewBounds(dialog)
+            : detailPreviewRect(dialog);
+        DetailPreviewControls controls = detailPreviewControls(previewRect);
+        auto rects = detailPreviewControlRects(controls, previewRect, count);
         for (int i = 0; i < (int)rects.size(); ++i) {
             if (rects[(size_t)i].contains(x, y))
                 return i;
@@ -1760,7 +1802,7 @@ bool ThemeShopScreen::handleCustomTouch(nxui::Input& input, const nxui::Rect&, c
                 return true;
             case ThemeTouchTarget::Refresh:
                 if (refreshHit(x, y)) {
-                    refreshCommunityCatalog();
+                    refreshCommunityCatalog(true);
                     if (m_activateSfxCb) m_activateSfxCb();
                 }
                 return true;
@@ -1801,19 +1843,25 @@ bool ThemeShopScreen::handleCustomTouch(nxui::Input& input, const nxui::Rect&, c
                 return true;
             case ThemeTouchTarget::DetailPreviewControl:
                 if (hitIndex == detailPreviewHitIndex(x, y)) {
+                    const int shots = detailPreviewInteractCount();
                     if (hitIndex == 0) {
-                        if (detailScreenshotCount() > 1) {
+                        if (shots > 1) {
                             int before = m_detailScreenshotIndex;
                             stepDetailScreenshot(-1);
                             if (before != m_detailScreenshotIndex && m_navSfxCb) m_navSfxCb();
+                        } else if (shots == 1) {
+                            m_detailFocusArea = DetailFocusArea::Preview;
+                            m_detailFullscreen = true;
+                            m_detailFullscreenAnim.set(1.f, 0.18f, nxui::Easing::outCubic);
+                            if (m_activateSfxCb) m_activateSfxCb();
                         }
-                    } else if ((hitIndex == 1 && detailScreenshotCount() > 1)
-                            || (hitIndex == 0 && detailScreenshotCount() == 1)) {
+                    } else if ((hitIndex == 1 && shots > 1)
+                            || (hitIndex == 0 && shots == 1)) {
                         m_detailFocusArea = DetailFocusArea::Preview;
                         m_detailFullscreen = true;
                         m_detailFullscreenAnim.set(1.f, 0.18f, nxui::Easing::outCubic);
                         if (m_activateSfxCb) m_activateSfxCb();
-                    } else if (hitIndex == 2 && detailScreenshotCount() > 1) {
+                    } else if (hitIndex == 2 && shots > 1) {
                         int before = m_detailScreenshotIndex;
                         stepDetailScreenshot(1);
                         if (before != m_detailScreenshotIndex && m_navSfxCb) m_navSfxCb();
@@ -2197,7 +2245,7 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
                 previewPhase = communityPreviewPhase(entry.coverUrl);
             } else if (previewRequested) {
                 const std::string packId = isIconsTab() ? entry.id : std::string{};
-                primeInstalledPreview(entry.coverPath, isIconsTab(), packId);
+                primeInstalledPreview(entry.coverPath, isIconsTab(), packId, nullptr, 384); // grid
                 previewTexture = installedPreviewTexture(entry.coverPath, isIconsTab(), packId);
                 previewPhase = installedPreviewPhase(entry.coverPath, isIconsTab(), packId);
                 previewAdaptive = isIconsTab()
@@ -2212,7 +2260,10 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
 
         nxui::Rect previewBounds = {card.x + 10.f, card.y + 10.f, card.width - 20.f, card.height - 76.f};
         nxui::Rect preview = fitAspectRect(previewBounds, kPreviewAspect);
-        bool previewLoading = previewPhase == PreviewPhase::Loading || previewPhase == PreviewPhase::Downloaded;
+        // Idle means "queued but not started yet" (download cap) - still loading, not unavailable.
+        bool previewLoading = previewPhase == PreviewPhase::Idle
+            || previewPhase == PreviewPhase::Loading
+            || previewPhase == PreviewPhase::Downloaded;
         std::string previewLabel = previewRequested
             ? (previewLoading
                 ? (isIconsTab()
@@ -2422,17 +2473,23 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
             detailInfoB = entry->description.empty()
                 ? i18n.tr("themeshop.icons.fallback", "Missing icons fall back to Default.")
                 : entry->description;
-            detailInfoC = entry->installed
-                ? i18n.tr("themeshop.icons.apply_hint", "Apply to switch sidebar icons immediately.")
-                : i18n.tr("themeshop.icons.download_hint", "Install to download this pack to the console.");
-            if (entry->removable)
+            if (!entry->installed) {
+                detailInfoC = i18n.tr("themeshop.icons.download_hint", "Install to download this pack to the console.");
+            } else if (entry->removable) {
                 detailInfoC = i18n.tr("themeshop.icons.remove_hint", "Downloaded pack: it can be removed from the console.");
+            } else if (!entry->coverPath.empty()) {
+                detailInfoC = i18n.tr("themeshop.icons.cover_single", "Press A for a closer look, then Apply to switch icons.");
+            } else {
+                detailInfoC = i18n.tr("themeshop.icons.apply_hint", "Apply to switch sidebar icons immediately.");
+            }
         } else {
             detailInfoB = i18n.tr("themeshop.installed.sound", "Bundled Sound Pack") + std::string(": ")
                 + (entry->soundPreset.empty() ? i18n.tr("themeshop.installed.sound_none", "None") : entry->soundPreset);
             detailInfoC = entry->removable
                 ? i18n.tr("themeshop.installed.remove_hint", "This theme can be removed from the console.")
                 : i18n.tr("themeshop.installed.builtin_hint", "This is part of the built-in theme set.");
+            if (!entry->coverPath.empty())
+                detailInfoC = i18n.tr("themeshop.installed.cover_single", "Press A to open this screenshot in fullscreen.");
         }
         detailPreviewRequested = !entry->coverPath.empty() || !entry->coverUrl.empty();
         if (detailPreviewRequested && !entry->coverUrl.empty()) {
@@ -2448,7 +2505,7 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
                 draftHsl = hslAdjustFromTint(selectedIconPackTint());
                 hslOverride = &draftHsl;
             }
-            primeInstalledPreview(entry->coverPath, isIconsTab(), packId, hslOverride);
+            primeInstalledPreview(entry->coverPath, isIconsTab(), packId, hslOverride, 384); // match grid - avoid waitIdle reupload
             detailPreviewTexture =
                 installedPreviewTexture(entry->coverPath, isIconsTab(), packId, hslOverride);
             detailPreviewPhase =
@@ -2470,7 +2527,9 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
                                         hslOverride);
     }();
 
-    bool detailPreviewLoading = detailPreviewPhase == PreviewPhase::Loading || detailPreviewPhase == PreviewPhase::Downloaded;
+    bool detailPreviewLoading = detailPreviewPhase == PreviewPhase::Idle
+        || detailPreviewPhase == PreviewPhase::Loading
+        || detailPreviewPhase == PreviewPhase::Downloaded;
     std::string detailPreviewLabel = detailPreviewRequested
         ? (detailPreviewLoading
             ? i18n.tr("themeshop.preview.loading", "Loading screenshot...")
@@ -2489,9 +2548,9 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
                      detailPreviewAdaptive,
                      isIconsTab());
 
-    if (isCommunityTab() && detailPreviewRequested) {
+    if (detailPreviewRequested) {
         auto previewButtons = detailPreviewControlRects(previewControls, preview, detailScreenshotTotal);
-        if (detailScreenshotTotal > 1) {
+        if (isCommunityTab() && detailScreenshotTotal > 1) {
             bool canGoPrev = m_detailScreenshotIndex > 0;
             bool canGoNext = m_detailScreenshotIndex + 1 < detailScreenshotTotal;
             drawActionButtonChip(ren,
@@ -2525,7 +2584,7 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
                      0.68f);
         }
 
-        if (m_detailFocusArea == DetailFocusArea::Preview && !previewButtons.empty()) {
+        if (m_detailFocusArea == DetailFocusArea::Preview) {
             m_focusCursor.moveTo(preview.expanded(4.f), 20.f, 0.08f);
         }
     }
@@ -2797,7 +2856,7 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
         || m_detailFocusArea == DetailFocusArea::TintHue
         || m_detailFocusArea == DetailFocusArea::TintSat
         || m_detailFocusArea == DetailFocusArea::TintLight;
-    if (!(isCommunityTab() && m_detailFocusArea == DetailFocusArea::Preview && detailPreviewRequested)
+    if (!(m_detailFocusArea == DetailFocusArea::Preview && detailPreviewRequested)
         && !tintFocus
         && !buttons.empty() && !disableCommunityButtons) {
         m_focusCursor.moveTo(buttons[(size_t)std::clamp(m_detailButtonIndex, 0, (int)buttons.size() - 1)].expanded(2.f),

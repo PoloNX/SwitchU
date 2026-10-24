@@ -123,7 +123,7 @@ public:
 
     void setThreadPool(nxui::ThreadPool* pool);
     void setRenderContext(nxui::GpuDevice* gpu, nxui::Renderer* renderer);
-    void refreshCommunityCatalog();
+    void refreshCommunityCatalog(bool forceNetwork = false);
     void requestRenderDiagnostics(int frames = 6) {
         if (frames > m_renderDebugFrames)
             m_renderDebugFrames = frames;
@@ -185,11 +185,16 @@ private:
         int failureCount = 0;
         bool cancelled = false;
         bool adaptiveRequested = false; // load via AdaptiveIconLoad
-        bool adaptive = false;          // mono result → tint with chrome
+        bool adaptive = false;          // mono result -> tint with chrome
         bool hasContrastMask = false;   // colour pack coverage twin for chrome follow
         std::uint32_t hslKey = 0;       // custom-tint fingerprint for cache reuse
+        int maxSide = 0;                // decode budget used for this slot
+        int pixelW = 0;
+        int pixelH = 0;
         std::string url;
-        std::vector<std::uint8_t> bytes;
+        std::vector<std::uint8_t> bytes;       // compressed community download
+        std::vector<std::uint8_t> pixels;      // decoded RGBA (installed/icons)
+        std::vector<std::uint8_t> maskPixels;  // optional contrast twin
         std::future<void> future;
         nxui::Texture texture;
         nxui::Texture contrastMask;
@@ -283,7 +288,10 @@ private:
     void primeInstalledPreview(const std::string& previewPath,
                                bool adaptiveLoad = false,
                                const std::string& iconPackId = {},
-                               const switchu::icons::HslAdjust* hslOverride = nullptr);
+                               const switchu::icons::HslAdjust* hslOverride = nullptr,
+                               int maxSide = 0);
+    void syncFinishedInstalledPreviewLoads();
+    void trimInstalledPreviewCache();
     bool selectedIconPackIsColour() const;
     IconPackTintState iconPackTintFor(const std::string& packId) const;
     IconPackTintState& selectedIconPackTint();
@@ -344,7 +352,7 @@ private:
     bool m_iconContrastAdapt = true;
     // Committed tints (match config / HOME / Icons grid cards).
     std::unordered_map<std::string, IconPackTintState> m_iconPackTints;
-    // Live HSL edit while the detail sheet is open — preview only until Apply.
+    // Live HSL edit while the detail sheet is open - preview only until Apply.
     bool m_draftTintActive = false;
     std::string m_draftTintPackId;
     IconPackTintState m_draftTint;
@@ -376,6 +384,7 @@ private:
     std::string m_packageTransferThemeId;
     bool m_packageTransferInstallMode = false;
     bool m_hasPendingCommunityPreviewWork = false;
+    bool m_hasPendingInstalledPreviewWork = false;
     std::uint64_t m_communityRevision = 0;
     bool m_detailOpen = false;
     bool m_detailFullscreen = false;

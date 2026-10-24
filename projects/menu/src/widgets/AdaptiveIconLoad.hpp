@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace switchu::icons {
 
@@ -21,13 +22,29 @@ struct HslAdjust {
 // Loads a PNG/JPG into `out`. Returns true on success.
 //
 // Monochrome glyphs (black, white, or grayscale gradients) are normalized to a
-// white RGB × coverage-alpha mask — luminance is baked into alpha so mid-tones
+// white RGB × coverage-alpha mask - luminance is baked into alpha so mid-tones
 // survive when chrome tints the icon white or black. Colour artwork is uploaded
 // unchanged (*outAdaptive false → identity white tint), optionally HSL-shifted.
 //
 // When outMeanLuma is set, writes the sparse-sampled mean relative luminance.
 // When outContrastMask is set and the icon is colour (not mono), also uploads a
 // white×alpha *luminance* twin (from pre-shift pixels) for chrome follow.
+// CPU-only decode (safe on worker threads). Uploading is the caller's job.
+struct DecodedAdaptiveIcon {
+    std::vector<std::uint8_t> rgba;
+    std::vector<std::uint8_t> contrastMask; // empty when mono / unused
+    int w = 0;
+    int h = 0;
+    bool adaptive = false;
+    float meanLuma = 0.5f;
+};
+
+bool decodeMaybeAdaptiveIcon(const std::string& path,
+                             DecodedAdaptiveIcon& out,
+                             int maxSide = 128,
+                             const HslAdjust* hslAdjust = nullptr,
+                             bool wantContrastMask = false);
+
 bool loadMaybeAdaptiveIcon(nxui::Texture& out,
                            nxui::GpuDevice& gpu,
                            nxui::Renderer& ren,
