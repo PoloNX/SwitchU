@@ -130,6 +130,8 @@ std::string resolveGlyphPath(const std::string& assetsBase,
 std::string displayNameForPack(const std::string& packId) {
     if (packId.empty() || packId == kDefaultPackId)
         return "Default";
+    if (packId == kAtmosPackId)
+        return "Atmos";
     if (isThemePackId(packId)) {
         std::string name = themeFolderFromPackId(packId);
         if (!name.empty())
@@ -155,7 +157,12 @@ std::vector<IconPackInfo> discoverPacks(const std::string& assetsBase) {
         IconPackInfo info;
         info.id = id;
         info.name = displayNameForPack(id);
-        info.author = (id == kDefaultPackId) ? "Built-in" : "Icon pack";
+        if (id == kDefaultPackId)
+            info.author = "Built-in";
+        else if (id == kAtmosPackId)
+            info.author = "bshurikan";
+        else
+            info.author = "Icon pack";
         info.directory = dir.generic_string();
         info.isDefault = (id == kDefaultPackId);
         info.fromTheme = false;

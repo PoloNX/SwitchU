@@ -62,9 +62,12 @@ struct AppConfig {
     // Colour HOME chrome icons follow single-row hero light/dark chrome when on
     // (Theme > Options). Default on — matches pre-PoloNX enjoyment.
     bool iconContrastAdapt = true;
-    // Per-pack Photoshop-style HSL adjust (0.5 pivots = leave original).
+    // Per-pack Photoshop-style HSL adjust (0.5 pivots = leave original) plus
+    // Flatten / Grayscale presentation toggles.
     struct IconPackTint {
         bool enabled = false;
+        bool flatten = false;
+        bool grayscale = false;
         float hue = 0.5f;
         float sat = 0.5f;
         float light = 0.5f;
@@ -79,7 +82,7 @@ struct AppConfig {
     }
     void setIconPackTint(const std::string& packId, const IconPackTint& tint) {
         const std::string id = packId.empty() ? "default" : packId;
-        if (!tint.enabled
+        if (!tint.enabled && !tint.flatten && !tint.grayscale
             && std::fabs(tint.hue - 0.5f) < 0.0005f
             && std::fabs(tint.sat - 0.5f) < 0.0005f
             && std::fabs(tint.light - 0.5f) < 0.0005f) {

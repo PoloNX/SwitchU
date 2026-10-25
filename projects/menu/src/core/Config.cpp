@@ -109,13 +109,19 @@ bool AppConfig::load() {
                 continue;
             IconPackTint tint;
             readJsonOpt(value, "enabled", tint.enabled);
+            readJsonOpt(value, "flatten", tint.flatten);
+            readJsonOpt(value, "grayscale", tint.grayscale);
             readJsonOpt(value, "hue", tint.hue);
             readJsonOpt(value, "sat", tint.sat);
             readJsonOpt(value, "light", tint.light);
             tint.hue = std::clamp(tint.hue, 0.f, 1.f);
             tint.sat = std::clamp(tint.sat, 0.f, 1.f);
             tint.light = std::clamp(tint.light, 0.f, 1.f);
-            iconPackTints[packId] = tint;
+            // Legacy pack ids (grayscale/solid/tinted) → atmos.
+            std::string id = packId;
+            if (id == "tinted" || id == "grayscale" || id == "solid")
+                id = "atmos";
+            iconPackTints[id] = tint;
         }
     } else {
         bool legacyEnabled = false;
@@ -154,6 +160,8 @@ bool AppConfig::load() {
     readJsonOpt(j, "iconPack", iconPack);
     if (iconPack.empty())
         iconPack = "default";
+    else if (iconPack == "tinted" || iconPack == "grayscale" || iconPack == "solid")
+        iconPack = "atmos";
     readJsonOpt(j, "autoThemeMode", autoThemeMode);
     readJsonOpt(j, "autoThemeDayPreset", autoThemeDayPreset);
     readJsonOpt(j, "autoThemeNightPreset", autoThemeNightPreset);
@@ -278,6 +286,8 @@ bool AppConfig::save() const {
                 continue;
             tints[packId] = {
                 {"enabled", tint.enabled},
+                {"flatten", tint.flatten},
+                {"grayscale", tint.grayscale},
                 {"hue", std::clamp(tint.hue, 0.f, 1.f)},
                 {"sat", std::clamp(tint.sat, 0.f, 1.f)},
                 {"light", std::clamp(tint.light, 0.f, 1.f)},

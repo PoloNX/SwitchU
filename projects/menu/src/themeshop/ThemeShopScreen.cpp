@@ -484,8 +484,11 @@ std::string ThemeShopScreen::installedPreviewCacheKey(const std::string& preview
     if (hslOverride)
         return previewPath + "#draft";
     const switchu::icons::HslAdjust hsl = hslAdjustForPack(iconPackId);
-    const std::uint32_t hslKey = hsl.enabled
-        ? (1u << 24)
+    const bool hasPres = hsl.enabled || hsl.flatten || hsl.grayscale;
+    const std::uint32_t hslKey = hasPres
+        ? ((hsl.enabled ? 1u : 0u) << 26)
+          | ((hsl.flatten ? 1u : 0u) << 25)
+          | ((hsl.grayscale ? 1u : 0u) << 24)
           | (static_cast<std::uint32_t>(std::lround(hsl.hue * 255.f)) << 16)
           | (static_cast<std::uint32_t>(std::lround(hsl.sat * 255.f)) << 8)
           | static_cast<std::uint32_t>(std::lround(hsl.light * 255.f))
@@ -524,7 +527,9 @@ const nxui::Texture* ThemeShopScreen::installedPreviewTexture(
         return nullptr;
 
     std::lock_guard<std::mutex> lk(it->second->mutex);
-    if (it->second->phase != PreviewPhase::Ready || !it->second->texture.valid())
+    // Stale-while-revalidate: keep showing the last good frame across Idle /
+    // Loading / Downloaded so HSL scrubbing never flashes the spinner.
+    if (!it->second->texture.valid())
         return nullptr;
     return &it->second->texture;
 }
@@ -573,6 +578,20 @@ bool ThemeShopScreen::selectedIconPackIsColour() const {
     return entry && entry->colourPack;
 }
 
+bool ThemeShopScreen::showSelectedIconTintControls() const {
+    if (!isIconsTab())
+        return false;
+    const auto* entry = selectedThemeShopEntry();
+    return entry && entry->installed;
+}
+
+bool ThemeShopScreen::selectedIconShowsHueSat() const {
+    if (!selectedIconCustomTint())
+        return false;
+    // Grayscale (alone or with Flatten) hides H/S; L stays.
+    return !selectedIconPackTint().grayscale;
+}
+
 ThemeShopScreen::IconPackTintState ThemeShopScreen::iconPackTintFor(const std::string& packId) const {
     auto it = m_iconPackTints.find(packId.empty() ? "default" : packId);
     if (it != m_iconPackTints.end())
@@ -601,7 +620,7 @@ const ThemeShopScreen::IconPackTintState& ThemeShopScreen::selectedIconPackTint(
 }
 
 void ThemeShopScreen::beginIconPackTintDraft() {
-    if (!isIconsTab() || !selectedIconPackIsColour()) {
+    if (!showSelectedIconTintControls()) {
         discardIconPackTintDraft();
         return;
     }
@@ -643,6 +662,34 @@ void ThemeShopScreen::setIconCustomTintEnabled(bool enabled) {
     if (tint.enabled == enabled)
         return;
     tint.enabled = enabled;
+    maybeSeedFlattenLightDefault();
+}
+
+void ThemeShopScreen::setIconFlattenEnabled(bool enabled) {
+    auto& tint = selectedIconPackTint();
+    if (tint.flatten == enabled)
+        return;
+    tint.flatten = enabled;
+    maybeSeedFlattenLightDefault();
+}
+
+void ThemeShopScreen::setIconGrayscaleEnabled(bool enabled) {
+    auto& tint = selectedIconPackTint();
+    if (tint.grayscale == enabled)
+        return;
+    tint.grayscale = enabled;
+}
+
+void ThemeShopScreen::maybeSeedFlattenLightDefault() {
+    // Flatten + Custom tint: seed L to match theme polarity once (white on dark /
+    // black on light). Theme flips leave tinted flatten alone afterward.
+    auto& tint = selectedIconPackTint();
+    if (!tint.flatten || !tint.enabled)
+        return;
+    if (std::fabs(tint.light - 0.5f) > 0.0005f)
+        return;
+    const bool darkTheme = !m_theme || m_theme->mode != nxui::ThemeMode::Light;
+    tint.light = darkTheme ? 1.f : 0.f;
 }
 
 void ThemeShopScreen::setIconTintHue(float hue01) {
@@ -686,6 +733,8 @@ void ThemeShopScreen::nudgeIconTintLight(float delta) {
 switchu::icons::HslAdjust ThemeShopScreen::hslAdjustFromTint(const IconPackTintState& tint) const {
     switchu::icons::HslAdjust adj;
     adj.enabled = tint.enabled;
+    adj.flatten = tint.flatten;
+    adj.grayscale = tint.grayscale;
     adj.hue = std::clamp(tint.hue, 0.f, 1.f);
     adj.sat = std::clamp(tint.sat, 0.f, 1.f);
     adj.light = std::clamp(tint.light, 0.f, 1.f);
@@ -746,6 +795,36 @@ void ThemeShopScreen::invalidateIconPackPreviews() {
     }
 }
 
+void ThemeShopScreen::pausePreviewWorkForSleep() {
+    // Cancel workers only — do not destroy textures (Texture dtor waitIdle can
+    // wedge the GPU path if sleep/wake is already delicate).
+    for (auto& entry : m_installedPreviewCache) {
+        if (!entry.second)
+            continue;
+        std::lock_guard<std::mutex> lk(entry.second->mutex);
+        entry.second->cancelled = true;
+        entry.second->pixels.clear();
+        entry.second->maskPixels.clear();
+        if (entry.second->phase == PreviewPhase::Loading
+            || entry.second->phase == PreviewPhase::Downloaded)
+            entry.second->phase = entry.second->texture.valid()
+                ? PreviewPhase::Ready : PreviewPhase::Idle;
+    }
+    for (auto& entry : m_communityPreviewCache) {
+        if (!entry.second)
+            continue;
+        std::lock_guard<std::mutex> lk(entry.second->mutex);
+        entry.second->cancelled = true;
+        entry.second->bytes.clear();
+        if (entry.second->phase == PreviewPhase::Loading
+            || entry.second->phase == PreviewPhase::Downloaded)
+            entry.second->phase = entry.second->texture.valid()
+                ? PreviewPhase::Ready : PreviewPhase::Idle;
+    }
+    m_hasPendingInstalledPreviewWork = false;
+    m_hasPendingCommunityPreviewWork = false;
+}
+
 void ThemeShopScreen::primeInstalledPreview(const std::string& previewPath,
                                             bool adaptiveLoad,
                                             const std::string& iconPackId,
@@ -759,13 +838,14 @@ void ThemeShopScreen::primeInstalledPreview(const std::string& previewPath,
     const switchu::icons::HslAdjust hsl = adaptiveLoad
         ? (hslOverride ? *hslOverride : hslAdjustForPack(iconPackId))
         : switchu::icons::HslAdjust{};
-    const std::uint32_t hslKey = adaptiveLoad
-        ? (hsl.enabled
-            ? (1u << 24)
-              | (static_cast<std::uint32_t>(std::lround(hsl.hue * 255.f)) << 16)
-              | (static_cast<std::uint32_t>(std::lround(hsl.sat * 255.f)) << 8)
-              | static_cast<std::uint32_t>(std::lround(hsl.light * 255.f))
-            : 0u)
+    const bool hasPres = hsl.enabled || hsl.flatten || hsl.grayscale;
+    const std::uint32_t hslKey = adaptiveLoad && hasPres
+        ? ((hsl.enabled ? 1u : 0u) << 26)
+          | ((hsl.flatten ? 1u : 0u) << 25)
+          | ((hsl.grayscale ? 1u : 0u) << 24)
+          | (static_cast<std::uint32_t>(std::lround(hsl.hue * 255.f)) << 16)
+          | (static_cast<std::uint32_t>(std::lround(hsl.sat * 255.f)) << 8)
+          | static_cast<std::uint32_t>(std::lround(hsl.light * 255.f))
         : 0u;
 
     // Key by path + HSL so draft detail previews don't overwrite grid cards.
@@ -788,22 +868,38 @@ void ThemeShopScreen::primeInstalledPreview(const std::string& previewPath,
                 || slot->phase == PreviewPhase::Failed
                 || slot->phase == PreviewPhase::Idle);
         if (identityChanged || needsUpgrade) {
+            // Draft HSL scrubbing: keep the last texture on screen so the
+            // preview does not flash a loading spinner between slider ticks.
+            const bool keepStaleDraft = hslOverride != nullptr && slot->texture.valid();
+            // Coalesce: if a draft decode is already running, cancel it and wait
+            // for Idle/Ready. Next frame primes once with the latest HSL — not
+            // dozens of overlapping decodes per second while scrubbing.
+            if (hslOverride
+                && (slot->phase == PreviewPhase::Loading
+                    || slot->phase == PreviewPhase::Downloaded)) {
+                slot->cancelled = true;
+                slot->maxSide = std::max(slot->maxSide, decodeSide);
+                return;
+            }
+            slot->cancelled = true; // drop any in-flight decode for this slot
             slot->url = previewPath;
             slot->adaptiveRequested = adaptiveLoad;
             slot->hslKey = hslKey;
             slot->maxSide = decodeSide;
             slot->phase = PreviewPhase::Idle;
             slot->failureCount = 0;
-            slot->cancelled = false;
-            slot->adaptive = false;
+            slot->adaptive = keepStaleDraft ? slot->adaptive : false;
             slot->hasContrastMask = false;
             slot->pixelW = 0;
             slot->pixelH = 0;
             slot->pixels.clear();
             slot->maskPixels.clear();
             slot->future = std::future<void>();
-            slot->texture = nxui::Texture();
-            slot->contrastMask = nxui::Texture();
+            slot->cancelled = false;
+            if (!keepStaleDraft) {
+                slot->texture = nxui::Texture();
+                slot->contrastMask = nxui::Texture();
+            }
         } else if (slot->maxSide < decodeSide) {
             slot->maxSide = decodeSide;
         }
@@ -841,13 +937,22 @@ void ThemeShopScreen::primeInstalledPreview(const std::string& previewPath,
         const std::string pathCopy = previewPath;
         const bool adaptiveCopy = adaptiveLoad;
         const switchu::icons::HslAdjust hslCopy = hsl;
+        const bool hasPresCopy = hasPres;
         const int sideCopy = decodeSide;
-        slot->future = m_threadPool->submit([slot, pathCopy, adaptiveCopy, hslCopy, sideCopy]() {
+        const std::uint32_t expectedHslKey = hslKey;
+        slot->future = m_threadPool->submit([slot, pathCopy, adaptiveCopy, hslCopy, hasPresCopy,
+                                             sideCopy, expectedHslKey]() {
             try {
                 {
                     std::lock_guard<std::mutex> lk(slot->mutex);
-                    if (slot->cancelled)
+                    if (slot->cancelled || slot->hslKey != expectedHslKey) {
+                        // Must leave Loading or scrub cancel + sleep leave the
+                        // slot stuck and every later prime coalesces forever.
+                        if (slot->phase == PreviewPhase::Loading)
+                            slot->phase = slot->texture.valid()
+                                ? PreviewPhase::Ready : PreviewPhase::Idle;
                         return;
+                    }
                 }
 
                 bool ok = false;
@@ -860,7 +965,7 @@ void ThemeShopScreen::primeInstalledPreview(const std::string& previewPath,
                     switchu::icons::DecodedAdaptiveIcon decoded;
                     ok = switchu::icons::decodeMaybeAdaptiveIcon(
                         pathCopy, decoded, sideCopy,
-                        hslCopy.enabled ? &hslCopy : nullptr,
+                        hasPresCopy ? &hslCopy : nullptr,
                         /*wantContrastMask=*/true);
                     if (ok) {
                         adaptive = decoded.adaptive;
@@ -882,9 +987,14 @@ void ThemeShopScreen::primeInstalledPreview(const std::string& previewPath,
                 }
 
                 std::lock_guard<std::mutex> lk(slot->mutex);
-                if (slot->cancelled) {
+                if (slot->cancelled || slot->hslKey != expectedHslKey) {
                     slot->pixels.clear();
                     slot->maskPixels.clear();
+                    // Superseded draft scrub / sleep cancel: free the slot so the
+                    // next prime can start with the latest HSL key.
+                    if (slot->phase == PreviewPhase::Loading)
+                        slot->phase = slot->texture.valid() ? PreviewPhase::Ready
+                                                           : PreviewPhase::Idle;
                     return;
                 }
                 if (!ok || pixels.empty()) {
@@ -904,7 +1014,12 @@ void ThemeShopScreen::primeInstalledPreview(const std::string& previewPath,
                 slot->phase = PreviewPhase::Downloaded;
             } catch (const std::exception& ex) {
                 std::lock_guard<std::mutex> lk(slot->mutex);
-                if (slot->cancelled) return;
+                if (slot->cancelled) {
+                    if (slot->phase == PreviewPhase::Loading)
+                        slot->phase = slot->texture.valid()
+                            ? PreviewPhase::Ready : PreviewPhase::Idle;
+                    return;
+                }
                 slot->pixels.clear();
                 slot->maskPixels.clear();
                 slot->failureCount += 1;
@@ -912,7 +1027,12 @@ void ThemeShopScreen::primeInstalledPreview(const std::string& previewPath,
                 DebugLog::log("[themeshop] installed preview decode failed: %s", ex.what());
             } catch (...) {
                 std::lock_guard<std::mutex> lk(slot->mutex);
-                if (slot->cancelled) return;
+                if (slot->cancelled) {
+                    if (slot->phase == PreviewPhase::Loading)
+                        slot->phase = slot->texture.valid()
+                            ? PreviewPhase::Ready : PreviewPhase::Idle;
+                    return;
+                }
                 slot->pixels.clear();
                 slot->maskPixels.clear();
                 slot->failureCount += 1;
@@ -938,7 +1058,7 @@ void ThemeShopScreen::primeInstalledPreview(const std::string& previewPath,
                                                    decodeSide,
                                                    nullptr,
                                                    &contrastMask,
-                                                   hsl.enabled ? &hsl : nullptr);
+                                                   hasPres ? &hsl : nullptr);
     } else {
         ok = uploaded.loadFromFile(*m_gpu, *m_renderer, previewPath, decodeSide);
     }
@@ -1001,7 +1121,13 @@ void ThemeShopScreen::syncFinishedInstalledPreviewLoads() {
         {
             std::lock_guard<std::mutex> lk(state->mutex);
             if (state->phase == PreviewPhase::Downloaded) {
-                if (uploadsThisFrame >= kMaxPreviewUploadsPerFrame) {
+                // Scrub cancel: drop superseded pixels; keep last texture on screen.
+                if (state->cancelled) {
+                    state->pixels.clear();
+                    state->maskPixels.clear();
+                    state->phase = state->texture.valid() ? PreviewPhase::Ready
+                                                         : PreviewPhase::Idle;
+                } else if (uploadsThisFrame >= kMaxPreviewUploadsPerFrame) {
                     hasPendingWork = true;
                 } else {
                     pixels = std::move(state->pixels);
@@ -1068,7 +1194,9 @@ void ThemeShopScreen::trimInstalledPreviewCache() {
         const auto* sel = selectedThemeShopEntry();
         if (sel && !sel->coverPath.empty()) {
             const std::string packId = icons ? sel->id : std::string{};
-            if (icons && selectedIconPackIsColour()) {
+            if (icons && showSelectedIconTintControls()) {
+                // Always keep the #draft slot while tint controls are open —
+                // including when every toggle is off (identity / original look).
                 auto draft = hslAdjustFromTint(selectedIconPackTint());
                 retain.insert(installedPreviewCacheKey(sel->coverPath, true, packId, &draft));
             }

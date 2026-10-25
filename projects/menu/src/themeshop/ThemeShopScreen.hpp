@@ -65,6 +65,8 @@ public:
     void onIconContrastAdaptChange(BoolCb cb) { m_iconContrastAdaptCb = std::move(cb); }
     struct IconPackTintState {
         bool enabled = false;
+        bool flatten = false;
+        bool grayscale = false;
         float hue = 0.5f;
         float sat = 0.5f;
         float light = 0.5f;
@@ -106,6 +108,8 @@ public:
         m_iconPackTints = tints;
     }
     void invalidateIconPackPreviews();
+    // Stop in-flight preview workers without destroying GPU textures (sleep-safe).
+    void pausePreviewWorkForSleep();
     // Persist draft tint (Theme Shop → config/HOME). Call before Apply.
     void commitDraftIconPackTint();
     void setActionHintStyleState(const std::string& style) {
@@ -210,6 +214,8 @@ private:
         DetailPreviewControl,
         DetailButton,
         DetailTintToggle,
+        DetailFlattenToggle,
+        DetailGrayscaleToggle,
         DetailTintHue,
         DetailTintSat,
         DetailTintLight,
@@ -220,6 +226,8 @@ private:
     enum class DetailFocusArea {
         Preview,
         TintToggle,
+        FlattenToggle,
+        GrayscaleToggle,
         TintHue,
         TintSat,
         TintLight,
@@ -293,6 +301,9 @@ private:
     void syncFinishedInstalledPreviewLoads();
     void trimInstalledPreviewCache();
     bool selectedIconPackIsColour() const;
+    // Installed Icons-tab pack: Custom tint / Flatten / Grayscale controls.
+    bool showSelectedIconTintControls() const;
+    bool selectedIconShowsHueSat() const;
     IconPackTintState iconPackTintFor(const std::string& packId) const;
     IconPackTintState& selectedIconPackTint();
     const IconPackTintState& selectedIconPackTint() const;
@@ -300,6 +311,8 @@ private:
     void beginIconPackTintDraft();
     void discardIconPackTintDraft();
     void setIconCustomTintEnabled(bool enabled);
+    void setIconFlattenEnabled(bool enabled);
+    void setIconGrayscaleEnabled(bool enabled);
     void setIconTintHue(float hue01);
     void setIconTintSat(float sat01);
     void setIconTintLight(float light01);
@@ -309,6 +322,7 @@ private:
     void emitIconPackTint(const std::string& packId, const IconPackTintState& tint);
     switchu::icons::HslAdjust hslAdjustForPack(const std::string& packId) const;
     switchu::icons::HslAdjust hslAdjustFromTint(const IconPackTintState& tint) const;
+    void maybeSeedFlattenLightDefault();
     void updateTintSliderAnalog(float dt);
     void primeCommunityPreview(const std::string& previewPath);
     void primeCommunityPreview(const ThemeCatalogClient::Entry& entry);

@@ -523,8 +523,12 @@ void drawTintTogglePill(nxui::Renderer& ren,
 }
 
 struct IconTintLayout {
-    nxui::Rect labelRow;
-    nxui::Rect togglePill;
+    nxui::Rect tintLabelRow;
+    nxui::Rect tintPill;
+    nxui::Rect flattenLabelRow;
+    nxui::Rect flattenPill;
+    nxui::Rect grayLabelRow;
+    nxui::Rect grayPill;
     nxui::Rect hueLabel;
     nxui::Rect hueTrack;
     nxui::Rect satLabel;
@@ -533,21 +537,29 @@ struct IconTintLayout {
     nxui::Rect lightTrack;
 };
 
-// Full-width HSL stack under the pack preview (roomier than the side column).
+// Toggle stack + HSL under the pack preview (side column).
 IconTintLayout makeIconTintLayout(const nxui::Rect& band) {
     IconTintLayout layout;
-    layout.labelRow = {band.x, band.y, band.width, 34.f};
-    layout.togglePill = {
-        band.x + band.width - 64.f,
-        layout.labelRow.y + 3.f,
-        56.f,
-        28.f
+    constexpr float kRowH = 34.f;
+    constexpr float kPillW = 56.f;
+    constexpr float kPillH = 28.f;
+    constexpr float kToggleGap = 6.f;
+    auto placeToggle = [&](nxui::Rect& labelRow, nxui::Rect& pill, float y) {
+        labelRow = {band.x, y, band.width, kRowH};
+        pill = {band.x + band.width - kPillW - 2.f, y + 3.f, kPillW, kPillH};
     };
+    float y = band.y;
+    placeToggle(layout.tintLabelRow, layout.tintPill, y);
+    y = layout.tintLabelRow.bottom() + kToggleGap;
+    placeToggle(layout.flattenLabelRow, layout.flattenPill, y);
+    y = layout.flattenLabelRow.bottom() + kToggleGap;
+    placeToggle(layout.grayLabelRow, layout.grayPill, y);
+
     constexpr float kLabelH = 20.f;
     constexpr float kTrackH = 16.f;
     constexpr float kLabelGap = 5.f;
-    constexpr float kSectionGap = 22.f; // track → next label
-    float y = layout.labelRow.bottom() + 10.f;
+    constexpr float kSectionGap = 18.f;
+    y = layout.grayLabelRow.bottom() + 12.f;
     layout.hueLabel = {band.x, y, band.width, kLabelH};
     y = layout.hueLabel.bottom() + kLabelGap;
     layout.hueTrack = {band.x, y, band.width, kTrackH};
@@ -1083,13 +1095,27 @@ bool ThemeShopScreen::handleCustomPressA() {
 
         if (m_detailFocusArea == DetailFocusArea::TintToggle) {
             setIconCustomTintEnabled(!selectedIconCustomTint());
-            if (selectedIconCustomTint())
-                m_detailFocusArea = DetailFocusArea::TintHue;
+            if (selectedIconCustomTint()) {
+                m_detailFocusArea = selectedIconShowsHueSat()
+                    ? DetailFocusArea::TintHue : DetailFocusArea::TintLight;
+            }
+            if (m_activateSfxCb) m_activateSfxCb();
+            return true;
+        }
+        if (m_detailFocusArea == DetailFocusArea::FlattenToggle) {
+            setIconFlattenEnabled(!selectedIconPackTint().flatten);
+            if (m_activateSfxCb) m_activateSfxCb();
+            return true;
+        }
+        if (m_detailFocusArea == DetailFocusArea::GrayscaleToggle) {
+            setIconGrayscaleEnabled(!selectedIconPackTint().grayscale);
             if (m_activateSfxCb) m_activateSfxCb();
             return true;
         }
 
-        if (m_detailFocusArea == DetailFocusArea::TintHue) {
+        if (m_detailFocusArea == DetailFocusArea::TintHue
+            || m_detailFocusArea == DetailFocusArea::TintSat
+            || m_detailFocusArea == DetailFocusArea::TintLight) {
             if (m_activateSfxCb) m_activateSfxCb();
             return true;
         }
@@ -1280,19 +1306,29 @@ bool ThemeShopScreen::handleCustomNavUp() {
         const bool canFocusPreview = isCommunityTab()
             ? detailScreenshotCount() > 0
             : (selectedThemeShopEntry() && !selectedThemeShopEntry()->coverPath.empty());
-        if (selectedIconPackIsColour()) {
-            // Apply Up → Tint toggle; Left reaches Preview. Sliders stay on
-            // Right from the toggle / Up through hue→sat→light when already in them.
+        if (showSelectedIconTintControls()) {
+            // Apply Up → Light → Sat → Hue → Grayscale → Flatten → Custom tint → Preview.
+            // (HS skipped when Grayscale hides them; Light only when Custom tint is on.)
             if (m_detailFocusArea == DetailFocusArea::Buttons) {
-                m_detailFocusArea = DetailFocusArea::TintToggle;
+                if (selectedIconCustomTint())
+                    m_detailFocusArea = DetailFocusArea::TintLight;
+                else
+                    m_detailFocusArea = DetailFocusArea::GrayscaleToggle;
                 if (m_navSfxCb) m_navSfxCb();
             } else if (m_detailFocusArea == DetailFocusArea::TintLight) {
-                m_detailFocusArea = DetailFocusArea::TintSat;
+                m_detailFocusArea = selectedIconShowsHueSat()
+                    ? DetailFocusArea::TintSat : DetailFocusArea::GrayscaleToggle;
                 if (m_navSfxCb) m_navSfxCb();
             } else if (m_detailFocusArea == DetailFocusArea::TintSat) {
                 m_detailFocusArea = DetailFocusArea::TintHue;
                 if (m_navSfxCb) m_navSfxCb();
             } else if (m_detailFocusArea == DetailFocusArea::TintHue) {
+                m_detailFocusArea = DetailFocusArea::GrayscaleToggle;
+                if (m_navSfxCb) m_navSfxCb();
+            } else if (m_detailFocusArea == DetailFocusArea::GrayscaleToggle) {
+                m_detailFocusArea = DetailFocusArea::FlattenToggle;
+                if (m_navSfxCb) m_navSfxCb();
+            } else if (m_detailFocusArea == DetailFocusArea::FlattenToggle) {
                 m_detailFocusArea = DetailFocusArea::TintToggle;
                 if (m_navSfxCb) m_navSfxCb();
             } else if (m_detailFocusArea == DetailFocusArea::TintToggle && canFocusPreview) {
@@ -1348,19 +1384,34 @@ bool ThemeShopScreen::handleCustomNavDown() {
     if (m_detailFullscreen)
         return true;
     if (m_detailOpen) {
-        // Preview and Tint toggle both drop to Apply (sliders stay via Right
-        // from the toggle / Up through the tint chain).
-        if (m_detailFocusArea == DetailFocusArea::Preview
-            || m_detailFocusArea == DetailFocusArea::TintToggle) {
+        // Preview Down → Apply. Toggle stack: tint → flatten → grayscale → Apply.
+        if (m_detailFocusArea == DetailFocusArea::Preview) {
             if (detailButtonCount() > 0) {
                 m_detailFocusArea = DetailFocusArea::Buttons;
                 if (m_navSfxCb) m_navSfxCb();
                 return true;
             }
         }
-        if (selectedIconPackIsColour()) {
-            if (m_detailFocusArea == DetailFocusArea::TintHue) {
-                m_detailFocusArea = DetailFocusArea::TintSat;
+        if (showSelectedIconTintControls()) {
+            if (m_detailFocusArea == DetailFocusArea::TintToggle) {
+                m_detailFocusArea = DetailFocusArea::FlattenToggle;
+                if (m_navSfxCb) m_navSfxCb();
+            } else if (m_detailFocusArea == DetailFocusArea::FlattenToggle) {
+                m_detailFocusArea = DetailFocusArea::GrayscaleToggle;
+                if (m_navSfxCb) m_navSfxCb();
+            } else if (m_detailFocusArea == DetailFocusArea::GrayscaleToggle) {
+                // Toggles → sliders (when Custom tint is on) → Apply.
+                if (selectedIconCustomTint()) {
+                    m_detailFocusArea = selectedIconShowsHueSat()
+                        ? DetailFocusArea::TintHue : DetailFocusArea::TintLight;
+                    if (m_navSfxCb) m_navSfxCb();
+                } else if (detailButtonCount() > 0) {
+                    m_detailFocusArea = DetailFocusArea::Buttons;
+                    if (m_navSfxCb) m_navSfxCb();
+                }
+            } else if (m_detailFocusArea == DetailFocusArea::TintHue) {
+                m_detailFocusArea = selectedIconShowsHueSat()
+                    ? DetailFocusArea::TintSat : DetailFocusArea::TintLight;
                 if (m_navSfxCb) m_navSfxCb();
             } else if (m_detailFocusArea == DetailFocusArea::TintSat) {
                 m_detailFocusArea = DetailFocusArea::TintLight;
@@ -1419,15 +1470,14 @@ bool ThemeShopScreen::handleCustomNavLeft() {
             return true;
         }
 
-        if (m_detailFocusArea == DetailFocusArea::TintToggle) {
-            // Prefer returning to the preview over clearing the toggle; A toggles on/off.
+        if (m_detailFocusArea == DetailFocusArea::TintToggle
+            || m_detailFocusArea == DetailFocusArea::FlattenToggle
+            || m_detailFocusArea == DetailFocusArea::GrayscaleToggle) {
+            // Prefer returning to the preview; A toggles on/off.
             const bool canPreview = selectedThemeShopEntry()
                 && !selectedThemeShopEntry()->coverPath.empty();
-            if (canPreview) {
+            if (canPreview)
                 m_detailFocusArea = DetailFocusArea::Preview;
-            } else {
-                setIconCustomTintEnabled(false);
-            }
             if (m_navSfxCb) m_navSfxCb();
             return true;
         }
@@ -1518,7 +1568,7 @@ bool ThemeShopScreen::handleCustomNavRight() {
         }
         // Icons: Preview Right -> Custom tint (when the pack supports it).
         if (isIconsTab() && m_detailFocusArea == DetailFocusArea::Preview
-            && selectedIconPackIsColour()) {
+            && showSelectedIconTintControls()) {
             m_detailFocusArea = DetailFocusArea::TintToggle;
             if (m_navSfxCb) m_navSfxCb();
             return true;
@@ -1527,7 +1577,7 @@ bool ThemeShopScreen::handleCustomNavRight() {
         // Apply → Tint when only one primary action is focused.
         if (isIconsTab() && m_detailFocusArea == DetailFocusArea::Buttons
             && m_detailButtonIndex + 1 >= detailButtonCount()
-            && selectedIconPackIsColour()) {
+            && showSelectedIconTintControls()) {
             m_detailFocusArea = DetailFocusArea::TintToggle;
             if (m_navSfxCb) m_navSfxCb();
             return true;
@@ -1535,7 +1585,8 @@ bool ThemeShopScreen::handleCustomNavRight() {
 
         if (m_detailFocusArea == DetailFocusArea::TintToggle) {
             setIconCustomTintEnabled(true);
-            m_detailFocusArea = DetailFocusArea::TintHue;
+            m_detailFocusArea = selectedIconShowsHueSat()
+                ? DetailFocusArea::TintHue : DetailFocusArea::TintLight;
             if (m_navSfxCb) m_navSfxCb();
             return true;
         }
@@ -1658,7 +1709,7 @@ bool ThemeShopScreen::handleCustomTouch(nxui::Input& input, const nxui::Rect&, c
             return -1;
 
         nxui::Rect dialog = detailDialogRect(content);
-        nxui::Rect previewRect = isIconsTab() && selectedIconPackIsColour()
+        nxui::Rect previewRect = isIconsTab() && showSelectedIconTintControls()
             ? colourIconPreviewBounds(dialog)
             : detailPreviewRect(dialog);
         DetailPreviewControls controls = detailPreviewControls(previewRect);
@@ -1713,12 +1764,20 @@ bool ThemeShopScreen::handleCustomTouch(nxui::Input& input, const nxui::Rect&, c
                 return true;
             }
 
-            if (selectedIconPackIsColour()) {
+            if (showSelectedIconTintControls()) {
                 nxui::Rect previewRect = colourIconPreviewBounds(dialog);
                 IconTintLayout tintLayout = makeIconTintLayout(
                     colourIconTintBand(dialog, previewRect, selectedIconCustomTint()));
-                if (tintLayout.togglePill.expanded(8.f).contains(x, y)) {
+                if (tintLayout.tintPill.expanded(8.f).contains(x, y)) {
                     m_themeTouchTarget = ThemeTouchTarget::DetailTintToggle;
+                    return true;
+                }
+                if (tintLayout.flattenPill.expanded(8.f).contains(x, y)) {
+                    m_themeTouchTarget = ThemeTouchTarget::DetailFlattenToggle;
+                    return true;
+                }
+                if (tintLayout.grayPill.expanded(8.f).contains(x, y)) {
+                    m_themeTouchTarget = ThemeTouchTarget::DetailGrayscaleToggle;
                     return true;
                 }
                 if (selectedIconCustomTint()) {
@@ -1731,15 +1790,20 @@ bool ThemeShopScreen::handleCustomTouch(nxui::Input& input, const nxui::Rect&, c
                         setter(t);
                         return true;
                     };
-                    if (hitTrack(tintLayout.hueTrack, ThemeTouchTarget::DetailTintHue,
-                                 [this](float t) { setIconTintHue(t); }))
+                    if (selectedIconShowsHueSat()) {
+                        if (hitTrack(tintLayout.hueTrack, ThemeTouchTarget::DetailTintHue,
+                                     [this](float t) { setIconTintHue(t); }))
+                            return true;
+                        if (hitTrack(tintLayout.satTrack, ThemeTouchTarget::DetailTintSat,
+                                     [this](float t) { setIconTintSat(t); }))
+                            return true;
+                        if (hitTrack(tintLayout.lightTrack, ThemeTouchTarget::DetailTintLight,
+                                     [this](float t) { setIconTintLight(t); }))
+                            return true;
+                    } else if (hitTrack(tintLayout.hueTrack, ThemeTouchTarget::DetailTintLight,
+                                        [this](float t) { setIconTintLight(t); })) {
                         return true;
-                    if (hitTrack(tintLayout.satTrack, ThemeTouchTarget::DetailTintSat,
-                                 [this](float t) { setIconTintSat(t); }))
-                        return true;
-                    if (hitTrack(tintLayout.lightTrack, ThemeTouchTarget::DetailTintLight,
-                                 [this](float t) { setIconTintLight(t); }))
-                        return true;
+                    }
                 }
             }
 
@@ -1789,7 +1853,7 @@ bool ThemeShopScreen::handleCustomTouch(nxui::Input& input, const nxui::Rect&, c
         if ((m_themeTouchTarget == ThemeTouchTarget::DetailTintHue
              || m_themeTouchTarget == ThemeTouchTarget::DetailTintSat
              || m_themeTouchTarget == ThemeTouchTarget::DetailTintLight)
-            && selectedIconPackIsColour()) {
+            && showSelectedIconTintControls()) {
             nxui::Rect dialog = detailDialogRect(content);
             nxui::Rect previewRect = colourIconPreviewBounds(dialog);
             IconTintLayout tintLayout = makeIconTintLayout(
@@ -1916,10 +1980,28 @@ bool ThemeShopScreen::handleCustomTouch(nxui::Input& input, const nxui::Rect&, c
                 return true;
             }
             case ThemeTouchTarget::DetailTintToggle: {
-                if (selectedIconPackIsColour()) {
+                if (showSelectedIconTintControls()) {
                     setIconCustomTintEnabled(!selectedIconCustomTint());
-                    m_detailFocusArea = selectedIconCustomTint() ? DetailFocusArea::TintHue
-                                                        : DetailFocusArea::TintToggle;
+                    m_detailFocusArea = selectedIconCustomTint()
+                        ? (selectedIconShowsHueSat() ? DetailFocusArea::TintHue
+                                                     : DetailFocusArea::TintLight)
+                        : DetailFocusArea::TintToggle;
+                    if (m_activateSfxCb) m_activateSfxCb();
+                }
+                return true;
+            }
+            case ThemeTouchTarget::DetailFlattenToggle: {
+                if (showSelectedIconTintControls()) {
+                    setIconFlattenEnabled(!selectedIconPackTint().flatten);
+                    m_detailFocusArea = DetailFocusArea::FlattenToggle;
+                    if (m_activateSfxCb) m_activateSfxCb();
+                }
+                return true;
+            }
+            case ThemeTouchTarget::DetailGrayscaleToggle: {
+                if (showSelectedIconTintControls()) {
+                    setIconGrayscaleEnabled(!selectedIconPackTint().grayscale);
+                    m_detailFocusArea = DetailFocusArea::GrayscaleToggle;
                     if (m_activateSfxCb) m_activateSfxCb();
                 }
                 return true;
@@ -2356,7 +2438,7 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
         }
 
                 const bool showSpectrumBadge = isIconsTab() && !isCommunityTab()
-            && m_iconPackEntries[(size_t)globalIndex].colourPack;
+            && iconPackTintFor(m_iconPackEntries[(size_t)globalIndex].id).enabled;
         constexpr float kSpectrumBadgeW = 40.f;
         constexpr float kSpectrumBadgeH = 14.f;
         constexpr float kSpectrumBadgeGap = 8.f;
@@ -2458,7 +2540,7 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
 
     // Tint only applies to packs that live on the console.
     const auto* tintEntry = isIconsTab() ? selectedThemeShopEntry() : nullptr;
-    const bool showIconTintControls = isIconsTab() && selectedIconPackIsColour()
+    const bool showIconTintControls = isIconsTab() && showSelectedIconTintControls()
         && tintEntry && tintEntry->installed;
     nxui::Rect preview = showIconTintControls
         ? colourIconPreviewBounds(dialog)
@@ -2545,10 +2627,13 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
             detailPreviewPhase = communityPreviewPhase(entry->coverUrl);
         } else if (detailPreviewRequested) {
             const std::string packId = isIconsTab() ? entry->id : std::string{};
-            // Detail uses draft HSL; Icons grid keeps the committed preview.
+            // Detail always uses the draft HSL slot while tint controls are up —
+            // including when Custom/Flatten/Gray are all off, so the preview can
+            // return to the pack's original look instead of the last Apply.
+            // Icons grid keeps the committed preview (hslOverride=null).
             switchu::icons::HslAdjust draftHsl;
             const switchu::icons::HslAdjust* hslOverride = nullptr;
-            if (isIconsTab() && selectedIconPackIsColour()) {
+            if (isIconsTab() && showSelectedIconTintControls()) {
                 draftHsl = hslAdjustFromTint(selectedIconPackTint());
                 hslOverride = &draftHsl;
             }
@@ -2566,7 +2651,7 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
         const std::string packId = selectedThemeShopEntry()->id;
         switchu::icons::HslAdjust draftHsl;
         const switchu::icons::HslAdjust* hslOverride = nullptr;
-        if (selectedIconPackIsColour()) {
+        if (showSelectedIconTintControls()) {
             draftHsl = hslAdjustFromTint(selectedIconPackTint());
             hslOverride = &draftHsl;
         }
@@ -2574,9 +2659,12 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
                                         hslOverride);
     }();
 
-    bool detailPreviewLoading = detailPreviewPhase == PreviewPhase::Idle
-        || detailPreviewPhase == PreviewPhase::Loading
-        || detailPreviewPhase == PreviewPhase::Downloaded;
+    // Never flash the spinner over a still-valid draft frame (Idle / Loading /
+    // Downloaded all keep the previous texture during HSL scrub).
+    bool detailPreviewLoading = !detailPreviewTexture
+        && (detailPreviewPhase == PreviewPhase::Idle
+            || detailPreviewPhase == PreviewPhase::Loading
+            || detailPreviewPhase == PreviewPhase::Downloaded);
     std::string detailPreviewLabel = detailPreviewRequested
         ? (detailPreviewLoading
             ? i18n.tr("themeshop.preview.loading", "Loading screenshot...")
@@ -2658,64 +2746,91 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
 
         IconTintLayout tintLayout = makeIconTintLayout(
             colourIconTintBand(dialog, preview, selectedIconCustomTint()));
-        const std::string tintLabel = i18n.tr("themeshop.icons.custom_tint", "Custom tint");
-        ren.drawText(ellipsize(m_smallFont, tintLabel, tintLayout.togglePill.x - tintLayout.labelRow.x - 12.f, 0.86f),
-                     {tintLayout.labelRow.x, tintLayout.labelRow.y + 6.f},
-                     m_smallFont,
-                     m_theme->textPrimary.withAlpha(detailOpacity),
-                     0.86f);
-        drawTintTogglePill(ren,
-                           m_smallFont,
-                           tintLayout.togglePill,
-                           selectedIconCustomTint(),
-                           detailOpacity,
-                           m_detailFocusArea == DetailFocusArea::TintToggle);
+        auto drawToggleRow = [&](const nxui::Rect& labelRow, const nxui::Rect& pill,
+                                 const std::string& label, bool enabled, bool focused) {
+            ren.drawText(ellipsize(m_smallFont, label, pill.x - labelRow.x - 12.f, 0.86f),
+                         {labelRow.x, labelRow.y + 6.f},
+                         m_smallFont,
+                         m_theme->textPrimary.withAlpha(detailOpacity),
+                         0.86f);
+            drawTintTogglePill(ren, m_smallFont, pill, enabled, detailOpacity, focused);
+        };
+        drawToggleRow(tintLayout.tintLabelRow, tintLayout.tintPill,
+                      i18n.tr("themeshop.icons.custom_tint", "Custom tint"),
+                      selectedIconCustomTint(),
+                      m_detailFocusArea == DetailFocusArea::TintToggle);
+        drawToggleRow(tintLayout.flattenLabelRow, tintLayout.flattenPill,
+                      i18n.tr("themeshop.icons.flatten", "Flatten"),
+                      selectedIconPackTint().flatten,
+                      m_detailFocusArea == DetailFocusArea::FlattenToggle);
+        drawToggleRow(tintLayout.grayLabelRow, tintLayout.grayPill,
+                      i18n.tr("themeshop.icons.grayscale", "Grayscale"),
+                      selectedIconPackTint().grayscale,
+                      m_detailFocusArea == DetailFocusArea::GrayscaleToggle);
 
         if (selectedIconCustomTint()) {
             constexpr float kLabelScale = 0.80f;
-            ren.drawText(i18n.tr("themeshop.icons.tint_hue", "Hue"),
-                         {tintLayout.hueLabel.x, tintLayout.hueLabel.y},
-                         m_smallFont,
-                         m_theme->textPrimary.withAlpha(0.92f * detailOpacity),
-                         kLabelScale);
-            drawHueSpectrumTrack(ren,
-                                 tintLayout.hueTrack,
-                                 selectedIconPackTint().hue,
-                                 detailOpacity,
-                                 m_detailFocusArea == DetailFocusArea::TintHue);
-            ren.drawText(i18n.tr("themeshop.icons.tint_saturation", "Saturation"),
-                         {tintLayout.satLabel.x, tintLayout.satLabel.y},
-                         m_smallFont,
-                         m_theme->textPrimary.withAlpha(0.92f * detailOpacity),
-                         kLabelScale);
-            drawGradientValueTrack(ren, tintLayout.satTrack, selectedIconPackTint().sat, detailOpacity,
-                                   m_detailFocusArea == DetailFocusArea::TintSat,
-                                   [](float t) {
-                                       return nxui::Color::fromHSL(0.58f, t, 0.55f, 1.f);
-                                   });
+            nxui::Rect lightLabel = tintLayout.lightLabel;
+            nxui::Rect lightTrack = tintLayout.lightTrack;
+            if (selectedIconShowsHueSat()) {
+                ren.drawText(i18n.tr("themeshop.icons.tint_hue", "Hue"),
+                             {tintLayout.hueLabel.x, tintLayout.hueLabel.y},
+                             m_smallFont,
+                             m_theme->textPrimary.withAlpha(0.92f * detailOpacity),
+                             kLabelScale);
+                drawHueSpectrumTrack(ren,
+                                     tintLayout.hueTrack,
+                                     selectedIconPackTint().hue,
+                                     detailOpacity,
+                                     m_detailFocusArea == DetailFocusArea::TintHue);
+                ren.drawText(i18n.tr("themeshop.icons.tint_saturation", "Saturation"),
+                             {tintLayout.satLabel.x, tintLayout.satLabel.y},
+                             m_smallFont,
+                             m_theme->textPrimary.withAlpha(0.92f * detailOpacity),
+                             kLabelScale);
+                drawGradientValueTrack(ren, tintLayout.satTrack, selectedIconPackTint().sat, detailOpacity,
+                                       m_detailFocusArea == DetailFocusArea::TintSat,
+                                       [](float t) {
+                                           return nxui::Color::fromHSL(0.58f, t, 0.55f, 1.f);
+                                       });
+            } else {
+                // Pack Lightness under the toggles when H/S are hidden.
+                lightLabel = tintLayout.hueLabel;
+                lightTrack = tintLayout.hueTrack;
+            }
             ren.drawText(i18n.tr("themeshop.icons.tint_lightness", "Lightness"),
-                         {tintLayout.lightLabel.x, tintLayout.lightLabel.y},
+                         {lightLabel.x, lightLabel.y},
                          m_smallFont,
                          m_theme->textPrimary.withAlpha(0.92f * detailOpacity),
                          kLabelScale);
-            drawGradientValueTrack(ren, tintLayout.lightTrack, selectedIconPackTint().light, detailOpacity,
+            drawGradientValueTrack(ren, lightTrack, selectedIconPackTint().light, detailOpacity,
                                    m_detailFocusArea == DetailFocusArea::TintLight,
                                    [](float t) {
                                        return nxui::Color::fromHSL(0.58f, 0.35f, t, 1.f);
                                    });
+            if (m_detailOpen && m_detailFocusArea == DetailFocusArea::TintLight)
+                m_focusCursor.moveTo(lightTrack.expanded(8.f), 18.f, 0.08f);
         }
 
         if (m_detailOpen && m_detailFocusArea == DetailFocusArea::TintToggle) {
-            m_focusCursor.moveTo(tintLayout.togglePill.expanded(6.f), 18.f, 0.08f);
-        } else if (m_detailOpen && m_detailFocusArea == DetailFocusArea::TintHue && selectedIconCustomTint()) {
+            m_focusCursor.moveTo(tintLayout.tintPill.expanded(6.f), 18.f, 0.08f);
+        } else if (m_detailOpen && m_detailFocusArea == DetailFocusArea::FlattenToggle) {
+            m_focusCursor.moveTo(tintLayout.flattenPill.expanded(6.f), 18.f, 0.08f);
+        } else if (m_detailOpen && m_detailFocusArea == DetailFocusArea::GrayscaleToggle) {
+            m_focusCursor.moveTo(tintLayout.grayPill.expanded(6.f), 18.f, 0.08f);
+        } else if (m_detailOpen && m_detailFocusArea == DetailFocusArea::TintHue
+                   && selectedIconCustomTint() && selectedIconShowsHueSat()) {
             m_focusCursor.moveTo(tintLayout.hueTrack.expanded(8.f), 18.f, 0.08f);
-        } else if (m_detailOpen && m_detailFocusArea == DetailFocusArea::TintSat && selectedIconCustomTint()) {
+        } else if (m_detailOpen && m_detailFocusArea == DetailFocusArea::TintSat
+                   && selectedIconCustomTint() && selectedIconShowsHueSat()) {
             m_focusCursor.moveTo(tintLayout.satTrack.expanded(8.f), 18.f, 0.08f);
-        } else if (m_detailOpen && m_detailFocusArea == DetailFocusArea::TintLight && selectedIconCustomTint()) {
-            m_focusCursor.moveTo(tintLayout.lightTrack.expanded(8.f), 18.f, 0.08f);
-        } else if (m_detailFocusArea == DetailFocusArea::TintHue
-                   || m_detailFocusArea == DetailFocusArea::TintSat
-                   || m_detailFocusArea == DetailFocusArea::TintLight) {
+        } else if ((m_detailFocusArea == DetailFocusArea::TintHue
+                    || m_detailFocusArea == DetailFocusArea::TintSat)
+                   && !(selectedIconCustomTint() && selectedIconShowsHueSat())) {
+            m_detailFocusArea = selectedIconCustomTint()
+                ? DetailFocusArea::TintLight : DetailFocusArea::TintToggle;
+        } else if (m_detailFocusArea == DetailFocusArea::TintLight
+                   && !selectedIconCustomTint()) {
             m_detailFocusArea = DetailFocusArea::TintToggle;
         }
     } else {
@@ -2901,6 +3016,8 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
     }
 
     const bool tintFocus = m_detailFocusArea == DetailFocusArea::TintToggle
+        || m_detailFocusArea == DetailFocusArea::FlattenToggle
+        || m_detailFocusArea == DetailFocusArea::GrayscaleToggle
         || m_detailFocusArea == DetailFocusArea::TintHue
         || m_detailFocusArea == DetailFocusArea::TintSat
         || m_detailFocusArea == DetailFocusArea::TintLight;
