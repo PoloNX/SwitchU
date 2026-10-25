@@ -1,5 +1,6 @@
 #include "ThemeShopScreen.hpp"
 
+#include "ThemeShopLayout.hpp"
 #include "ThemeHttp.hpp"
 #include "widgets/AdaptiveIconLoad.hpp"
 
@@ -29,10 +30,11 @@
 
 namespace {
 
-constexpr int kCommunityPreviewGridCols = 2;
-constexpr int kCommunityPreviewVisibleRows = 2;
-constexpr int kCommunityPreviewEntriesPerPage = kCommunityPreviewGridCols * kCommunityPreviewVisibleRows;
-constexpr int kMaxPreviewUploadsPerFrame = 1;
+constexpr int kCommunityPreviewGridCols = themeshop::layout::kGridCols;
+constexpr int kCommunityPreviewVisibleRows = themeshop::layout::kVisibleRows;
+constexpr int kCommunityPreviewEntriesPerPage = themeshop::layout::kEntriesPerPage;
+// Fill a 3x2 shelf quickly; still capped so GPU/HTTP stay polite.
+constexpr int kMaxPreviewUploadsPerFrame = 2;
 constexpr int kMaxPreviewDownloadsInFlight = kCommunityPreviewEntriesPerPage;
 constexpr int kMaxInstalledPreviewDecodesInFlight = kCommunityPreviewEntriesPerPage;
 constexpr int kCommunityPreviewGridMaxSide = 384;   // keep GPU under ~64MB image budget
@@ -1293,8 +1295,12 @@ void ThemeShopScreen::primeCommunityPreview(const std::string& previewPath) {
         try {
             {
                 std::lock_guard<std::mutex> lk(slot->mutex);
-                if (slot->cancelled)
+                if (slot->cancelled) {
+                    if (slot->phase == PreviewPhase::Loading)
+                        slot->phase = slot->texture.valid() ? PreviewPhase::Ready
+                                                           : PreviewPhase::Idle;
                     return;
+                }
             }
 
             std::vector<std::uint8_t> bytes;
@@ -1306,6 +1312,10 @@ void ThemeShopScreen::primeCommunityPreview(const std::string& previewPath) {
             std::lock_guard<std::mutex> lk(slot->mutex);
             if (slot->cancelled) {
                 slot->bytes.clear();
+                // Free the Loading slot so the next prime can restart.
+                if (slot->phase == PreviewPhase::Loading)
+                    slot->phase = slot->texture.valid() ? PreviewPhase::Ready
+                                                       : PreviewPhase::Idle;
                 return;
             }
             slot->bytes = std::move(bytes);
@@ -1318,16 +1328,24 @@ void ThemeShopScreen::primeCommunityPreview(const std::string& previewPath) {
             }
         } catch (const std::exception& ex) {
             std::lock_guard<std::mutex> lk(slot->mutex);
-            if (slot->cancelled)
+            if (slot->cancelled) {
+                if (slot->phase == PreviewPhase::Loading)
+                    slot->phase = slot->texture.valid() ? PreviewPhase::Ready
+                                                       : PreviewPhase::Idle;
                 return;
+            }
             slot->bytes.clear();
             slot->failureCount += 1;
             slot->phase = PreviewPhase::Failed;
             DebugLog::log("[themeshop] preview fetch failed: %s", ex.what());
         } catch (...) {
             std::lock_guard<std::mutex> lk(slot->mutex);
-            if (slot->cancelled)
+            if (slot->cancelled) {
+                if (slot->phase == PreviewPhase::Loading)
+                    slot->phase = slot->texture.valid() ? PreviewPhase::Ready
+                                                       : PreviewPhase::Idle;
                 return;
+            }
             slot->bytes.clear();
             slot->failureCount += 1;
             slot->phase = PreviewPhase::Failed;
@@ -1481,11 +1499,11 @@ void ThemeShopScreen::trimCommunityPreviewCache() {
         return;
 
     // Soft LRU: keep a wide Ready set on Community so page flips don't
-    // waitIdle-thrash. Away from Community, drip-release (1-2/frame) so tab
-    // cycling stays smooth instead of nuking the whole cache at once.
-    const std::size_t kMaxReadyCommunityPreviews = isCommunityTab() ? 28u : 0u;
+    // waitIdle-thrash. Away from Community, keep a small reserve so returning
+    // to the tab does not cold-start every cover again (was max=0).
+    const std::size_t kMaxReadyCommunityPreviews = isCommunityTab() ? 36u : 12u;
     // Texture::~Texture waitIdle's - never drop more than a couple per tick.
-    const int kMaxDropsPerCall = isCommunityTab() ? 2 : 2;
+    const int kMaxDropsPerCall = 2;
 
     std::unordered_set<std::string> preferred;
     auto prefer = [&](const std::string& previewPath) {

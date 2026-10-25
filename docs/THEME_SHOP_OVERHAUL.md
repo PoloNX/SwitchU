@@ -26,32 +26,22 @@ We are **not** throwing away catalog / HTTP / install / draft-tint. Those alread
 
 ## Phases
 
-### Phase 1 — eShop shelf + product sheet *(this PR / experiment)*
+### Phase 1 — eShop shelf + product sheet *(in progress on this branch)*
 
 Visible redesign without a full rewrite:
 
-1. **Browse (shelf)**  
-   - Cover-dominant tiles (art fills the card; caption strip underneath)  
-   - Quieter headers (“Themes”, “Community”, “Icons”)  
-   - Soften chrome; keep Active / version chips light  
-   - Keep 2×2 or nudge toward a denser eShop shelf if it still reads on TV  
-
-2. **Detail (product sheet)**  
-   - Larger hero cover  
-   - Title + author + one supporting line (drop dense info columns)  
-   - Soft full-bleed scrim; sheet rises cleanly  
-   - Primary CTA row stays bottom-right / bottom-forward  
-
-3. **Icons studio**  
-   - Same sheet language; tint controls remain a side panel under the hero  
-
-4. **Docs + branch** so we can iterate with PoloNX’s green light
+1. **Browse (shelf)** — done  
+   - Cover-dominant 3×2 tiles; short headers; shared `ThemeShopLayout.hpp`  
+2. **Detail (product sheet)** — done (hero + quiet copy + stronger primary CTA)  
+3. **Icons studio** — Flatten keeps mean hue; Flatten+Gray honors Light  
+4. **Community covers** — prefetch aligned to 3-col shelf; cache reserve when leaving tab  
 
 ### Phase 2 — Structure
 
 1. Extract `PreviewPipeline` (local + remote adapters) out of `ThemeShopScreen`  
 2. Split Themes vs Icons **presenters** under the same overlay chrome  
-3. Thin `ThemeShopScreenUi.cpp` (stop `isIconsTab()` branching everywhere)
+3. Thin `ThemeShopScreenUi.cpp` (stop `isIconsTab()` branching everywhere)  
+4. First-focus Community hitch (catalog / HTTP bootstrap)
 
 ### Phase 3 — Options + polish
 

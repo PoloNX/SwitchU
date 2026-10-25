@@ -1,5 +1,6 @@
 #include "ThemeShopScreen.hpp"
 
+#include "ThemeShopLayout.hpp"
 #include "widgets/ActionButtonStyle.hpp"
 #include "core/DebugLog.hpp"
 
@@ -16,8 +17,9 @@
 namespace {
 
 // eShop-inspired shelf: wider store row, cover-first (art owns the card).
-constexpr int kGridCols = 3;
-constexpr int kVisibleRows = 2;
+// Column/row counts live in ThemeShopLayout.hpp (shared with preview prefetch).
+constexpr int kGridCols = themeshop::layout::kGridCols;
+constexpr int kVisibleRows = themeshop::layout::kVisibleRows;
 constexpr float kContentInsetX = 22.f;
 constexpr float kContentInsetY = 12.f;
 constexpr float kHeaderHeight = 58.f;
@@ -29,7 +31,7 @@ constexpr float kPreviewAspect = 16.f / 9.f;
 constexpr float kSearchButtonWidth = 208.f;
 constexpr float kRefreshButtonWidth = 144.f;
 constexpr float kHeaderButtonGap = 12.f;
-constexpr int kEntriesPerPage = kGridCols * kVisibleRows;
+constexpr int kEntriesPerPage = themeshop::layout::kEntriesPerPage;
 constexpr float kPageButtonWidth = 124.f;
 constexpr float kPageCounterWidth = 96.f;
 constexpr float kActionButtonRadius = 16.f;
@@ -3041,7 +3043,12 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
     bool disableCommunityButtons = isCommunityTab() && m_packageTransferState.isRunning();
     for (int i = 0; i < (int)buttons.size(); ++i) {
         bool selectedButton = !disableCommunityButtons && (i == m_detailButtonIndex);
+        // Primary CTA (Apply / Install) reads stronger — eShop "Get" energy.
+        const bool primary = (i == 0);
         nxui::Color textColor = disableCommunityButtons ? m_theme->textSecondary : m_theme->textPrimary;
+        const float fill = disableCommunityButtons
+            ? 0.f
+            : (selectedButton ? 1.f : (primary ? 0.38f : 0.14f));
         drawActionButtonChip(ren,
                              m_smallFont,
                              buttons[(size_t)i],
@@ -3050,8 +3057,8 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
                              textColor,
                              contentOpacity,
                              selectedButton ? 1.f : 0.f,
-                             disableCommunityButtons ? 0.f : (selectedButton ? 1.f : 0.18f),
-                             0.84f);
+                             fill,
+                             primary ? 0.88f : 0.80f);
     }
 
     const bool tintFocus = m_detailFocusArea == DetailFocusArea::TintToggle
