@@ -15,16 +15,16 @@
 
 namespace {
 
-// eShop-inspired shelf: roomy tiles, cover-first (art owns the card).
-constexpr int kGridCols = 2;
+// eShop-inspired shelf: wider store row, cover-first (art owns the card).
+constexpr int kGridCols = 3;
 constexpr int kVisibleRows = 2;
-constexpr float kContentInsetX = 28.f;
-constexpr float kContentInsetY = 16.f;
-constexpr float kHeaderHeight = 64.f;
-constexpr float kGridGapX = 22.f;
-constexpr float kGridGapY = 22.f;
-constexpr float kFooterHintHeight = 68.f;
-constexpr float kCardCaptionH = 54.f;
+constexpr float kContentInsetX = 22.f;
+constexpr float kContentInsetY = 12.f;
+constexpr float kHeaderHeight = 58.f;
+constexpr float kGridGapX = 16.f;
+constexpr float kGridGapY = 16.f;
+constexpr float kFooterHintHeight = 64.f;
+constexpr float kCardCaptionH = 48.f;
 constexpr float kPreviewAspect = 16.f / 9.f;
 constexpr float kSearchButtonWidth = 208.f;
 constexpr float kRefreshButtonWidth = 144.f;
@@ -2110,9 +2110,9 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
     }
 
     ren.drawText(title, {layout.header.x, layout.header.y + 0.f}, m_font,
-                 m_theme->textPrimary.withAlpha(contentOpacity), 1.08f);
-    ren.drawText(subtitle, {layout.header.x, layout.header.y + 36.f}, m_smallFont,
-                 m_theme->textSecondary.withAlpha(0.82f * contentOpacity), 0.74f);
+                 m_theme->textPrimary.withAlpha(contentOpacity), 1.16f);
+    ren.drawText(subtitle, {layout.header.x, layout.header.y + 34.f}, m_smallFont,
+                 m_theme->textSecondary.withAlpha(0.78f * contentOpacity), 0.72f);
 
     std::string searchLabel = m_searchQuery.empty()
         ? i18n.tr("themeshop.search.button", "Search")
