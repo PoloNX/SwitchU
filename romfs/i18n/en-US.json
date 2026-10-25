@@ -756,8 +756,8 @@
       "no_results_hint": "Press X or use Search to change or clear the filter."
     },
     "installed": {
-      "title": "Installed Theme Library",
-      "subtitle": "Your local themes in a gallery layout.",
+      "title": "Themes",
+      "subtitle": "Installed on this console.",
       "empty": "No installed themes found.",
       "status": "Status",
       "status_active": "Active",
@@ -770,8 +770,8 @@
       "remove": "Remove Theme"
     },
     "community": {
-      "title": "Browse Community Themes",
-      "subtitle": "A visual catalog, not a settings selector.",
+      "title": "Browse Themes",
+      "subtitle": "Themes from the catalog.",
       "counter_loading": "Loading",
       "refresh": "Refresh",
       "refreshing": "Refreshing",
@@ -822,8 +822,8 @@
       "next": "Next"
     },
     "icons": {
-      "title": "Icon Packs",
-      "subtitle": "Switch on the fly.",
+      "title": "Icons",
+      "subtitle": "Sidebar icon packs.",
       "apply": "Apply Icon Pack",
       "remove": "Remove Icon Pack",
       "remove_confirm": "Delete this icon pack from the console?",

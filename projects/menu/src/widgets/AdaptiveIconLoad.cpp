@@ -187,6 +187,67 @@ float adjustChannelPivot(float value, float pivot) {
     return value + (1.f - value) * ((pivot - 0.5f) * 2.f);
 }
 
+// Mean HSL of opaque pixels — Flatten uses this so the silhouette keeps the
+// pack's character instead of jumping to chrome black/white.
+bool sampleMeanHsl(const std::uint8_t* rgba, int w, int h,
+                   float& outH, float& outS, float& outL) {
+    outH = 0.f;
+    outS = 0.45f;
+    outL = 0.55f;
+    if (!rgba || w <= 0 || h <= 0)
+        return false;
+
+    double sumR = 0.0, sumG = 0.0, sumB = 0.0;
+    int count = 0;
+    const int stepX = std::max(1, w / 48);
+    const int stepY = std::max(1, h / 48);
+    for (int y = 0; y < h; y += stepY) {
+        for (int x = 0; x < w; x += stepX) {
+            const std::size_t p = (static_cast<std::size_t>(y) * w + x) * 4u;
+            if (rgba[p + 3] < 32)
+                continue;
+            sumR += rgba[p] / 255.0;
+            sumG += rgba[p + 1] / 255.0;
+            sumB += rgba[p + 2] / 255.0;
+            ++count;
+        }
+    }
+    if (count <= 0)
+        return false;
+
+    float r = static_cast<float>(sumR / count);
+    float g = static_cast<float>(sumG / count);
+    float b = static_cast<float>(sumB / count);
+    rgbToHsl(r, g, b, outH, outS, outL);
+    if (outS < 0.08f)
+        outS = 0.45f; // near-gray art still gets a usable flat colour
+    outL = std::clamp(outL, 0.22f, 0.82f);
+    return true;
+}
+
+void fillSilhouetteWithHsl(std::uint8_t* rgba, int w, int h,
+                           float hue, float sat, float light) {
+    if (!rgba || w <= 0 || h <= 0)
+        return;
+    float r = 0.f, g = 0.f, b = 0.f;
+    hslToRgb(std::clamp(hue, 0.f, 1.f),
+             std::clamp(sat, 0.f, 1.f),
+             std::clamp(light, 0.f, 1.f),
+             r, g, b);
+    const auto R = static_cast<std::uint8_t>(r * 255.f + 0.5f);
+    const auto G = static_cast<std::uint8_t>(g * 255.f + 0.5f);
+    const auto B = static_cast<std::uint8_t>(b * 255.f + 0.5f);
+    const std::size_t n = static_cast<std::size_t>(w) * static_cast<std::size_t>(h);
+    for (std::size_t i = 0; i < n; ++i) {
+        const std::size_t p = i * 4u;
+        if (rgba[p + 3] < 8)
+            continue;
+        rgba[p] = R;
+        rgba[p + 1] = G;
+        rgba[p + 2] = B;
+    }
+}
+
 // Grayscale + Light: pivot every pixel's luma (0.5 = leave, 0 = black, 1 = white).
 void applyLightnessPivot(std::uint8_t* rgba, int w, int h, float light01) {
     if (!rgba || w <= 0 || h <= 0)
@@ -355,28 +416,33 @@ bool decodeMaybeAdaptiveIcon(const std::string& path,
     out.meanLuma = mono.meanLuma;
 
     const bool forceMono = hslAdjust && hslTreatsAsMono(*hslAdjust);
-    const bool flattenColour = hslAdjust && hslAdjust->flatten && hslAdjust->enabled
-        && !hslAdjust->grayscale;
     const bool grayColour = hslAdjust && hslAdjust->grayscale && hslAdjust->enabled
         && !hslAdjust->flatten;
 
-    if (forceMono || mono.mono) {
-        if (hslAdjust && hslAdjust->flatten)
-            buildFlatSilhouetteMask(owned, w, h);
-        else
-            normalizeToTintableMask(owned, w, h, mono.meanLuma);
-        out.adaptive = true;
-        out.rgba.assign(owned, owned + static_cast<std::size_t>(w) * h * 4u);
-        if (stbiOwned)
-            stbi_image_free(owned);
-        else
-            std::free(owned);
-        return true;
-    }
-
-    if (flattenColour) {
+    // Flatten: solid silhouette filled with the icon's mean colour (keeps hue).
+    // Custom tint pivots that mean H/S/L; +Grayscale zeros sat (Light still works).
+    // Never chrome B/W — that was forcing black on Light themes.
+    if (hslAdjust && hslAdjust->flatten) {
+        float meanH = 0.f, meanS = 0.45f, meanL = 0.55f;
+        sampleMeanHsl(owned, w, h, meanH, meanS, meanL);
         buildFlatSilhouetteMask(owned, w, h);
-        applyHslAdjust(owned, w, h, *hslAdjust, /*lightOnly=*/false);
+
+        float fillH = meanH;
+        float fillS = meanS;
+        float fillL = meanL;
+        if (hslAdjust->grayscale) {
+            fillS = 0.f;
+            if (hslAdjust->enabled)
+                fillL = std::clamp(adjustChannelPivot(meanL, hslAdjust->light), 0.f, 1.f);
+        } else if (hslAdjust->enabled) {
+            const float hueOff = std::clamp(hslAdjust->hue, 0.f, 1.f) - 0.5f;
+            fillH += hueOff;
+            fillH -= std::floor(fillH);
+            fillS = std::clamp(adjustChannelPivot(meanS, hslAdjust->sat), 0.f, 1.f);
+            fillL = std::clamp(adjustChannelPivot(meanL, hslAdjust->light), 0.f, 1.f);
+        }
+        fillSilhouetteWithHsl(owned, w, h, fillH, fillS, fillL);
+
         out.adaptive = false;
         out.rgba.assign(owned, owned + static_cast<std::size_t>(w) * h * 4u);
         if (stbiOwned)
@@ -384,6 +450,17 @@ bool decodeMaybeAdaptiveIcon(const std::string& path,
         else
             std::free(owned);
         return !out.rgba.empty();
+    }
+
+    if (forceMono || mono.mono) {
+        normalizeToTintableMask(owned, w, h, mono.meanLuma);
+        out.adaptive = true;
+        out.rgba.assign(owned, owned + static_cast<std::size_t>(w) * h * 4u);
+        if (stbiOwned)
+            stbi_image_free(owned);
+        else
+            std::free(owned);
+        return true;
     }
 
     if (grayColour) {

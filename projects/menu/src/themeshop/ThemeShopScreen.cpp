@@ -662,7 +662,6 @@ void ThemeShopScreen::setIconCustomTintEnabled(bool enabled) {
     if (tint.enabled == enabled)
         return;
     tint.enabled = enabled;
-    maybeSeedFlattenLightDefault();
 }
 
 void ThemeShopScreen::setIconFlattenEnabled(bool enabled) {
@@ -670,7 +669,8 @@ void ThemeShopScreen::setIconFlattenEnabled(bool enabled) {
     if (tint.flatten == enabled)
         return;
     tint.flatten = enabled;
-    maybeSeedFlattenLightDefault();
+    // Flatten keeps the pack's mean hue now — do not seed Light to 0/1 (that
+    // forced black-on-Light / white-on-Dark and made L feel broken).
 }
 
 void ThemeShopScreen::setIconGrayscaleEnabled(bool enabled) {
@@ -681,15 +681,7 @@ void ThemeShopScreen::setIconGrayscaleEnabled(bool enabled) {
 }
 
 void ThemeShopScreen::maybeSeedFlattenLightDefault() {
-    // Flatten + Custom tint: seed L to match theme polarity once (white on dark /
-    // black on light). Theme flips leave tinted flatten alone afterward.
-    auto& tint = selectedIconPackTint();
-    if (!tint.flatten || !tint.enabled)
-        return;
-    if (std::fabs(tint.light - 0.5f) > 0.0005f)
-        return;
-    const bool darkTheme = !m_theme || m_theme->mode != nxui::ThemeMode::Light;
-    tint.light = darkTheme ? 1.f : 0.f;
+    // No-op: Flatten no longer forces theme-polarity black/white.
 }
 
 void ThemeShopScreen::setIconTintHue(float hue01) {

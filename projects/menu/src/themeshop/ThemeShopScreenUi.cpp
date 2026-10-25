@@ -2099,7 +2099,7 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
     std::string title;
     std::string subtitle;
     if (isCommunityTab()) {
-        title = i18n.tr("themeshop.community.title", "Community");
+        title = i18n.tr("themeshop.community.title", "Browse Themes");
         subtitle = i18n.tr("themeshop.community.subtitle", "Themes from the catalog.");
     } else if (isIconsTab()) {
         title = i18n.tr("themeshop.icons.title", "Icons");
