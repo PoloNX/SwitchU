@@ -27,9 +27,7 @@
     "layout": {
       "grid": "Grid mode",
       "dynamic_line": "Dynamic line mode",
-      "dynamic_line_squares": "Single-row view, square tiles",
       "flip_to_line": "Switch to single-row view.",
-      "flip_to_posters": "Switch to single-row poster view.",
       "flip_to_grid": "Switch to grid view."
     },
     "roles": {
@@ -337,6 +335,10 @@
       "show_line_desc": "Hero and logo behind the single-row carousel.",
       "show_folders": "Show inside folders",
       "show_folders_desc": "Artwork while browsing games inside an open folder.",
+      "show_poster_line": "Show Poster artwork in single-row view",
+      "show_poster_line_desc": "Use tall SteamGridDB covers on the carousel. Grid layout stays on icons.",
+      "show_logo_line": "Show logo in single-row view",
+      "show_logo_line_desc": "Game logo above the carousel. Turn off to keep only the hero and covers.",
       "api_key": "API key",
       "api_key_set": "Configured (hidden)",
       "api_key_missing": "Not configured",

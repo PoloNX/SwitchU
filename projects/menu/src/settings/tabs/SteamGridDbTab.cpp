@@ -68,6 +68,25 @@ SettingsScreen::Tab settings::tabs::SteamGridDbTab::build(SettingsScreen& screen
                   "Artwork while browsing games inside an open folder.",
                   screen.m_steamGridDbShowInFolders);
 
+    SettingItem poster;
+    poster.type = ItemType::Toggle;
+    poster.label = i18n.tr("settings.steamgriddb.show_poster_line",
+                           "Show Poster artwork in single-row view");
+    poster.description = i18n.tr("settings.steamgriddb.show_poster_line_desc",
+        "Use tall SteamGridDB covers on the carousel. Grid layout stays on icons.");
+    poster.boolVal = screen.m_steamGridDbShowPosterInDynamicLine;
+    poster.anim01 = poster.boolVal ? 1.f : 0.f;
+    poster.indentLevel = 1;
+    poster.enabled = screen.m_steamGridDbEnabled;
+    poster.onChange = [&screen](SettingItem& self) {
+        if (!screen.m_steamGridDbEnabled)
+            return;
+        screen.m_steamGridDbShowPosterInDynamicLine = self.boolVal;
+        if (screen.m_steamGridDbPosterInLineCb)
+            screen.m_steamGridDbPosterInLineCb(self.boolVal);
+    };
+    tab.items.push_back(std::move(poster));
+
     SettingItem logo;
     logo.type = ItemType::Toggle;
     logo.label = i18n.tr("settings.steamgriddb.show_logo_line",
@@ -122,15 +141,15 @@ SettingsScreen::Tab settings::tabs::SteamGridDbTab::build(SettingsScreen& screen
 
     tab.onUpdate = [](SettingsScreen::Tab& current, TabbedOverlayScreen& base) {
         auto& owner = static_cast<SettingsScreen&>(base);
-        // Section, master, 3 view toggles, logo, API key, scan
-        if (current.items.size() < 8) return;
+        // Section, master, 3 view toggles, poster, logo, API key, scan
+        if (current.items.size() < 9) return;
 
-        for (int i = 2; i <= 5; ++i) {
+        for (int i = 2; i <= 6; ++i) {
             current.items[static_cast<std::size_t>(i)].enabled = owner.m_steamGridDbEnabled;
             current.items[static_cast<std::size_t>(i)].indentLevel = 1;
         }
 
-        auto& key = current.items[6];
+        auto& key = current.items[7];
         key.description = owner.m_steamGridDbHasApiKey
             ? nxui::I18n::instance().tr("settings.steamgriddb.api_key_set", "Configured (hidden)")
             : nxui::I18n::instance().tr("settings.steamgriddb.api_key_missing", "Not configured");

@@ -407,10 +407,11 @@ void IconStreamer::onPageChanged(int currentPage, int iconsPerPage,
         }
     }
 
-    // 2. Re-attach already-loaded slots to the current widget order. This is
-    //    needed after grid relayouts and swaps where the GlossyIcon objects
-    //    may have moved while the GPU texture pool stayed valid.
-    for (int i = visibleStartApp; i < visibleEndApp; ++i) {
+    // 2. Re-attach already-loaded slots across the cache window. After a
+    //    folder/model rebuild GlossyIcons are new widgets; only rebinding the
+    //    focused tile left neighbours blank until they gained focus. Cover the
+    //    whole hot window so single-row neighbours keep their art.
+    for (int i = cacheStartApp; i < cacheEndApp; ++i) {
         int slotIdx = m_appToSlot[i];
         if (slotIdx < 0)
             continue;

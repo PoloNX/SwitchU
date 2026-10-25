@@ -49,6 +49,9 @@ public:
     void onSteamGridDbViewFlagsChange(std::function<void(bool, bool, bool)> cb) {
         m_steamGridDbViewFlagsCb = std::move(cb);
     }
+    void onSteamGridDbPosterInLineChange(BoolCb cb) {
+        m_steamGridDbPosterInLineCb = std::move(cb);
+    }
     void onSteamGridDbLogoInLineChange(BoolCb cb) {
         m_steamGridDbLogoInLineCb = std::move(cb);
     }
@@ -94,12 +97,14 @@ public:
                              bool showInGrid = true,
                              bool showInDynamicLine = true,
                              bool showInFolders = true,
+                             bool showPosterInDynamicLine = true,
                              bool showLogoInDynamicLine = true) {
         m_steamGridDbEnabled = enabled;
         m_steamGridDbHasApiKey = hasApiKey;
         m_steamGridDbShowInGrid = showInGrid;
         m_steamGridDbShowInDynamicLine = showInDynamicLine;
         m_steamGridDbShowInFolders = showInFolders;
+        m_steamGridDbShowPosterInDynamicLine = showPosterInDynamicLine;
         m_steamGridDbShowLogoInDynamicLine = showLogoInDynamicLine;
     }
     void setSteamGridDbProgress(bool running, bool finished, int completed, int total,
@@ -149,6 +154,7 @@ private:
     VoidCb m_netConnectCb;
     BoolCb m_steamGridDbEnabledCb;
     std::function<void(bool, bool, bool)> m_steamGridDbViewFlagsCb;
+    BoolCb m_steamGridDbPosterInLineCb;
     BoolCb m_steamGridDbLogoInLineCb;
     VoidCb m_steamGridDbApiKeyCb;
     VoidCb m_steamGridDbScrapeCb;
@@ -176,6 +182,7 @@ private:
     bool m_steamGridDbShowInGrid = true;
     bool m_steamGridDbShowInDynamicLine = true;
     bool m_steamGridDbShowInFolders = true;
+    bool m_steamGridDbShowPosterInDynamicLine = true;
     bool m_steamGridDbShowLogoInDynamicLine = true;
     bool m_steamGridDbHasApiKey = false;
     bool m_steamGridDbRunning = false;

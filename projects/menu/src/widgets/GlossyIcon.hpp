@@ -148,6 +148,8 @@ public:
     bool isFocusable() const override { return m_focusable; }
     void onFocusGained() override;
     void onFocusLost() override;
+    /// Live focus pop applied at draw time (SelectionCursor must match this).
+    float focusScaleValue() const { return m_focusScale.value(); }
 
 protected:
     void onRender(nxui::Renderer& ren) override;

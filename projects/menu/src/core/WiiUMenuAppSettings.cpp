@@ -135,6 +135,8 @@ std::string installedThemePreviewPath(const ThemePreset& preset) {
     }
 
     static constexpr const char* kFallbacks[] = {
+        "media/screenshots/00.png",
+        "media/screenshots/cover.png",
         "preview/cover.png",
         "preview/screenshot.png",
         "preview/cover.jpg",
@@ -256,6 +258,7 @@ void WiiUMenuApp::createSettings() {
                                     m_config.steamGridDbShowInGrid,
                                     m_config.steamGridDbShowInDynamicLine,
                                     m_config.steamGridDbShowInFolders,
+                                    m_config.steamGridDbShowPosterInDynamicLine,
                                     m_config.steamGridDbShowLogoInDynamicLine);
 
     m_settings->onNavigateSfx([this]() { m_audio.playSfx(Sfx::Navigate); });
@@ -483,6 +486,11 @@ void WiiUMenuApp::createSettings() {
         }
         showFocusedSteamGridDbArtwork(true);
     });
+    m_settings->onSteamGridDbPosterInLineChange([this](bool enabled) {
+        m_config.steamGridDbShowPosterInDynamicLine = enabled;
+        m_config.save();
+        syncSingleRowPosterPresentation(true);
+    });
     m_settings->onSteamGridDbLogoInLineChange([this](bool enabled) {
         m_config.steamGridDbShowLogoInDynamicLine = enabled;
         m_config.save();
@@ -635,6 +643,7 @@ void WiiUMenuApp::editSteamGridDbApiKey() {
                                              m_config.steamGridDbShowInGrid,
                                              m_config.steamGridDbShowInDynamicLine,
                                              m_config.steamGridDbShowInFolders,
+                                             m_config.steamGridDbShowPosterInDynamicLine,
                                              m_config.steamGridDbShowLogoInDynamicLine);
             m_settings->refreshCurrentTabWidgets();
             m_settings->requestToast(value.empty()
@@ -2600,9 +2609,12 @@ void WiiUMenuApp::reloadSidebarIcons() {
     m_sidebar.invalidateAssetsCache();
     m_sidebar.reloadAssets(app().gpu(), app().renderer(), SD_ASSETS, customIconsBase, fallbackPackId);
     // The layout-flip chrome button uses the same pack, so refresh it too.
-    if (m_layoutFlip)
-        m_layoutFlip->ensureIcon(app().gpu(), app().renderer(),
+    if (m_layoutFlip) {
+        m_layoutFlip->setIconHslAdjust(m_sidebar.iconHslAdjust());
+        m_layoutFlip->setColourIconContrast(m_sidebar.colourIconContrast());
+        m_layoutFlip->reloadIcon(app().gpu(), app().renderer(),
                                  resolveActiveIconGlyphPath(switchu::icons::kChangeViewFile));
+    }
 }
 
 void WiiUMenuApp::applyIconPack(const std::string& packId) {
@@ -3225,6 +3237,7 @@ void WiiUMenuApp::applyHomeChrome() {
         m_layoutFlip->setTheme(&m_homeChrome);
 
     m_sidebar.applyTheme(m_homeChrome);
+    syncColourIconContrast();
 }
 
 void WiiUMenuApp::updateHeroAwareChrome(bool force) {
@@ -3256,8 +3269,12 @@ void WiiUMenuApp::updateHeroAwareChrome(bool force) {
         }
     }
 
-    if (!force && desired == m_heroChromeAdapt)
+    // Colour-icon contrast must track every hero change even when chrome mode
+    // stays put (otherwise adapt never releases after the first hero).
+    if (!force && desired == m_heroChromeAdapt) {
+        syncColourIconContrast();
         return;
+    }
 
     m_heroChromeAdapt = desired;
     if (desired == HeroChromeAdapt::ForceDark) {
@@ -3551,10 +3568,16 @@ void WiiUMenuApp::syncSoftwareDeletion() {
 }
 
 void WiiUMenuApp::syncColourIconContrast() {
-    // Apply committed per-pack HSL to HOME sidebar. Full single-row hero
-    // chrome-follow lives on the posters stack; here we keep authored/tint.
-    const std::string activePackId = m_config.iconPack.empty()
-        ? switchu::icons::kDefaultPackId : m_config.iconPack;
+    // Single-row + hero: colour icons follow HOME chrome (same light/dark flip
+    // as mono glyphs). No hero / grid: authored colour, optionally HSL-shifted
+    // when custom tint is on. Theme > Options arms the feature.
+    const bool fullHero =
+        presentationLayoutMode() == AppLayoutMode::DynamicLine
+        && m_steamGridDbBackdrop
+        && m_steamGridDbBackdrop->hasDisplayedHero();
+    const bool adaptColour = m_config.iconContrastAdapt && fullHero;
+
+    const std::string activePackId = resolvedIconPackId();
     const AppConfig::IconPackTint packTint = m_config.iconPackTintFor(activePackId);
     switchu::icons::HslAdjust hsl;
     hsl.enabled = packTint.enabled;
@@ -3569,15 +3592,17 @@ void WiiUMenuApp::syncColourIconContrast() {
         || std::fabs(m_sidebar.iconHslAdjust().light - hsl.light) > 0.0005f;
 
     m_sidebar.setIconHslAdjust(hsl);
-    // The Theme > Options toggle is the single source of truth: when it is on,
-    // colour packs follow the chrome; when off they keep their authored pixels.
-    const bool adapt = m_config.iconContrastAdapt;
-    const bool adaptChanged = m_sidebar.colourIconContrast() != adapt;
-    m_sidebar.setColourIconContrast(adapt);
+    if (m_layoutFlip)
+        m_layoutFlip->setIconHslAdjust(hsl);
+    m_sidebar.setColourIconContrast(adaptColour);
+    if (m_layoutFlip)
+        m_layoutFlip->setColourIconContrast(adaptColour);
 
-    if (hslChanged || adaptChanged) {
+    if (hslChanged) {
+        // Rebake colour glyphs (and Change View) with the new HSL adjust.
         reloadSidebarIcons();
-        m_sidebar.setColourIconContrast(adapt);
+        m_sidebar.setColourIconContrast(adaptColour);
+        if (m_layoutFlip)
+            m_layoutFlip->setColourIconContrast(adaptColour);
     }
 }
-

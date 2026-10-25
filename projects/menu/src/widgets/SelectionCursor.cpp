@@ -154,27 +154,29 @@ void SelectionCursor::onRender(nxui::Renderer& ren) {
     if (w < 1.f || h < 1.f) return;
 
     const float arrival = m_teleportPulse * (2.f - m_teleportPulse);
-    nxui::Rect r = nxui::Rect{x, y, w, h}.expanded(4.f * arrival);
-    float cr = m_cornerRadius.value() + 4.f * arrival;
+    // Target rect is the card itself. Rings only expand outward — same geometry
+    // as GlossyIcon's green suspended outline — so posters are never inset.
+    nxui::Rect r = nxui::Rect{x, y, w, h};
+    float cr = m_cornerRadius.value();
+    if (arrival > 0.01f) {
+        r = r.expanded(4.f * arrival);
+        cr += 4.f * arrival;
+    }
 
     float wave = std::sin(m_time * m_waveSpeed) * 0.5f + 0.5f;
+    const float outerAlpha = (0.28f + 0.22f * wave) * m_opacity;
+    const float innerAlpha = (0.72f + 0.20f * wave) * m_opacity;
 
-    // Outline-only (no filled bloom) so folder/game art stays readable —
-    // same idea as the green suspended ring on GlossyIcon.
     if (arrival > 0.01f) {
         ren.drawRoundedRectOutline(
             r.expanded(7.f * arrival),
             m_color.withAlpha(0.28f * arrival * m_opacity),
             cr + 7.f * arrival, 2.f);
     }
-    const float outerAlpha = (0.35f + 0.20f * wave) * m_opacity;
-    ren.drawRoundedRectOutline(r.expanded(3.f),
+    ren.drawRoundedRectOutline(r.expanded(5.f),
                                m_color.withAlpha(outerAlpha * 0.55f),
-                               cr + 3.f, m_borderWidth + 1.2f);
-    ren.drawRoundedRectOutline(r, m_color.withAlpha(m_opacity), cr, m_borderWidth);
-
-    nxui::Rect inner = r.shrunk(m_borderWidth * 0.5f);
-    nxui::Color innerC = nxui::Color(0.3f, 0.85f, 1.f,
-                                     0.55f * m_opacity * (0.75f + 0.25f * wave));
-    ren.drawRoundedRectOutline(inner, innerC, std::max(1.f, cr - 2.f), 1.5f);
+                               cr + 5.f, m_borderWidth + 1.5f);
+    ren.drawRoundedRectOutline(r.expanded(2.f),
+                               m_color.withAlpha(innerAlpha),
+                               cr + 2.f, m_borderWidth);
 }

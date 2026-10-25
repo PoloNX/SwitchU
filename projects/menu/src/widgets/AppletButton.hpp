@@ -33,8 +33,8 @@ public:
         m_iconContrastMask = mask;
         syncIconTint();
     }
-    // When true (single-row + hero), colour icons follow chrome textPrimary —
-    // same hero-aware light/dark flip as the rest of HOME.
+    // When true (Theme > Options adapt + single-row hero), colour icons follow
+    // chrome textPrimary — same hero-aware light/dark flip as mono HOME glyphs.
     void setColourContrastAdapt(bool enabled) {
         m_colourContrastAdapt = enabled;
         syncIconTint();

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "AdaptiveIconLoad.hpp"
+
 #include <nxui/widgets/GlassWidget.hpp>
 #include <nxui/core/GpuDevice.hpp>
 #include <nxui/core/Texture.hpp>
@@ -8,23 +10,20 @@
 
 namespace nxui { class Renderer; }
 
-// Compact camera-flip control for toggling grid ↔ single-row (touch + D-pad).
+// Compact camera-flip control for toggling grid Γåö single-row (touch + D-pad).
 class LayoutFlipButton : public nxui::GlassWidget {
 public:
-    // The three views the button cycles through. Single-row has two flavours:
-    // square tiles and tall SteamGridDB posters.
-    enum class FlipTarget { Grid, LineSquares, LinePosters };
-
     LayoutFlipButton();
 
     void setTheme(const nxui::Theme* theme);
-    /// Current view + what the next activation switches to (drives the hint).
-    void setFlipTarget(FlipTarget target);
-    FlipTarget flipTarget() const { return m_flipTarget; }
-    /// Load white+alpha mask from disk (theme-tinted at draw time).
-    /// Reloads when `path` differs from the one already loaded, so an icon
-    /// pack switch is picked up without rebuilding the widget.
+    void setSingleRowActive(bool singleRow);
+    /// Load icon from disk. Mono glyphs adapt to chrome; colour icons stay as-is
+    /// unless colour-contrast adapt forces a black/white silhouette.
     void ensureIcon(nxui::GpuDevice& gpu, nxui::Renderer& ren, const std::string& path);
+    /// Force a reload (icon pack switch).
+    void reloadIcon(nxui::GpuDevice& gpu, nxui::Renderer& ren, const std::string& path);
+    void setColourIconContrast(bool enabled);
+    void setIconHslAdjust(const switchu::icons::HslAdjust& adj);
 
 protected:
     void onContentRender(nxui::Renderer& ren) override;
@@ -32,10 +31,16 @@ protected:
 private:
     void refreshAccessibility();
     void drawFallbackIcon(nxui::Renderer& ren, const nxui::Color& ink);
+    void resolveDrawStyle(nxui::Color& ink, const nxui::Texture*& tex) const;
 
     const nxui::Theme* m_theme = nullptr;
-    FlipTarget m_flipTarget = FlipTarget::Grid;
+    bool m_singleRow = false;
     nxui::Texture m_icon;
+    nxui::Texture m_iconContrastMask;
+    float m_iconMeanLuma = 0.5f;
     std::string m_iconPath;
     bool m_iconLoadAttempted = false;
+    bool m_iconAdaptive = false;
+    bool m_colourContrastAdapt = true;
+    switchu::icons::HslAdjust m_hslAdjust;
 };

@@ -3625,50 +3625,18 @@ void WiiUMenuApp::syncPageIndicator() {
 void WiiUMenuApp::toggleAppLayoutMode() {
     if (m_layoutTransition.kind != LayoutTransitionKind::Idle)
         return;
-    // The view is a HOME preference. Inside a folder it stays locked to the
-    // view the folder opened with, so Minus / the flip must not touch it.
-    if (m_openFolderId != 0)
-        return;
-
-    // Three views on one button: grid → single-row posters → single-row
-    // squares → grid. The poster flavour only exists when SteamGridDB artwork
-    // is enabled, so without it the button stays a plain two-way flip.
-    if (m_appLayoutMode == AppLayoutMode::Grid) {
-        if (m_config.steamGridDbEnabled && !m_config.steamGridDbShowPosterInDynamicLine) {
-            // Entering single-row always starts on posters when available.
-            m_config.steamGridDbShowPosterInDynamicLine = true;
-            m_config.save();
-        }
-        setAppLayoutMode(AppLayoutMode::DynamicLine);
-        return;
-    }
-
-    if (m_config.steamGridDbEnabled && m_config.steamGridDbShowPosterInDynamicLine) {
-        m_config.steamGridDbShowPosterInDynamicLine = false;
-        m_config.save();
-        syncSingleRowPosterPresentation(true);
-        m_audio.playSfx(Sfx::ThemeToggle);
-        m_accessibility.announce(
-            nxui::I18n::instance().tr("accessibility.layout.dynamic_line_squares",
-                                      "Single-row view, square tiles"),
-            true, true);
-        syncLayoutFlipState();
-        return;
-    }
-
-    setAppLayoutMode(AppLayoutMode::Grid);
+    // Two-way flip only: grid ↔ single-row. Poster vs square tiles is a
+    // Settings preference (steamGridDbShowPosterInDynamicLine), not a third
+    // Change View state. Minus still works inside folders (session-only).
+    setAppLayoutMode(m_appLayoutMode == AppLayoutMode::Grid
+                         ? AppLayoutMode::DynamicLine
+                         : AppLayoutMode::Grid);
 }
 
 void WiiUMenuApp::syncLayoutFlipState() {
     if (!m_layoutFlip)
         return;
-    if (m_appLayoutMode != AppLayoutMode::DynamicLine) {
-        m_layoutFlip->setFlipTarget(LayoutFlipButton::FlipTarget::Grid);
-        return;
-    }
-    m_layoutFlip->setFlipTarget(preferSingleRowPosters()
-        ? LayoutFlipButton::FlipTarget::LinePosters
-        : LayoutFlipButton::FlipTarget::LineSquares);
+    m_layoutFlip->setSingleRowActive(m_appLayoutMode == AppLayoutMode::DynamicLine);
 }
 
 std::string WiiUMenuApp::sortModeLabel() const {
@@ -4232,7 +4200,7 @@ std::uint64_t WiiUMenuApp::resolveFolderCoverTitleId(
 
 void WiiUMenuApp::syncSingleRowPosterPresentation(bool forceReloadIcons) {
     const bool preferPoster = preferSingleRowPosters();
-    // Poster ↔ squares is one of the three Change View states.
+    // Poster ↔ squares follows Settings; Change View is grid ↔ single-row only.
     syncLayoutFlipState();
 
     m_iconStreamer.setIconDataLoader([this](uint64_t titleId) {
@@ -5578,7 +5546,8 @@ void WiiUMenuApp::buildGrid() {
     m_layoutFlip->ensureIcon(app().gpu(), app().renderer(),
                              resolveActiveIconGlyphPath(switchu::icons::kChangeViewFile));
     m_layoutFlip->setOnActivate([this]() {
-        if (m_editMode || m_openFolderId != 0 || leaveSplashActive())
+        // Button is HOME-chrome only (hidden in folders); Minus flips in-folder.
+        if (m_editMode || leaveSplashActive())
             return;
         if (m_layoutTransition.kind != LayoutTransitionKind::Idle)
             return;
@@ -5813,8 +5782,8 @@ void WiiUMenuApp::buildGrid() {
         // already usable HOME scene hidden behind the old opaque fade.
         m_returnFadeTimer = 0.f;
     } else if (m_appLayoutMode == AppLayoutMode::DynamicLine) {
-        // Single-row hides the selection ring — an appear tween from scale 0
-        // makes boot look unfocused / unresponsive. Show tiles immediately.
+        // Single-row boot: skip appear-from-zero so the outline ring and
+        // centred tile are readable on first paint.
         for (auto& icon : m_grid->allIcons())
             icon->forceVisible();
     } else {
