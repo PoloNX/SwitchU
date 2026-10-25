@@ -15,14 +15,16 @@
 
 namespace {
 
+// eShop-inspired shelf: roomy tiles, cover-first (art owns the card).
 constexpr int kGridCols = 2;
 constexpr int kVisibleRows = 2;
-constexpr float kContentInsetX = 24.f;
-constexpr float kContentInsetY = 18.f;
-constexpr float kHeaderHeight = 78.f;
-constexpr float kGridGapX = 16.f;
-constexpr float kGridGapY = 20.f;
-constexpr float kFooterHintHeight = 74.f;
+constexpr float kContentInsetX = 28.f;
+constexpr float kContentInsetY = 16.f;
+constexpr float kHeaderHeight = 64.f;
+constexpr float kGridGapX = 22.f;
+constexpr float kGridGapY = 22.f;
+constexpr float kFooterHintHeight = 68.f;
+constexpr float kCardCaptionH = 54.f;
 constexpr float kPreviewAspect = 16.f / 9.f;
 constexpr float kSearchButtonWidth = 208.f;
 constexpr float kRefreshButtonWidth = 144.f;
@@ -143,11 +145,12 @@ nxui::Rect gridCardRect(const GridLayout& layout, int localIndex) {
 }
 
 nxui::Rect detailDialogRect(const nxui::Rect& content) {
+    // Product sheet: closer to full content — eShop product page, not a modal card.
     return {
-        content.x + 38.f,
-        content.y + 42.f,
-        content.width - 76.f,
-        content.height - 84.f
+        content.x + 22.f,
+        content.y + 24.f,
+        content.width - 44.f,
+        content.height - 52.f
     };
 }
 
@@ -219,12 +222,12 @@ nxui::Rect fitAspectRect(const nxui::Rect& bounds, float aspect) {
 }
 
 nxui::Rect detailPreviewRect(const nxui::Rect& dialog) {
-    constexpr float kBodyTopInset = 26.f;
-    constexpr float kBodyBottomInset = 96.f;
+    constexpr float kBodyTopInset = 28.f;
+    constexpr float kBodyBottomInset = 92.f;
     nxui::Rect bounds = {
-        dialog.x + 22.f,
+        dialog.x + 28.f,
         dialog.y + kBodyTopInset,
-        dialog.width * 0.50f,
+        dialog.width * 0.58f,
         dialog.height - kBodyTopInset - kBodyBottomInset
     };
     return fitAspectRect(bounds, kPreviewAspect);
@@ -576,12 +579,12 @@ IconTintLayout makeIconTintLayout(const nxui::Rect& band) {
 
 // Large left preview (same footprint as theme detail) + roomy tint column on the right.
 nxui::Rect colourIconPreviewBounds(const nxui::Rect& dialog) {
-    constexpr float kBodyTopInset = 26.f;
-    constexpr float kBodyBottomInset = 96.f;
+    constexpr float kBodyTopInset = 78.f; // room for title above the studio preview
+    constexpr float kBodyBottomInset = 92.f;
     nxui::Rect bounds = {
-        dialog.x + 22.f,
+        dialog.x + 28.f,
         dialog.y + kBodyTopInset,
-        dialog.width * 0.52f,
+        dialog.width * 0.48f,
         dialog.height - kBodyTopInset - kBodyBottomInset
     };
     return fitAspectRect(bounds, kPreviewAspect);
@@ -635,13 +638,20 @@ void drawThemePreview(nxui::Renderer& ren,
                       bool adaptiveTint = false,
                       bool iconPackGlass = false,
                       const nxui::Texture* contrastMask = nullptr,
-                      const nxui::Color* customTint = nullptr) {
+                      const nxui::Color* customTint = nullptr,
+                      bool shelfCover = false) {
     if (!theme)
         return;
 
     if (texture && texture->valid()) {
         nxui::Rect drawRect = rect;
-        if (iconPackGlass) {
+        float corner = 14.f;
+        if (shelfCover) {
+            // eShop shelf / product hero: cover is the plane — no inset frame.
+            ren.drawRoundedRect(rect, nxui::Color(0.f, 0.f, 0.f, 0.22f * opacity), 16.f);
+            drawRect = rect;
+            corner = 16.f;
+        } else if (iconPackGlass) {
             // Little glass well inside the pack card - theme-coloured (no hard
             // #1c1e25 plate). Glyphs keep alpha and sit on this glass.
             const bool dark = theme->mode == nxui::ThemeMode::Dark;
@@ -650,12 +660,14 @@ void drawThemePreview(nxui::Renderer& ren,
             const nxui::Color glassHighlight = theme->panelHighlight.withAlpha(0.16f * opacity);
             ren.drawFrostedInset(rect, glassBase, glassBorder, glassHighlight, 14.f, opacity);
             drawRect = {rect.x + 10.f, rect.y + 10.f, rect.width - 20.f, rect.height - 20.f};
+            corner = 10.f;
         } else {
             // Theme screenshots keep a framed inset well.
             ren.drawRoundedRect(rect, theme->panelBase.withAlpha(0.14f * opacity), 14.f);
             ren.drawRoundedRectOutline(rect, theme->panelBorder.withAlpha(0.18f * opacity), 14.f, 1.f);
             drawRect = {rect.x + 4.f, rect.y + 4.f, rect.width - 8.f, rect.height - 8.f};
             ren.drawRoundedRect(drawRect, nxui::Color(0.f, 0.f, 0.f, 0.14f * opacity), 12.f);
+            corner = 12.f;
         }
         const nxui::Texture* drawTex = texture;
         nxui::Color tint = adaptiveTint
@@ -667,7 +679,7 @@ void drawThemePreview(nxui::Renderer& ren,
         }
         ren.drawTextureRounded(drawTex,
                                fitTextureRect(drawRect, drawTex),
-                               iconPackGlass ? 10.f : 12.f,
+                               corner,
                                tint);
         return;
     }
@@ -2083,23 +2095,24 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
     layout.pageNextButton.y += slideOffset;
     layout.grid.y += slideOffset;
 
+    // eShop shelf headers: short store names, one quiet line of context.
     std::string title;
     std::string subtitle;
     if (isCommunityTab()) {
-        title = i18n.tr("themeshop.community.title", "Browse Community Themes");
-        subtitle = i18n.tr("themeshop.community.subtitle", "A visual catalog, not a settings selector.");
+        title = i18n.tr("themeshop.community.title", "Community");
+        subtitle = i18n.tr("themeshop.community.subtitle", "Themes from the catalog.");
     } else if (isIconsTab()) {
-        title = i18n.tr("themeshop.icons.title", "Icon Packs");
-        subtitle = i18n.tr("themeshop.icons.subtitle", "Switch sidebar icons on the fly.");
+        title = i18n.tr("themeshop.icons.title", "Icons");
+        subtitle = i18n.tr("themeshop.icons.subtitle", "Sidebar icon packs.");
     } else {
-        title = i18n.tr("themeshop.installed.title", "Installed Theme Library");
-        subtitle = i18n.tr("themeshop.installed.subtitle", "Your local themes in a gallery layout.");
+        title = i18n.tr("themeshop.installed.title", "Themes");
+        subtitle = i18n.tr("themeshop.installed.subtitle", "Installed on this console.");
     }
 
-    ren.drawText(title, {layout.header.x, layout.header.y + 2.f}, m_font,
-                 m_theme->textPrimary.withAlpha(contentOpacity), 1.00f);
-    ren.drawText(subtitle, {layout.header.x, layout.header.y + 38.f}, m_smallFont,
-                 m_theme->textSecondary.withAlpha(0.92f * contentOpacity), 0.78f);
+    ren.drawText(title, {layout.header.x, layout.header.y + 0.f}, m_font,
+                 m_theme->textPrimary.withAlpha(contentOpacity), 1.08f);
+    ren.drawText(subtitle, {layout.header.x, layout.header.y + 36.f}, m_smallFont,
+                 m_theme->textSecondary.withAlpha(0.82f * contentOpacity), 0.74f);
 
     std::string searchLabel = m_searchQuery.empty()
         ? i18n.tr("themeshop.search.button", "Search")
@@ -2351,10 +2364,10 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
                 ? m_iconPackEntries[(size_t)globalIndex]
                 : m_themeShopEntries[(size_t)globalIndex];
             titleText = entry.name;
-            std::string author = entry.author.empty()
+            // Shelf caption: author only (source/version live as chips or detail).
+            subtitleText = entry.author.empty()
                 ? i18n.tr("themeshop.community.author_unknown", "Unknown")
                 : entry.author;
-            subtitleText = entry.source.empty() ? author : (author + " - " + entry.source);
             versionText = entry.version;
             activeTheme = entry.active;
             previewRequested = !entry.coverPath.empty() || !entry.coverUrl.empty();
@@ -2374,13 +2387,21 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
             }
         }
 
-        nxui::Color cardFill = m_theme->panelBase.withAlpha((cardSelected ? 0.18f : 0.14f) * rowOpacity);
-        nxui::Color cardBorder = m_theme->panelBorder.withAlpha((cardSelected ? 0.34f : 0.24f) * rowOpacity);
-        ren.drawRoundedRect(card, cardFill, 22.f);
-        ren.drawRoundedRectOutline(card, cardBorder, 22.f, 1.0f);
+        // Shelf tile: soft plate + cover-forward art (caption lives under the cover).
+        nxui::Color cardFill = m_theme->panelBase.withAlpha((cardSelected ? 0.16f : 0.10f) * rowOpacity);
+        nxui::Color cardBorder = m_theme->panelBorder.withAlpha((cardSelected ? 0.28f : 0.14f) * rowOpacity);
+        ren.drawRoundedRect(card, cardFill, 20.f);
+        ren.drawRoundedRectOutline(card, cardBorder, 20.f, 1.0f);
 
-        nxui::Rect previewBounds = {card.x + 10.f, card.y + 10.f, card.width - 20.f, card.height - 76.f};
-        nxui::Rect preview = fitAspectRect(previewBounds, kPreviewAspect);
+        nxui::Rect previewBounds = {
+            card.x + 8.f,
+            card.y + 8.f,
+            card.width - 16.f,
+            card.height - kCardCaptionH - 10.f
+        };
+        nxui::Rect preview = isIconsTab()
+            ? previewBounds
+            : fitAspectRect(previewBounds, kPreviewAspect);
         // Idle means "queued but not started yet" (download cap) - still loading, not unavailable.
         bool previewLoading = previewPhase == PreviewPhase::Idle
             || previewPhase == PreviewPhase::Loading
@@ -2406,7 +2427,10 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
                          m_uiTime,
                          rowOpacity,
                          previewAdaptive,
-                         isIconsTab());
+                         isIconsTab(),
+                         nullptr,
+                         nullptr,
+                         !isIconsTab());
 
         if (!versionText.empty()) {
             float chipWidth = std::max(74.f, std::min(108.f, 32.f + measureTextCached(m_smallFont, versionText).x * 0.64f));
@@ -2456,15 +2480,15 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
         const float titleMaxW = titleReserve > 0.f
             ? std::max(40.f, card.width - 18.f - titleReserve)
             : (card.width - 18.f);
-        std::string titleFitted = ellipsize(m_font, titleText, titleMaxW, 0.86f);
-        const float titleY = preview.bottom() + 10.f;
+        std::string titleFitted = ellipsize(m_font, titleText, titleMaxW, 0.82f);
+        const float titleY = card.bottom() - kCardCaptionH + 6.f;
         ren.drawText(titleFitted,
-                     {card.x + 10.f, titleY},
+                     {card.x + 12.f, titleY},
                      m_font,
                      m_theme->textPrimary.withAlpha(rowOpacity),
-                     0.86f);
-        float badgeX = card.x + 10.f + measureTextCached(m_font, titleFitted).x * 0.86f + kSpectrumBadgeGap;
-        const float titleH = measureTextCached(m_font, titleFitted).y * 0.86f;
+                     0.82f);
+        float badgeX = card.x + 12.f + measureTextCached(m_font, titleFitted).x * 0.82f + kSpectrumBadgeGap;
+        const float titleH = measureTextCached(m_font, titleFitted).y * 0.82f;
         if (showSpectrumBadge) {
             nxui::Rect spectrum = {
                 badgeX,
@@ -2477,7 +2501,10 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
         }
         if (showIconsBadge) {
             nxui::Rect iconsChip = {
-                showSpectrumBadge ? badgeX : (card.x + 10.f + measureTextCached(m_font, titleFitted).x * 0.86f + kIconsBadgeGap),
+                showSpectrumBadge ? badgeX
+                                  : (card.x + 12.f
+                                     + measureTextCached(m_font, titleFitted).x * 0.82f
+                                     + kIconsBadgeGap),
                 titleY + std::max(0.f, (titleH - kIconsBadgeH) * 0.5f),
                 iconsBadgeW,
                 kIconsBadgeH
@@ -2491,12 +2518,14 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
                      m_theme->textPrimary,
                      rowOpacity,
                      0.62f);
-        }std::string subtitleFitted = ellipsize(m_smallFont, subtitleText, card.width - 18.f, 0.76f);
+        }
+        // Author only — eShop shelves don't dump source/version in the caption.
+        std::string subtitleFitted = ellipsize(m_smallFont, subtitleText, card.width - 24.f, 0.70f);
         ren.drawText(subtitleFitted,
-                     {card.x + 10.f, card.bottom() - 30.f},
+                     {card.x + 12.f, card.bottom() - 22.f},
                      m_smallFont,
-                     m_theme->textSecondary.withAlpha(0.92f * rowOpacity),
-                     0.76f);
+                     m_theme->textSecondary.withAlpha(0.78f * rowOpacity),
+                     0.70f);
 
         // Hold grid focus until the detail close anim finishes, then snap once.
         // Mid-close updates let the fading sheet steal the ring back to Apply.
@@ -2533,10 +2562,11 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
         return;
 
     float detailOpacity = contentOpacity * detailT;
-    ren.drawRoundedRect(content, nxui::Color(0.f, 0.f, 0.f, 0.42f * detailOpacity), 26.f);
+    // Soft store scrim — dim the shelf, lift the product sheet.
+    ren.drawRoundedRect(content, nxui::Color(0.f, 0.f, 0.f, 0.52f * detailOpacity), 26.f);
     nxui::Rect dialog = detailDialogRect(content);
-    dialog = scaledRect(dialog, 0.96f + 0.04f * detailT);
-    drawFrostedInsetPanel(ren, m_theme, dialog, 24.f, detailOpacity, 1.4f);
+    dialog = scaledRect(dialog, 0.97f + 0.03f * detailT);
+    drawFrostedInsetPanel(ren, m_theme, dialog, 26.f, detailOpacity, 1.2f);
 
     // Tint only applies to packs that live on the console.
     const auto* tintEntry = isIconsTab() ? selectedThemeShopEntry() : nullptr;
@@ -2681,7 +2711,10 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
                      m_uiTime,
                      detailOpacity,
                      detailPreviewAdaptive,
-                     isIconsTab());
+                     isIconsTab(),
+                     nullptr,
+                     nullptr,
+                     !isIconsTab());
 
     if (detailPreviewRequested) {
         auto previewButtons = detailPreviewControlRects(previewControls, preview, detailScreenshotTotal);
@@ -2834,59 +2867,62 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
             m_detailFocusArea = DetailFocusArea::TintToggle;
         }
     } else {
-        float infoBlockHeight = (isCommunityTab() && !m_packageTransferState.label().empty()) ? 272.f : 224.f;
+        // Product copy: title, author, one soft line — no settings-style dump.
         nxui::Rect infoBounds = {
-            preview.right() + 24.f,
-            dialog.y + 26.f,
-            dialog.right() - preview.right() - 46.f,
-            dialog.height - 122.f
+            preview.right() + 28.f,
+            dialog.y + 36.f,
+            dialog.right() - preview.right() - 52.f,
+            dialog.height - 130.f
         };
-        nxui::Rect info = {
-            infoBounds.x,
-            infoBounds.y + std::max(0.f, (infoBounds.height - infoBlockHeight) * 0.5f),
-            infoBounds.width,
-            infoBlockHeight
-        };
-        ren.drawText(ellipsize(m_font, detailTitle, info.width, 1.10f),
-                     {info.x, info.y + 2.f},
+        ren.drawText(ellipsize(m_font, detailTitle, infoBounds.width, 1.22f),
+                     {infoBounds.x, infoBounds.y + 4.f},
                      m_font,
                      m_theme->textPrimary.withAlpha(detailOpacity),
-                     1.10f);
-        ren.drawText(ellipsize(m_smallFont, detailSubtitle, info.width, 0.84f),
-                     {info.x, info.y + 44.f},
+                     1.22f);
+        ren.drawText(ellipsize(m_smallFont, detailSubtitle, infoBounds.width, 0.86f),
+                     {infoBounds.x, infoBounds.y + 52.f},
                      m_smallFont,
-                     m_theme->textSecondary.withAlpha(0.90f * detailOpacity),
-                     0.84f);
-        ren.drawText(detailInfoA,
-                     {info.x, info.y + 108.f},
+                     m_theme->textSecondary.withAlpha(0.88f * detailOpacity),
+                     0.86f);
+
+        // Soft status chip (Active / Available) instead of "Status: …" prose.
+        if (!detailInfoA.empty()) {
+            const std::string statusChipLabel = [&]() -> std::string {
+                if (detailInfoA.find(':') != std::string::npos)
+                    return detailInfoA.substr(detailInfoA.find(':') + 1);
+                return detailInfoA;
+            }();
+            std::string trimmed = statusChipLabel;
+            while (!trimmed.empty() && trimmed.front() == ' ')
+                trimmed.erase(trimmed.begin());
+            const float chipW = std::max(96.f,
+                std::min(infoBounds.width * 0.72f,
+                         36.f + measureTextCached(m_smallFont, trimmed).x * 0.72f));
+            nxui::Rect statusChip = {infoBounds.x, infoBounds.y + 96.f, chipW, 30.f};
+            drawChip(ren,
                      m_smallFont,
-                     m_theme->textPrimary.withAlpha(detailOpacity),
-                     0.80f);
-        ren.drawText(ellipsize(m_smallFont, detailInfoB, info.width, 0.76f),
-                     {info.x, info.y + 150.f},
+                     statusChip,
+                     trimmed,
+                     m_theme->panelBase.withAlpha(0.22f),
+                     m_theme->panelBorder.withAlpha(0.28f),
+                     m_theme->textPrimary,
+                     detailOpacity,
+                     0.72f);
+        }
+
+        ren.drawText(ellipsize(m_smallFont, detailInfoC, infoBounds.width, 0.76f),
+                     {infoBounds.x, infoBounds.y + 146.f},
                      m_smallFont,
-                     m_theme->textSecondary.withAlpha(0.92f * detailOpacity),
-                     0.76f);
-        ren.drawText(ellipsize(m_smallFont, detailInfoC, info.width, 0.76f),
-                     {info.x, info.y + 190.f},
-                     m_smallFont,
-                     m_theme->textSecondary.withAlpha(0.92f * detailOpacity),
+                     m_theme->textSecondary.withAlpha(0.80f * detailOpacity),
                      0.76f);
     }
 
     if (isCommunityTab() && !m_packageTransferState.label().empty()) {
-        float infoBlockHeight = 272.f;
         nxui::Rect infoBounds = {
-            preview.right() + 24.f,
-            dialog.y + 26.f,
-            dialog.right() - preview.right() - 46.f,
-            dialog.height - 122.f
-        };
-        nxui::Rect transferInfo = {
-            infoBounds.x,
-            infoBounds.y + std::max(0.f, (infoBounds.height - infoBlockHeight) * 0.5f),
-            infoBounds.width,
-            infoBlockHeight
+            preview.right() + 28.f,
+            dialog.y + 36.f,
+            dialog.right() - preview.right() - 52.f,
+            dialog.height - 130.f
         };
         nxui::Color statusColor = m_theme->textSecondary;
         if (m_packageTransferState.isRunning())
@@ -2896,14 +2932,14 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
         else if (m_packageTransferState.hasFailed())
             statusColor = nxui::Color(1.f, 0.56f, 0.52f, 1.f);
 
-        ren.drawText(ellipsize(m_smallFont, transferLabel(m_packageTransferState), transferInfo.width - 24.f, 0.76f),
-                     {transferInfo.x + 24.f, transferInfo.y + 236.f},
+        ren.drawText(ellipsize(m_smallFont, transferLabel(m_packageTransferState), infoBounds.width, 0.76f),
+                     {infoBounds.x, infoBounds.bottom() - 36.f},
                      m_smallFont,
                      statusColor.withAlpha(detailOpacity),
                      0.76f);
         if (m_packageTransferState.isRunning()) {
             drawSpinner(ren,
-                        {transferInfo.x + 10.f, transferInfo.y + 246.f},
+                        {infoBounds.x + infoBounds.width - 18.f, infoBounds.bottom() - 24.f},
                         7.f,
                         m_uiTime,
                         m_theme->cursorNormal,
@@ -2927,7 +2963,10 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
                          m_uiTime,
                          detailOpacity,
                          detailPreviewAdaptive,
-                         isIconsTab());
+                         isIconsTab(),
+                         nullptr,
+                         nullptr,
+                         !isIconsTab());
 
         drawActionButtonChip(ren,
                              m_smallFont,
