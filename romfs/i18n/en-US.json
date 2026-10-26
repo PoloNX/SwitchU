@@ -721,7 +721,9 @@
     "tabs": {
       "installed": "Installed",
       "community": "Community",
-      "options": "Options"
+      "options": "Options",
+      "sounds": "Sounds",
+      "interface": "Interface"
     },
     "options": {
       "action_hints": "Action Hints",
@@ -729,7 +731,13 @@
       "sort_large_tiles": "Sort Large Tiles Too",
       "sort_large_tiles_desc": "A-Z and Recent also move applications that use a larger tile size.",
       "hint_panel": "Panel",
-      "hint_capsules": "Capsules"
+      "hint_capsules": "Capsules",
+      "theme_music_override": "Allow themes to replace my playlist",
+      "theme_music_override_desc": "On: applying a theme with music swaps your playlist for the theme's tracks. Off: keep your library and use the options below.",
+      "theme_music_add": "Add theme music to my playlist",
+      "theme_music_add_desc": "When replace is off, append the theme's tracks to your current playlist instead of ignoring them.",
+      "theme_music_play": "Play theme music on apply",
+      "theme_music_play_desc": "When replace is off and theme music was added, start that track after Apply. (Replace mode always starts the theme playlist when music is enabled.)"
     },
     "accessibility": {
       "fullscreen_preview": "Fullscreen preview",

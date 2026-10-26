@@ -47,7 +47,7 @@ Checkpoint before hitch / Phase 2: `checkpoint/themeshop-eshop-20261025-1538`
 
 ### Phase 3 — Options + polish
 
-1. Options tab: SwitchU personalization stays here (music, grid, hints, cursor/page, Auto Theme, adaptive contrast, theme-music Apply policy) — restored after brief Settings move  
+1. Theme Shop left bar: **Sounds** (menu music / volumes / theme-music Apply policy) and **Interface** (grid, sort, hints, Auto Theme, adaptive contrast, cursor/page)  
 2. Settings → Audio / Display stays system-adjacent (brightness, TV, speaker mute, etc.)  
 3. Install progress on-card / thin sheet (avoid nuking Community cache mid-transfer) — *done*  
 4. Motion pass: page slide + detail rise — *done*  

@@ -19,7 +19,12 @@ public:
     static ThemeShopScreen::Tab build(ThemeShopScreen& screen);
 };
 
-class OptionsTab {
+class SoundsTab {
+public:
+    static ThemeShopScreen::Tab build(ThemeShopScreen& screen);
+};
+
+class InterfaceTab {
 public:
     static ThemeShopScreen::Tab build(ThemeShopScreen& screen);
 };

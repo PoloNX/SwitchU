@@ -19,7 +19,8 @@ namespace themeshop::tabs {
 class InstalledTab;
 class CommunityTab;
 class IconsTab;
-class OptionsTab;
+class SoundsTab;
+class InterfaceTab;
 }
 
 namespace nxui {
@@ -190,7 +191,8 @@ private:
     friend class themeshop::tabs::InstalledTab;
     friend class themeshop::tabs::CommunityTab;
     friend class themeshop::tabs::IconsTab;
-    friend class themeshop::tabs::OptionsTab;
+    friend class themeshop::tabs::SoundsTab;
+    friend class themeshop::tabs::InterfaceTab;
 
     enum class PreviewPhase {
         Idle,
