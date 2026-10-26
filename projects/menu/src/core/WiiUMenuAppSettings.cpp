@@ -2912,7 +2912,8 @@ void WiiUMenuApp::activateThemePreset(ThemePreset* preset, bool applyBundledSoun
             } else if (!presetRef.empty()) {
                 album = "theme-" + presetRef;
             }
-            if (!musicDir.empty() && directoryExists(musicDir)
+            std::error_code musicDirEc;
+            if (!musicDir.empty() && std::filesystem::is_directory(musicDir, musicDirEc)
                 && !m_presetChangePending && !m_themeMusicMergePending) {
                 DebugLog::log("[theme-apply] merge theme music: dir=%s album=%s play=%d",
                               safeLogPath(musicDir),
