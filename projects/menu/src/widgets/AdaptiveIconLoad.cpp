@@ -22,7 +22,7 @@ MonoStats sampleMonochrome(const std::uint8_t* rgba, int w, int h) {
     if (!rgba || w <= 0 || h <= 0)
         return stats;
 
-    // Sparse sample — icons are usually 256–512; a full scan is fine but this
+    // Sparse sample - icons are usually 256-512; a full scan is fine but this
     // keeps custom 1024s cheap.
     const int stepX = std::max(1, w / 64);
     const int stepY = std::max(1, h / 64);
@@ -57,7 +57,7 @@ MonoStats sampleMonochrome(const std::uint8_t* rgba, int w, int h) {
 
 // Encode grayscale (and solid black/white glyphs) as a white RGB × coverage
 // alpha mask so multiply tinting by chrome textPrimary yields light or dark
-// icons while mid-tone gradients survive in alpha — not flat stark silhouettes.
+// icons while mid-tone gradients survive in alpha - not flat stark silhouettes.
 void normalizeToTintableMask(std::uint8_t* rgba, int w, int h, float meanLuma) {
     // Dark ink (near-black glyphs): coverage rises as luma falls.
     // Light / gray-gradient ink: coverage follows luma so soft fills keep shape.
@@ -117,6 +117,27 @@ void buildColourCoverageMask(std::uint8_t* rgba, int w, int h) {
     }
 }
 
+// Flatten: solid silhouette — shape from alpha only, no luminance/gradient detail.
+void buildFlatSilhouetteMask(std::uint8_t* rgba, int w, int h) {
+    const std::size_t n = static_cast<std::size_t>(w) * static_cast<std::size_t>(h);
+    for (std::size_t i = 0; i < n; ++i) {
+        const std::size_t p = i * 4u;
+        const float a = rgba[p + 3] / 255.f;
+        if (a <= 0.04f) {
+            rgba[p] = 0;
+            rgba[p + 1] = 0;
+            rgba[p + 2] = 0;
+            rgba[p + 3] = 0;
+        } else {
+            rgba[p] = 255;
+            rgba[p + 1] = 255;
+            rgba[p + 2] = 255;
+            // Keep source alpha for edge AA; RGB is flat white (no fill shading).
+            rgba[p + 3] = static_cast<std::uint8_t>(std::clamp(a, 0.f, 1.f) * 255.f + 0.5f);
+        }
+    }
+}
+
 void rgbToHsl(float r, float g, float b, float& h, float& s, float& l) {
     const float mx = std::max({r, g, b});
     const float mn = std::min({r, g, b});
@@ -166,14 +187,54 @@ float adjustChannelPivot(float value, float pivot) {
     return value + (1.f - value) * ((pivot - 0.5f) * 2.f);
 }
 
-// Rotate every pixel's hue and pivot sat/light — keeps multi-colour artwork
+// Grayscale + Light: pivot every pixel's luma (0.5 = leave, 0 = black, 1 = white).
+void applyLightnessPivot(std::uint8_t* rgba, int w, int h, float light01) {
+    if (!rgba || w <= 0 || h <= 0)
+        return;
+    if (std::fabs(light01 - 0.5f) < 0.0005f)
+        return;
+    const std::size_t n = static_cast<std::size_t>(w) * static_cast<std::size_t>(h);
+    for (std::size_t i = 0; i < n; ++i) {
+        const std::size_t p = i * 4u;
+        if (rgba[p + 3] < 8)
+            continue;
+        const float luma = rgba[p] / 255.f; // already gray — R=G=B
+        const float out = std::clamp(adjustChannelPivot(luma, light01), 0.f, 1.f);
+        const auto v = static_cast<std::uint8_t>(out * 255.f + 0.5f);
+        rgba[p] = v;
+        rgba[p + 1] = v;
+        rgba[p + 2] = v;
+    }
+}
+
+void applyGrayscaleRgb(std::uint8_t* rgba, int w, int h) {
+    if (!rgba || w <= 0 || h <= 0)
+        return;
+    const std::size_t n = static_cast<std::size_t>(w) * static_cast<std::size_t>(h);
+    for (std::size_t i = 0; i < n; ++i) {
+        const std::size_t p = i * 4u;
+        if (rgba[p + 3] < 8)
+            continue;
+        const float r = rgba[p] / 255.f;
+        const float g = rgba[p + 1] / 255.f;
+        const float b = rgba[p + 2] / 255.f;
+        const float luma = 0.2126f * r + 0.7152f * g + 0.0722f * b;
+        const auto v = static_cast<std::uint8_t>(std::clamp(luma, 0.f, 1.f) * 255.f + 0.5f);
+        rgba[p] = v;
+        rgba[p + 1] = v;
+        rgba[p + 2] = v;
+    }
+}
+
+// Rotate every pixel's hue and pivot sat/light - keeps multi-colour artwork
 // multi-colour (Photoshop Hue/Saturation style), unlike a flat colorize.
-void applyHslAdjust(std::uint8_t* rgba, int w, int h, const HslAdjust& adj) {
+// lightOnly: grayscale+Custom tint path (H/S ignored).
+void applyHslAdjust(std::uint8_t* rgba, int w, int h, const HslAdjust& adj, bool lightOnly = false) {
     if (!rgba || w <= 0 || h <= 0 || !adj.enabled)
         return;
-    const float hueOff = std::clamp(adj.hue, 0.f, 1.f) - 0.5f;
-    const bool hueId = std::fabs(hueOff) < 0.0005f;
-    const bool satId = std::fabs(adj.sat - 0.5f) < 0.0005f;
+    const float hueOff = lightOnly ? 0.f : (std::clamp(adj.hue, 0.f, 1.f) - 0.5f);
+    const bool hueId = lightOnly || std::fabs(hueOff) < 0.0005f;
+    const bool satId = lightOnly || std::fabs(adj.sat - 0.5f) < 0.0005f;
     const bool lightId = std::fabs(adj.light - 0.5f) < 0.0005f;
     if (hueId && satId && lightId)
         return;
@@ -226,19 +287,14 @@ ColourIconForce resolveColourIconContrast(float iconMeanLuma,
     return backdropLuma < 0.5f ? ColourIconForce::White : ColourIconForce::Black;
 }
 
-bool loadMaybeAdaptiveIcon(nxui::Texture& out,
-                           nxui::GpuDevice& gpu,
-                           nxui::Renderer& ren,
-                           const std::string& path,
-                           bool* outAdaptive,
-                           int maxSide,
-                           float* outMeanLuma,
-                           nxui::Texture* outContrastMask,
-                           const HslAdjust* hslAdjust) {
-    if (outAdaptive)
-        *outAdaptive = false;
-    if (outMeanLuma)
-        *outMeanLuma = 0.5f;
+bool decodeMaybeAdaptiveIcon(const std::string& path,
+                             DecodedAdaptiveIcon& out,
+                             int maxSide,
+                             const HslAdjust* hslAdjust,
+                             bool wantContrastMask) {
+    out = DecodedAdaptiveIcon{};
+    if (path.empty())
+        return false;
 
     int w = 0, h = 0, ch = 0;
     std::uint8_t* data = stbi_load(path.c_str(), &w, &h, &ch, 4);
@@ -275,40 +331,119 @@ bool loadMaybeAdaptiveIcon(nxui::Texture& out,
         }
     }
 
-    const MonoStats mono = sampleMonochrome(owned, w, h);
-    if (outMeanLuma)
-        *outMeanLuma = mono.meanLuma;
+    out.w = w;
+    out.h = h;
 
-    if (mono.mono) {
-        normalizeToTintableMask(owned, w, h, mono.meanLuma);
-        if (outAdaptive)
-            *outAdaptive = true;
-        const bool ok = out.loadFromPixels(gpu, ren, owned, w, h);
+    const bool hasPresentation = hslAdjust
+        && (hslAdjust->enabled || hslAdjust->flatten || hslAdjust->grayscale);
+
+    // Plain screenshots/covers (theme previews): never run icon mono heuristics.
+    // Flat Default Light/Dark cards were classified as mono masks, which produced
+    // broken GPU uploads and soft-locks when opening detail.
+    if (!wantContrastMask && !hasPresentation) {
+        out.adaptive = false;
+        out.meanLuma = 0.f;
+        out.rgba.assign(owned, owned + static_cast<std::size_t>(w) * h * 4u);
         if (stbiOwned)
             stbi_image_free(owned);
         else
             std::free(owned);
-        return ok;
+        return true;
     }
 
-    // Colour path: bake chrome mask from original pixels, then optional HSL
-    // shift on the display copy (hue rotates all colours — multi-hue preserved).
-    std::vector<std::uint8_t> maskCopy;
-    if (outContrastMask) {
-        maskCopy.assign(owned, owned + static_cast<std::size_t>(w) * h * 4u);
-        buildColourCoverageMask(maskCopy.data(), w, h);
+    const MonoStats mono = sampleMonochrome(owned, w, h);
+    out.meanLuma = mono.meanLuma;
+
+    const bool forceMono = hslAdjust && hslTreatsAsMono(*hslAdjust);
+    const bool flattenColour = hslAdjust && hslAdjust->flatten && hslAdjust->enabled
+        && !hslAdjust->grayscale;
+    const bool grayColour = hslAdjust && hslAdjust->grayscale && hslAdjust->enabled
+        && !hslAdjust->flatten;
+
+    if (forceMono || mono.mono) {
+        if (hslAdjust && hslAdjust->flatten)
+            buildFlatSilhouetteMask(owned, w, h);
+        else
+            normalizeToTintableMask(owned, w, h, mono.meanLuma);
+        out.adaptive = true;
+        out.rgba.assign(owned, owned + static_cast<std::size_t>(w) * h * 4u);
+        if (stbiOwned)
+            stbi_image_free(owned);
+        else
+            std::free(owned);
+        return true;
+    }
+
+    if (flattenColour) {
+        buildFlatSilhouetteMask(owned, w, h);
+        applyHslAdjust(owned, w, h, *hslAdjust, /*lightOnly=*/false);
+        out.adaptive = false;
+        out.rgba.assign(owned, owned + static_cast<std::size_t>(w) * h * 4u);
+        if (stbiOwned)
+            stbi_image_free(owned);
+        else
+            std::free(owned);
+        return !out.rgba.empty();
+    }
+
+    if (grayColour) {
+        applyGrayscaleRgb(owned, w, h);
+        applyLightnessPivot(owned, w, h, hslAdjust->light);
+        if (wantContrastMask) {
+            out.contrastMask.assign(owned, owned + static_cast<std::size_t>(w) * h * 4u);
+            buildColourCoverageMask(out.contrastMask.data(), w, h);
+        }
+        out.adaptive = false;
+        out.rgba.assign(owned, owned + static_cast<std::size_t>(w) * h * 4u);
+        if (stbiOwned)
+            stbi_image_free(owned);
+        else
+            std::free(owned);
+        return !out.rgba.empty();
+    }
+
+    if (wantContrastMask) {
+        out.contrastMask.assign(owned, owned + static_cast<std::size_t>(w) * h * 4u);
+        buildColourCoverageMask(out.contrastMask.data(), w, h);
     }
     if (hslAdjust && hslAdjust->enabled)
         applyHslAdjust(owned, w, h, *hslAdjust);
 
-    const bool ok = out.loadFromPixels(gpu, ren, owned, w, h);
-    if (ok && outContrastMask && !maskCopy.empty())
-        outContrastMask->loadFromPixels(gpu, ren, maskCopy.data(), w, h);
-
+    out.adaptive = false;
+    out.rgba.assign(owned, owned + static_cast<std::size_t>(w) * h * 4u);
     if (stbiOwned)
         stbi_image_free(owned);
     else
         std::free(owned);
+    return !out.rgba.empty();
+}
+
+bool loadMaybeAdaptiveIcon(nxui::Texture& out,
+                           nxui::GpuDevice& gpu,
+                           nxui::Renderer& ren,
+                           const std::string& path,
+                           bool* outAdaptive,
+                           int maxSide,
+                           float* outMeanLuma,
+                           nxui::Texture* outContrastMask,
+                           const HslAdjust* hslAdjust) {
+    if (outAdaptive)
+        *outAdaptive = false;
+    if (outMeanLuma)
+        *outMeanLuma = 0.5f;
+
+    DecodedAdaptiveIcon decoded;
+    if (!decodeMaybeAdaptiveIcon(path, decoded, maxSide, hslAdjust, outContrastMask != nullptr))
+        return false;
+
+    if (outMeanLuma)
+        *outMeanLuma = decoded.meanLuma;
+    if (outAdaptive)
+        *outAdaptive = decoded.adaptive;
+
+    const bool ok = out.loadFromPixels(gpu, ren, decoded.rgba.data(), decoded.w, decoded.h);
+    if (ok && outContrastMask && !decoded.contrastMask.empty())
+        outContrastMask->loadFromPixels(gpu, ren, decoded.contrastMask.data(), decoded.w, decoded.h);
     return ok;
 }
 

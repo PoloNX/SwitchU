@@ -20,7 +20,8 @@ inline constexpr const char* kInstalledThemesDir = "sdmc:/config/SwitchU/themes"
 inline constexpr const char* kInstalledPacksDir = "sdmc:/switch/SwitchU/icons";
 
 // Pack glyphs live under romfs:/icons/<pack>/. Shared chrome (page arrows,
-// batteries, gamecard) ships in default/; music/ stays at icons root.
+// batteries, gamecard, music transport) ships in default/; other packs may
+// override any of these via resolveGlyphPath.
 inline constexpr const char* kPackGlyphFiles[] = {
     "album.png",
     "mii_editor.png",
@@ -31,6 +32,26 @@ inline constexpr const char* kPackGlyphFiles[] = {
 };
 inline constexpr int kPackGlyphCount = 6;
 inline constexpr const char* kChangeViewFile = "change_view.png";
+inline constexpr const char* kAtmosPackId = "atmos";
+inline constexpr const char* kMusicGlyphFiles[] = {
+    "prev.png",
+    "next.png",
+    "play.png",
+    "pause.png",
+    "repeat.png",
+    "shuffle.png",
+    "playlist.png",
+};
+inline constexpr int kMusicGlyphCount = 7;
+
+// Legacy built-in ids remapped to atmos (Flatten/Grayscale replace those packs).
+inline std::string canonicalizeIconPackId(const std::string& packId) {
+    if (packId.empty())
+        return kDefaultPackId;
+    if (packId == "tinted" || packId == "grayscale" || packId == "solid")
+        return kAtmosPackId;
+    return packId;
+}
 
 struct IconPackInfo {
     std::string id;

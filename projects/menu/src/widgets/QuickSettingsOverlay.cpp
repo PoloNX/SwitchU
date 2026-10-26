@@ -377,14 +377,33 @@ static void drawPlaylistHandle(nxui::Renderer& ren, const nxui::Rect& handle,
 
 } // namespace
 
+void QuickSettingsOverlay::invalidateMusicControlIcons() {
+    m_musicIconsLoadAttempted = false;
+    m_iconPrev = nxui::Texture();
+    m_iconNext = nxui::Texture();
+    m_iconPlay = nxui::Texture();
+    m_iconPause = nxui::Texture();
+    m_iconRepeat = nxui::Texture();
+    m_iconShuffle = nxui::Texture();
+    m_iconPlaylist = nxui::Texture();
+}
+
 void QuickSettingsOverlay::ensureMusicControlIcons(nxui::Renderer& ren) {
     if (m_musicIconsLoadAttempted)
         return;
     m_musicIconsLoadAttempted = true;
 
-    constexpr const char* kBase = "sdmc:/switch/SwitchU/icons/music/";
     auto load = [&](nxui::Texture& tex, const char* file) {
-        tex.loadFromFile(ren.gpu(), ren, std::string(kBase) + file, 128);
+        std::string path;
+        if (m_iconGlyphResolve)
+            path = m_iconGlyphResolve(file);
+        if (!path.empty() && tex.loadFromFile(ren.gpu(), ren, path, 128))
+            return;
+        // Homebrew embeds icons in romfs; sysmodule serves them from SD.
+        if (tex.loadFromFile(ren.gpu(), ren, std::string("romfs:/icons/default/") + file, 128))
+            return;
+        tex.loadFromFile(ren.gpu(), ren,
+                         std::string("sdmc:/switch/SwitchU/icons/default/") + file, 128);
     };
     load(m_iconPrev, "prev.png");
     load(m_iconNext, "next.png");

@@ -3625,6 +3625,20 @@ void WiiUMenuApp::syncPageIndicator() {
 void WiiUMenuApp::toggleAppLayoutMode() {
     if (m_layoutTransition.kind != LayoutTransitionKind::Idle)
         return;
+    // Empty-page Minus hold opens the delete dialog; a further Minus press
+    // must not flip layout under that modal (selector ends up orphaned).
+    if ((m_dialog && m_dialog->isActive())
+        || (m_contextMenu && m_contextMenu->isActive())
+        || (m_quickSettings && m_quickSettings->isActive())
+        || (m_textEntry && m_textEntry->isActive())
+        || (m_settings && m_settings->isActive())
+        || (m_themeShop && m_themeShop->isActive())
+        || (m_gameOptions && m_gameOptions->isActive())
+        || (m_folderOptions && m_folderOptions->isActive())
+        || (m_controllerTest && m_controllerTest->isActive())
+        || (m_profileCarousel && m_profileCarousel->isActive())
+        || (m_userSelect && m_userSelect->isActive()))
+        return;
     // Two-way flip only: grid ↔ single-row. Poster vs square tiles is a
     // Settings preference (steamGridDbShowPosterInDynamicLine), not a third
     // Change View state. Minus still works inside folders (session-only).
@@ -5551,6 +5565,8 @@ void WiiUMenuApp::buildGrid() {
             return;
         if (m_layoutTransition.kind != LayoutTransitionKind::Idle)
             return;
+        if (m_dialog && m_dialog->isActive())
+            return;
         m_retainLayoutFlipFocus = true;
         m_audio.playSfx(Sfx::Navigate);
         toggleAppLayoutMode();
@@ -6479,6 +6495,12 @@ void WiiUMenuApp::enterSystemSleep() {
     m_systemAsleep = true;
     DebugLog::log("[power] console sleeping: frames stopped, music paused");
 
+    // Theme Shop preview workers (especially Icons HSL scrubbing) must not keep
+    // decoding/uploading across sleep — overnight wake hung after swapchain
+    // recreate with Icons detail still open and hundreds of in-flight primes.
+    if (m_themeShop)
+        m_themeShop->pausePreviewWorkForSleep();
+
     // Music keeps the mixer feeding the audio path for the whole sleep. The
     // wake path restores exactly what was audible before.
     m_musicWasPlayingBeforeSleep = m_audio.isPlaying();
@@ -6500,20 +6522,19 @@ void WiiUMenuApp::leaveSystemSleep() {
 
     // The vi layer/swapchain goes stale across sleep: PresentQueue::acquireImage
     // would block forever and freeze the menu on the last presented frame.
-    // Rebuild the swapchain, then re-apply the TV underscan size (the managed
-    // layer size can be reset by the OS during sleep) before presenting again.
+    // Rebuild the swapchain before presenting again. Underscan / audio / cursor
+    // are deferred a few frames — overnight Icons-page wake logged swapchain OK
+    // then never reached "console awake" (likely blocked in a follow-up call).
+    DebugLog::log("[power] wake: recreating swapchain");
     app().gpu().recreateSwapchain();
-    switchu::menu::applyScreenUnderscan();
+    DebugLog::log("[power] wake: swapchain done");
 
-    if (m_musicWasPlayingBeforeSleep && m_config.musicEnabled)
-        m_audio.play();
-    m_musicWasPlayingBeforeSleep = false;
+    m_wakePostSwapchainFrames = 3;
 
     // Notifications pushed during sleep were only inspected for the wake
     // message, so re-read the catalogue and realign the screen state.
     m_refreshQueued = true;
     m_deferredRefreshFrames = std::max(m_deferredRefreshFrames, 3);
-    updateCursor();
     DebugLog::log("[power] console awake: presentation resumed");
 }
 
@@ -6538,6 +6559,23 @@ void WiiUMenuApp::pollSleepNotifications() {
 }
 
 void WiiUMenuApp::onUpdateAwake(float dt) {
+    if (m_wakePostSwapchainFrames > 0) {
+        const int step = m_wakePostSwapchainFrames;
+        --m_wakePostSwapchainFrames;
+        if (step == 3) {
+            DebugLog::log("[power] wake step: underscan");
+            switchu::menu::applyScreenUnderscan();
+        } else if (step == 2) {
+            DebugLog::log("[power] wake step: audio");
+            if (m_musicWasPlayingBeforeSleep && m_config.musicEnabled)
+                m_audio.play();
+            m_musicWasPlayingBeforeSleep = false;
+        } else if (step == 1) {
+            DebugLog::log("[power] wake step: cursor");
+            updateCursor();
+        }
+    }
+
     updateLeaveSplashHandoff(dt);
     pollDeferredLeaveCapture();
     const float motionDt = m_leaveMotionFrozen ? 0.f : dt;
@@ -6828,7 +6866,11 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
 
         // Hold Minus (Select) on an empty page to open the delete-page menu —
         // matches the on-screen − control. Short Minus still switches view.
-        if (deletePageAvailable()) {
+        // While the delete (or any) dialog is open, ignore Minus entirely so a
+        // press cannot flip layout under the modal.
+        if (deletePageAvailable()
+            && !(m_dialog && m_dialog->isActive())
+            && !(m_contextMenu && m_contextMenu->isActive())) {
             if (app().input().isDown(nxui::Button::Minus)
                 && !app().input().isDown(nxui::Button::Plus))
                 m_deletePageMinusArmed = true;

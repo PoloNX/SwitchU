@@ -6,28 +6,62 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace switchu::icons {
 
 // Photoshop-style HSL adjust for colour icons (hue rotates every pixel;
 // sat/light pivots around 0.5 = leave original). Mono glyphs ignore this.
+// Flatten / grayscale are per-pack presentation modes (Theme Shop toggles).
 struct HslAdjust {
     bool enabled = false;
     float hue = 0.5f;   // 0.5 = no hue shift; 0..1 → ±180°
     float sat = 0.5f;   // 0.5 = original; 0 = gray; 1 = full sat
     float light = 0.5f; // 0.5 = original; 0 = black; 1 = white
+    bool flatten = false;   // silhouette mask (white×alpha)
+    bool grayscale = false; // force gray look / mono when untinted
 };
+
+// Flatten / grayscale / sat≈0 rules that force a chrome-follow mono mask.
+inline bool hslTreatsAsMono(const HslAdjust& a) {
+    if (a.flatten && a.grayscale)
+        return true;
+    if (a.flatten && !a.enabled)
+        return true;
+    if (a.grayscale && !a.enabled)
+        return true;
+    // Saturation fully down → mono, unless grayscale+tint (L-only colour path).
+    if (a.enabled && !a.grayscale && a.sat < 0.02f)
+        return true;
+    return false;
+}
 
 // Loads a PNG/JPG into `out`. Returns true on success.
 //
 // Monochrome glyphs (black, white, or grayscale gradients) are normalized to a
-// white RGB × coverage-alpha mask — luminance is baked into alpha so mid-tones
+// white RGB × coverage-alpha mask - luminance is baked into alpha so mid-tones
 // survive when chrome tints the icon white or black. Colour artwork is uploaded
 // unchanged (*outAdaptive false → identity white tint), optionally HSL-shifted.
 //
 // When outMeanLuma is set, writes the sparse-sampled mean relative luminance.
 // When outContrastMask is set and the icon is colour (not mono), also uploads a
 // white×alpha *luminance* twin (from pre-shift pixels) for chrome follow.
+// CPU-only decode (safe on worker threads). Uploading is the caller's job.
+struct DecodedAdaptiveIcon {
+    std::vector<std::uint8_t> rgba;
+    std::vector<std::uint8_t> contrastMask; // empty when mono / unused
+    int w = 0;
+    int h = 0;
+    bool adaptive = false;
+    float meanLuma = 0.5f;
+};
+
+bool decodeMaybeAdaptiveIcon(const std::string& path,
+                             DecodedAdaptiveIcon& out,
+                             int maxSide = 128,
+                             const HslAdjust* hslAdjust = nullptr,
+                             bool wantContrastMask = false);
+
 bool loadMaybeAdaptiveIcon(nxui::Texture& out,
                            nxui::GpuDevice& gpu,
                            nxui::Renderer& ren,
@@ -47,7 +81,6 @@ ColourIconForce resolveColourIconContrast(float iconMeanLuma,
                                           ColourIconForce previous);
 
 // True when the PNG/JPG has a clear colourful majority (not a mono glyph).
-// Used to mark colour icon packs for spectrum badge / custom tint UI.
 bool probeIconLooksColour(const std::string& path);
 
 } // namespace switchu::icons

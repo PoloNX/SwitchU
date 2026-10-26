@@ -107,6 +107,12 @@ public:
     void setInstantCursorMotion(bool instant) { m_cursor.setInstantMotion(instant); }
     void setInput(nxui::Input* input) { m_input = input; }
     void setCallbacks(const Callbacks& cb) { m_callbacks = cb; }
+    // Resolve music transport glyphs from the active icon pack (fallback default).
+    void setIconGlyphResolver(std::function<std::string(const char* fileName)> resolve) {
+        m_iconGlyphResolve = std::move(resolve);
+        invalidateMusicControlIcons();
+    }
+    void invalidateMusicControlIcons();
 
     void show();
     void hide();
@@ -295,6 +301,7 @@ private:
     nxui::Texture m_iconShuffle;
     nxui::Texture m_iconPlaylist;
     bool  m_musicIconsLoadAttempted = false;
+    std::function<std::string(const char*)> m_iconGlyphResolve;
 
     int   m_batteryPercent = -1;
     bool  m_batteryCharging = false;

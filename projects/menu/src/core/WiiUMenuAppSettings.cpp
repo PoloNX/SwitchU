@@ -806,6 +806,9 @@ void WiiUMenuApp::createQuickSettings() {
     callbacks.onActivateSfx = [this]() { m_audio.playSfx(Sfx::Activate); };
     callbacks.onToggleOffSfx = [this]() { m_audio.playSfx(Sfx::ToggleOff); };
     m_quickSettings->setCallbacks(callbacks);
+    m_quickSettings->setIconGlyphResolver([this](const char* fileName) {
+        return resolveActiveIconGlyphPath(fileName);
+    });
 
     if (m_overlayLayer) {
         m_overlayLayer->addChild(m_quickSettings);
@@ -1816,6 +1819,8 @@ void WiiUMenuApp::createThemeShop() {
         for (const auto& [packId, tint] : m_config.iconPackTints) {
             ThemeShopScreen::IconPackTintState state;
             state.enabled = tint.enabled;
+            state.flatten = tint.flatten;
+            state.grayscale = tint.grayscale;
             state.hue = tint.hue;
             state.sat = tint.sat;
             state.light = tint.light;
@@ -1938,11 +1943,15 @@ void WiiUMenuApp::createThemeShop() {
                                              const ThemeShopScreen::IconPackTintState& tint) {
         AppConfig::IconPackTint cfg;
         cfg.enabled = tint.enabled;
+        cfg.flatten = tint.flatten;
+        cfg.grayscale = tint.grayscale;
         cfg.hue = std::clamp(tint.hue, 0.f, 1.f);
         cfg.sat = std::clamp(tint.sat, 0.f, 1.f);
         cfg.light = std::clamp(tint.light, 0.f, 1.f);
         const AppConfig::IconPackTint previous = m_config.iconPackTintFor(packId);
         if (previous.enabled == cfg.enabled
+            && previous.flatten == cfg.flatten
+            && previous.grayscale == cfg.grayscale
             && std::fabs(previous.hue - cfg.hue) < 0.0005f
             && std::fabs(previous.sat - cfg.sat) < 0.0005f
             && std::fabs(previous.light - cfg.light) < 0.0005f)
@@ -2518,9 +2527,7 @@ namespace {
 // Packs that ship with SwitchU: always present, never removable from the shop.
 bool isBuiltinIconPack(const std::string& packId) {
     return packId == switchu::icons::kDefaultPackId
-        || packId == "grayscale"
-        || packId == "solid"
-        || packId == "tinted";
+        || packId == switchu::icons::kAtmosPackId;
 }
 
 } // namespace
@@ -2621,6 +2628,8 @@ void WiiUMenuApp::applyIconPack(const std::string& packId) {
     std::string id = packId.empty() ? switchu::icons::kDefaultPackId : packId;
     if (switchu::icons::isThemePackId(id))
         id = switchu::icons::makeThemePackId(id);
+    else
+        id = switchu::icons::canonicalizeIconPackId(id);
     const bool packChanged = m_config.iconPack != id;
     if (packChanged) {
         m_config.iconPack = id;
@@ -2630,6 +2639,8 @@ void WiiUMenuApp::applyIconPack(const std::string& packId) {
     // Always rebake HOME chrome so Apply also commits a live tint edit on the
     // already-active pack.
     reloadSidebarIcons();
+    if (m_quickSettings)
+        m_quickSettings->invalidateMusicControlIcons();
     syncColourIconContrast();
     refreshThemeShopState();
     if (m_themeShop)
@@ -2661,6 +2672,8 @@ void WiiUMenuApp::refreshThemeShopState() {
         for (const auto& [packId, tint] : m_config.iconPackTints) {
             ThemeShopScreen::IconPackTintState state;
             state.enabled = tint.enabled;
+            state.flatten = tint.flatten;
+            state.grayscale = tint.grayscale;
             state.hue = tint.hue;
             state.sat = tint.sat;
             state.light = tint.light;
@@ -3581,15 +3594,20 @@ void WiiUMenuApp::syncColourIconContrast() {
     const AppConfig::IconPackTint packTint = m_config.iconPackTintFor(activePackId);
     switchu::icons::HslAdjust hsl;
     hsl.enabled = packTint.enabled;
+    hsl.flatten = packTint.flatten;
+    hsl.grayscale = packTint.grayscale;
     hsl.hue = std::clamp(packTint.hue, 0.f, 1.f);
     hsl.sat = std::clamp(packTint.sat, 0.f, 1.f);
     hsl.light = std::clamp(packTint.light, 0.f, 1.f);
 
+    const auto& prev = m_sidebar.iconHslAdjust();
     const bool hslChanged =
-        m_sidebar.iconHslAdjust().enabled != hsl.enabled
-        || std::fabs(m_sidebar.iconHslAdjust().hue - hsl.hue) > 0.0005f
-        || std::fabs(m_sidebar.iconHslAdjust().sat - hsl.sat) > 0.0005f
-        || std::fabs(m_sidebar.iconHslAdjust().light - hsl.light) > 0.0005f;
+        prev.enabled != hsl.enabled
+        || prev.flatten != hsl.flatten
+        || prev.grayscale != hsl.grayscale
+        || std::fabs(prev.hue - hsl.hue) > 0.0005f
+        || std::fabs(prev.sat - hsl.sat) > 0.0005f
+        || std::fabs(prev.light - hsl.light) > 0.0005f;
 
     m_sidebar.setIconHslAdjust(hsl);
     if (m_layoutFlip)

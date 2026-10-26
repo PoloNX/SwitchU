@@ -603,6 +603,9 @@ private:
     // Console sleep: set by the daemon's sleep notification, cleared on wake.
     bool m_systemAsleep      = false;
     bool m_musicWasPlayingBeforeSleep = false;
+    // After recreateSwapchain, underscan / music / cursor run over a few frames
+    // so a hang in any of them still leaves "console awake" + step logs.
+    int  m_wakePostSwapchainFrames = 0;
     bool m_editMode          = false;
     int  m_editSourceIndex   = -1;
     int  m_editTargetIndex   = -1;

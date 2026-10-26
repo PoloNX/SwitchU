@@ -4,6 +4,8 @@
 
 #include "core/DebugLog.hpp"
 
+#include <fstream>
+#include <filesystem>
 #include <nxui/core/ThreadPool.hpp>
 
 #include <curlpp/Easy.hpp>
@@ -180,6 +182,8 @@ bool manifestDeclaresIcons(const std::string& catalogUrl, const ThemeCatalogClie
 struct PreviewData {
     std::string cover;
     std::vector<std::string> screenshots;
+    bool hasIcons = false;
+    bool fetchedManifest = false;
 };
 
 PreviewData derivePreviewDataFromManifest(const std::string& catalogUrl,
@@ -202,6 +206,8 @@ PreviewData derivePreviewDataFromManifest(const std::string& catalogUrl,
     }
 
     PreviewData data;
+    data.fetchedManifest = true;
+    data.hasIcons = jsonDeclaresIcons(manifest);
     std::string cover;
     readStringOpt(manifest, "cover", cover);
     if (!cover.empty())
@@ -320,7 +326,29 @@ ThemeCatalogClient::Snapshot ThemeCatalogClient::snapshot() const {
 ThemeCatalogClient::Snapshot ThemeCatalogClient::loadCatalog(const std::string& url) {
     Snapshot snapshot;
 
-    const std::string body = themeshop::http::getText(url);
+    // Disk-first catalog: revisiting Community should paint from SD immediately.
+    // Network is used when no cache exists; Refresh can delete the cache file.
+    constexpr const char* kCatalogDiskPath = "sdmc:/config/SwitchU/community_preview_cache/catalog_index.json";
+    std::string body;
+    {
+        std::ifstream in(kCatalogDiskPath, std::ios::binary);
+        if (in) {
+            body.assign((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        }
+    }
+    if (body.empty()) {
+        body = themeshop::http::getText(url);
+        if (body.empty())
+            throw std::runtime_error("Catalog body empty");
+        std::error_code ec;
+        std::filesystem::create_directories("sdmc:/config/SwitchU/community_preview_cache", ec);
+        std::ofstream out(kCatalogDiskPath, std::ios::binary | std::ios::trunc);
+        if (out)
+            out.write(body.data(), static_cast<std::streamsize>(body.size()));
+        DebugLog::log("[themeshop] catalog fetched and cached (%zu bytes)", body.size());
+    } else {
+        DebugLog::log("[themeshop] catalog loaded from disk cache (%zu bytes)", body.size());
+    }
 
     nlohmann::json root;
     try {
@@ -410,6 +438,10 @@ ThemeCatalogClient::Snapshot ThemeCatalogClient::loadCatalog(const std::string& 
             continue;
         if (entry.manifest.empty())
             entry.manifest = deriveManifestPath(entry.path);
+        // Only hit the network for themes missing cover/screenshots. Do NOT
+        // fetch every manifest just to learn hasIcons - that made first Community
+        // open take many seconds. Badge can come from catalog flags or from the
+        // same fetch when we already need preview metadata.
         if ((entry.cover.empty() || entry.screenshots.empty()) && !entry.manifest.empty()) {
             try {
                 PreviewData preview = derivePreviewDataFromManifest(url, entry);
@@ -417,17 +449,10 @@ ThemeCatalogClient::Snapshot ThemeCatalogClient::loadCatalog(const std::string& 
                     entry.cover = preview.cover;
                 for (auto& screenshotPath : preview.screenshots)
                     appendUniqueString(entry.screenshots, std::move(screenshotPath));
+                if (!entry.hasIcons && preview.fetchedManifest)
+                    entry.hasIcons = preview.hasIcons;
             } catch (const std::exception& ex) {
                 DebugLog::log("[themeshop] manifest preview fallback failed for %s: %s",
-                              entry.id.c_str(),
-                              ex.what());
-            }
-        }
-        if (!entry.hasIcons && !entry.manifest.empty()) {
-            try {
-                entry.hasIcons = manifestDeclaresIcons(url, entry);
-            } catch (const std::exception& ex) {
-                DebugLog::log("[themeshop] icon detect failed for %s: %s",
                               entry.id.c_str(),
                               ex.what());
             }
