@@ -152,6 +152,9 @@ private:
     static std::string cleanedFilenameTitle(const std::string& filename);
     static void readMp3Metadata(const std::string& path, MusicTrackInfo& info);
     static bool pathLooksLikeMp3(const std::string& path);
+    /// Reject MP4/AAC (ftyp…) and other non-decodable-on-Switch containers that
+    /// are often mislabeled .mp3 — Mix_PlayMusic can soft-lock the console.
+    static bool audioContainerLooksSafe(const std::string& path);
 
     std::mutex m_trackMutex;
     std::vector<Mix_Music*> m_tracks;

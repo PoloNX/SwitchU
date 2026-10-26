@@ -23,11 +23,11 @@ struct HslAdjust {
 };
 
 // Flatten / grayscale / sat≈0 rules that force a chrome-follow mono mask.
+// Flatten never forces chrome B/W — it keeps a flat fill (sampled hue, or
+// Custom tint / Light). Flatten+Grayscale is a flat gray silhouette.
 inline bool hslTreatsAsMono(const HslAdjust& a) {
-    if (a.flatten && a.grayscale)
-        return true;
-    if (a.flatten && !a.enabled)
-        return true;
+    if (a.flatten)
+        return false;
     if (a.grayscale && !a.enabled)
         return true;
     // Saturation fully down → mono, unless grayscale+tint (L-only colour path).
@@ -82,5 +82,19 @@ ColourIconForce resolveColourIconContrast(float iconMeanLuma,
 
 // True when the PNG/JPG has a clear colourful majority (not a mono glyph).
 bool probeIconLooksColour(const std::string& path);
+
+// Mean HSL of opaque pixels in a PNG/JPG (same sampler Flatten uses).
+bool probeIconMeanHsl(const std::string& path, float& outH, float& outS, float& outL);
+
+// Photoshop-style pivots that move pack mean HSL toward a theme accent.
+// Used by Match theme (with or without Solid/Flatten). Weak accents get a
+// sat floor so Auto does not collapse to gray.
+struct MatchThemePivots {
+    float hue = 0.5f;
+    float sat = 0.5f;
+    float light = 0.5f;
+};
+MatchThemePivots computeMatchThemePivots(float meanH, float meanS, float meanL,
+                                        float accentH, float accentS, float accentL);
 
 } // namespace switchu::icons

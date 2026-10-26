@@ -102,6 +102,9 @@ bool AppConfig::load() {
     readJsonOpt(j, "sortMode", sortMode);
     readJsonOpt(j, "sortLargeTiles", sortLargeTiles);
     readJsonOpt(j, "iconContrastAdapt", iconContrastAdapt);
+    readJsonOpt(j, "themeMusicOverride", themeMusicOverride);
+    readJsonOpt(j, "themeMusicAddToPlaylist", themeMusicAddToPlaylist);
+    readJsonOpt(j, "themeMusicPlayOnApply", themeMusicPlayOnApply);
     iconPackTints.clear();
     if (auto it = j.find("iconPackTints"); it != j.end() && it->is_object()) {
         for (auto& [packId, value] : it->items()) {
@@ -111,9 +114,12 @@ bool AppConfig::load() {
             readJsonOpt(value, "enabled", tint.enabled);
             readJsonOpt(value, "flatten", tint.flatten);
             readJsonOpt(value, "grayscale", tint.grayscale);
+            readJsonOpt(value, "matchTheme", tint.matchTheme);
             readJsonOpt(value, "hue", tint.hue);
             readJsonOpt(value, "sat", tint.sat);
             readJsonOpt(value, "light", tint.light);
+            if (tint.matchTheme)
+                tint.enabled = true;
             tint.hue = std::clamp(tint.hue, 0.f, 1.f);
             tint.sat = std::clamp(tint.sat, 0.f, 1.f);
             tint.light = std::clamp(tint.light, 0.f, 1.f);
@@ -279,6 +285,9 @@ bool AppConfig::save() const {
     j["sortMode"] = std::clamp(sortMode, 0, 2);
     j["sortLargeTiles"] = sortLargeTiles;
     j["iconContrastAdapt"] = iconContrastAdapt;
+    j["themeMusicOverride"] = themeMusicOverride;
+    j["themeMusicAddToPlaylist"] = themeMusicAddToPlaylist;
+    j["themeMusicPlayOnApply"] = themeMusicPlayOnApply;
     {
         nlohmann::json tints = nlohmann::json::object();
         for (const auto& [packId, tint] : iconPackTints) {
@@ -288,6 +297,7 @@ bool AppConfig::save() const {
                 {"enabled", tint.enabled},
                 {"flatten", tint.flatten},
                 {"grayscale", tint.grayscale},
+                {"matchTheme", tint.matchTheme},
                 {"hue", std::clamp(tint.hue, 0.f, 1.f)},
                 {"sat", std::clamp(tint.sat, 0.f, 1.f)},
                 {"light", std::clamp(tint.light, 0.f, 1.f)},

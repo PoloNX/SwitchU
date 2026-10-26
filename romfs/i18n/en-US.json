@@ -721,7 +721,9 @@
     "tabs": {
       "installed": "Installed",
       "community": "Community",
-      "options": "Options"
+      "options": "Options",
+      "sounds": "Sounds",
+      "interface": "Interface"
     },
     "options": {
       "action_hints": "Action Hints",
@@ -729,7 +731,13 @@
       "sort_large_tiles": "Sort Large Tiles Too",
       "sort_large_tiles_desc": "A-Z and Recent also move applications that use a larger tile size.",
       "hint_panel": "Panel",
-      "hint_capsules": "Capsules"
+      "hint_capsules": "Capsules",
+      "theme_music_override": "Allow themes to replace my playlist",
+      "theme_music_override_desc": "On: applying a theme with music swaps your playlist for the theme's tracks. Off: keep your library and use the options below.",
+      "theme_music_add": "Add theme music to my playlist",
+      "theme_music_add_desc": "When replace is off, append the theme's tracks to your current playlist instead of ignoring them.",
+      "theme_music_play": "Play theme music on apply",
+      "theme_music_play_desc": "When replace is off and theme music was added, start that track after Apply. (Replace mode always starts the theme playlist when music is enabled.)"
     },
     "accessibility": {
       "fullscreen_preview": "Fullscreen preview",
@@ -756,8 +764,8 @@
       "no_results_hint": "Press X or use Search to change or clear the filter."
     },
     "installed": {
-      "title": "Installed Theme Library",
-      "subtitle": "Your local themes in a gallery layout.",
+      "title": "Themes",
+      "subtitle": "Installed on this console.",
       "empty": "No installed themes found.",
       "status": "Status",
       "status_active": "Active",
@@ -767,11 +775,13 @@
       "remove_hint": "This theme can be removed from the console.",
       "builtin_hint": "This is part of the built-in theme set.",
       "apply": "Apply Theme",
-      "remove": "Remove Theme"
+      "remove": "Remove Theme",
+      "remove_confirm": "Remove this theme from the console?",
+      "remove_confirm_yes": "Remove"
     },
     "community": {
-      "title": "Browse Community Themes",
-      "subtitle": "A visual catalog, not a settings selector.",
+      "title": "Browse Themes",
+      "subtitle": "Themes from the catalog.",
       "counter_loading": "Loading",
       "refresh": "Refresh",
       "refreshing": "Refreshing",
@@ -791,6 +801,8 @@
       "cover_unavailable": "The screenshot could not be loaded. Placeholder shown instead.",
       "install": "Install",
       "download_apply": "Download + Apply",
+      "download_apply_confirm_title": "Download And Apply",
+      "download_apply_confirm": "Download this theme and apply it to HOME now?",
       "transfer_busy": "Another theme transfer is already running.",
       "install_pending": "Install flow is not wired yet.",
       "download_apply_pending": "Download + apply flow is not wired yet.",
@@ -822,8 +834,8 @@
       "next": "Next"
     },
     "icons": {
-      "title": "Icon Packs",
-      "subtitle": "Switch on the fly.",
+      "title": "Icons",
+      "subtitle": "Sidebar icon packs.",
       "apply": "Apply Icon Pack",
       "remove": "Remove Icon Pack",
       "remove_confirm": "Delete this icon pack from the console?",
@@ -833,6 +845,8 @@
       "status_online": "Available online",
       "download_hint": "Install to download this pack to the console.",
       "remove_hint": "Downloaded pack: it can be removed from the console.",
+      "download_apply_confirm_title": "Download And Apply",
+      "download_apply_confirm": "Download this icon pack and apply it now?",
       "dialog_title": "Downloading Icon Pack",
       "prepare_download": "Preparing icon pack download...",
       "finalize_download": "Finishing icon pack install...",

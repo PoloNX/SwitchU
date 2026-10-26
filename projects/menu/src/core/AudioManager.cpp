@@ -281,6 +281,49 @@ bool AudioManager::pathLooksLikeMp3(const std::string& path) {
     return ext == ".mp3" || ext == ".MP3" || ext == ".Mp3";
 }
 
+bool AudioManager::audioContainerLooksSafe(const std::string& path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in)
+        return false;
+    unsigned char head[16] = {};
+    in.read(reinterpret_cast<char*>(head), sizeof(head));
+    const auto got = static_cast<size_t>(in.gcount());
+    if (got < 4)
+        return false;
+
+    // ISO BMFF (MP4/M4A/AAC) mislabeled as .mp3 — Mix_PlayMusic has soft-locked
+    // the Switch on these (BOTW Sheikah Tower OST shipped as ftypdash).
+    if (got >= 8 && std::memcmp(head + 4, "ftyp", 4) == 0)
+        return false;
+
+    auto lowerExt = [](std::string p) {
+        for (char& c : p) {
+            if (c >= 'A' && c <= 'Z')
+                c = static_cast<char>(c - 'A' + 'a');
+        }
+        const auto slash = p.find_last_of("/\\");
+        const auto base = (slash == std::string::npos) ? p : p.substr(slash + 1);
+        const auto dot = base.find_last_of('.');
+        return (dot == std::string::npos) ? std::string{} : base.substr(dot);
+    };
+    const std::string ext = lowerExt(path);
+
+    if (ext == ".mp3") {
+        if (got >= 3 && std::memcmp(head, "ID3", 3) == 0)
+            return true;
+        // MPEG frame sync (1111 1111 111x xxxx)
+        if (head[0] == 0xFF && (head[1] & 0xE0) == 0xE0)
+            return true;
+        return false;
+    }
+    if (ext == ".ogg")
+        return got >= 4 && std::memcmp(head, "OggS", 4) == 0;
+    if (ext == ".wav")
+        return got >= 4 && std::memcmp(head, "RIFF", 4) == 0;
+    // Other extensions: let Mix decide (romfs may use uncommon names).
+    return true;
+}
+
 void AudioManager::readMp3Metadata(const std::string& path, MusicTrackInfo& info) {
     info.title.clear();
     info.artist.clear();
@@ -378,6 +421,14 @@ void AudioManager::readMp3Metadata(const std::string& path, MusicTrackInfo& info
 }
 
 bool AudioManager::loadTrack(const std::string& path, const std::string& albumFolder) {
+    if (!audioContainerLooksSafe(path)) {
+        std::fprintf(stderr,
+                     "[Audio] Rejected unsafe/mismatched audio container: %s "
+                     "(need real MP3/OGG/WAV — MP4/AAC .mp3 renames freeze playback on Switch)\n",
+                     path.c_str());
+        return false;
+    }
+
     Mix_Music* music = Mix_LoadMUS(path.c_str());
     if (!music) {
         std::fprintf(stderr, "[Audio] Failed to load %s: %s\n", path.c_str(), Mix_GetError());

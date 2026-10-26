@@ -1,5 +1,7 @@
 #include "ThemeShopScreen.hpp"
 
+#include "ThemeShopLayout.hpp"
+#include "ThemeShopPreviewPipeline.hpp"
 #include "ThemeHttp.hpp"
 #include "widgets/AdaptiveIconLoad.hpp"
 
@@ -9,6 +11,7 @@
 #include <nxui/core/I18n.hpp>
 #include <nxui/core/Renderer.hpp>
 #include <nxui/core/ThreadPool.hpp>
+#include <nxui/third_party/stb/stb_image.h>
 
 #include <curlpp/Easy.hpp>
 #include <curlpp/Infos.hpp>
@@ -22,6 +25,8 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <fstream>
 #include <filesystem>
 #include <stdexcept>
@@ -29,82 +34,81 @@
 
 namespace {
 
-constexpr int kCommunityPreviewGridCols = 2;
-constexpr int kCommunityPreviewVisibleRows = 2;
-constexpr int kCommunityPreviewEntriesPerPage = kCommunityPreviewGridCols * kCommunityPreviewVisibleRows;
-constexpr int kMaxPreviewUploadsPerFrame = 1;
-constexpr int kMaxPreviewDownloadsInFlight = kCommunityPreviewEntriesPerPage;
-constexpr int kMaxInstalledPreviewDecodesInFlight = kCommunityPreviewEntriesPerPage;
-constexpr int kCommunityPreviewGridMaxSide = 384;   // keep GPU under ~64MB image budget
-constexpr int kCommunityPreviewDetailMaxSide = 640;
+constexpr int kCommunityPreviewGridCols = themeshop::layout::kGridCols;
+constexpr int kCommunityPreviewVisibleRows = themeshop::layout::kVisibleRows;
+constexpr int kCommunityPreviewEntriesPerPage = themeshop::layout::kEntriesPerPage;
+// Fill a 3x2 shelf quickly; still capped so GPU/HTTP stay polite.
+constexpr int kMaxPreviewUploadsPerFrame = themeshop::preview::kMaxUploadsPerFrame;
+// Current + ±1 neighbor shelves in flight so the next ZL/ZR is already decoding.
+// Downloaded (awaiting GPU upload) must NOT count — that used to block prefetch.
+constexpr int kMaxPreviewDownloadsInFlight = kCommunityPreviewEntriesPerPage * 3;
+constexpr int kMaxInstalledPreviewDecodesInFlight = kCommunityPreviewEntriesPerPage * 2;
+constexpr int kCommunityPreviewGridMaxSide = themeshop::preview::kGridMaxSide;
+constexpr int kCommunityPreviewDetailMaxSide = themeshop::preview::kDetailMaxSide;
 constexpr int kCommunityPreviewMaxSide = kCommunityPreviewGridMaxSide; // legacy alias
-constexpr int kInstalledPreviewCachePages = 3; // current ± 1
-
-constexpr const char* kCommunityPreviewDiskDir = "sdmc:/config/SwitchU/community_preview_cache";
-
-std::string communityPreviewDiskLeaf(const std::string& url) {
-    // Stable, filesystem-safe fingerprint of the URL.
-    std::uint64_t h = 14695981039346656037ull;
-    for (unsigned char c : url) {
-        h ^= c;
-        h *= 1099511628211ull;
-    }
-    char buf[32];
-    std::snprintf(buf, sizeof(buf), "%016llx.png", static_cast<unsigned long long>(h));
-    return buf;
-}
-
-std::string communityPreviewDiskPath(const std::string& url) {
-    return std::string(kCommunityPreviewDiskDir) + "/" + communityPreviewDiskLeaf(url);
-}
-
-bool loadCommunityPreviewDiskCache(const std::string& url, std::vector<std::uint8_t>& outBytes) {
-    outBytes.clear();
-    if (url.empty())
-        return false;
-    const std::string path = communityPreviewDiskPath(url);
-    std::ifstream in(path, std::ios::binary);
-    if (!in)
-        return false;
-    in.seekg(0, std::ios::end);
-    const std::streamoff n = in.tellg();
-    if (n <= 0 || n > 12 * 1024 * 1024)
-        return false;
-    in.seekg(0, std::ios::beg);
-    outBytes.resize(static_cast<std::size_t>(n));
-    if (!in.read(reinterpret_cast<char*>(outBytes.data()), n)) {
-        outBytes.clear();
-        return false;
-    }
-    return true;
-}
-
-void saveCommunityPreviewDiskCache(const std::string& url, const std::vector<std::uint8_t>& bytes) {
-    if (url.empty() || bytes.empty())
-        return;
-    std::error_code ec;
-    std::filesystem::create_directories(kCommunityPreviewDiskDir, ec);
-    const std::string path = communityPreviewDiskPath(url);
-    const std::string tmp = path + ".tmp";
-    {
-        std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
-        if (!out)
-            return;
-        out.write(reinterpret_cast<const char*>(bytes.data()),
-                  static_cast<std::streamsize>(bytes.size()));
-        if (!out)
-            return;
-    }
-    std::filesystem::rename(tmp, path, ec);
-    if (ec) {
-        std::filesystem::remove(path, ec);
-        std::filesystem::rename(tmp, path, ec);
-    }
-}
-
+constexpr int kInstalledPreviewCachePages = 4; // current ± neighbors (2-row pages)
 
 bool startsWith(const std::string& value, const std::string& prefix) {
     return value.size() >= prefix.size() && value.compare(0, prefix.size(), prefix) == 0;
+}
+
+// Decode + downscale off the UI thread (Community used to stbi+upload on main).
+bool decodeCommunityCoverPixels(const std::vector<std::uint8_t>& bytes,
+                                int maxSide,
+                                std::vector<std::uint8_t>& outPixels,
+                                int& outW,
+                                int& outH) {
+    outPixels.clear();
+    outW = 0;
+    outH = 0;
+    if (bytes.empty())
+        return false;
+
+    int w = 0, h = 0, ch = 0;
+    std::uint8_t* pixels = stbi_load_from_memory(
+        bytes.data(), static_cast<int>(bytes.size()), &w, &h, &ch, 4);
+    if (!pixels || w <= 0 || h <= 0) {
+        if (pixels)
+            stbi_image_free(pixels);
+        return false;
+    }
+
+    std::uint8_t* owned = pixels;
+    bool stbiOwned = true;
+    if (maxSide > 0 && (w > maxSide || h > maxSide)) {
+        const float scale = std::min(static_cast<float>(maxSide) / static_cast<float>(w),
+                                     static_cast<float>(maxSide) / static_cast<float>(h));
+        const int dw = std::max(1, static_cast<int>(w * scale));
+        const int dh = std::max(1, static_cast<int>(h * scale));
+        auto* scaled = static_cast<std::uint8_t*>(
+            std::malloc(static_cast<std::size_t>(dw) * static_cast<std::size_t>(dh) * 4u));
+        if (scaled) {
+            for (int y = 0; y < dh; ++y) {
+                const int sy = y * h / dh;
+                for (int x = 0; x < dw; ++x) {
+                    const int sx = x * w / dw;
+                    std::memcpy(scaled + (static_cast<std::size_t>(y) * dw + x) * 4u,
+                                pixels + (static_cast<std::size_t>(sy) * w + sx) * 4u,
+                                4u);
+                }
+            }
+            stbi_image_free(pixels);
+            owned = scaled;
+            stbiOwned = false;
+            w = dw;
+            h = dh;
+        }
+    }
+
+    outPixels.resize(static_cast<std::size_t>(w) * static_cast<std::size_t>(h) * 4u);
+    std::memcpy(outPixels.data(), owned, outPixels.size());
+    if (stbiOwned)
+        stbi_image_free(owned);
+    else
+        std::free(owned);
+    outW = w;
+    outH = h;
+    return true;
 }
 
 std::string trimLeadingSlashes(std::string value) {
@@ -178,17 +182,63 @@ void ThemeShopScreen::refreshCommunityCatalog(bool forceNetwork) {
     // Only bust disk cache on explicit Refresh - auto-open must stay disk-first.
     if (forceNetwork) {
         std::error_code ec;
-        std::filesystem::remove("sdmc:/config/SwitchU/community_preview_cache/catalog_index.json", ec);
+        const std::string catalogIndex =
+            std::string(themeshop::preview::kCommunityDiskDir) + "/catalog_index.json";
+        std::filesystem::remove(catalogIndex, ec);
     }
 
     m_catalogClient.refresh(*m_threadPool);
     syncCommunityCatalog(m_catalogClient.snapshot());
 }
 
+void ThemeShopScreen::ensureCommunityCatalogWarm() {
+    if (!m_threadPool)
+        return;
+    if (m_communityRevision == 0
+        && !m_communityTransferState.isRunning()) {
+        refreshCommunityCatalog(false);
+        return;
+    }
+    // Prefetch is owned by updateCustomContent (once/frame) — do not double-queue
+    // the neighborhood from here (was re-scanning Idle slots every tick).
+}
+
+void ThemeShopScreen::prefetchCommunityShelfNeighborhood() {
+    if (m_communityEntries.empty() || !m_threadPool)
+        return;
+    if (m_packageTransferState.isRunning())
+        return;
+
+    std::unordered_set<std::string> queued;
+    auto queueCover = [&](int index) {
+        if (index < 0 || index >= static_cast<int>(m_communityEntries.size()))
+            return;
+        const std::string& cover = m_communityEntries[static_cast<std::size_t>(index)].cover;
+        std::string url = resolveCommunityPreviewUrl(cover);
+        if (url.empty() || !queued.emplace(std::move(url)).second)
+            return;
+        primeCommunityPreview(cover);
+    };
+
+    // Always keep page 1 warm (first focus / reset).
+    for (int i = 0; i < kCommunityPreviewEntriesPerPage; ++i)
+        queueCover(i);
+
+    // Pin the last Community scroll window ±2 shelves so the next cold flip
+    // is already downloading/decoding off-thread.
+    const int scroll = m_communityScrollRow;
+    const int start = std::max(0, (scroll - kCommunityPreviewVisibleRows * 2) * kCommunityPreviewGridCols);
+    const int end = std::min(static_cast<int>(m_communityEntries.size()),
+                             (scroll + kCommunityPreviewVisibleRows * 3) * kCommunityPreviewGridCols);
+    for (int i = start; i < end; ++i)
+        queueCover(i);
+}
+
 void ThemeShopScreen::setThemeShopState(const std::vector<ThemeShopEntry>& entries,
                                         const std::string& activeId) {
     m_allThemeShopEntries = entries;
-    m_installedPreviewCache.clear();
+    // Keep Ready GPU covers across refreshThemeShopState / reopen — clearing here
+    // forced a full re-decode every Theme Shop open (logs: decode storm on show()).
     applySearchFilter();
 
     auto hasId = [&](const std::string& id) {
@@ -238,11 +288,8 @@ void ThemeShopScreen::setPackageTransferState(const ThemeTransferState& state,
     m_packageTransferState = state;
     m_packageTransferThemeId = std::move(themeId);
     m_packageTransferInstallMode = installMode;
-
-    if (m_packageTransferState.isRunning()) {
-        clearCommunityPreviewCache();
-        m_lastPreviewPrimeKey.clear();
-    }
+    // Do not clearCommunityPreviewCache() here — install used to waitIdle-nuke
+    // every cover. Progress lives on-card / thin sheet instead.
 }
 
 const ThemeShopScreen::ThemeShopEntry* ThemeShopScreen::selectedThemeShopEntry() const {
@@ -648,7 +695,10 @@ void ThemeShopScreen::commitDraftIconPackTint() {
     const std::string id = m_draftTintPackId.empty() ? "default" : m_draftTintPackId;
     m_iconPackTints[id] = m_draftTint;
     emitIconPackTint(id, m_draftTint);
-    invalidateIconPackPreviews();
+    std::string coverFilter;
+    if (const auto* entry = selectedThemeShopEntry())
+        coverFilter = entry->coverPath;
+    invalidateIconPackPreviews(coverFilter);
     discardIconPackTintDraft();
 }
 
@@ -657,12 +707,70 @@ void ThemeShopScreen::emitIconPackTint(const std::string& packId, const IconPack
         m_iconPackTintCb(packId, tint);
 }
 
+bool ThemeShopScreen::applyMatchThemePivotsToTint(IconPackTintState& tint,
+                                                 const std::string& meanSamplePath) const {
+    if (!m_themeMatchAccentValid)
+        return false;
+    float meanH = 0.f, meanS = 0.45f, meanL = 0.55f;
+    if (!meanSamplePath.empty())
+        switchu::icons::probeIconMeanHsl(meanSamplePath, meanH, meanS, meanL);
+    float accentH = m_themeMatchAccentH;
+    float accentS = m_themeMatchAccentS;
+    float accentL = m_themeMatchAccentL;
+    // Prefer cursor-like accent when theme accent is near-black with no chroma.
+    if (accentS < 0.05f && accentL < 0.08f) {
+        accentS = std::max(accentS, 0.45f);
+        accentL = std::max(accentL, 0.45f);
+    }
+    const auto pivots = switchu::icons::computeMatchThemePivots(
+        meanH, meanS, meanL, accentH, accentS, accentL);
+    tint.enabled = true;
+    tint.grayscale = false;
+    tint.matchTheme = true;
+    tint.hue = pivots.hue;
+    tint.sat = pivots.sat;
+    tint.light = pivots.light;
+    return true;
+}
+
 void ThemeShopScreen::setIconCustomTintEnabled(bool enabled) {
     auto& tint = selectedIconPackTint();
     if (tint.enabled == enabled)
         return;
     tint.enabled = enabled;
-    maybeSeedFlattenLightDefault();
+    if (!enabled)
+        tint.matchTheme = false;
+}
+
+void ThemeShopScreen::setIconMatchThemeEnabled(bool enabled) {
+    auto& tint = selectedIconPackTint();
+    if (enabled) {
+        std::string samplePath;
+        if (const auto* entry = selectedThemeShopEntry())
+            samplePath = entry->coverPath;
+        if (!applyMatchThemePivotsToTint(tint, samplePath)) {
+            // Still enable Custom tint so the user can edit; Match stays off.
+            tint.enabled = true;
+            tint.matchTheme = false;
+            tint.grayscale = false;
+        }
+    } else {
+        if (!tint.matchTheme)
+            return;
+        // Leave auto-adjusted HSL as the Custom tint starting point.
+        tint.matchTheme = false;
+        tint.enabled = true;
+    }
+    // Persist Match immediately so theme switches keep the mode (and HOME
+    // rematch) even if the user has not pressed Apply yet.
+    if (m_draftTintActive && !m_draftTintPackId.empty()) {
+        m_iconPackTints[m_draftTintPackId] = tint;
+        emitIconPackTint(m_draftTintPackId, tint);
+        std::string coverFilter;
+        if (const auto* entry = selectedThemeShopEntry())
+            coverFilter = entry->coverPath;
+        invalidateIconPackPreviews(coverFilter);
+    }
 }
 
 void ThemeShopScreen::setIconFlattenEnabled(bool enabled) {
@@ -670,7 +778,14 @@ void ThemeShopScreen::setIconFlattenEnabled(bool enabled) {
     if (tint.flatten == enabled)
         return;
     tint.flatten = enabled;
-    maybeSeedFlattenLightDefault();
+    // Solid keeps the pack's mean hue now — do not seed Light to 0/1 (that
+    // forced black-on-Light / white-on-Dark and made L feel broken).
+    if (tint.matchTheme) {
+        std::string samplePath;
+        if (const auto* entry = selectedThemeShopEntry())
+            samplePath = entry->coverPath;
+        applyMatchThemePivotsToTint(tint, samplePath);
+    }
 }
 
 void ThemeShopScreen::setIconGrayscaleEnabled(bool enabled) {
@@ -678,18 +793,12 @@ void ThemeShopScreen::setIconGrayscaleEnabled(bool enabled) {
     if (tint.grayscale == enabled)
         return;
     tint.grayscale = enabled;
+    if (enabled)
+        tint.matchTheme = false;
 }
 
 void ThemeShopScreen::maybeSeedFlattenLightDefault() {
-    // Flatten + Custom tint: seed L to match theme polarity once (white on dark /
-    // black on light). Theme flips leave tinted flatten alone afterward.
-    auto& tint = selectedIconPackTint();
-    if (!tint.flatten || !tint.enabled)
-        return;
-    if (std::fabs(tint.light - 0.5f) > 0.0005f)
-        return;
-    const bool darkTheme = !m_theme || m_theme->mode != nxui::ThemeMode::Light;
-    tint.light = darkTheme ? 1.f : 0.f;
+    // No-op: Solid no longer forces theme-polarity black/white.
 }
 
 void ThemeShopScreen::setIconTintHue(float hue01) {
@@ -698,6 +807,7 @@ void ThemeShopScreen::setIconTintHue(float hue01) {
     if (std::fabs(tint.hue - hue01) < 0.0005f)
         return;
     tint.hue = hue01;
+    tint.matchTheme = false;
 }
 
 void ThemeShopScreen::setIconTintSat(float sat01) {
@@ -706,6 +816,7 @@ void ThemeShopScreen::setIconTintSat(float sat01) {
     if (std::fabs(tint.sat - sat01) < 0.0005f)
         return;
     tint.sat = sat01;
+    tint.matchTheme = false;
 }
 
 void ThemeShopScreen::setIconTintLight(float light01) {
@@ -714,6 +825,7 @@ void ThemeShopScreen::setIconTintLight(float light01) {
     if (std::fabs(tint.light - light01) < 0.0005f)
         return;
     tint.light = light01;
+    tint.matchTheme = false;
 }
 
 void ThemeShopScreen::nudgeIconTintHue(float delta) {
@@ -779,19 +891,32 @@ void ThemeShopScreen::updateTintSliderAnalog(float dt) {
         nudgeIconTintLight(delta);
 }
 
-void ThemeShopScreen::invalidateIconPackPreviews() {
+void ThemeShopScreen::invalidateIconPackPreviews(const std::string& coverPathFilter) {
+    // Soft invalidate only — Texture::~Texture waitIdle's. Only mark slots that
+    // need a new HSL bake Idle; do not zero hslKey (that forced a decode storm
+    // and starved Community cover fetches).
     for (auto& entry : m_installedPreviewCache) {
         if (!entry.second)
             continue;
         std::lock_guard<std::mutex> lk(entry.second->mutex);
         if (!entry.second->adaptiveRequested)
             continue;
-        entry.second->phase = PreviewPhase::Idle;
-        entry.second->hslKey = 0;
-        entry.second->adaptive = false;
-        entry.second->hasContrastMask = false;
-        entry.second->texture = nxui::Texture();
-        entry.second->contrastMask = nxui::Texture();
+        if (!coverPathFilter.empty()
+            && entry.second->url != coverPathFilter
+            && entry.first.find(coverPathFilter) == std::string::npos)
+            continue;
+        entry.second->cancelled = true;
+        entry.second->pixels.clear();
+        entry.second->maskPixels.clear();
+        if (entry.second->phase == PreviewPhase::Loading
+            || entry.second->phase == PreviewPhase::Downloaded) {
+            entry.second->phase = entry.second->texture.valid()
+                ? PreviewPhase::Ready : PreviewPhase::Idle;
+        } else if (entry.second->phase == PreviewPhase::Ready) {
+            // Keep stale GPU frame; next prime sees hslKey mismatch and reloads.
+            entry.second->phase = PreviewPhase::Idle;
+        }
+        entry.second->cancelled = false;
     }
 }
 
@@ -868,9 +993,12 @@ void ThemeShopScreen::primeInstalledPreview(const std::string& previewPath,
                 || slot->phase == PreviewPhase::Failed
                 || slot->phase == PreviewPhase::Idle);
         if (identityChanged || needsUpgrade) {
-            // Draft HSL scrubbing: keep the last texture on screen so the
-            // preview does not flash a loading spinner between slider ticks.
-            const bool keepStaleDraft = hslOverride != nullptr && slot->texture.valid();
+            // Keep the last GPU frame while HSL rematches / Match theme Apply —
+            // destroying textures waitIdle's and was hitching Community after.
+            const bool sameImage = slot->texture.valid()
+                && slot->url == previewPath
+                && slot->adaptiveRequested == adaptiveLoad;
+            const bool keepStale = sameImage || (hslOverride != nullptr && slot->texture.valid());
             // Coalesce: if a draft decode is already running, cancel it and wait
             // for Idle/Ready. Next frame primes once with the latest HSL — not
             // dozens of overlapping decodes per second while scrubbing.
@@ -888,15 +1016,15 @@ void ThemeShopScreen::primeInstalledPreview(const std::string& previewPath,
             slot->maxSide = decodeSide;
             slot->phase = PreviewPhase::Idle;
             slot->failureCount = 0;
-            slot->adaptive = keepStaleDraft ? slot->adaptive : false;
-            slot->hasContrastMask = false;
+            slot->adaptive = keepStale ? slot->adaptive : false;
+            slot->hasContrastMask = keepStale ? slot->hasContrastMask : false;
             slot->pixelW = 0;
             slot->pixelH = 0;
             slot->pixels.clear();
             slot->maskPixels.clear();
             slot->future = std::future<void>();
             slot->cancelled = false;
-            if (!keepStaleDraft) {
+            if (!keepStale) {
                 slot->texture = nxui::Texture();
                 slot->contrastMask = nxui::Texture();
             }
@@ -914,8 +1042,8 @@ void ThemeShopScreen::primeInstalledPreview(const std::string& previewPath,
         for (const auto& entry : m_installedPreviewCache) {
             if (!entry.second) continue;
             std::lock_guard<std::mutex> lk(entry.second->mutex);
-            if (entry.second->phase == PreviewPhase::Loading
-                || entry.second->phase == PreviewPhase::Downloaded)
+            // Only active decodes — Downloaded slots are waiting on GPU upload.
+            if (entry.second->phase == PreviewPhase::Loading)
                 ++inFlight;
         }
         if (inFlight >= kMaxInstalledPreviewDecodesInFlight)
@@ -925,6 +1053,15 @@ void ThemeShopScreen::primeInstalledPreview(const std::string& previewPath,
         {
             std::lock_guard<std::mutex> lk(slot->mutex);
             if (slot->phase == PreviewPhase::Idle) {
+                // pausePreviewWorkForSleep / pauseInstalledPreviewDecodes leave
+                // cancelled=true on Idle slots with no texture. Starting a new
+                // decode without clearing it makes the worker immediately fall
+                // back to Idle — endless "decode start" spam (BOTW / Minimalist).
+                if (slot->failureCount >= 4) {
+                    slot->phase = PreviewPhase::Failed;
+                    return;
+                }
+                slot->cancelled = false;
                 slot->phase = PreviewPhase::Loading;
                 shouldStart = true;
             }
@@ -948,9 +1085,16 @@ void ThemeShopScreen::primeInstalledPreview(const std::string& previewPath,
                     if (slot->cancelled || slot->hslKey != expectedHslKey) {
                         // Must leave Loading or scrub cancel + sleep leave the
                         // slot stuck and every later prime coalesces forever.
-                        if (slot->phase == PreviewPhase::Loading)
-                            slot->phase = slot->texture.valid()
-                                ? PreviewPhase::Ready : PreviewPhase::Idle;
+                        if (slot->phase == PreviewPhase::Loading) {
+                            if (slot->texture.valid()) {
+                                slot->phase = PreviewPhase::Ready;
+                            } else {
+                                slot->failureCount += 1;
+                                slot->phase = (slot->failureCount >= 4)
+                                    ? PreviewPhase::Failed
+                                    : PreviewPhase::Idle;
+                            }
+                        }
                         return;
                     }
                 }
@@ -992,9 +1136,16 @@ void ThemeShopScreen::primeInstalledPreview(const std::string& previewPath,
                     slot->maskPixels.clear();
                     // Superseded draft scrub / sleep cancel: free the slot so the
                     // next prime can start with the latest HSL key.
-                    if (slot->phase == PreviewPhase::Loading)
-                        slot->phase = slot->texture.valid() ? PreviewPhase::Ready
-                                                           : PreviewPhase::Idle;
+                    if (slot->phase == PreviewPhase::Loading) {
+                        if (slot->texture.valid()) {
+                            slot->phase = PreviewPhase::Ready;
+                        } else {
+                            slot->failureCount += 1;
+                            slot->phase = (slot->failureCount >= 4)
+                                ? PreviewPhase::Failed
+                                : PreviewPhase::Idle;
+                        }
+                    }
                     return;
                 }
                 if (!ok || pixels.empty()) {
@@ -1002,6 +1153,8 @@ void ThemeShopScreen::primeInstalledPreview(const std::string& previewPath,
                     slot->phase = PreviewPhase::Failed;
                     slot->pixels.clear();
                     slot->maskPixels.clear();
+                    DebugLog::log("[themeshop] installed preview decode failed: %s",
+                                  pathCopy.c_str());
                     return;
                 }
                 slot->adaptive = adaptive;
@@ -1127,7 +1280,7 @@ void ThemeShopScreen::syncFinishedInstalledPreviewLoads() {
                     state->maskPixels.clear();
                     state->phase = state->texture.valid() ? PreviewPhase::Ready
                                                          : PreviewPhase::Idle;
-                } else if (uploadsThisFrame >= kMaxPreviewUploadsPerFrame) {
+                } else if (uploadsThisFrame >= previewUploadsBudgetThisFrame()) {
                     hasPendingWork = true;
                 } else {
                     pixels = std::move(state->pixels);
@@ -1223,7 +1376,13 @@ void ThemeShopScreen::trimInstalledPreviewCache() {
             it->second->cancelled = true;
             it->second->pixels.clear();
             it->second->maskPixels.clear();
-            it->second->texture = nxui::Texture();
+            // Soft demote: keep GPU frame. Erasing a live Texture waitIdle's and
+            // was part of the Community first-focus hitch after Match storms.
+            if (it->second->texture.valid()) {
+                it->second->phase = PreviewPhase::Ready;
+                ++it;
+                continue;
+            }
             it->second->contrastMask = nxui::Texture();
         }
         it = m_installedPreviewCache.erase(it);
@@ -1276,7 +1435,8 @@ void ThemeShopScreen::primeCommunityPreview(const std::string& previewPath) {
             continue;
 
         std::lock_guard<std::mutex> lk(state->mutex);
-        if (state->phase == PreviewPhase::Loading || state->phase == PreviewPhase::Downloaded)
+        // Only active HTTP/disk loads — Downloaded awaits GPU upload.
+        if (state->phase == PreviewPhase::Loading)
             ++inFlightDownloads;
     }
 
@@ -1297,46 +1457,80 @@ void ThemeShopScreen::primeCommunityPreview(const std::string& previewPath) {
         return;
 
     m_hasPendingCommunityPreviewWork = true;
-    slot->future = m_threadPool->submit([slot, url]() {
+    const int decodeSide = kCommunityPreviewGridMaxSide;
+    slot->future = m_threadPool->submit([slot, url, decodeSide]() {
         try {
             {
                 std::lock_guard<std::mutex> lk(slot->mutex);
-                if (slot->cancelled)
+                if (slot->cancelled) {
+                    if (slot->phase == PreviewPhase::Loading)
+                        slot->phase = slot->texture.valid() ? PreviewPhase::Ready
+                                                           : PreviewPhase::Idle;
                     return;
+                }
             }
 
             std::vector<std::uint8_t> bytes;
-            if (!loadCommunityPreviewDiskCache(url, bytes)) {
+            if (!themeshop::preview::loadCommunityDiskCache(url, bytes)) {
                 bytes = themeshop::http::getBytes(url);
                 if (!bytes.empty())
-                    saveCommunityPreviewDiskCache(url, bytes);
+                    themeshop::preview::saveCommunityDiskCache(url, bytes);
             }
+
+            std::vector<std::uint8_t> pixels;
+            int pw = 0, ph = 0;
+            const bool decoded = !bytes.empty()
+                && decodeCommunityCoverPixels(bytes, decodeSide, pixels, pw, ph);
+            bytes.clear();
+
             std::lock_guard<std::mutex> lk(slot->mutex);
             if (slot->cancelled) {
                 slot->bytes.clear();
+                slot->pixels.clear();
+                // Free the Loading slot so the next prime can restart.
+                if (slot->phase == PreviewPhase::Loading)
+                    slot->phase = slot->texture.valid() ? PreviewPhase::Ready
+                                                       : PreviewPhase::Idle;
                 return;
             }
-            slot->bytes = std::move(bytes);
-            if (slot->bytes.empty()) {
+            slot->bytes.clear();
+            if (!decoded || pixels.empty() || pw <= 0 || ph <= 0) {
+                slot->pixels.clear();
+                slot->pixelW = 0;
+                slot->pixelH = 0;
                 slot->failureCount += 1;
                 slot->phase = PreviewPhase::Failed;
             } else {
+                slot->pixels = std::move(pixels);
+                slot->pixelW = pw;
+                slot->pixelH = ph;
+                slot->maxSide = decodeSide;
                 slot->failureCount = 0;
                 slot->phase = PreviewPhase::Downloaded;
             }
         } catch (const std::exception& ex) {
             std::lock_guard<std::mutex> lk(slot->mutex);
-            if (slot->cancelled)
+            if (slot->cancelled) {
+                if (slot->phase == PreviewPhase::Loading)
+                    slot->phase = slot->texture.valid() ? PreviewPhase::Ready
+                                                       : PreviewPhase::Idle;
                 return;
+            }
             slot->bytes.clear();
+            slot->pixels.clear();
             slot->failureCount += 1;
             slot->phase = PreviewPhase::Failed;
             DebugLog::log("[themeshop] preview fetch failed: %s", ex.what());
         } catch (...) {
             std::lock_guard<std::mutex> lk(slot->mutex);
-            if (slot->cancelled)
+            if (slot->cancelled) {
+                if (slot->phase == PreviewPhase::Loading)
+                    slot->phase = slot->texture.valid() ? PreviewPhase::Ready
+                                                       : PreviewPhase::Idle;
                 return;
+            }
             slot->bytes.clear();
+            slot->pixels.clear();
             slot->failureCount += 1;
             slot->phase = PreviewPhase::Failed;
             DebugLog::log("[themeshop] preview fetch failed: unknown error");
@@ -1348,16 +1542,87 @@ void ThemeShopScreen::primeCommunityPreview(const ThemeCatalogClient::Entry& ent
     primeCommunityPreview(entry.cover);
 }
 
+int ThemeShopScreen::previewUploadsBudgetThisFrame() const {
+    // During the shelf slide, push a few more GPU uploads so a cold landing
+    // page settles inside the animation (decode already happened off-thread).
+    if (m_pageSlideAnim.value() > 0.05f)
+        return std::max(3, kMaxPreviewUploadsPerFrame);
+    return kMaxPreviewUploadsPerFrame;
+}
+
+void ThemeShopScreen::primeVisibleInstalledPreviews() {
+    if ((!isInstalledTab() && !isIconsTab()) || !m_gpu || !m_renderer)
+        return;
+
+    const bool icons = isIconsTab();
+    const auto& entries = icons ? m_iconPackEntries : m_themeShopEntries;
+    if (entries.empty())
+        return;
+
+    const int scroll = currentScrollRowRef();
+    const int pageStart = scroll * kCommunityPreviewGridCols;
+    const int pageEnd = std::min(static_cast<int>(entries.size()),
+                                 pageStart + kCommunityPreviewEntriesPerPage);
+    // Prefetch ±1 page (2 visible rows each) so the next ZL/ZR lands warm.
+    const int preStart = std::max(0, (scroll - kCommunityPreviewVisibleRows) * kCommunityPreviewGridCols);
+    const int preEnd = std::min(static_cast<int>(entries.size()),
+                                (scroll + kCommunityPreviewVisibleRows * 2) * kCommunityPreviewGridCols);
+
+    auto primeEntry = [&](int index) {
+        if (index < 0 || index >= static_cast<int>(entries.size()))
+            return;
+        const auto& entry = entries[static_cast<std::size_t>(index)];
+        if (!entry.coverUrl.empty()) {
+            primeCommunityPreview(entry.coverUrl);
+            return;
+        }
+        if (entry.coverPath.empty())
+            return;
+        const std::string packId = icons ? entry.id : std::string{};
+        primeInstalledPreview(entry.coverPath, icons, packId, nullptr, kCommunityPreviewGridMaxSide);
+    };
+
+    for (int i = pageStart; i < pageEnd; ++i)
+        primeEntry(i);
+    for (int i = preStart; i < preEnd; ++i)
+        primeEntry(i);
+    // Do NOT prime the entire shelf every frame — that decode-stormed the
+    // thread pool (logs: atmos/Default Dark spam) and starved Community covers.
+}
+
 void ThemeShopScreen::primeVisibleCommunityPreviews() {
     if (!isCommunityTab() || m_communityEntries.empty())
         return;
 
+    // Count Loading once — primeCommunityPreview used to re-scan the whole cache
+    // per cover, which went O(n²) when a full-catalog warm was also queued.
+    int inFlightDownloads = 0;
+    for (const auto& entry : m_communityPreviewCache) {
+        if (!entry.second)
+            continue;
+        std::lock_guard<std::mutex> lk(entry.second->mutex);
+        if (entry.second->phase == PreviewPhase::Loading)
+            ++inFlightDownloads;
+    }
+
     std::unordered_set<std::string> queuedUrls;
     auto queuePreview = [&](const std::string& previewPath) {
+        if (inFlightDownloads >= kMaxPreviewDownloadsInFlight)
+            return;
         std::string url = resolveCommunityPreviewUrl(previewPath);
         if (url.empty() || !queuedUrls.emplace(url).second)
             return;
+        auto it = m_communityPreviewCache.find(url);
+        if (it != m_communityPreviewCache.end() && it->second) {
+            std::lock_guard<std::mutex> lk(it->second->mutex);
+            if (it->second->phase != PreviewPhase::Idle
+                && !(it->second->phase == PreviewPhase::Failed && it->second->failureCount < 2))
+                return;
+        }
         primeCommunityPreview(previewPath);
+        // Optimistic: assume a start so we stop queueing at the in-flight cap
+        // without re-scanning the whole cache after every prime.
+        ++inFlightDownloads;
     };
 
     const int scrollRow = m_communityScrollRow;
@@ -1380,10 +1645,10 @@ void ThemeShopScreen::primeVisibleCommunityPreviews() {
         }
     }
 
-    // 2) Neighbor pages only after the visible set is queued.
-    const int preStart = std::max(0, (scrollRow - 1) * kCommunityPreviewGridCols);
+    // 2) Neighbor shelves (±2) after the visible set — cold ZL/ZR lands warm.
+    const int preStart = std::max(0, (scrollRow - kCommunityPreviewVisibleRows * 2) * kCommunityPreviewGridCols);
     const int preEnd = std::min((int)m_communityEntries.size(),
-                                (scrollRow + 2) * kCommunityPreviewGridCols);
+                                (scrollRow + kCommunityPreviewVisibleRows * 3) * kCommunityPreviewGridCols);
     for (int i = preStart; i < preEnd; ++i)
         queuePreview(m_communityEntries[(size_t)i].cover);
 
@@ -1392,74 +1657,131 @@ void ThemeShopScreen::primeVisibleCommunityPreviews() {
         for (const auto& shot : selected->screenshots)
             queuePreview(shot);
     }
+
+    // Do NOT warm the entire catalog here — that re-primed every cover every
+    // frame (main-thread mutex storm) and made first Community visits hitchy.
 }
 
 void ThemeShopScreen::syncFinishedCommunityPreviewLoads() {
     if (!m_gpu || !m_renderer || !m_hasPendingCommunityPreviewWork)
         return;
 
+    // Prefer uploading the visible shelf (and next shelf mid-slide) before
+    // background neighbor frames so cold flips paint first.
+    std::unordered_set<std::string> preferUpload;
+    if (isCommunityTab() && !m_communityEntries.empty()) {
+        const int scroll = m_communityScrollRow;
+        const int first = scroll * kCommunityPreviewGridCols;
+        const int last = std::min(static_cast<int>(m_communityEntries.size()),
+                                  first + kCommunityPreviewEntriesPerPage);
+        for (int i = first; i < last; ++i) {
+            std::string url = resolveCommunityPreviewUrl(
+                m_communityEntries[static_cast<std::size_t>(i)].cover);
+            if (!url.empty())
+                preferUpload.insert(std::move(url));
+        }
+        if (m_pageSlideAnim.value() > 0.05f) {
+            const int nextFirst = last;
+            const int nextLast = std::min(static_cast<int>(m_communityEntries.size()),
+                                          nextFirst + kCommunityPreviewEntriesPerPage);
+            for (int i = nextFirst; i < nextLast; ++i) {
+                std::string url = resolveCommunityPreviewUrl(
+                    m_communityEntries[static_cast<std::size_t>(i)].cover);
+                if (!url.empty())
+                    preferUpload.insert(std::move(url));
+            }
+        }
+    }
+
     bool hasPendingWork = false;
     int uploadsThisFrame = 0;
-    for (auto& entry : m_communityPreviewCache) {
-        auto state = entry.second;
-        if (!state)
-            continue;
+    const int uploadBudget = previewUploadsBudgetThisFrame();
 
-        if (state->future.valid()) {
-            if (state->future.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
-                try {
-                    state->future.get();
-                } catch (const std::exception& ex) {
-                    std::lock_guard<std::mutex> lk(state->mutex);
-                    state->phase = PreviewPhase::Failed;
-                    state->failureCount += 1;
-                    state->bytes.clear();
-                    DebugLog::log("[themeshop] preview task failed: %s", ex.what());
-                } catch (...) {
-                    std::lock_guard<std::mutex> lk(state->mutex);
-                    state->phase = PreviewPhase::Failed;
-                    state->failureCount += 1;
-                    state->bytes.clear();
-                    DebugLog::log("[themeshop] preview task failed: unknown error");
+    auto pumpFutures = [&](const std::shared_ptr<PreviewImageState>& state) {
+        if (!state || !state->future.valid())
+            return;
+        if (state->future.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+            try {
+                state->future.get();
+            } catch (const std::exception& ex) {
+                std::lock_guard<std::mutex> lk(state->mutex);
+                state->phase = PreviewPhase::Failed;
+                state->failureCount += 1;
+                state->bytes.clear();
+                state->pixels.clear();
+                DebugLog::log("[themeshop] preview task failed: %s", ex.what());
+            } catch (...) {
+                std::lock_guard<std::mutex> lk(state->mutex);
+                state->phase = PreviewPhase::Failed;
+                state->failureCount += 1;
+                state->bytes.clear();
+                state->pixels.clear();
+                DebugLog::log("[themeshop] preview task failed: unknown error");
+            }
+        } else {
+            hasPendingWork = true;
+        }
+    };
+
+    auto tryUpload = [&](const std::string& key,
+                         const std::shared_ptr<PreviewImageState>& state,
+                         bool preferredOnly) {
+        if (!state)
+            return;
+        if (preferredOnly && !preferUpload.empty() && preferUpload.find(key) == preferUpload.end())
+            return;
+
+        pumpFutures(state);
+
+        std::vector<std::uint8_t> pixels;
+        int pw = 0, ph = 0;
+        {
+            std::lock_guard<std::mutex> lk(state->mutex);
+            if (state->phase == PreviewPhase::Downloaded) {
+                if (uploadsThisFrame >= uploadBudget) {
+                    hasPendingWork = true;
+                    return;
                 }
-            } else {
+                pixels = std::move(state->pixels);
+                pw = state->pixelW;
+                ph = state->pixelH;
+                state->pixels.clear();
+                state->bytes.clear();
+            } else if (state->phase == PreviewPhase::Loading) {
                 hasPendingWork = true;
             }
         }
 
-        std::vector<std::uint8_t> bytes;
-        {
-            std::lock_guard<std::mutex> lk(state->mutex);
-            if (state->phase == PreviewPhase::Downloaded) {
-                if (uploadsThisFrame >= kMaxPreviewUploadsPerFrame) {
-                    hasPendingWork = true;
-                } else {
-                    bytes = std::move(state->bytes);
-                }
-            }
-        }
-
-        if (bytes.empty())
-            continue;
+        if (pixels.empty() || pw <= 0 || ph <= 0)
+            return;
 
         ++uploadsThisFrame;
-        // Grid-sized uploads only - detail 960px textures blew the 64MB GPU image budget.
         nxui::Texture uploaded;
-        bool ok = uploaded.loadFromMemory(*m_gpu, *m_renderer, bytes.data(), bytes.size(), kCommunityPreviewGridMaxSide);
+        const bool ok = uploaded.loadFromPixels(*m_gpu, *m_renderer, pixels.data(), pw, ph);
         std::lock_guard<std::mutex> lk(state->mutex);
         if (ok) {
-            state->bytes.clear();
             state->texture = std::move(uploaded);
             state->failureCount = 0;
             state->phase = PreviewPhase::Ready;
         } else {
-            // Budget miss: keep bytes on SD cache path, do not re-download storm.
-            state->bytes = std::move(bytes);
-            state->failureCount = 8;
-            state->phase = PreviewPhase::Failed;
+            // Keep decoded pixels for a retry next frame instead of re-fetching.
+            state->pixels = std::move(pixels);
+            state->pixelW = pw;
+            state->pixelH = ph;
+            state->phase = PreviewPhase::Downloaded;
+            hasPendingWork = true;
             DebugLog::log("[themeshop] community preview upload skipped (GPU budget)");
         }
+    };
+
+    // Pass 1: visible (preferred) covers.
+    if (!preferUpload.empty()) {
+        for (auto& entry : m_communityPreviewCache)
+            tryUpload(entry.first, entry.second, true);
     }
+    // Pass 2: everything else (neighbors / leftovers).
+    for (auto& entry : m_communityPreviewCache)
+        tryUpload(entry.first, entry.second, false);
 
     m_hasPendingCommunityPreviewWork = hasPendingWork;
 }
@@ -1477,23 +1799,84 @@ void ThemeShopScreen::clearCommunityPreviewCache() {
         std::lock_guard<std::mutex> lk(state->mutex);
         state->cancelled = true;
         state->bytes.clear();
+        state->pixels.clear();
+        state->maskPixels.clear();
         state->texture = nxui::Texture();
+        state->contrastMask = nxui::Texture();
+        state->phase = PreviewPhase::Idle;
     }
 
     m_communityPreviewCache.clear();
     m_hasPendingCommunityPreviewWork = false;
 }
 
-void ThemeShopScreen::trimCommunityPreviewCache() {
+void ThemeShopScreen::clearInstalledPreviewCache() {
+    if (m_installedPreviewCache.empty())
+        return;
+
+    for (auto& entry : m_installedPreviewCache) {
+        auto& state = entry.second;
+        if (!state)
+            continue;
+
+        std::lock_guard<std::mutex> lk(state->mutex);
+        state->cancelled = true;
+        state->bytes.clear();
+        state->pixels.clear();
+        state->maskPixels.clear();
+        state->texture = nxui::Texture();
+        state->contrastMask = nxui::Texture();
+        state->phase = PreviewPhase::Idle;
+    }
+
+    m_installedPreviewCache.clear();
+    m_hasPendingInstalledPreviewWork = false;
+}
+
+void ThemeShopScreen::releasePreviewCachesOnHide() {
+    const std::size_t community = m_communityPreviewCache.size();
+    const std::size_t installed = m_installedPreviewCache.size();
+    if (community == 0 && installed == 0)
+        return;
+
+    clearCommunityPreviewCache();
+    clearInstalledPreviewCache();
+    DebugLog::log("[themeshop] preview caches hard-released on hide: community=%zu installed=%zu (Frame Tap headroom)",
+                  community, installed);
+}
+
+void ThemeShopScreen::trimCommunityPreviewCache(bool pressure) {
     if (m_communityPreviewCache.empty())
         return;
 
-    // Soft LRU: keep a wide Ready set on Community so page flips don't
-    // waitIdle-thrash. Away from Community, drip-release (1-2/frame) so tab
-    // cycling stays smooth instead of nuking the whole cache at once.
-    const std::size_t kMaxReadyCommunityPreviews = isCommunityTab() ? 28u : 0u;
-    // Texture::~Texture waitIdle's - never drop more than a couple per tick.
-    const int kMaxDropsPerCall = isCommunityTab() ? 2 : 2;
+    // Hold neighborhood covers when possible. Logs (19:24) showed max=36
+    // thrashing Ready 38→36 with waitIdle destroys — next shelves got cold again
+    // so first visits stayed slower than revisited pages.
+    // Under pressure (shop hidden / remount room for Frame Tap): keep only the
+    // current shelf neighborhood so Applet-pool free climbs back toward ~40 MB.
+    const std::size_t kMaxReadyCommunityPreviews = pressure
+        ? std::max<std::size_t>(12u, static_cast<std::size_t>(kCommunityPreviewGridCols) * 3u)
+        : std::max<std::size_t>(
+              48u,
+              static_cast<std::size_t>(kCommunityPreviewEntriesPerPage) * 4u);
+    // Hysteresis: only start dropping once we are meaningfully over budget.
+    const std::size_t kTrimStart = pressure
+        ? kMaxReadyCommunityPreviews
+        : (kMaxReadyCommunityPreviews + 8u);
+    // Texture::~Texture waitIdle's - drip; pressure may drop a few more/tick.
+    const int kMaxDropsPerCall = pressure ? 3 : 1;
+
+    // Cheap ready count first — callers used to rebuild a full-catalog preferred
+    // set every frame even when nothing needed trimming.
+    std::size_t readyCount = 0;
+    for (const auto& entry : m_communityPreviewCache) {
+        if (!entry.second) continue;
+        std::lock_guard<std::mutex> lk(entry.second->mutex);
+        if (entry.second->phase == PreviewPhase::Ready)
+            ++readyCount;
+    }
+    if (readyCount <= kTrimStart)
+        return;
 
     std::unordered_set<std::string> preferred;
     auto prefer = [&](const std::string& previewPath) {
@@ -1502,32 +1885,22 @@ void ThemeShopScreen::trimCommunityPreviewCache() {
             preferred.insert(std::move(url));
     };
 
-    if (isCommunityTab()) {
-        const int start = std::max(0, (m_communityScrollRow - 1) * kCommunityPreviewGridCols);
-        const int end = std::min((int)m_communityEntries.size(),
-                                 (m_communityScrollRow + 3) * kCommunityPreviewGridCols);
-        for (int i = start; i < end; ++i)
-            prefer(m_communityEntries[(size_t)i].cover);
-
-        const auto* selected = selectedCommunityThemeEntry();
-        if (selected) {
-            prefer(selected->cover);
-            if (m_detailOpen) {
-                prefer(currentDetailCommunityPreviewPath());
-                // Pin only the visible screenshot, not the whole gallery.
-            }
-        }
+    // Pin visible + neighbor shelves (and open detail), not the whole catalog —
+    // pinning everything made trim a no-op while preferred-set build stayed O(n).
+    const int scroll = std::max(0, m_communityScrollRow);
+    const int first = std::max(0, (scroll - 1) * kCommunityPreviewGridCols);
+    const int last = (scroll + 2) * kCommunityPreviewGridCols;
+    for (int i = first; i < last && i < static_cast<int>(m_communityEntries.size()); ++i)
+        prefer(m_communityEntries[static_cast<std::size_t>(i)].cover);
+    // Keep page 1 warm for first focus / reset.
+    for (int i = 0; i < kCommunityPreviewEntriesPerPage
+             && i < static_cast<int>(m_communityEntries.size()); ++i)
+        prefer(m_communityEntries[static_cast<std::size_t>(i)].cover);
+    if (const auto* selected = selectedCommunityThemeEntry()) {
+        prefer(selected->cover);
+        if (m_detailOpen)
+            prefer(currentDetailCommunityPreviewPath());
     }
-
-    std::size_t readyCount = 0;
-    for (const auto& entry : m_communityPreviewCache) {
-        if (!entry.second) continue;
-        std::lock_guard<std::mutex> lk(entry.second->mutex);
-        if (entry.second->phase == PreviewPhase::Ready)
-            ++readyCount;
-    }
-    if (readyCount <= kMaxReadyCommunityPreviews)
-        return;
 
     int erased = 0;
     for (auto it = m_communityPreviewCache.begin();
@@ -1568,10 +1941,30 @@ void ThemeShopScreen::trimCommunityPreviewCache() {
     }
 
     if (erased > 0) {
-        DebugLog::log("[themeshop] preview cache soft-trim: erased=%d size=%zu ready=%zu",
+        DebugLog::log("[themeshop] preview cache soft-trim%s: erased=%d size=%zu ready=%zu",
+                      pressure ? " (pressure)" : "",
                       erased, m_communityPreviewCache.size(), readyCount);
     }
 }
+
+void ThemeShopScreen::pauseInstalledPreviewDecodes() {
+    // Free thread-pool slots for Community cover fetches when entering that tab.
+    for (auto& entry : m_installedPreviewCache) {
+        if (!entry.second)
+            continue;
+        std::lock_guard<std::mutex> lk(entry.second->mutex);
+        if (entry.second->phase != PreviewPhase::Loading
+            && entry.second->phase != PreviewPhase::Downloaded)
+            continue;
+        entry.second->cancelled = true;
+        entry.second->pixels.clear();
+        entry.second->maskPixels.clear();
+        entry.second->phase = entry.second->texture.valid()
+            ? PreviewPhase::Ready : PreviewPhase::Idle;
+    }
+    m_hasPendingInstalledPreviewWork = false;
+}
+
 void ThemeShopScreen::syncCommunityCatalog(const ThemeCatalogClient::Snapshot& snapshot) {
     m_communityTransferState = snapshot.loading;
     m_allCommunityEntries = snapshot.entries;

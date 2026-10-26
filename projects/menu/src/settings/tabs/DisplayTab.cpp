@@ -5,7 +5,6 @@
 #include <algorithm>
 
 SettingsScreen::Tab settings::tabs::DisplayTab::build(SettingsScreen& screen) {
-    (void)screen;
     using Tab = SettingsScreen::Tab;
     using SettingItem = SettingsScreen::SettingItem;
     using ItemType = SettingsScreen::ItemType;
