@@ -1774,11 +1774,50 @@ void ThemeShopScreen::clearCommunityPreviewCache() {
         std::lock_guard<std::mutex> lk(state->mutex);
         state->cancelled = true;
         state->bytes.clear();
+        state->pixels.clear();
+        state->maskPixels.clear();
         state->texture = nxui::Texture();
+        state->contrastMask = nxui::Texture();
+        state->phase = PreviewPhase::Idle;
     }
 
     m_communityPreviewCache.clear();
     m_hasPendingCommunityPreviewWork = false;
+}
+
+void ThemeShopScreen::clearInstalledPreviewCache() {
+    if (m_installedPreviewCache.empty())
+        return;
+
+    for (auto& entry : m_installedPreviewCache) {
+        auto& state = entry.second;
+        if (!state)
+            continue;
+
+        std::lock_guard<std::mutex> lk(state->mutex);
+        state->cancelled = true;
+        state->bytes.clear();
+        state->pixels.clear();
+        state->maskPixels.clear();
+        state->texture = nxui::Texture();
+        state->contrastMask = nxui::Texture();
+        state->phase = PreviewPhase::Idle;
+    }
+
+    m_installedPreviewCache.clear();
+    m_hasPendingInstalledPreviewWork = false;
+}
+
+void ThemeShopScreen::releasePreviewCachesOnHide() {
+    const std::size_t community = m_communityPreviewCache.size();
+    const std::size_t installed = m_installedPreviewCache.size();
+    if (community == 0 && installed == 0)
+        return;
+
+    clearCommunityPreviewCache();
+    clearInstalledPreviewCache();
+    DebugLog::log("[themeshop] preview caches hard-released on hide: community=%zu installed=%zu (Frame Tap headroom)",
+                  community, installed);
 }
 
 void ThemeShopScreen::trimCommunityPreviewCache(bool pressure) {

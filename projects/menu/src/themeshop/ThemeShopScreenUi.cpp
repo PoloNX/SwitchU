@@ -1153,18 +1153,14 @@ void ThemeShopScreen::updateCustomContent(float dt) {
 
     if (!m_showing) {
         closeDetail();
-        // Keep covers warm for the next open. clearCommunityPreviewCache() used to
-        // waitIdle-nuke every texture on hide → mega hitch on reopen.
+        // Soft-trim-only left ~10 MB Applet free — Frame Tap needs ~30 MB to
+        // remount while SwitchU stays up. Hard-drop preview GPU once on hide;
+        // catalog + SD disk cache stay warm for the next open.
         if (!m_previewPausedWhileHidden) {
             pausePreviewWorkForSleep();
+            releasePreviewCachesOnHide();
             m_previewPausedWhileHidden = true;
         }
-        // Drip-reclaim screenshots / off-page covers so Frame Tap can remount
-        // (~30 MB) after Theme Shop browsing filled the Applet pool.
-        if (!m_communityPreviewCache.empty())
-            trimCommunityPreviewCache(/*pressure=*/true);
-        if (!m_installedPreviewCache.empty())
-            trimInstalledPreviewCache();
         return;
     }
     m_previewPausedWhileHidden = false;

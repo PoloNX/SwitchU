@@ -318,6 +318,8 @@ private:
                                int maxSide = 0);
     void syncFinishedInstalledPreviewLoads();
     void trimInstalledPreviewCache();
+    // Drop all installed/Icons GPU frames + CPU pixels (Frame Tap Applet headroom).
+    void clearInstalledPreviewCache();
     bool selectedIconPackIsColour() const;
     // Installed Icons-tab pack: Custom tint / Flatten / Grayscale controls.
     bool showSelectedIconTintControls() const;
@@ -351,8 +353,11 @@ private:
     void primeVisibleInstalledPreviews();
     void syncFinishedCommunityPreviewLoads();
     void clearCommunityPreviewCache();
-    /* pressure=true: reclaim screenshots / excess covers so Frame Tap can
-     * remount a slim donor (Applet pool ~10 MB free after Theme Shop browsing). */
+    // Hard-drop community + installed preview GPU on hide so Frame Tap can
+    // remount (~30–40 MB Applet free). Catalog/disk cache stay warm.
+    void releasePreviewCachesOnHide();
+    /* pressure=true: reclaim screenshots / excess covers while browsing under
+     * GPU pressure. Hide path uses releasePreviewCachesOnHide() instead. */
     void trimCommunityPreviewCache(bool pressure = false);
     int previewUploadsBudgetThisFrame() const;
 
