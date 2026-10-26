@@ -185,37 +185,6 @@ void sortMusicTrackNames(std::vector<std::string>& names) {
     });
 }
 
-// Append root-level .mp3 files from a theme music folder without clearing the
-// current playlist. albumFolder namespaces relativeKey so theme tracks do not
-// collide with the user's library filenames.
-size_t appendMp3TracksFromDir(AudioManager& audio,
-                              const std::string& musicDir,
-                              const std::string& albumFolder) {
-    std::error_code ec;
-    if (!std::filesystem::is_directory(musicDir, ec))
-        return 0;
-    std::vector<std::string> rootTracks;
-    ec.clear();
-    for (const auto& entry : std::filesystem::directory_iterator(musicDir, ec)) {
-        if (ec)
-            break;
-        std::error_code entryEc;
-        if (!entry.is_regular_file(entryEc))
-            continue;
-        const auto name = entry.path().filename().string();
-        if (name.empty() || name[0] == '.' || !isMp3Filename(name))
-            continue;
-        rootTracks.push_back(name);
-    }
-    sortMusicTrackNames(rootTracks);
-    size_t loaded = 0;
-    for (const auto& t : rootTracks) {
-        if (audio.loadTrack(musicDir + "/" + t, albumFolder))
-            ++loaded;
-    }
-    return loaded;
-}
-
 std::string resolveAudioOverridePath(const std::string& preferredBase,
                                     const std::string& fallbackBase,
                                     const char* relativePath) {
@@ -237,22 +206,6 @@ std::string installedThemePathFromPackagePreset(const std::string& preset) {
 
     const std::string installPath = std::string("sdmc:/config/SwitchU/themes/") + slug;
     return directoryExists(installPath) ? installPath : std::string();
-}
-
-std::string resolveThemeSoundBase(const std::string& installPath) {
-    if (installPath.empty())
-        return {};
-
-    const std::string directSfx = installPath + "/sfx";
-    const std::string directMusic = installPath + "/music";
-    const std::string soundsRoot = installPath + "/sounds";
-
-    const bool hasDirect = directoryExists(directSfx) || directoryExists(directMusic);
-    if (hasDirect)
-        return installPath;
-    if (directoryExists(soundsRoot))
-        return soundsRoot;
-    return {};
 }
 
 // Keep enough side/top clearance so large grids do not overlap HUD/side buttons.
@@ -419,6 +372,52 @@ bool gridModelsRefreshEquivalent(const GridModel& a, const GridModel& b) {
     return true;
 }
 
+} // namespace
+
+// Shared with WiiUMenuAppSettings.cpp (theme Apply music merge). Kept outside
+// the anonymous namespace so the Settings TU can link them.
+size_t appendMp3TracksFromDir(AudioManager& audio,
+                              const std::string& musicDir,
+                              const std::string& albumFolder) {
+    std::error_code ec;
+    if (!std::filesystem::is_directory(musicDir, ec))
+        return 0;
+    std::vector<std::string> rootTracks;
+    ec.clear();
+    for (const auto& entry : std::filesystem::directory_iterator(musicDir, ec)) {
+        if (ec)
+            break;
+        std::error_code entryEc;
+        if (!entry.is_regular_file(entryEc))
+            continue;
+        const auto name = entry.path().filename().string();
+        if (name.empty() || name[0] == '.' || !isMp3Filename(name))
+            continue;
+        rootTracks.push_back(name);
+    }
+    sortMusicTrackNames(rootTracks);
+    size_t loaded = 0;
+    for (const auto& t : rootTracks) {
+        if (audio.loadTrack(musicDir + "/" + t, albumFolder))
+            ++loaded;
+    }
+    return loaded;
+}
+
+std::string resolveThemeSoundBase(const std::string& installPath) {
+    if (installPath.empty())
+        return {};
+
+    const std::string directSfx = installPath + "/sfx";
+    const std::string directMusic = installPath + "/music";
+    const std::string soundsRoot = installPath + "/sounds";
+
+    const bool hasDirect = directoryExists(directSfx) || directoryExists(directMusic);
+    if (hasDirect)
+        return installPath;
+    if (directoryExists(soundsRoot))
+        return soundsRoot;
+    return {};
 }
 
 
