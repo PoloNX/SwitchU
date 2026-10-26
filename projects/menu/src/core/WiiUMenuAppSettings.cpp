@@ -3814,12 +3814,11 @@ void WiiUMenuApp::syncColourIconContrast() {
 
     if (hslChanged) {
         // Rebake colour glyphs (and Change View) with the new HSL adjust.
-        DebugLog::log("[theme-apply] sidebar HSL changed - reloadAssets");
+        // Do not log the unchanged path — syncColourIconContrast runs every
+        // frame from updateHeroAwareChrome; SD log spam soft-locks the console.
         reloadSidebarIcons();
         m_sidebar.setColourIconContrast(adaptColour);
         if (m_layoutFlip)
             m_layoutFlip->setColourIconContrast(adaptColour);
-    } else {
-        DebugLog::log("[theme-apply] sidebar HSL unchanged - skip second reloadAssets");
     }
 }
