@@ -51,6 +51,7 @@
 #include "navigation/MenuNavigator.hpp"
 #include "services/ClockService.hpp"
 #include "services/AutoThemeService.hpp"
+#include "services/FrameTapStatus.hpp"
 #ifdef SWITCHU_DEBUG_UI
 #include "debug/DebugImGuiOverlay.hpp"
 #endif
@@ -378,6 +379,10 @@ private:
     void leaveSystemSleep();
     void pollSleepNotifications();
     void onUpdateAwake(float dt);
+    void tickFrameTapLightPath(float dt);
+    void enterFrameTapLightPath(const char* reason);
+    void leaveFrameTapLightPath(const char* reason);
+    void logFrameTapLightSoak(const char* tag);
     void closeQuickSettings();
     void createThemeShop();
     void createGameOptions();
@@ -487,6 +492,8 @@ private:
     HeroChromeAdapt m_heroChromeAdapt = HeroChromeAdapt::Off;
     switchu::services::ClockService m_clockService;
     switchu::services::AutoThemeService m_autoTheme;
+    switchu::services::FrameTapStatus m_frameTapStatus;
+    bool                     m_frameTapLightActive = false;
     float                    m_autoThemeCheckTimer = 0.f;
 
     struct GeoFetchResult {

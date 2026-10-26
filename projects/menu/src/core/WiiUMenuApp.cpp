@@ -6589,6 +6589,97 @@ void WiiUMenuApp::pollSleepNotifications() {
 #endif
 }
 
+void WiiUMenuApp::logFrameTapLightSoak(const char* tag) {
+    u64 total = 0, used = 0;
+    u64 freeBytes = 0;
+    if (R_SUCCEEDED(svcGetInfo(&total, InfoType_TotalMemorySize, CUR_PROCESS_HANDLE, 0)) &&
+        R_SUCCEEDED(svcGetInfo(&used, InfoType_UsedMemorySize, CUR_PROCESS_HANDLE, 0)) &&
+        total > used) {
+        freeBytes = total - used;
+    }
+    DebugLog::log(
+        "[ft-light] %s active=%d viewer=%d ftAvail=%d state=%u reserved3=0x%x "
+        "free=%lluKB img=%llu/%lluKB headroom=%lluKB streamerCap=%d peeks=%zu composites=%zu",
+        tag ? tag : "-",
+        m_frameTapLightActive ? 1 : 0,
+        m_frameTapStatus.viewerConnected() ? 1 : 0,
+        m_frameTapStatus.available() ? 1 : 0,
+        m_frameTapStatus.status().state,
+        m_frameTapStatus.status().reserved3,
+        static_cast<unsigned long long>(freeBytes / 1024ull),
+        static_cast<unsigned long long>(app().gpu().imageMemoryUsed() / 1024ull),
+        static_cast<unsigned long long>(app().gpu().imageMemoryBudget() / 1024ull),
+        static_cast<unsigned long long>(app().gpu().allocationHeadroom() / 1024ull),
+        m_iconStreamer.pageCacheRadiusCap(),
+        m_folderPeekCache.size(),
+        m_folderPeekCompositeCache.size());
+}
+
+void WiiUMenuApp::enterFrameTapLightPath(const char* reason) {
+    if (m_frameTapLightActive)
+        return;
+    m_frameTapLightActive = true;
+
+#ifdef NXUI_BACKEND_DEKO3D
+    app().gpu().setAllocationHeadroom(
+        nxui::GpuDevice::kFrameTapLightAllocationHeadroom);
+#endif
+    // Hold HOME fill: keep only the current page neighborhood warm.
+    m_iconStreamer.setPageCacheRadiusCap(1);
+    m_iconStreamer.cancelShadowPrefetch();
+    m_iconStreamer.cancelPending();
+    if (m_steamGridDbBackdrop)
+        m_steamGridDbBackdrop->setPreloadPaused(true);
+
+    // Drop off-page folder peeks / composites; focused page refills on demand.
+    m_folderPeekCache.clear();
+    m_folderPeekBorrowed.clear();
+    m_folderPeekCompositeCache.clear();
+    m_folderPeekCompositeBakeQueued.clear();
+
+    if (m_grid) {
+        int page = 0;
+        int pageSize = 1;
+        if (m_grid->iconsPerPage() > 0) {
+            page = m_grid->currentPage();
+            pageSize = std::max(1, m_grid->iconsPerPage());
+        }
+        m_iconStreamer.onPageChanged(page, pageSize, app().gpu(), app().renderer(),
+                                     m_grid->allIcons());
+    }
+
+    DebugLog::log("[ft-light] ENTER reason=%s", reason ? reason : "-");
+    logFrameTapLightSoak("enter");
+}
+
+void WiiUMenuApp::leaveFrameTapLightPath(const char* reason) {
+    if (!m_frameTapLightActive)
+        return;
+    m_frameTapLightActive = false;
+
+#ifdef NXUI_BACKEND_DEKO3D
+    app().gpu().setAllocationHeadroom(
+        nxui::GpuDevice::kDefaultAllocationHeadroom);
+#endif
+    m_iconStreamer.setPageCacheRadiusCap(-1);
+    // Pace refill so exit does not instantly re-eat FT headroom.
+    m_iconStreamer.startSoftLanding(2.0f, 2, 1.75f, 3);
+    if (m_steamGridDbBackdrop)
+        m_steamGridDbBackdrop->setPreloadPaused(false);
+
+    DebugLog::log("[ft-light] LEAVE reason=%s", reason ? reason : "-");
+    logFrameTapLightSoak("leave");
+}
+
+void WiiUMenuApp::tickFrameTapLightPath(float dt) {
+    m_frameTapStatus.probe(dt, 500.f);
+    const bool wantLight = m_frameTapStatus.viewerConnected();
+    if (wantLight && !m_frameTapLightActive)
+        enterFrameTapLightPath(m_frameTapStatus.available() ? "viewer" : "force-file");
+    else if (!wantLight && m_frameTapLightActive)
+        leaveFrameTapLightPath("viewer-gone");
+}
+
 void WiiUMenuApp::onUpdateAwake(float dt) {
     if (m_wakePostSwapchainFrames > 0) {
         const int step = m_wakePostSwapchainFrames;
@@ -6606,6 +6697,8 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
             updateCursor();
         }
     }
+
+    tickFrameTapLightPath(dt);
 
     updateLeaveSplashHandoff(dt);
     pollDeferredLeaveCapture();
@@ -6718,7 +6811,8 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
             && presentationLayoutMode() == AppLayoutMode::DynamicLine
             && !leaveSplashActive()) {
             const int focus = m_grid->focusedGlobalIndex();
-            if (focus != m_lastFolderPeekWarmFocus
+            if (!m_frameTapLightActive
+                && focus != m_lastFolderPeekWarmFocus
                 && focus >= 0 && focus < m_model.count()
                 && m_model.at(focus).isFolder()) {
                 m_lastFolderPeekWarmFocus = focus;
@@ -6743,7 +6837,8 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
             || m_deferBackdropPreloadSec > 0.f
             || m_iconStreamer.softLandingActive();
         m_steamGridDbBackdrop->setPreloadPaused(
-            paceWindow && app().input().hasUserActivity());
+            m_frameTapLightActive
+            || (paceWindow && app().input().hasUserActivity()));
         // Hero decode finishes async — re-check contrast when art lands/clears.
         updateHeroAwareChrome();
     }

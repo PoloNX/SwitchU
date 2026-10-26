@@ -345,6 +345,11 @@ void IconStreamer::startBurst(float seconds) {
         std::chrono::milliseconds(static_cast<int>(seconds * 1000.f));
 }
 
+void IconStreamer::setPageCacheRadiusCap(int radius) {
+    m_pageCacheRadiusCap = radius;
+    DebugLog::log("[streamer] page-cache radius cap=%d", radius);
+}
+
 void IconStreamer::startSoftLanding(float tightSeconds, int tightRadius,
                                     float widenSeconds, int widenRadius) {
     const auto now = std::chrono::steady_clock::now();

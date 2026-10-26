@@ -76,6 +76,11 @@ public:
                           float widenSeconds = 0.f, int widenRadius = 3);
     bool softLandingActive() const { return inSoftLanding(); }
 
+    // Cap neighbor page radius while Frame Tap viewer light path is active.
+    // Pass <0 to clear the cap (restore normal kPageCacheRadius behavior).
+    void setPageCacheRadiusCap(int radius);
+    int pageCacheRadiusCap() const { return m_pageCacheRadiusCap; }
+
     // Off-screen art prefetch for layout transitions: decode destination art
     // (poster or icon) by titleId without touching textures already shown on
     // tiles. pumpShadowPrefetch() uploads a few GPU textures per frame so the
@@ -188,16 +193,20 @@ private:
     }
     int pageCacheRadius() const {
         const auto now = std::chrono::steady_clock::now();
-        auto clampRadius = [](int radius) {
+        auto clampRadius = [this](int radius) {
             if (radius <= 0)
                 return 0;
-            return radius < kPageCacheRadius ? radius : kPageCacheRadius;
+            int capped = radius < kPageCacheRadius ? radius : kPageCacheRadius;
+            if (m_pageCacheRadiusCap >= 0 && capped > m_pageCacheRadiusCap)
+                capped = m_pageCacheRadiusCap;
+            return capped;
         };
         if (now < m_softLandingUntil)
             return clampRadius(m_softLandingRadius);
         if (now < m_softLandingWidenUntil)
             return clampRadius(m_softLandingWidenRadius);
-        return kPageCacheRadius;
+        return clampRadius(kPageCacheRadius);
     }
+    int m_pageCacheRadiusCap = -1;
     static constexpr std::uint64_t kGpuImageReserve = 4u * 1024u * 1024u;
 };

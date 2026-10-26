@@ -137,12 +137,19 @@ public:
     // well below that process ceiling so CPU-side decodes, audio and Deko's
     // fixed framebuffer/offscreen pools retain comfortable headroom.
     static constexpr uint64_t kDefaultImageBudget = 64u * 1024u * 1024u;
+    // Process free-memory cushion before accepting a new image alloc.
+    // Default 2 MiB keeps SwitchU lush; raise temporarily (e.g. Frame Tap
+    // viewer light path) so concurrent sysmodules keep remount headroom.
+    static constexpr uint64_t kDefaultAllocationHeadroom = 2ull * 1024ull * 1024ull;
+    static constexpr uint64_t kFrameTapLightAllocationHeadroom = 28ull * 1024ull * 1024ull;
     uint64_t imageMemoryUsed() const { return m_imageMemUsed; }
     uint64_t imageMemoryBudget() const { return kDefaultImageBudget; }
     uint64_t imageMemoryAvailable() const {
         return m_imageMemUsed < kDefaultImageBudget
             ? kDefaultImageBudget - m_imageMemUsed : 0;
     }
+    uint64_t allocationHeadroom() const { return m_allocationHeadroom; }
+    void setAllocationHeadroom(uint64_t bytes) { m_allocationHeadroom = bytes; }
 
 
     using LogSink = void (*)(const char* message);
@@ -176,6 +183,10 @@ public:
     uint64_t imageMemoryUsed() const { return 0; }
     uint64_t imageMemoryBudget() const { return UINT64_MAX; }
     uint64_t imageMemoryAvailable() const { return UINT64_MAX; }
+    static constexpr uint64_t kDefaultAllocationHeadroom = 2ull * 1024ull * 1024ull;
+    static constexpr uint64_t kFrameTapLightAllocationHeadroom = 28ull * 1024ull * 1024ull;
+    uint64_t allocationHeadroom() const { return kDefaultAllocationHeadroom; }
+    void setAllocationHeadroom(uint64_t) {}
 #endif
 
 private:
@@ -223,6 +234,7 @@ private:
 
     uint64_t m_imageMemUsed = 0;
     uint64_t m_poolMemUsed  = 0;
+    uint64_t m_allocationHeadroom = kDefaultAllocationHeadroom;
     static inline LogSink s_logSink = nullptr;
 
     static constexpr uint32_t kImageChunkSize = 2u * 1024u * 1024u;
