@@ -2725,8 +2725,8 @@ void WiiUMenuApp::applyIconPack(const std::string& packId) {
         m_config.save();
     }
     DebugLog::log("[icon-pack] apply pack=%s changed=%d", id.c_str(), packChanged ? 1 : 0);
-    // Always rebake HOME chrome so Apply also commits a live tint edit on the
-    // already-active pack.
+    // Bake once with the pack's current HSL (avoid reload → sync → reload).
+    applyActivePackHslToSidebar();
     reloadSidebarIcons();
     if (m_quickSettings)
         m_quickSettings->invalidateMusicControlIcons();
@@ -2737,7 +2737,7 @@ void WiiUMenuApp::applyIconPack(const std::string& packId) {
             nxui::I18n::instance().tr("themeshop.icons.applied", "Icon pack applied."), 2.0f);
 }
 
-void WiiUMenuApp::refreshThemeShopState() {
+void WiiUMenuApp::refreshThemeShopState(bool rebuildTab) {
     if (!m_themeShop) return;
 
     ThemePreset* activePreset = findPresetPtr(m_activePresetName);
@@ -2776,7 +2776,22 @@ void WiiUMenuApp::refreshThemeShopState() {
     }
     m_themeShop->setThemeShopState(buildThemeShopEntries(), activeId);
     m_themeShop->setIconPackState(buildIconPackEntries(), activePackId);
-    m_themeShop->rebuildCurrentTab();
+    if (rebuildTab)
+        m_themeShop->rebuildCurrentTab();
+}
+
+void WiiUMenuApp::applyActivePackHslToSidebar() {
+    const AppConfig::IconPackTint packTint = m_config.iconPackTintFor(resolvedIconPackId());
+    switchu::icons::HslAdjust hsl;
+    hsl.enabled = packTint.enabled;
+    hsl.flatten = packTint.flatten;
+    hsl.grayscale = packTint.grayscale;
+    hsl.hue = std::clamp(packTint.hue, 0.f, 1.f);
+    hsl.sat = std::clamp(packTint.sat, 0.f, 1.f);
+    hsl.light = std::clamp(packTint.light, 0.f, 1.f);
+    m_sidebar.setIconHslAdjust(hsl);
+    if (m_layoutFlip)
+        m_layoutFlip->setIconHslAdjust(hsl);
 }
 
 void WiiUMenuApp::activateThemePreset(ThemePreset* preset, bool applyBundledSound) {
@@ -2829,17 +2844,30 @@ void WiiUMenuApp::activateThemePreset(ThemePreset* preset, bool applyBundledSoun
     }
     m_config.save();
 
+    // Rematch Match-theme packs to the new accent before baking sidebar glyphs
+    // so we only reloadAssets once (old path: bake → rematch → bake again).
+    rematchIconPackTintsToTheme(/*syncSidebar=*/false);
+    applyActivePackHslToSidebar();
+
+    // Cancel in-flight Theme Shop preview workers so Apply does not fight
+    // cover uploads for GPU / waitIdle under Applet pressure (Frame Tap).
+    if (m_themeShop)
+        m_themeShop->pausePreviewWorkForSleep();
+
     DebugLog::log("[theme-apply] rebuildThemeFromColors start: preset=%s", presetRef.c_str());
     rebuildThemeFromColors();
     DebugLog::log("[theme-apply] rebuildThemeFromColors done: preset=%s", presetRef.c_str());
-    rematchIconPackTintsToTheme();
 
+    // HSL already applied above - sync should be a no-op reload when unchanged.
+    syncColourIconContrast();
+
+    // Sound already loads off-thread; queue after visuals so Apply returns sooner.
     if (applyBundledSound && !preset->soundPreset.empty()) {
         DebugLog::log("[theme-apply] changeSoundPreset queued: preset=%s sound=%s",
                       presetRef.c_str(),
                       preset->soundPreset.c_str());
-        changeSoundPreset(preset->soundPreset);
         m_config.soundPreset = preset->soundPreset;
+        changeSoundPreset(preset->soundPreset);
     } else {
         DebugLog::log("[theme-apply] bundled sound skipped: preset=%s apply=%d soundPreset=%s",
                       presetRef.c_str(),
@@ -2847,8 +2875,9 @@ void WiiUMenuApp::activateThemePreset(ThemePreset* preset, bool applyBundledSoun
                       safeLogPath(preset->soundPreset));
     }
 
-    DebugLog::log("[theme-apply] refreshThemeShopState start: preset=%s", presetRef.c_str());
-    refreshThemeShopState();
+    // Light shop refresh: update Applied badges / tints without rebuildCurrentTab.
+    DebugLog::log("[theme-apply] refreshThemeShopState start: preset=%s (light)", presetRef.c_str());
+    refreshThemeShopState(/*rebuildTab=*/false);
     DebugLog::log("[theme-apply] refreshThemeShopState done: preset=%s", presetRef.c_str());
     m_themeRenderDebugFrames = 6;
     if (m_themeShop)
@@ -3687,7 +3716,7 @@ void WiiUMenuApp::syncSoftwareDeletion() {
     m_softwareDeleteClosesGameOptions = false;
 }
 
-void WiiUMenuApp::rematchIconPackTintsToTheme() {
+void WiiUMenuApp::rematchIconPackTintsToTheme(bool syncSidebar) {
     float accentH = m_activeColors.accentH;
     float accentS = m_activeColors.accentS;
     float accentL = m_activeColors.accentL;
@@ -3701,7 +3730,7 @@ void WiiUMenuApp::rematchIconPackTintsToTheme() {
         m_themeShop->setThemeMatchAccent(accentH, accentS, accentL);
 
     // Rematch every pack that already has Match on. Do NOT move/clear Match
-    // when a theme switches the active icon pack (e.g. iiSU) — Atmos keeps Auto.
+    // when a theme switches the active icon pack (e.g. iiSU) - Atmos keeps Auto.
     bool any = false;
     for (auto& [packId, tint] : m_config.iconPackTints) {
         if (!tint.matchTheme)
@@ -3725,7 +3754,8 @@ void WiiUMenuApp::rematchIconPackTintsToTheme() {
         return;
 
     m_config.save();
-    syncColourIconContrast();
+    if (syncSidebar)
+        syncColourIconContrast();
     // Push rematched tints into Theme Shop before invalidating so hslKeys match.
     if (m_themeShop) {
         std::unordered_map<std::string, ThemeShopScreen::IconPackTintState> tints;
@@ -3784,9 +3814,12 @@ void WiiUMenuApp::syncColourIconContrast() {
 
     if (hslChanged) {
         // Rebake colour glyphs (and Change View) with the new HSL adjust.
+        DebugLog::log("[theme-apply] sidebar HSL changed - reloadAssets");
         reloadSidebarIcons();
         m_sidebar.setColourIconContrast(adaptColour);
         if (m_layoutFlip)
             m_layoutFlip->setColourIconContrast(adaptColour);
+    } else {
+        DebugLog::log("[theme-apply] sidebar HSL unchanged - skip second reloadAssets");
     }
 }

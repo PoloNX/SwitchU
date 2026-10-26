@@ -388,15 +388,19 @@ private:
     void pushGeoDisplayToScreen();
     void createControllerTest();
     void reloadThemePresets();
-    void refreshThemeShopState();
+    // rebuildTab=false: update selection/tints without rebuildCurrentTab (Apply path).
+    void refreshThemeShopState(bool rebuildTab = true);
     std::vector<ThemeShopScreen::ThemeShopEntry> buildThemeShopEntries();
     std::vector<ThemeShopScreen::ThemeShopEntry> buildIconPackEntries();
     std::string resolvedIconPackId() const;
     std::string iconsDirectoryForPack(const std::string& packId) const;
     void applyIconPack(const std::string& packId);
     void syncColourIconContrast();
+    // Apply rematched Match-theme HSL to sidebar state before reloadAssets.
+    void applyActivePackHslToSidebar();
     // Recompute HSL pivots for packs with Match theme when accent colours change.
-    void rematchIconPackTintsToTheme();
+    // syncSidebar=false: config/shop only (Activate rematches before one sidebar bake).
+    void rematchIconPackTintsToTheme(bool syncSidebar = true);
     void reloadSidebarIcons();
     std::string resolveActiveIconGlyphPath(const char* fileName) const;
     void startThemePackageTransfer(const ThemeCatalogClient::Entry& entry, bool installMode);
