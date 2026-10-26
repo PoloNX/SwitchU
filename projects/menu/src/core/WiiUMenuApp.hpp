@@ -571,6 +571,13 @@ private:
     bool                 m_presetChangePending = false;
     std::string          m_loadedSoundPreset;
     std::string          m_pendingSoundPreset;
+    // After a theme sound swap / merge, delay Mix_PlayMusic off the Apply frame.
+    bool                 m_themeMusicStartPending = false;
+    int                  m_themeMusicStartDelayFrames = 0;
+    int                  m_themeMusicStartTrackIndex = 0;
+    bool                 m_themeMusicMergePending = false;
+    bool                 m_themeMusicMergePlay = false;
+    int                  m_themeMusicMergeFirstIndex = 0;
 
     struct ThemePackageTransferShared {
         std::mutex mutex;

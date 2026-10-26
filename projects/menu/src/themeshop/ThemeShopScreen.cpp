@@ -1053,6 +1053,15 @@ void ThemeShopScreen::primeInstalledPreview(const std::string& previewPath,
         {
             std::lock_guard<std::mutex> lk(slot->mutex);
             if (slot->phase == PreviewPhase::Idle) {
+                // pausePreviewWorkForSleep / pauseInstalledPreviewDecodes leave
+                // cancelled=true on Idle slots with no texture. Starting a new
+                // decode without clearing it makes the worker immediately fall
+                // back to Idle — endless "decode start" spam (BOTW / Minimalist).
+                if (slot->failureCount >= 4) {
+                    slot->phase = PreviewPhase::Failed;
+                    return;
+                }
+                slot->cancelled = false;
                 slot->phase = PreviewPhase::Loading;
                 shouldStart = true;
             }
@@ -1076,9 +1085,16 @@ void ThemeShopScreen::primeInstalledPreview(const std::string& previewPath,
                     if (slot->cancelled || slot->hslKey != expectedHslKey) {
                         // Must leave Loading or scrub cancel + sleep leave the
                         // slot stuck and every later prime coalesces forever.
-                        if (slot->phase == PreviewPhase::Loading)
-                            slot->phase = slot->texture.valid()
-                                ? PreviewPhase::Ready : PreviewPhase::Idle;
+                        if (slot->phase == PreviewPhase::Loading) {
+                            if (slot->texture.valid()) {
+                                slot->phase = PreviewPhase::Ready;
+                            } else {
+                                slot->failureCount += 1;
+                                slot->phase = (slot->failureCount >= 4)
+                                    ? PreviewPhase::Failed
+                                    : PreviewPhase::Idle;
+                            }
+                        }
                         return;
                     }
                 }
@@ -1120,9 +1136,16 @@ void ThemeShopScreen::primeInstalledPreview(const std::string& previewPath,
                     slot->maskPixels.clear();
                     // Superseded draft scrub / sleep cancel: free the slot so the
                     // next prime can start with the latest HSL key.
-                    if (slot->phase == PreviewPhase::Loading)
-                        slot->phase = slot->texture.valid() ? PreviewPhase::Ready
-                                                           : PreviewPhase::Idle;
+                    if (slot->phase == PreviewPhase::Loading) {
+                        if (slot->texture.valid()) {
+                            slot->phase = PreviewPhase::Ready;
+                        } else {
+                            slot->failureCount += 1;
+                            slot->phase = (slot->failureCount >= 4)
+                                ? PreviewPhase::Failed
+                                : PreviewPhase::Idle;
+                        }
+                    }
                     return;
                 }
                 if (!ok || pixels.empty()) {
@@ -1130,6 +1153,8 @@ void ThemeShopScreen::primeInstalledPreview(const std::string& previewPath,
                     slot->phase = PreviewPhase::Failed;
                     slot->pixels.clear();
                     slot->maskPixels.clear();
+                    DebugLog::log("[themeshop] installed preview decode failed: %s",
+                                  pathCopy.c_str());
                     return;
                 }
                 slot->adaptive = adaptive;

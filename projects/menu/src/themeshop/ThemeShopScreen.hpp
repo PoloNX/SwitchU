@@ -63,6 +63,9 @@ public:
     void onActionHintStyleChange(IntCb cb) { m_actionHintStyleCb = std::move(cb); }
     void onSortLargeTilesChange(BoolCb cb) { m_sortLargeTilesCb = std::move(cb); }
     void onIconContrastAdaptChange(BoolCb cb) { m_iconContrastAdaptCb = std::move(cb); }
+    void onThemeMusicOverrideChange(BoolCb cb) { m_themeMusicOverrideCb = std::move(cb); }
+    void onThemeMusicAddToPlaylistChange(BoolCb cb) { m_themeMusicAddToPlaylistCb = std::move(cb); }
+    void onThemeMusicPlayOnApplyChange(BoolCb cb) { m_themeMusicPlayOnApplyCb = std::move(cb); }
     struct IconPackTintState {
         bool enabled = false;
         bool flatten = false;
@@ -105,6 +108,9 @@ public:
     }
     void setSortLargeTilesState(bool enabled) { m_sortLargeTiles = enabled; }
     void setIconContrastAdaptState(bool enabled) { m_iconContrastAdapt = enabled; }
+    void setThemeMusicOverrideState(bool enabled) { m_themeMusicOverride = enabled; }
+    void setThemeMusicAddToPlaylistState(bool enabled) { m_themeMusicAddToPlaylist = enabled; }
+    void setThemeMusicPlayOnApplyState(bool enabled) { m_themeMusicPlayOnApply = enabled; }
     void setIconPackTintState(const std::unordered_map<std::string, IconPackTintState>& tints) {
         m_iconPackTints = tints;
     }
@@ -369,6 +375,9 @@ private:
     IntCb m_actionHintStyleCb;
     BoolCb m_sortLargeTilesCb;
     BoolCb m_iconContrastAdaptCb;
+    BoolCb m_themeMusicOverrideCb;
+    BoolCb m_themeMusicAddToPlaylistCb;
+    BoolCb m_themeMusicPlayOnApplyCb;
     IconPackTintCb m_iconPackTintCb;
     VoidCb m_autoThemeOpenCb;
     IntCb m_cursorMotionModeCb;
@@ -394,6 +403,9 @@ private:
     int m_actionHintStyle = 1;
     bool m_sortLargeTiles = true;
     bool m_iconContrastAdapt = true;
+    bool m_themeMusicOverride = true;
+    bool m_themeMusicAddToPlaylist = true;
+    bool m_themeMusicPlayOnApply = true;
     bool m_themeMatchAccentValid = false;
     float m_themeMatchAccentH = 0.f;
     float m_themeMatchAccentS = 0.55f;

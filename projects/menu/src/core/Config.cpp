@@ -102,6 +102,9 @@ bool AppConfig::load() {
     readJsonOpt(j, "sortMode", sortMode);
     readJsonOpt(j, "sortLargeTiles", sortLargeTiles);
     readJsonOpt(j, "iconContrastAdapt", iconContrastAdapt);
+    readJsonOpt(j, "themeMusicOverride", themeMusicOverride);
+    readJsonOpt(j, "themeMusicAddToPlaylist", themeMusicAddToPlaylist);
+    readJsonOpt(j, "themeMusicPlayOnApply", themeMusicPlayOnApply);
     iconPackTints.clear();
     if (auto it = j.find("iconPackTints"); it != j.end() && it->is_object()) {
         for (auto& [packId, value] : it->items()) {
@@ -282,6 +285,9 @@ bool AppConfig::save() const {
     j["sortMode"] = std::clamp(sortMode, 0, 2);
     j["sortLargeTiles"] = sortLargeTiles;
     j["iconContrastAdapt"] = iconContrastAdapt;
+    j["themeMusicOverride"] = themeMusicOverride;
+    j["themeMusicAddToPlaylist"] = themeMusicAddToPlaylist;
+    j["themeMusicPlayOnApply"] = themeMusicPlayOnApply;
     {
         nlohmann::json tints = nlohmann::json::object();
         for (const auto& [packId, tint] : iconPackTints) {

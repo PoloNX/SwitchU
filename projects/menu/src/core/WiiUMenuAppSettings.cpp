@@ -23,6 +23,12 @@
 #include <unordered_map>
 #include <cmath>
 
+// Defined in WiiUMenuApp.cpp (shared theme-sound helpers).
+std::string resolveThemeSoundBase(const std::string& installPath);
+size_t appendMp3TracksFromDir(AudioManager& audio,
+                              const std::string& musicDir,
+                              const std::string& albumFolder);
+
 namespace {
 
 bool removeDirectoryRecursive(const std::string& path) {
@@ -1880,6 +1886,9 @@ void WiiUMenuApp::createThemeShop() {
     m_themeShop->setActionHintStyleState(m_config.actionHintStyle);
     m_themeShop->setSortLargeTilesState(m_config.sortLargeTiles);
     m_themeShop->setIconContrastAdaptState(m_config.iconContrastAdapt);
+    m_themeShop->setThemeMusicOverrideState(m_config.themeMusicOverride);
+    m_themeShop->setThemeMusicAddToPlaylistState(m_config.themeMusicAddToPlaylist);
+    m_themeShop->setThemeMusicPlayOnApplyState(m_config.themeMusicPlayOnApply);
     m_themeShop->setThemeMatchAccent(m_activeColors.accentH,
                                      m_activeColors.accentS,
                                      m_activeColors.accentL);
@@ -2008,6 +2017,24 @@ void WiiUMenuApp::createThemeShop() {
         m_config.iconContrastAdapt = enabled;
         m_config.save();
         syncColourIconContrast();
+    });
+    m_themeShop->onThemeMusicOverrideChange([this](bool enabled) {
+        if (m_config.themeMusicOverride == enabled)
+            return;
+        m_config.themeMusicOverride = enabled;
+        m_config.save();
+    });
+    m_themeShop->onThemeMusicAddToPlaylistChange([this](bool enabled) {
+        if (m_config.themeMusicAddToPlaylist == enabled)
+            return;
+        m_config.themeMusicAddToPlaylist = enabled;
+        m_config.save();
+    });
+    m_themeShop->onThemeMusicPlayOnApplyChange([this](bool enabled) {
+        if (m_config.themeMusicPlayOnApply == enabled)
+            return;
+        m_config.themeMusicPlayOnApply = enabled;
+        m_config.save();
     });
     m_themeShop->onIconPackTintChange([this](const std::string& packId,
                                              const ThemeShopScreen::IconPackTintState& tint) {
@@ -2756,6 +2783,9 @@ void WiiUMenuApp::refreshThemeShopState(bool rebuildTab) {
     m_themeShop->setMusicState(m_audio.isPlaying(), m_audio.volume(), m_audio.sfxVolume());
     m_themeShop->setSortLargeTilesState(m_config.sortLargeTiles);
     m_themeShop->setIconContrastAdaptState(m_config.iconContrastAdapt);
+    m_themeShop->setThemeMusicOverrideState(m_config.themeMusicOverride);
+    m_themeShop->setThemeMusicAddToPlaylistState(m_config.themeMusicAddToPlaylist);
+    m_themeShop->setThemeMusicPlayOnApplyState(m_config.themeMusicPlayOnApply);
     m_themeShop->setThemeMatchAccent(m_activeColors.accentH,
                                      m_activeColors.accentS,
                                      m_activeColors.accentL);
@@ -2862,12 +2892,49 @@ void WiiUMenuApp::activateThemePreset(ThemePreset* preset, bool applyBundledSoun
     syncColourIconContrast();
 
     // Sound already loads off-thread; queue after visuals so Apply returns sooner.
+    // Theme Shop Options: replace playlist (legacy), merge into it, or leave alone.
     if (applyBundledSound && !preset->soundPreset.empty()) {
-        DebugLog::log("[theme-apply] changeSoundPreset queued: preset=%s sound=%s",
-                      presetRef.c_str(),
-                      preset->soundPreset.c_str());
-        m_config.soundPreset = preset->soundPreset;
-        changeSoundPreset(preset->soundPreset);
+        if (m_config.themeMusicOverride) {
+            DebugLog::log("[theme-apply] changeSoundPreset queued: preset=%s sound=%s",
+                          presetRef.c_str(),
+                          preset->soundPreset.c_str());
+            m_config.soundPreset = preset->soundPreset;
+            changeSoundPreset(preset->soundPreset);
+        } else if (m_config.themeMusicAddToPlaylist) {
+            const std::string base = resolveThemeSoundBase(preset->installPath);
+            const std::string musicDir = base.empty() ? std::string() : (base + "/music");
+            std::string album = "theme";
+            if (!preset->installPath.empty()) {
+                const auto pos = preset->installPath.find_last_of("/\\");
+                album = "theme-" + ((pos == std::string::npos)
+                    ? preset->installPath
+                    : preset->installPath.substr(pos + 1));
+            } else if (!presetRef.empty()) {
+                album = "theme-" + presetRef;
+            }
+            if (!musicDir.empty() && directoryExists(musicDir)
+                && !m_presetChangePending && !m_themeMusicMergePending) {
+                DebugLog::log("[theme-apply] merge theme music: dir=%s album=%s play=%d",
+                              safeLogPath(musicDir),
+                              album.c_str(),
+                              (m_config.themeMusicPlayOnApply && m_config.musicEnabled) ? 1 : 0);
+                m_themeMusicMergePending = true;
+                m_themeMusicMergePlay = m_config.themeMusicPlayOnApply && m_config.musicEnabled;
+                m_themeMusicMergeFirstIndex = m_audio.trackCount();
+                m_audioFuture = m_threadPool.submit([this, musicDir, album]() {
+                    const size_t n = appendMp3TracksFromDir(m_audio, musicDir, album);
+                    DebugLog::log("[audio] merged %zu theme track(s) from %s",
+                                  n, safeLogPath(musicDir));
+                });
+            } else {
+                DebugLog::log("[theme-apply] merge theme music skipped: dir=%s pending=%d",
+                              safeLogPath(musicDir),
+                              (m_presetChangePending || m_themeMusicMergePending) ? 1 : 0);
+            }
+        } else {
+            DebugLog::log("[theme-apply] bundled sound skipped by Options (override off, add off): preset=%s",
+                          presetRef.c_str());
+        }
     } else {
         DebugLog::log("[theme-apply] bundled sound skipped: preset=%s apply=%d soundPreset=%s",
                       presetRef.c_str(),

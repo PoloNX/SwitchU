@@ -185,6 +185,36 @@ void sortMusicTrackNames(std::vector<std::string>& names) {
     });
 }
 
+// Append root-level .mp3 files from a theme music folder without clearing the
+// current playlist. albumFolder namespaces relativeKey so theme tracks do not
+// collide with the user's library filenames.
+size_t appendMp3TracksFromDir(AudioManager& audio,
+                              const std::string& musicDir,
+                              const std::string& albumFolder) {
+    std::error_code ec;
+    if (!std::filesystem::is_directory(musicDir, ec))
+        return 0;
+    std::vector<std::string> rootTracks;
+    ec.clear();
+    for (const auto& entry : std::filesystem::directory_iterator(musicDir, ec)) {
+        if (ec)
+            break;
+        std::error_code entryEc;
+        if (!entry.is_regular_file(entryEc))
+            continue;
+        const auto name = entry.path().filename().string();
+        if (name.empty() || name[0] == '.' || !isMp3Filename(name))
+            continue;
+        rootTracks.push_back(name);
+    }
+    sortMusicTrackNames(rootTracks);
+    size_t loaded = 0;
+    for (const auto& t : rootTracks) {
+        if (audio.loadTrack(musicDir + "/" + t, albumFolder))
+            ++loaded;
+    }
+    return loaded;
+}
 
 std::string resolveAudioOverridePath(const std::string& preferredBase,
                                     const std::string& fallbackBase,
@@ -7189,12 +7219,9 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
         if (!m_config.musicPlaylistOrder.empty())
             m_audio.applyPlaylistOrder(m_config.musicPlaylistOrder);
         // A preset change swaps the whole playlist, so the saved index/position
-        // can point past the new tracks. Start the new theme's music from its
-        // first track, audibly: restorePlaybackState mutes until its deferred
-        // seek lands, and nothing applies that seek outside the boot path —
-        // which is why changing theme used to leave the menu silent until the
-        // console was restarted.
-        m_audio.restorePlaybackState(0, 0.f, m_config.musicEnabled);
+        // can point past the new tracks. Arm a delayed start — Mix_PlayMusic on
+        // the same frame as theme Apply / shop GPU work has soft-locked (BOTW).
+        m_audio.restorePlaybackState(0, 0.f, /*playing=*/false);
         m_config.musicTrackIndex = 0;
         m_config.musicPositionSeconds = 0.f;
         m_config.musicTrackKey = m_audio.currentTrackKey();
@@ -7203,7 +7230,55 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
                                                            : m_pendingSoundPreset;
         m_pendingSoundPreset.clear();
         m_presetChangePending = false;
-        DebugLog::log("[audio] Preset change complete: %s", m_config.soundPreset.c_str());
+        if (m_config.musicEnabled && m_audio.trackCount() > 0) {
+            m_themeMusicStartPending = true;
+            m_themeMusicStartDelayFrames = 8;
+            m_themeMusicStartTrackIndex = 0;
+        } else {
+            m_themeMusicStartPending = false;
+        }
+        DebugLog::log("[audio] Preset change complete: %s (playArmed=%d)",
+                      m_config.soundPreset.c_str(),
+                      m_themeMusicStartPending ? 1 : 0);
+    }
+
+    if (m_themeMusicMergePending && m_audioFuture.valid() &&
+        m_audioFuture.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+        m_audioFuture.get();
+        m_themeMusicMergePending = false;
+        persistMusicPlaybackState(false);
+        m_config.save();
+        const int startIdx = std::clamp(m_themeMusicMergeFirstIndex,
+                                        0,
+                                        std::max(0, m_audio.trackCount() - 1));
+        if (m_themeMusicMergePlay && m_audio.trackCount() > m_themeMusicMergeFirstIndex) {
+            m_themeMusicStartPending = true;
+            m_themeMusicStartDelayFrames = 8;
+            m_themeMusicStartTrackIndex = startIdx;
+            DebugLog::log("[audio] theme music merge complete; play armed index=%d", startIdx);
+        } else {
+            DebugLog::log("[audio] theme music merge complete; play skipped");
+        }
+        m_themeMusicMergePlay = false;
+    }
+
+    if (m_themeMusicStartPending) {
+        if (m_themeMusicStartDelayFrames > 0) {
+            --m_themeMusicStartDelayFrames;
+        } else {
+            m_themeMusicStartPending = false;
+            const int idx = std::clamp(m_themeMusicStartTrackIndex,
+                                       0,
+                                       std::max(0, m_audio.trackCount() - 1));
+            if (m_audio.trackCount() > 0) {
+                DebugLog::log("[audio] delayed theme music start index=%d", idx);
+                m_audio.playTrackAt(idx);
+                m_config.musicTrackIndex = idx;
+                m_config.musicPositionSeconds = 0.f;
+                m_config.musicTrackKey = m_audio.currentTrackKey();
+                persistMusicPlaybackState(true);
+            }
+        }
     }
 
     if (m_settingsNeedRefresh && m_settings) {

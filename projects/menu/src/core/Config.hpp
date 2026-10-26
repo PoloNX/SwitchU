@@ -62,6 +62,12 @@ struct AppConfig {
     // Colour HOME chrome icons follow single-row hero light/dark chrome when on
     // (Theme > Options). Default on — matches pre-PoloNX enjoyment.
     bool iconContrastAdapt = true;
+    // Theme Shop → Options: applying a theme with bundled music.
+    // Override on = replace the current playlist (legacy). Off = keep the
+    // user's library; optionally append theme tracks and/or start them.
+    bool themeMusicOverride = true;
+    bool themeMusicAddToPlaylist = true;
+    bool themeMusicPlayOnApply = true;
     // Per-pack Photoshop-style HSL adjust (0.5 pivots = leave original) plus
     // Solid / Grayscale presentation toggles. matchTheme keeps pivots synced
     // to the active theme accent until the user edits HSL or turns it off.
