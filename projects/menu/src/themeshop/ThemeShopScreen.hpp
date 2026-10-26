@@ -67,6 +67,7 @@ public:
         bool enabled = false;
         bool flatten = false;
         bool grayscale = false;
+        bool matchTheme = false;
         float hue = 0.5f;
         float sat = 0.5f;
         float light = 0.5f;
@@ -107,7 +108,17 @@ public:
     void setIconPackTintState(const std::unordered_map<std::string, IconPackTintState>& tints) {
         m_iconPackTints = tints;
     }
-    void invalidateIconPackPreviews();
+    // Theme accent used by Match theme (app refreshes on theme apply / shop open).
+    void setThemeMatchAccent(float h, float s, float l) {
+        m_themeMatchAccentH = h;
+        m_themeMatchAccentS = s;
+        m_themeMatchAccentL = l;
+        m_themeMatchAccentValid = true;
+    }
+    // Soft-invalidate adaptive icon previews (optional cover-path filter).
+    void invalidateIconPackPreviews(const std::string& coverPathFilter = {});
+    // Cancel in-flight installed/icon decodes so Community can use the pool.
+    void pauseInstalledPreviewDecodes();
     // Stop in-flight preview workers without destroying GPU textures (sleep-safe).
     void pausePreviewWorkForSleep();
     // Persist draft tint (Theme Shop → config/HOME). Call before Apply.
@@ -214,6 +225,7 @@ private:
         DetailPreviewControl,
         DetailButton,
         DetailTintToggle,
+        DetailMatchThemeToggle,
         DetailFlattenToggle,
         DetailGrayscaleToggle,
         DetailTintHue,
@@ -226,6 +238,7 @@ private:
     enum class DetailFocusArea {
         Preview,
         TintToggle,
+        MatchThemeToggle,
         FlattenToggle,
         GrayscaleToggle,
         TintHue,
@@ -242,6 +255,11 @@ private:
 
     bool pollCommunityCatalog();
     void syncCommunityCatalog(const ThemeCatalogClient::Snapshot& snapshot);
+    // Warm catalog + shelf covers while still on Installed so Community
+    // first-focus / page flips do not pay disk/HTTP bootstrap on the focus frame.
+    void ensureCommunityCatalogWarm();
+    // First shelf + last Community scroll neighborhood (±1 page).
+    void prefetchCommunityShelfNeighborhood();
     bool isCommunityTab() const;
     bool isIconsTab() const;
     bool isInstalledTab() const;
@@ -311,11 +329,14 @@ private:
     void beginIconPackTintDraft();
     void discardIconPackTintDraft();
     void setIconCustomTintEnabled(bool enabled);
+    void setIconMatchThemeEnabled(bool enabled);
     void setIconFlattenEnabled(bool enabled);
     void setIconGrayscaleEnabled(bool enabled);
     void setIconTintHue(float hue01);
     void setIconTintSat(float sat01);
     void setIconTintLight(float light01);
+    bool applyMatchThemePivotsToTint(IconPackTintState& tint,
+                                     const std::string& meanSamplePath) const;
     void nudgeIconTintHue(float delta);
     void nudgeIconTintSat(float delta);
     void nudgeIconTintLight(float delta);
@@ -327,9 +348,13 @@ private:
     void primeCommunityPreview(const std::string& previewPath);
     void primeCommunityPreview(const ThemeCatalogClient::Entry& entry);
     void primeVisibleCommunityPreviews();
+    void primeVisibleInstalledPreviews();
     void syncFinishedCommunityPreviewLoads();
     void clearCommunityPreviewCache();
-    void trimCommunityPreviewCache();
+    /* pressure=true: reclaim screenshots / excess covers so Frame Tap can
+     * remount a slim donor (Applet pool ~10 MB free after Theme Shop browsing). */
+    void trimCommunityPreviewCache(bool pressure = false);
+    int previewUploadsBudgetThisFrame() const;
 
     BoolCb m_musicEnabledCb;
     FloatCb m_musicVolumeCb;
@@ -364,6 +389,10 @@ private:
     int m_actionHintStyle = 1;
     bool m_sortLargeTiles = true;
     bool m_iconContrastAdapt = true;
+    bool m_themeMatchAccentValid = false;
+    float m_themeMatchAccentH = 0.f;
+    float m_themeMatchAccentS = 0.55f;
+    float m_themeMatchAccentL = 0.55f;
     // Committed tints (match config / HOME / Icons grid cards).
     std::unordered_map<std::string, IconPackTintState> m_iconPackTints;
     // Live HSL edit while the detail sheet is open - preview only until Apply.
@@ -413,6 +442,10 @@ private:
     int m_detailScreenshotIndex = 0;
     nxui::AnimatedFloat m_detailSheetAnim{0.f};
     nxui::AnimatedFloat m_detailFullscreenAnim{0.f};
+    // Soft eShop page flip: 1 → 0 after stepPage (sign in m_pageSlideFrom).
+    nxui::AnimatedFloat m_pageSlideAnim{0.f};
+    float m_pageSlideFrom = 0.f;
+    bool m_previewPausedWhileHidden = false;
     int m_installedScrollRow = 0;
     int m_communityScrollRow = 0;
     int m_iconPackScrollRow = 0;

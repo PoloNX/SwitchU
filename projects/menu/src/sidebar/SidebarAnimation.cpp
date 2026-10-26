@@ -6,6 +6,42 @@
 #include <cmath>
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
+#include <cstring>
+#include <vector>
+
+namespace {
+
+// Wireframe loaders (white-on-dark) often ship with opaque near-black fills that
+// draw as a white blob under straight-alpha blending. If the frame lacks real
+// transparency, rebuild alpha from luma and force line RGB to white.
+void repairWireframeAlpha(std::uint8_t* rgba, int w, int h) {
+    if (!rgba || w <= 0 || h <= 0)
+        return;
+    const std::size_t count = static_cast<std::size_t>(w) * static_cast<std::size_t>(h);
+    std::size_t transparent = 0;
+    const std::size_t step = std::max<std::size_t>(1u, count / 256u);
+    for (std::size_t i = 0; i < count; i += step) {
+        if (rgba[i * 4u + 3u] < 16u)
+            ++transparent;
+    }
+    if (transparent > 8u)
+        return; // already has a usable alpha hole
+
+    for (std::size_t i = 0; i < count; ++i) {
+        std::uint8_t* p = rgba + i * 4u;
+        const int luma = (static_cast<int>(p[0]) * 3 + static_cast<int>(p[1]) * 4
+                          + static_cast<int>(p[2])) / 8;
+        if (luma < 28) {
+            p[0] = p[1] = p[2] = p[3] = 0;
+        } else {
+            p[0] = p[1] = p[2] = 255;
+            p[3] = static_cast<std::uint8_t>(std::min(255, luma + 40));
+        }
+    }
+}
+
+} // namespace
 
 bool SidebarAnimation::load(nxui::GpuDevice& gpu, nxui::Renderer& ren,
                             const std::string& webpPath,
@@ -73,7 +109,6 @@ bool SidebarAnimation::load(nxui::GpuDevice& gpu, nxui::Renderer& ren,
             const int nextSourceFrame = (frame + 1) * frameCount / framesToUpload;
             const stbi_uc* source = decoded +
                 static_cast<std::size_t>(sourceFrame) * width * height * 4u;
-            const std::uint8_t* upload = source;
             if (uploadWidth != width || uploadHeight != height) {
                 for (int y = 0; y < uploadHeight; ++y) {
                     const int sourceY = y * height / uploadHeight;
@@ -86,11 +121,13 @@ bool SidebarAnimation::load(nxui::GpuDevice& gpu, nxui::Renderer& ren,
                         std::copy_n(pixel, 4, target);
                     }
                 }
-                upload = scaled.data();
+            } else {
+                std::memcpy(scaled.data(), source, bytesPerFrame);
             }
+            repairWireframeAlpha(scaled.data(), uploadWidth, uploadHeight);
             nxui::Texture texture;
             if (!texture.loadFromPixels(
-                    gpu, ren, upload, uploadWidth, uploadHeight))
+                    gpu, ren, scaled.data(), uploadWidth, uploadHeight))
                 break;
             m_frames.push_back(std::move(texture));
             int sampledDuration = 0;
@@ -181,7 +218,9 @@ bool SidebarAnimation::load(nxui::GpuDevice& gpu, nxui::Renderer& ren,
             continue;
         }
 
-        const uint8_t* uploadPixels = rgba;
+        // Always copy into a mutable buffer so we can repair alpha in-place.
+        if (scaledBuf.size() < bytesPerFrame)
+            scaledBuf.resize(bytesPerFrame);
         if (needScale) {
             for (int y = 0; y < uploadH; ++y) {
                 int srcY = (y * static_cast<int>(info.canvas_height)) / uploadH;
@@ -194,8 +233,11 @@ bool SidebarAnimation::load(nxui::GpuDevice& gpu, nxui::Renderer& ren,
                     d[0] = s[0]; d[1] = s[1]; d[2] = s[2]; d[3] = s[3];
                 }
             }
-            uploadPixels = scaledBuf.data();
+        } else {
+            std::memcpy(scaledBuf.data(), rgba, bytesPerFrame);
         }
+        repairWireframeAlpha(scaledBuf.data(), uploadW, uploadH);
+        const uint8_t* uploadPixels = scaledBuf.data();
 
         nxui::Texture tex;
         if (tex.loadFromPixels(gpu, ren, uploadPixels, uploadW, uploadH)) {

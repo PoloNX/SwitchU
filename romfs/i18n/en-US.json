@@ -767,7 +767,9 @@
       "remove_hint": "This theme can be removed from the console.",
       "builtin_hint": "This is part of the built-in theme set.",
       "apply": "Apply Theme",
-      "remove": "Remove Theme"
+      "remove": "Remove Theme",
+      "remove_confirm": "Remove this theme from the console?",
+      "remove_confirm_yes": "Remove"
     },
     "community": {
       "title": "Browse Themes",
@@ -791,6 +793,8 @@
       "cover_unavailable": "The screenshot could not be loaded. Placeholder shown instead.",
       "install": "Install",
       "download_apply": "Download + Apply",
+      "download_apply_confirm_title": "Download And Apply",
+      "download_apply_confirm": "Download this theme and apply it to HOME now?",
       "transfer_busy": "Another theme transfer is already running.",
       "install_pending": "Install flow is not wired yet.",
       "download_apply_pending": "Download + apply flow is not wired yet.",
@@ -833,6 +837,8 @@
       "status_online": "Available online",
       "download_hint": "Install to download this pack to the console.",
       "remove_hint": "Downloaded pack: it can be removed from the console.",
+      "download_apply_confirm_title": "Download And Apply",
+      "download_apply_confirm": "Download this icon pack and apply it now?",
       "dialog_title": "Downloading Icon Pack",
       "prepare_download": "Preparing icon pack download...",
       "finalize_download": "Finishing icon pack install...",

@@ -539,4 +539,61 @@ bool probeIconLooksColour(const std::string& path) {
     return !stats.mono;
 }
 
+bool probeIconMeanHsl(const std::string& path, float& outH, float& outS, float& outL) {
+    outH = 0.f;
+    outS = 0.45f;
+    outL = 0.55f;
+    if (path.empty())
+        return false;
+    int w = 0, h = 0, ch = 0;
+    std::uint8_t* data = stbi_load(path.c_str(), &w, &h, &ch, 4);
+    if (!data || w <= 0 || h <= 0) {
+        if (data)
+            stbi_image_free(data);
+        return false;
+    }
+    const bool ok = sampleMeanHsl(data, w, h, outH, outS, outL);
+    stbi_image_free(data);
+    return ok;
+}
+
+namespace {
+
+float pivotToReach(float from, float target) {
+    from = std::clamp(from, 0.001f, 0.999f);
+    target = std::clamp(target, 0.f, 1.f);
+    if (std::fabs(from - target) < 0.0005f)
+        return 0.5f;
+    if (target <= from) {
+        // target = from * (pivot * 2) when pivot <= 0.5
+        return std::clamp(target / (2.f * from), 0.f, 0.5f);
+    }
+    // target = from + (1 - from) * ((pivot - 0.5) * 2)
+    return std::clamp((target - from) / (2.f * (1.f - from)) + 0.5f, 0.5f, 1.f);
+}
+
+} // namespace
+
+MatchThemePivots computeMatchThemePivots(float meanH, float meanS, float meanL,
+                                        float accentH, float accentS, float accentL) {
+    MatchThemePivots out;
+    meanH -= std::floor(meanH);
+    accentH -= std::floor(accentH);
+    meanS = std::clamp(meanS, 0.f, 1.f);
+    meanL = std::clamp(meanL, 0.f, 1.f);
+    accentS = std::clamp(accentS, 0.f, 1.f);
+    accentL = std::clamp(accentL, 0.f, 1.f);
+    // Weak / near-gray accents still get a usable colour (same floor Flatten uses).
+    if (accentS < 0.08f)
+        accentS = 0.45f;
+    accentL = std::clamp(accentL, 0.22f, 0.82f);
+
+    float hue = 0.5f + (accentH - meanH);
+    hue -= std::floor(hue);
+    out.hue = std::clamp(hue, 0.f, 1.f);
+    out.sat = pivotToReach(meanS, accentS);
+    out.light = pivotToReach(meanL, accentL);
+    return out;
+}
+
 } // namespace switchu::icons

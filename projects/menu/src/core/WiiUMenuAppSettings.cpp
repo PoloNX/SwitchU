@@ -3,6 +3,7 @@
 #include "icons/IconPackManager.hpp"
 #include "themeshop/ThemePackageInstaller.hpp"
 #include "themeshop/ThemeHttp.hpp"
+#include "widgets/AdaptiveIconLoad.hpp"
 #include "widgets/GlossyIcon.hpp"
 #include "DebugLog.hpp"
 
@@ -242,7 +243,12 @@ void WiiUMenuApp::createSettings() {
     m_settings->setTheme(&m_theme);
     m_settings->setInstantCursorMotion(m_config.cursorMotionMode == 1);
     m_settings->setWireframeState(m_showWireframe);
+    m_settings->setMusicState(m_audio.isPlaying(), m_audio.volume(), m_audio.sfxVolume());
     m_settings->setGridLayoutState(m_config.gridColumns, m_config.gridRows);
+    m_settings->setSortLargeTilesState(m_config.sortLargeTiles);
+    m_settings->setActionHintStyleState(m_config.actionHintStyle == "panel" ? 0 : 1);
+    m_settings->setCursorMotionModeState(m_config.cursorMotionMode);
+    m_settings->setPageTransitionModeState(m_config.pageTransitionMode);
     m_settings->setUiLanguageOverride(m_config.uiLanguageOverride);
     m_settings->setClockUse12HourState(m_config.clockUse12Hour);
     m_settings->setWebClockSyncState(m_config.webClockSyncEnabled);
@@ -284,6 +290,23 @@ void WiiUMenuApp::createSettings() {
         m_showWireframe = enabled;
         app().renderer().setBoxWireframeEnabled(enabled);
     });
+    m_settings->onMusicEnabledChange([this](bool enabled) {
+        m_config.musicEnabled = enabled;
+        if (enabled)
+            m_audio.play();
+        else
+            m_audio.pause();
+        persistMusicPlaybackState(false);
+        m_config.save();
+    });
+    m_settings->onMusicVolumeChange([this](float v) {
+        m_audio.setVolume(v);
+        m_config.musicVolume = v;
+    });
+    m_settings->onSfxVolumeChange([this](float v) {
+        m_audio.setSfxVolume(v);
+        m_config.sfxVolume = v;
+    });
     m_settings->onGridColumnsChange([this](int cols) {
         cols = std::clamp(cols, 1, 8);
         if (m_config.gridColumns == cols)
@@ -297,6 +320,35 @@ void WiiUMenuApp::createSettings() {
             return;
         m_config.gridRows = rows;
         reflowHomeGrid();
+    });
+    m_settings->onSortLargeTilesChange([this](bool enabled) {
+        if (m_config.sortLargeTiles == enabled)
+            return;
+        m_config.sortLargeTiles = enabled;
+        m_config.save();
+        reflowHomeGrid();
+    });
+    m_settings->onActionHintStyleChange([this](int style) {
+        m_config.actionHintStyle = style == 0 ? "panel" : "capsules";
+    });
+    m_settings->onCursorMotionModeChange([this](int mode) {
+        m_config.cursorMotionMode = std::clamp(mode, 0, 1);
+        const bool instant = m_config.cursorMotionMode == 1;
+        if (m_cursor) m_cursor->setInstantMotion(instant);
+        if (m_settings) m_settings->setInstantCursorMotion(instant);
+        if (m_themeShop) m_themeShop->setInstantCursorMotion(instant);
+        if (m_gameOptions) m_gameOptions->setInstantCursorMotion(instant);
+        if (m_folderOptions) m_folderOptions->setInstantCursorMotion(instant);
+        if (m_quickSettings) m_quickSettings->setInstantCursorMotion(instant);
+        if (m_dialog) m_dialog->cursor().setInstantMotion(instant);
+        if (m_userSelect) m_userSelect->cursor().setInstantMotion(instant);
+        updateCursor();
+    });
+    m_settings->onPageTransitionModeChange([this](int mode) {
+        m_config.pageTransitionMode = std::clamp(mode, 0, 1);
+        if (m_grid)
+            m_grid->setSlideTransition(m_config.pageTransitionMode == 0);
+        m_config.save();
     });
     m_settings->onUiLanguageChange([this](const std::string& tag) {
         m_config.uiLanguageOverride = tag;
@@ -1748,7 +1800,21 @@ void WiiUMenuApp::createThemeShop() {
             startThemePackageTransfer(entryCopy, applyAfterInstall);
         };
 
-        if (!pathExists(destination)) {
+        // Finish any in-flight uninstall before we decide "already installed".
+        if (m_themeDeleteFuture.valid()) {
+            m_themeDeleteFuture.wait();
+            m_themeDeleteFuture = {};
+        }
+
+        // Only a real package (theme.json) counts. Empty/orphan folders left by a
+        // failed async delete used to trigger a bogus "Replace Installed Theme".
+        const bool packagePresent = pathExists(joinPath(destination, "theme.json"));
+        if (!packagePresent) {
+            if (pathExists(destination)) {
+                const bool cleaned = removeDirectoryRecursive(destination);
+                DebugLog::log("[themeshop] cleared orphan theme folder before install: %s (%s)",
+                              safeLogPath(destination), cleaned ? "ok" : "failed");
+            }
             startTransfer();
             return;
         }
@@ -1814,6 +1880,9 @@ void WiiUMenuApp::createThemeShop() {
     m_themeShop->setActionHintStyleState(m_config.actionHintStyle);
     m_themeShop->setSortLargeTilesState(m_config.sortLargeTiles);
     m_themeShop->setIconContrastAdaptState(m_config.iconContrastAdapt);
+    m_themeShop->setThemeMatchAccent(m_activeColors.accentH,
+                                     m_activeColors.accentS,
+                                     m_activeColors.accentL);
     {
         std::unordered_map<std::string, ThemeShopScreen::IconPackTintState> tints;
         for (const auto& [packId, tint] : m_config.iconPackTints) {
@@ -1821,6 +1890,7 @@ void WiiUMenuApp::createThemeShop() {
             state.enabled = tint.enabled;
             state.flatten = tint.flatten;
             state.grayscale = tint.grayscale;
+            state.matchTheme = tint.matchTheme;
             state.hue = tint.hue;
             state.sat = tint.sat;
             state.light = tint.light;
@@ -1945,6 +2015,7 @@ void WiiUMenuApp::createThemeShop() {
         cfg.enabled = tint.enabled;
         cfg.flatten = tint.flatten;
         cfg.grayscale = tint.grayscale;
+        cfg.matchTheme = tint.matchTheme;
         cfg.hue = std::clamp(tint.hue, 0.f, 1.f);
         cfg.sat = std::clamp(tint.sat, 0.f, 1.f);
         cfg.light = std::clamp(tint.light, 0.f, 1.f);
@@ -1952,6 +2023,7 @@ void WiiUMenuApp::createThemeShop() {
         if (previous.enabled == cfg.enabled
             && previous.flatten == cfg.flatten
             && previous.grayscale == cfg.grayscale
+            && previous.matchTheme == cfg.matchTheme
             && std::fabs(previous.hue - cfg.hue) < 0.0005f
             && std::fabs(previous.sat - cfg.sat) < 0.0005f
             && std::fabs(previous.light - cfg.light) < 0.0005f)
@@ -2019,7 +2091,19 @@ void WiiUMenuApp::createThemeShop() {
             return;
         }
 
-        deletePreset(presetId);
+        if (!m_dialog) {
+            deletePreset(presetId);
+            return;
+        }
+        m_dialogReturnFocus = focusManager().current();
+        m_dialog->show(
+            i18n.tr("themeshop.installed.remove", "Remove Theme"),
+            i18n.tr("themeshop.installed.remove_confirm",
+                    "Remove this theme from the console?"),
+            {{i18n.tr("button.cancel", "Cancel"), {}, false},
+             {i18n.tr("themeshop.installed.remove_confirm_yes", "Remove"),
+              [this, presetId]() { deletePreset(presetId); }, true}});
+        focusManager().setFocus(m_dialog.get());
     });
     m_themeShop->onThemeShopDownload([queueThemeTransfer](const std::string& themeId) {
         queueThemeTransfer(themeId, false);
@@ -2117,7 +2201,10 @@ void WiiUMenuApp::startThemePackageTransfer(const ThemeCatalogClient::Entry& ent
 
     if (m_themeShop)
         m_themeShop->setPackageTransferState(shared->state, shared->themeId, shared->installMode);
-    if (m_progressDialog) {
+    // Theme Shop shows on-card / thin-sheet progress — skip the modal so we
+    // don't steal focus or pressure the Community preview GPU budget.
+    const bool inlineThemeShopProgress = m_themeShop && m_themeShop->isActive();
+    if (m_progressDialog && !inlineThemeShopProgress) {
         m_progressDialog->setTheme(&m_theme);
         m_progressDialog->show(i18n.tr("themeshop.transfer.dialog_title", "Downloading Theme"),
                                preparingLabel,
@@ -2215,7 +2302,8 @@ void WiiUMenuApp::startIconPackTransfer(const ThemeCatalogClient::IconEntry& ent
     m_themePackageTransferHandledRevision = 0;
 
     m_themeShop->setPackageTransferState(shared->state, shared->themeId, true);
-    if (m_progressDialog) {
+    const bool inlineThemeShopProgress = m_themeShop->isActive();
+    if (m_progressDialog && !inlineThemeShopProgress) {
         m_progressDialog->setTheme(&m_theme);
         m_progressDialog->show(i18n.tr("themeshop.icons.dialog_title", "Downloading Icon Pack"),
                                preparingLabel,
@@ -2371,7 +2459,8 @@ void WiiUMenuApp::syncThemePackageTransfer() {
     if (revision != m_themePackageTransferUiRevision) {
         if (m_themeShop)
             m_themeShop->setPackageTransferState(state, themeId, installMode);
-        if (m_progressDialog && state.isRunning()) {
+        const bool inlineThemeShopProgress = m_themeShop && m_themeShop->isActive();
+        if (m_progressDialog && state.isRunning() && !inlineThemeShopProgress) {
             auto& i18n = nxui::I18n::instance();
             m_progressDialog->updateState(
                 state.label().empty()
@@ -2667,6 +2756,9 @@ void WiiUMenuApp::refreshThemeShopState() {
     m_themeShop->setMusicState(m_audio.isPlaying(), m_audio.volume(), m_audio.sfxVolume());
     m_themeShop->setSortLargeTilesState(m_config.sortLargeTiles);
     m_themeShop->setIconContrastAdaptState(m_config.iconContrastAdapt);
+    m_themeShop->setThemeMatchAccent(m_activeColors.accentH,
+                                     m_activeColors.accentS,
+                                     m_activeColors.accentL);
     {
         std::unordered_map<std::string, ThemeShopScreen::IconPackTintState> tints;
         for (const auto& [packId, tint] : m_config.iconPackTints) {
@@ -2674,6 +2766,7 @@ void WiiUMenuApp::refreshThemeShopState() {
             state.enabled = tint.enabled;
             state.flatten = tint.flatten;
             state.grayscale = tint.grayscale;
+            state.matchTheme = tint.matchTheme;
             state.hue = tint.hue;
             state.sat = tint.sat;
             state.light = tint.light;
@@ -2739,6 +2832,7 @@ void WiiUMenuApp::activateThemePreset(ThemePreset* preset, bool applyBundledSoun
     DebugLog::log("[theme-apply] rebuildThemeFromColors start: preset=%s", presetRef.c_str());
     rebuildThemeFromColors();
     DebugLog::log("[theme-apply] rebuildThemeFromColors done: preset=%s", presetRef.c_str());
+    rematchIconPackTintsToTheme();
 
     if (applyBundledSound && !preset->soundPreset.empty()) {
         DebugLog::log("[theme-apply] changeSoundPreset queued: preset=%s sound=%s",
@@ -3438,16 +3532,6 @@ void WiiUMenuApp::deletePreset(const std::string& presetId) {
         userPresets.end());
     ThemePreset::saveUserPresets(userPresets);
 
-    if (source == ThemePresetSource::InstalledPackage && !installPath.empty()) {
-        if (m_themeDeleteFuture.valid())
-            m_themeDeleteFuture.wait();
-        m_themeDeleteFuture = m_threadPool.submit([installPath]() {
-            const bool removed = removeDirectoryRecursive(installPath);
-            DebugLog::log("[theme-delete] async removal %s: %s",
-                          removed ? "complete" : "failed", safeLogPath(installPath));
-        });
-    }
-
     if (!soundPreset.empty() && m_config.soundPreset == soundPreset) {
         m_config.soundPreset = "wiiu";
         changeSoundPreset(m_config.soundPreset);
@@ -3459,6 +3543,9 @@ void WiiUMenuApp::deletePreset(const std::string& presetId) {
             const auto pos = installPath.find_last_of("/\\");
             folder = (pos == std::string::npos) ? installPath : installPath.substr(pos + 1);
         }
+        // package:slug ids store the folder under installPath; strip prefix for pack ids.
+        if (folder.rfind("package:", 0) == 0)
+            folder = folder.substr(8);
         const std::string themePackId = switchu::icons::makeThemePackId(folder);
         const std::string legacyPackId = switchu::icons::makeThemePackId(idToDelete);
         if ((!themePackId.empty() && m_config.iconPack == themePackId)
@@ -3471,6 +3558,8 @@ void WiiUMenuApp::deletePreset(const std::string& presetId) {
         }
     }
 
+    // Leave the package BEFORE deleting files — otherwise open fonts/textures can
+    // lock the folder, remove_all fails, and Community still thinks it's installed.
     if (deletingActive) {
         m_activePresetName = defaultThemeRef();
         m_config.themePreset = defaultThemeRef();
@@ -3483,8 +3572,26 @@ void WiiUMenuApp::deletePreset(const std::string& presetId) {
             m_config.themePreset = m_activePresetName;
             m_activeColors = fallback->colors;
             m_activeMode = fallback->mode;
+            m_forceThemeResourceReload = true;
         }
         rebuildThemeFromColors();
+    }
+
+    if (source == ThemePresetSource::InstalledPackage && !installPath.empty()) {
+        if (m_themeDeleteFuture.valid()) {
+            m_themeDeleteFuture.wait();
+            m_themeDeleteFuture = {};
+        }
+        // Sync remove so Installed → Community reinstall does not race an orphan folder.
+        const bool removed = removeDirectoryRecursive(installPath);
+        DebugLog::log("[theme-delete] removal %s: %s",
+                      removed ? "complete" : "failed", safeLogPath(installPath));
+        if (!removed || pathExists(installPath)) {
+            // One more pass after resources have switched away.
+            const bool retry = removeDirectoryRecursive(installPath);
+            DebugLog::log("[theme-delete] retry %s: %s",
+                          retry ? "complete" : "failed", safeLogPath(installPath));
+        }
     }
 
     refreshThemeShopState();
@@ -3578,6 +3685,65 @@ void WiiUMenuApp::syncSoftwareDeletion() {
     m_softwareDeleteTitleId = 0;
     m_softwareDeleteTitle.clear();
     m_softwareDeleteClosesGameOptions = false;
+}
+
+void WiiUMenuApp::rematchIconPackTintsToTheme() {
+    float accentH = m_activeColors.accentH;
+    float accentS = m_activeColors.accentS;
+    float accentL = m_activeColors.accentL;
+    if (accentS < 0.05f && accentL < 0.08f
+        && (m_activeColors.cursorS >= 0.05f || m_activeColors.cursorL >= 0.08f)) {
+        accentH = m_activeColors.cursorH;
+        accentS = std::max(0.f, m_activeColors.cursorS);
+        accentL = std::max(0.f, m_activeColors.cursorL);
+    }
+    if (m_themeShop)
+        m_themeShop->setThemeMatchAccent(accentH, accentS, accentL);
+
+    // Rematch every pack that already has Match on. Do NOT move/clear Match
+    // when a theme switches the active icon pack (e.g. iiSU) — Atmos keeps Auto.
+    bool any = false;
+    for (auto& [packId, tint] : m_config.iconPackTints) {
+        if (!tint.matchTheme)
+            continue;
+        float meanH = 0.f, meanS = 0.45f, meanL = 0.55f;
+        const std::string sample =
+            switchu::icons::resolveGlyphPath(SD_ASSETS, packId, "album.png");
+        if (!sample.empty())
+            switchu::icons::probeIconMeanHsl(sample, meanH, meanS, meanL);
+        const auto pivots = switchu::icons::computeMatchThemePivots(
+            meanH, meanS, meanL, accentH, accentS, accentL);
+        tint.enabled = true;
+        tint.grayscale = false;
+        tint.matchTheme = true;
+        tint.hue = pivots.hue;
+        tint.sat = pivots.sat;
+        tint.light = pivots.light;
+        any = true;
+    }
+    if (!any)
+        return;
+
+    m_config.save();
+    syncColourIconContrast();
+    // Push rematched tints into Theme Shop before invalidating so hslKeys match.
+    if (m_themeShop) {
+        std::unordered_map<std::string, ThemeShopScreen::IconPackTintState> tints;
+        for (const auto& [packId, tint] : m_config.iconPackTints) {
+            ThemeShopScreen::IconPackTintState state;
+            state.enabled = tint.enabled;
+            state.flatten = tint.flatten;
+            state.grayscale = tint.grayscale;
+            state.matchTheme = tint.matchTheme;
+            state.hue = tint.hue;
+            state.sat = tint.sat;
+            state.light = tint.light;
+            tints[packId] = state;
+        }
+        m_themeShop->setIconPackTintState(tints);
+        m_themeShop->setThemeMatchAccent(accentH, accentS, accentL);
+        m_themeShop->invalidateIconPackPreviews();
+    }
 }
 
 void WiiUMenuApp::syncColourIconContrast() {

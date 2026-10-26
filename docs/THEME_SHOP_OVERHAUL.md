@@ -26,7 +26,7 @@ We are **not** throwing away catalog / HTTP / install / draft-tint. Those alread
 
 ## Phases
 
-### Phase 1 — eShop shelf + product sheet *(in progress on this branch)*
+### Phase 1 — eShop shelf + product sheet *(done on this branch)*
 
 Visible redesign without a full rewrite:
 
@@ -35,20 +35,23 @@ Visible redesign without a full rewrite:
 2. **Detail (product sheet)** — done (hero + quiet copy + stronger primary CTA)  
 3. **Icons studio** — Flatten keeps mean hue; Flatten+Gray honors Light  
 4. **Community covers** — prefetch aligned to 3-col shelf; cache reserve when leaving tab  
+5. **First-focus hitch** — warm disk catalog + first shelf covers while still on Installed  
+
+Checkpoint before hitch / Phase 2: `checkpoint/themeshop-eshop-20261025-1538`
 
 ### Phase 2 — Structure
 
-1. Extract `PreviewPipeline` (local + remote adapters) out of `ThemeShopScreen`  
+1. Extract `PreviewPipeline` (local + remote adapters) out of `ThemeShopScreen` — *disk cache skeleton landed*  
 2. Split Themes vs Icons **presenters** under the same overlay chrome  
-3. Thin `ThemeShopScreenUi.cpp` (stop `isIconsTab()` branching everywhere)  
-4. First-focus Community hitch (catalog / HTTP bootstrap)
+3. Thin `ThemeShopScreenUi.cpp` (stop `isIconsTab()` branching everywhere)
 
 ### Phase 3 — Options + polish
 
-1. Options tab: keep only theme/icon-adjacent prefs (Auto Theme, adaptive contrast)  
-2. Move music / grid / sort / cursor prefs back toward Settings  
-3. Install progress on-card / thin sheet (avoid nuking Community cache mid-transfer)  
-4. Motion pass: 2–3 intentional transitions only
+1. Options tab: keep only theme/icon-adjacent prefs (Auto Theme, adaptive contrast) — *done*  
+2. Move music / grid / sort / cursor prefs to Settings → Audio / Display — *done*  
+3. Install progress on-card / thin sheet (avoid nuking Community cache mid-transfer) — *done*  
+4. Motion pass: page slide + detail rise — *done*  
+5. Confirms: Remove + Download/Apply (Install stays one-tap) — *done*
 
 ## Non-goals (for now)
 

@@ -63,11 +63,13 @@ struct AppConfig {
     // (Theme > Options). Default on — matches pre-PoloNX enjoyment.
     bool iconContrastAdapt = true;
     // Per-pack Photoshop-style HSL adjust (0.5 pivots = leave original) plus
-    // Flatten / Grayscale presentation toggles.
+    // Solid / Grayscale presentation toggles. matchTheme keeps pivots synced
+    // to the active theme accent until the user edits HSL or turns it off.
     struct IconPackTint {
         bool enabled = false;
         bool flatten = false;
         bool grayscale = false;
+        bool matchTheme = false;
         float hue = 0.5f;
         float sat = 0.5f;
         float light = 0.5f;
@@ -82,7 +84,7 @@ struct AppConfig {
     }
     void setIconPackTint(const std::string& packId, const IconPackTint& tint) {
         const std::string id = packId.empty() ? "default" : packId;
-        if (!tint.enabled && !tint.flatten && !tint.grayscale
+        if (!tint.enabled && !tint.flatten && !tint.grayscale && !tint.matchTheme
             && std::fabs(tint.hue - 0.5f) < 0.0005f
             && std::fabs(tint.sat - 0.5f) < 0.0005f
             && std::fabs(tint.light - 0.5f) < 0.0005f) {

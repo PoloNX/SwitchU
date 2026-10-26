@@ -111,9 +111,12 @@ bool AppConfig::load() {
             readJsonOpt(value, "enabled", tint.enabled);
             readJsonOpt(value, "flatten", tint.flatten);
             readJsonOpt(value, "grayscale", tint.grayscale);
+            readJsonOpt(value, "matchTheme", tint.matchTheme);
             readJsonOpt(value, "hue", tint.hue);
             readJsonOpt(value, "sat", tint.sat);
             readJsonOpt(value, "light", tint.light);
+            if (tint.matchTheme)
+                tint.enabled = true;
             tint.hue = std::clamp(tint.hue, 0.f, 1.f);
             tint.sat = std::clamp(tint.sat, 0.f, 1.f);
             tint.light = std::clamp(tint.light, 0.f, 1.f);
@@ -288,6 +291,7 @@ bool AppConfig::save() const {
                 {"enabled", tint.enabled},
                 {"flatten", tint.flatten},
                 {"grayscale", tint.grayscale},
+                {"matchTheme", tint.matchTheme},
                 {"hue", std::clamp(tint.hue, 0.f, 1.f)},
                 {"sat", std::clamp(tint.sat, 0.f, 1.f)},
                 {"light", std::clamp(tint.light, 0.f, 1.f)},

@@ -395,6 +395,8 @@ private:
     std::string iconsDirectoryForPack(const std::string& packId) const;
     void applyIconPack(const std::string& packId);
     void syncColourIconContrast();
+    // Recompute HSL pivots for packs with Match theme when accent colours change.
+    void rematchIconPackTintsToTheme();
     void reloadSidebarIcons();
     std::string resolveActiveIconGlyphPath(const char* fileName) const;
     void startThemePackageTransfer(const ThemeCatalogClient::Entry& entry, bool installMode);

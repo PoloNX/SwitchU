@@ -351,6 +351,106 @@ void drawSpinner(nxui::Renderer& ren, const nxui::Vec2& center, float radius,
     }
 }
 
+// GameCube-ish tumble: diagonal roll + GIF-style breathe + soft ghost trail.
+void drawCatalogLoadingCubePose(nxui::Renderer& ren,
+                                const nxui::Vec2& center,
+                                float size,
+                                float yaw,
+                                float pitch,
+                                float roll,
+                                const nxui::Color& color,
+                                float opacity,
+                                float lineScale = 1.f) {
+    const float cy = std::cos(yaw), sy = std::sin(yaw);
+    const float cp = std::cos(pitch), sp = std::sin(pitch);
+    const float cr = std::cos(roll), sr = std::sin(roll);
+    const float s = size * 0.40f;
+
+    nxui::Vec2 projected[8];
+    float depth[8];
+    int nearest = 0;
+    for (int i = 0; i < 8; ++i) {
+        float x = (i & 1) ? 1.f : -1.f;
+        float y = (i & 2) ? 1.f : -1.f;
+        float z = (i & 4) ? 1.f : -1.f;
+        // Roll → pitch → yaw (tumble over a corner).
+        float x0 = x * cr - y * sr;
+        float y0 = x * sr + y * cr;
+        float y1 = y0 * cp - z * sp;
+        float z1 = y0 * sp + z * cp;
+        float x2 = x0 * cy + z1 * sy;
+        float z2 = -x0 * sy + z1 * cy;
+        depth[i] = z2;
+        if (z2 > depth[nearest])
+            nearest = i;
+        projected[i] = {
+            center.x + (x2 - z2) * s * 0.72f,
+            center.y + (y1 * 0.92f + (x2 + z2) * 0.38f) * s * 0.72f
+        };
+    }
+
+    struct Edge { int a; int b; float z; };
+    Edge edges[12] = {
+        {0, 1, 0}, {1, 3, 0}, {3, 2, 0}, {2, 0, 0},
+        {4, 5, 0}, {5, 7, 0}, {7, 6, 0}, {6, 4, 0},
+        {0, 4, 0}, {1, 5, 0}, {2, 6, 0}, {3, 7, 0},
+    };
+    for (auto& e : edges)
+        e.z = 0.5f * (depth[e.a] + depth[e.b]);
+    std::sort(edges, edges + 12, [](const Edge& lhs, const Edge& rhs) {
+        return lhs.z < rhs.z;
+    });
+
+    const float zMin = edges[0].z;
+    const float zMax = edges[11].z;
+    const float zSpan = std::max(0.001f, zMax - zMin);
+
+    for (const auto& e : edges) {
+        const nxui::Vec2& a = projected[e.a];
+        const nxui::Vec2& b = projected[e.b];
+        const float t = (e.z - zMin) / zSpan;
+        const bool touchesNear = (e.a == nearest || e.b == nearest);
+        const float edgeAlpha = (0.28f + 0.72f * t) * opacity * (touchesNear ? 1.f : 0.82f);
+        const float thick = (touchesNear ? 2.85f : 2.2f) * lineScale;
+        ren.drawLine(a, b, nxui::Color(0.f, 0.f, 0.f, 0.20f * edgeAlpha), thick + 1.6f);
+        ren.drawLine(a, b, color.withAlpha(edgeAlpha), thick);
+    }
+
+    // Soft highlight on the nearest corner (logo “apex” energy).
+    if (opacity > 0.15f) {
+        ren.drawCircle(projected[nearest], 2.6f * lineScale,
+                       color.withAlpha(0.55f * opacity), 12);
+    }
+}
+
+void drawCatalogLoadingCube(nxui::Renderer& ren,
+                            const nxui::Vec2& center,
+                            float size,
+                            float time,
+                            const nxui::Color& color,
+                            float opacity) {
+    // Slightly snappier breathe than the first tumble pass.
+    const float breathe = 0.5f + 0.5f * std::sin(time * 2.65f);
+    const float eased = breathe * breathe * (3.f - 2.f * breathe);
+    const float pulse = 0.78f + 0.42f * eased;
+
+    // Continuous corner-over-corner tumble (~25% faster).
+    const float yaw = time * 1.35f;
+    const float pitch = 0.55f + time * 0.92f;
+    const float roll = time * 0.62f;
+
+    // Ghost trail — slightly smaller / earlier pose.
+    drawCatalogLoadingCubePose(ren, center, size * pulse * 0.96f,
+                               yaw - 0.22f, pitch - 0.16f, roll - 0.12f,
+                               color, opacity * 0.20f, 0.85f);
+    drawCatalogLoadingCubePose(ren, center, size * pulse * 0.98f,
+                               yaw - 0.10f, pitch - 0.07f, roll - 0.05f,
+                               color, opacity * 0.38f, 0.92f);
+    drawCatalogLoadingCubePose(ren, center, size * pulse,
+                               yaw, pitch, roll,
+                               color, opacity, 1.f);
+}
+
 void drawChip(nxui::Renderer& ren, nxui::Font* font, const nxui::Rect& rect,
               const std::string& text, const nxui::Color& fill, const nxui::Color& border,
               const nxui::Color& textColor, float opacity, float scale = 0.72f) {
@@ -450,37 +550,6 @@ void drawPreviewPlaceholder(nxui::Renderer& ren,
     }
 }
 
-void drawSpectrumBadge(nxui::Renderer& ren, const nxui::Rect& rect, float opacity) {
-    if (rect.width <= 1.f || rect.height <= 1.f)
-        return;
-    const float radius = std::min(4.f, rect.height * 0.35f);
-    ren.drawRoundedRect(rect, nxui::Color(0.f, 0.f, 0.f, 0.28f * opacity), radius);
-    // Four solid swatches - clearer than a fine rainbow gradient.
-    static const nxui::Color kSwatches[4] = {
-        nxui::Color(0.92f, 0.28f, 0.32f, 1.f),
-        nxui::Color(0.98f, 0.78f, 0.18f, 1.f),
-        nxui::Color(0.22f, 0.78f, 0.48f, 1.f),
-        nxui::Color(0.28f, 0.52f, 0.96f, 1.f),
-    };
-    constexpr int kBlocks = 4;
-    const float inset = 2.5f;
-    const float gap = 1.5f;
-    const float innerW = rect.width - inset * 2.f - gap * static_cast<float>(kBlocks - 1);
-    const float blockW = innerW / static_cast<float>(kBlocks);
-    const float blockH = rect.height - inset * 2.f;
-    const float blockR = std::min(2.5f, blockH * 0.35f);
-    for (int i = 0; i < kBlocks; ++i) {
-        nxui::Rect block = {
-            rect.x + inset + (blockW + gap) * static_cast<float>(i),
-            rect.y + inset,
-            std::max(1.f, blockW),
-            blockH
-        };
-        ren.drawRoundedRect(block, kSwatches[i].withAlpha(opacity), blockR);
-    }
-    ren.drawRoundedRectOutline(rect, nxui::Color(1.f, 1.f, 1.f, 0.18f * opacity), radius, 1.f);
-}
-
 void drawHueSpectrumTrack(nxui::Renderer& ren, const nxui::Rect& track, float hue01, float opacity,
                           bool focused) {
     constexpr int kBands = 24;
@@ -530,6 +599,8 @@ void drawTintTogglePill(nxui::Renderer& ren,
 struct IconTintLayout {
     nxui::Rect tintLabelRow;
     nxui::Rect tintPill;
+    nxui::Rect matchLabelRow;
+    nxui::Rect matchPill;
     nxui::Rect flattenLabelRow;
     nxui::Rect flattenPill;
     nxui::Rect grayLabelRow;
@@ -542,63 +613,124 @@ struct IconTintLayout {
     nxui::Rect lightTrack;
 };
 
-// Toggle stack + HSL under the pack preview (side column).
-IconTintLayout makeIconTintLayout(const nxui::Rect& band) {
+// HSL above toggles so Apply is reached without brushing sliders (which break Match).
+// Block is always vertically centered against the preview band — if HSL makes the
+// stack taller than the art, scale gaps/rows so it still fits and can center.
+IconTintLayout makeIconTintLayout(const nxui::Rect& band, bool showSliders, bool showHueSat) {
     IconTintLayout layout;
-    constexpr float kRowH = 34.f;
     constexpr float kPillW = 56.f;
-    constexpr float kPillH = 28.f;
-    constexpr float kToggleGap = 6.f;
-    auto placeToggle = [&](nxui::Rect& labelRow, nxui::Rect& pill, float y) {
-        labelRow = {band.x, y, band.width, kRowH};
-        pill = {band.x + band.width - kPillW - 2.f, y + 3.f, kPillW, kPillH};
-    };
-    float y = band.y;
-    placeToggle(layout.tintLabelRow, layout.tintPill, y);
-    y = layout.tintLabelRow.bottom() + kToggleGap;
-    placeToggle(layout.flattenLabelRow, layout.flattenPill, y);
-    y = layout.flattenLabelRow.bottom() + kToggleGap;
-    placeToggle(layout.grayLabelRow, layout.grayPill, y);
+    float rowH = 34.f;
+    float pillH = 28.f;
+    float toggleGap = 6.f;
+    float labelH = 20.f;
+    float trackH = 16.f;
+    float labelGap = 5.f;
+    float sectionGap = 14.f;
+    float sliderToToggleGap = 12.f;
 
-    constexpr float kLabelH = 20.f;
-    constexpr float kTrackH = 16.f;
-    constexpr float kLabelGap = 5.f;
-    constexpr float kSectionGap = 18.f;
-    y = layout.grayLabelRow.bottom() + 12.f;
-    layout.hueLabel = {band.x, y, band.width, kLabelH};
-    y = layout.hueLabel.bottom() + kLabelGap;
-    layout.hueTrack = {band.x, y, band.width, kTrackH};
-    y = layout.hueTrack.bottom() + kSectionGap;
-    layout.satLabel = {band.x, y, band.width, kLabelH};
-    y = layout.satLabel.bottom() + kLabelGap;
-    layout.satTrack = {band.x, y, band.width, kTrackH};
-    y = layout.satTrack.bottom() + kSectionGap;
-    layout.lightLabel = {band.x, y, band.width, kLabelH};
-    y = layout.lightLabel.bottom() + kLabelGap;
-    layout.lightTrack = {band.x, y, band.width, kTrackH};
+    auto measureBlockH = [&]() {
+        const float togglesH = 4.f * rowH + 3.f * toggleGap;
+        if (!showSliders)
+            return togglesH;
+        const int sliderCount = showHueSat ? 3 : 1;
+        const float slidersH = static_cast<float>(sliderCount) * (labelH + labelGap + trackH)
+            + static_cast<float>(std::max(0, sliderCount - 1)) * sectionGap
+            + sliderToToggleGap;
+        return togglesH + slidersH;
+    };
+
+    float blockH = measureBlockH();
+    constexpr float kMinPad = 6.f;
+    if (showSliders && band.height > 1.f && blockH + 2.f * kMinPad > band.height) {
+        const float target = std::max(40.f, band.height - 2.f * kMinPad);
+        const float s = std::clamp(target / blockH, 0.55f, 1.f);
+        rowH *= s;
+        pillH *= s;
+        toggleGap *= s;
+        labelH *= s;
+        trackH *= s;
+        labelGap *= s;
+        sectionGap *= s;
+        sliderToToggleGap *= s;
+        blockH = measureBlockH();
+    }
+    float y = band.y + std::max(0.f, (band.height - blockH) * 0.5f);
+
+    auto placeToggle = [&](nxui::Rect& labelRow, nxui::Rect& pill, float rowY) {
+        labelRow = {band.x, rowY, band.width, rowH};
+        pill = {band.x + band.width - kPillW - 2.f,
+                rowY + std::max(1.f, (rowH - pillH) * 0.5f),
+                kPillW,
+                pillH};
+    };
+
+    if (showSliders) {
+        if (showHueSat) {
+            layout.hueLabel = {band.x, y, band.width, labelH};
+            y = layout.hueLabel.bottom() + labelGap;
+            layout.hueTrack = {band.x, y, band.width, trackH};
+            y = layout.hueTrack.bottom() + sectionGap;
+            layout.satLabel = {band.x, y, band.width, labelH};
+            y = layout.satLabel.bottom() + labelGap;
+            layout.satTrack = {band.x, y, band.width, trackH};
+            y = layout.satTrack.bottom() + sectionGap;
+            layout.lightLabel = {band.x, y, band.width, labelH};
+            y = layout.lightLabel.bottom() + labelGap;
+            layout.lightTrack = {band.x, y, band.width, trackH};
+            y = layout.lightTrack.bottom() + sliderToToggleGap;
+        } else {
+            // Lightness alone reuses the hue slots (same as draw/touch path).
+            layout.hueLabel = {band.x, y, band.width, labelH};
+            y = layout.hueLabel.bottom() + labelGap;
+            layout.hueTrack = {band.x, y, band.width, trackH};
+            y = layout.hueTrack.bottom() + sliderToToggleGap;
+            layout.satLabel = {};
+            layout.satTrack = {};
+            layout.lightLabel = {};
+            layout.lightTrack = {};
+        }
+    } else {
+        layout.hueLabel = {};
+        layout.hueTrack = {};
+        layout.satLabel = {};
+        layout.satTrack = {};
+        layout.lightLabel = {};
+        layout.lightTrack = {};
+    }
+
+    placeToggle(layout.matchLabelRow, layout.matchPill, y);
+    y = layout.matchLabelRow.bottom() + toggleGap;
+    placeToggle(layout.tintLabelRow, layout.tintPill, y);
+    y = layout.tintLabelRow.bottom() + toggleGap;
+    placeToggle(layout.flattenLabelRow, layout.flattenPill, y);
+    y = layout.flattenLabelRow.bottom() + toggleGap;
+    placeToggle(layout.grayLabelRow, layout.grayPill, y);
     return layout;
 }
 
-// Large left preview (same footprint as theme detail) + roomy tint column on the right.
+// Large left preview + tint column. Icon studio is a glyph collage (not a 16:9
+// screenshot) — fill the body box so HSL+toggles have a tall partner to center on.
 nxui::Rect colourIconPreviewBounds(const nxui::Rect& dialog) {
     constexpr float kBodyTopInset = 78.f; // room for title above the studio preview
     constexpr float kBodyBottomInset = 92.f;
-    nxui::Rect bounds = {
+    return {
         dialog.x + 28.f,
         dialog.y + kBodyTopInset,
         dialog.width * 0.48f,
         dialog.height - kBodyTopInset - kBodyBottomInset
     };
-    return fitAspectRect(bounds, kPreviewAspect);
 }
 
 nxui::Rect colourIconTintBand(const nxui::Rect& dialog, const nxui::Rect& preview, bool tintExpanded) {
     (void)tintExpanded;
+    (void)dialog;
+    // Same vertical span as the preview art — controls center against that tile
+    // (Apply stays in the dialog footer and is not part of this band).
     return {
         preview.right() + 24.f,
-        dialog.y + 118.f,
+        preview.y,
         std::max(160.f, dialog.right() - preview.right() - 46.f),
-        std::max(80.f, dialog.height - 118.f - 96.f)
+        std::max(80.f, preview.height)
     };
 }
 
@@ -699,6 +831,25 @@ std::string transferLabel(const ThemeTransferState& state) {
     return state.label() + " (" + std::to_string(percent) + "%)";
 }
 
+void drawTransferProgressTrack(nxui::Renderer& ren,
+                               const nxui::Rect& track,
+                               float progress01,
+                               float opacity,
+                               const nxui::Color& accent) {
+    if (track.width <= 1.f || track.height <= 1.f)
+        return;
+    const float radius = track.height * 0.5f;
+    ren.drawRoundedRect(track, nxui::Color(0.f, 0.f, 0.f, 0.42f * opacity), radius);
+    ren.drawRoundedRectOutline(track, nxui::Color(1.f, 1.f, 1.f, 0.14f * opacity), radius, 1.f);
+    if (progress01 < 0.f)
+        return;
+    const float fillW = std::max(track.height,
+                                 track.width * std::clamp(progress01, 0.f, 1.f));
+    ren.drawRoundedRect({track.x, track.y, fillW, track.height},
+                        accent.withAlpha(0.95f * opacity),
+                        radius);
+}
+
 } // namespace
 
 bool ThemeShopScreen::isCommunityTab() const {
@@ -788,6 +939,17 @@ void ThemeShopScreen::setCurrentPage(int page) {
 void ThemeShopScreen::stepPage(int delta) {
     int before = currentPage();
     setCurrentPage(before + delta);
+    if (currentPage() == before || delta == 0)
+        return;
+    // Presence, not noise: short lateral settle when flipping shelves.
+    m_pageSlideFrom = delta > 0 ? 1.f : -1.f;
+    m_pageSlideAnim.setImmediate(1.f);
+    m_pageSlideAnim.set(0.f, 0.20f, nxui::Easing::outCubic);
+    // Kick decode for the landing page at slide start so cold flips recover faster.
+    if (isCommunityTab())
+        primeVisibleCommunityPreviews();
+    else if (isInstalledTab() || isIconsTab())
+        primeVisibleInstalledPreviews();
 }
 
 int& ThemeShopScreen::currentScrollRowRef() {
@@ -856,10 +1018,8 @@ void ThemeShopScreen::closeDetail() {
         m_packageTransferState.reset();
         m_packageTransferThemeId.clear();
         m_packageTransferInstallMode = false;
-    } else if (isCommunityTab()) {
-        clearCommunityPreviewCache();
-        m_lastPreviewPrimeKey.clear();
     }
+    // Keep Community covers warm while a package transfer runs in the background.
     discardIconPackTintDraft();
 }
 
@@ -894,20 +1054,29 @@ void ThemeShopScreen::activateDetailButton(int buttonIndex) {
         }
 
         std::string themeId = entry->id;
-        clearCommunityPreviewCache();
-        m_lastPreviewPrimeKey.clear();
         if (buttonIndex == 0) {
+            // Plain Install stays one-tap (Replace dialog still gates overwrites).
             if (m_themeShopDownloadCb) {
                 m_themeShopDownloadCb(themeId);
             } else {
                 requestToast(i18n.tr("themeshop.community.install_pending", "Install flow is not wired yet."), 2.5f);
             }
         } else if (buttonIndex == 1) {
-            if (m_themeShopDownloadInstallCb) {
-                m_themeShopDownloadInstallCb(themeId);
-            } else {
-                requestToast(i18n.tr("themeshop.community.download_apply_pending", "Download + apply flow is not wired yet."), 2.5f);
-            }
+            requestDialog(
+                i18n.tr("themeshop.community.download_apply_confirm_title", "Download And Apply"),
+                i18n.tr("themeshop.community.download_apply_confirm",
+                        "Download this theme and apply it to HOME now?"),
+                {{i18n.tr("button.cancel", "Cancel"), {}},
+                 {i18n.tr("themeshop.community.download_apply", "Download + Apply"),
+                  [this, themeId]() {
+                      if (m_themeShopDownloadInstallCb)
+                          m_themeShopDownloadInstallCb(themeId);
+                      else
+                          requestToast(nxui::I18n::instance().tr(
+                                           "themeshop.community.download_apply_pending",
+                                           "Download + apply flow is not wired yet."),
+                                       2.5f);
+                  }}});
         }
         return;
     }
@@ -921,11 +1090,24 @@ void ThemeShopScreen::activateDetailButton(int buttonIndex) {
 
     if (isIconsTab()) {
         if (!entry->installed) {
-            // Catalog pack: install it, optionally applying right away.
-            closeDetail();
-            StringCb& cb = (buttonIndex == 1) ? m_iconPackDownloadApplyCb : m_iconPackDownloadCb;
-            if (cb)
-                cb(themeId);
+            if (buttonIndex == 0) {
+                // Plain Install stays one-tap.
+                closeDetail();
+                if (m_iconPackDownloadCb)
+                    m_iconPackDownloadCb(themeId);
+                return;
+            }
+            requestDialog(
+                i18n.tr("themeshop.icons.download_apply_confirm_title", "Download And Apply"),
+                i18n.tr("themeshop.icons.download_apply_confirm",
+                        "Download this icon pack and apply it now?"),
+                {{i18n.tr("button.cancel", "Cancel"), {}},
+                 {i18n.tr("themeshop.community.download_apply", "Download + Apply"),
+                  [this, themeId]() {
+                      closeDetail();
+                      if (m_iconPackDownloadApplyCb)
+                          m_iconPackDownloadApplyCb(themeId);
+                  }}});
             return;
         }
         // Commit draft tint before closing so Apply publishes HSL + HOME chrome.
@@ -936,16 +1118,18 @@ void ThemeShopScreen::activateDetailButton(int buttonIndex) {
             if (m_iconPackApplyCb)
                 m_iconPackApplyCb(themeId);
         } else if (buttonIndex == 1 && removable && m_iconPackDeleteCb) {
+            // App callback already shows a Remove confirm.
             m_iconPackDeleteCb(themeId);
         }
         return;
     }
 
-    closeDetail();
     if (buttonIndex == 0) {
+        closeDetail();
         if (m_themeShopApplyCb)
             m_themeShopApplyCb(themeId);
     } else if (buttonIndex == 1 && removable) {
+        // Keep the product sheet up until Remove is confirmed in the app dialog.
         if (m_themeShopDeleteCb)
             m_themeShopDeleteCb(themeId);
     }
@@ -965,28 +1149,61 @@ void ThemeShopScreen::updateCustomContent(float dt) {
 
     m_detailSheetAnim.update(std::min(dt, 0.03f));
     m_detailFullscreenAnim.update(std::min(dt, 0.03f));
+    m_pageSlideAnim.update(std::min(dt, 0.03f));
 
     if (!m_showing) {
         closeDetail();
-        clearCommunityPreviewCache();
-        m_lastPreviewPrimeKey.clear();
+        // Keep covers warm for the next open. clearCommunityPreviewCache() used to
+        // waitIdle-nuke every texture on hide → mega hitch on reopen.
+        if (!m_previewPausedWhileHidden) {
+            pausePreviewWorkForSleep();
+            m_previewPausedWhileHidden = true;
+        }
+        // Drip-reclaim screenshots / off-page covers so Frame Tap can remount
+        // (~30 MB) after Theme Shop browsing filled the Applet pool.
+        if (!m_communityPreviewCache.empty())
+            trimCommunityPreviewCache(/*pressure=*/true);
+        if (!m_installedPreviewCache.empty())
+            trimInstalledPreviewCache();
         return;
     }
+    m_previewPausedWhileHidden = false;
 
-    if (isCommunityTab())
-        syncFinishedCommunityPreviewLoads();
-    if (isInstalledTab() || isIconsTab())
+    // Bootstrap Community catalog while on Installed; neighborhood prefetch only
+    // off the Community tab (on-tab priming owns the visible shelf).
+    ensureCommunityCatalogWarm();
+    (void)pollCommunityCatalog();
+    if (!isCommunityTab())
+        prefetchCommunityShelfNeighborhood();
+
+    if (isCommunityTab()) {
+        if (m_hasPendingCommunityPreviewWork)
+            syncFinishedCommunityPreviewLoads();
+    } else if (isInstalledTab() || isIconsTab()) {
+        if (!m_packageTransferState.isRunning())
+            primeVisibleInstalledPreviews();
         syncFinishedInstalledPreviewLoads();
+        // Drip one Community warm upload only when installed had nothing to do.
+        if (!m_hasPendingInstalledPreviewWork && m_hasPendingCommunityPreviewWork)
+            syncFinishedCommunityPreviewLoads();
+    } else if (m_hasPendingCommunityPreviewWork) {
+        syncFinishedCommunityPreviewLoads();
+    }
 
     int headerButtonCount = isCommunityTab() ? 2 : 1;
     m_headerButtonIndex = std::clamp(m_headerButtonIndex, 0, std::max(0, headerButtonCount - 1));
 
     if (m_lastCustomTabIndex != m_tabIndex) {
+        const int previousTab = m_lastCustomTabIndex;
         m_lastCustomTabIndex = m_tabIndex;
         m_contentFocusArea = ContentFocusArea::Grid;
         closeDetail();
         // Don't clearCommunityPreviewCache() here - nuking every texture waitIdle's
         // and is the major hitch when cycling past Community. Soft-trim drips below.
+        // Entering Community: cancel installed/icon decode workers so covers get
+        // the thread pool (Match/Apply storms were starving first focus).
+        if (isCommunityTab() && previousTab != m_tabIndex)
+            pauseInstalledPreviewDecodes();
     }
 
     if (currentEntryCount() <= 0) {
@@ -999,7 +1216,9 @@ void ThemeShopScreen::updateCustomContent(float dt) {
 
     ensureSelectionVisible();
 
-    if (isCommunityTab() && !m_packageTransferState.isRunning()) {
+    if (isCommunityTab()) {
+        // Keep covers during package install — only skip heavy neighbor primes
+        // while the transfer is saturating the thread pool / network.
         clampDetailScreenshotIndex();
         int previewButtonCount = detailScreenshotCount() > 0 ? 1 : 0;
         if (previewButtonCount <= 0) {
@@ -1009,39 +1228,44 @@ void ThemeShopScreen::updateCustomContent(float dt) {
         } else {
             m_detailPreviewButtonIndex = 0;
         }
-        std::string primeKey = std::to_string(m_communityRevision)
-            + "|" + m_communitySelectedId
-            + "|" + std::to_string(m_communityScrollRow)
-            + "|" + std::to_string(m_detailOpen ? 1 : 0)
-            + "|" + std::to_string(m_detailScreenshotIndex);
-        if (primeKey != m_lastPreviewPrimeKey) {
-            // Trim only when scroll changes - not every detail open/close
-            // (open/close was soft-trim thrashing covers <-> screenshots).
-            const bool pageChanged = m_lastPreviewPrimeKey.empty()
-                || primeKey.find('|') == std::string::npos
-                || ([&]() {
-                       auto field = [](const std::string& s, int idx) -> std::string {
-                           std::size_t start = 0;
-                           for (int i = 0; i < idx; ++i) {
+        if (!m_packageTransferState.isRunning()) {
+            std::string primeKey = std::to_string(m_communityRevision)
+                + "|" + m_communitySelectedId
+                + "|" + std::to_string(m_communityScrollRow)
+                + "|" + std::to_string(m_detailOpen ? 1 : 0)
+                + "|" + std::to_string(m_detailScreenshotIndex);
+            if (primeKey != m_lastPreviewPrimeKey) {
+                // Trim only when scroll changes - not every detail open/close
+                // (open/close was soft-trim thrashing covers <-> screenshots).
+                const bool pageChanged = m_lastPreviewPrimeKey.empty()
+                    || primeKey.find('|') == std::string::npos
+                    || ([&]() {
+                           auto field = [](const std::string& s, int idx) -> std::string {
+                               std::size_t start = 0;
+                               for (int i = 0; i < idx; ++i) {
+                                   std::size_t p = s.find('|', start);
+                                   if (p == std::string::npos) return {};
+                                   start = p + 1;
+                               }
                                std::size_t p = s.find('|', start);
-                               if (p == std::string::npos) return {};
-                               start = p + 1;
-                           }
-                           std::size_t p = s.find('|', start);
-                           return s.substr(start, p == std::string::npos ? std::string::npos : p - start);
-                       };
-                       return field(primeKey, 2) != field(m_lastPreviewPrimeKey, 2);
-                   })();
-            m_lastPreviewPrimeKey = std::move(primeKey);
-            if (pageChanged)
-                trimCommunityPreviewCache();
+                               return s.substr(start, p == std::string::npos ? std::string::npos : p - start);
+                           };
+                           return field(primeKey, 2) != field(m_lastPreviewPrimeKey, 2);
+                       })();
+                m_lastPreviewPrimeKey = std::move(primeKey);
+                // Never trim on page change — Texture dtor waitIdle hitch fought
+                // cold flips. Size-based trim when leaving Community is enough.
+                (void)pageChanged;
+            }
+            // Always re-attempt primes so Idle slots can start when a download slot frees.
+            primeVisibleCommunityPreviews();
         }
-        // Always re-attempt primes so Idle slots can start when a download slot frees.
-        primeVisibleCommunityPreviews();
     } else {
-        // Away from Community: drip-release GPU textures so Installed/Icons can upload
-        // without a one-frame waitIdle storm.
-        if (!m_communityPreviewCache.empty())
+        // Away from Community: soft-trim at most occasionally — Texture dtor
+        // waitIdle's, and rebuilding preferred sets every frame was hitchy.
+        if (!m_communityPreviewCache.empty()
+            && m_pageSlideAnim.value() <= 0.05f
+            && m_communityPreviewCache.size() > 36u)
             trimCommunityPreviewCache();
         if (isInstalledTab() || isIconsTab())
             trimInstalledPreviewCache();
@@ -1113,6 +1337,11 @@ bool ThemeShopScreen::handleCustomPressA() {
                 m_detailFocusArea = selectedIconShowsHueSat()
                     ? DetailFocusArea::TintHue : DetailFocusArea::TintLight;
             }
+            if (m_activateSfxCb) m_activateSfxCb();
+            return true;
+        }
+        if (m_detailFocusArea == DetailFocusArea::MatchThemeToggle) {
+            setIconMatchThemeEnabled(!selectedIconPackTint().matchTheme);
             if (m_activateSfxCb) m_activateSfxCb();
             return true;
         }
@@ -1321,22 +1550,9 @@ bool ThemeShopScreen::handleCustomNavUp() {
             ? detailScreenshotCount() > 0
             : (selectedThemeShopEntry() && !selectedThemeShopEntry()->coverPath.empty());
         if (showSelectedIconTintControls()) {
-            // Apply Up → Light → Sat → Hue → Grayscale → Flatten → Custom tint → Preview.
-            // (HS skipped when Grayscale hides them; Light only when Custom tint is on.)
+            // Apply Up → toggles → sliders (above) → Preview. Sliders sit above
+            // toggles so the Apply path does not brush HSL and break Match.
             if (m_detailFocusArea == DetailFocusArea::Buttons) {
-                if (selectedIconCustomTint())
-                    m_detailFocusArea = DetailFocusArea::TintLight;
-                else
-                    m_detailFocusArea = DetailFocusArea::GrayscaleToggle;
-                if (m_navSfxCb) m_navSfxCb();
-            } else if (m_detailFocusArea == DetailFocusArea::TintLight) {
-                m_detailFocusArea = selectedIconShowsHueSat()
-                    ? DetailFocusArea::TintSat : DetailFocusArea::GrayscaleToggle;
-                if (m_navSfxCb) m_navSfxCb();
-            } else if (m_detailFocusArea == DetailFocusArea::TintSat) {
-                m_detailFocusArea = DetailFocusArea::TintHue;
-                if (m_navSfxCb) m_navSfxCb();
-            } else if (m_detailFocusArea == DetailFocusArea::TintHue) {
                 m_detailFocusArea = DetailFocusArea::GrayscaleToggle;
                 if (m_navSfxCb) m_navSfxCb();
             } else if (m_detailFocusArea == DetailFocusArea::GrayscaleToggle) {
@@ -1345,7 +1561,24 @@ bool ThemeShopScreen::handleCustomNavUp() {
             } else if (m_detailFocusArea == DetailFocusArea::FlattenToggle) {
                 m_detailFocusArea = DetailFocusArea::TintToggle;
                 if (m_navSfxCb) m_navSfxCb();
-            } else if (m_detailFocusArea == DetailFocusArea::TintToggle && canFocusPreview) {
+            } else if (m_detailFocusArea == DetailFocusArea::TintToggle) {
+                m_detailFocusArea = DetailFocusArea::MatchThemeToggle;
+                if (m_navSfxCb) m_navSfxCb();
+            } else if (m_detailFocusArea == DetailFocusArea::MatchThemeToggle) {
+                if (selectedIconCustomTint())
+                    m_detailFocusArea = DetailFocusArea::TintLight;
+                else if (canFocusPreview)
+                    m_detailFocusArea = DetailFocusArea::Preview;
+                if (m_navSfxCb) m_navSfxCb();
+            } else if (m_detailFocusArea == DetailFocusArea::TintLight) {
+                m_detailFocusArea = selectedIconShowsHueSat()
+                    ? DetailFocusArea::TintSat : (canFocusPreview ? DetailFocusArea::Preview
+                                                                  : DetailFocusArea::MatchThemeToggle);
+                if (m_navSfxCb) m_navSfxCb();
+            } else if (m_detailFocusArea == DetailFocusArea::TintSat) {
+                m_detailFocusArea = DetailFocusArea::TintHue;
+                if (m_navSfxCb) m_navSfxCb();
+            } else if (m_detailFocusArea == DetailFocusArea::TintHue && canFocusPreview) {
                 m_detailFocusArea = DetailFocusArea::Preview;
                 if (m_navSfxCb) m_navSfxCb();
             }
@@ -1398,8 +1631,14 @@ bool ThemeShopScreen::handleCustomNavDown() {
     if (m_detailFullscreen)
         return true;
     if (m_detailOpen) {
-        // Preview Down → Apply. Toggle stack: tint → flatten → grayscale → Apply.
+        // Preview → toggles → Apply. Sliders sit above toggles; reach them via
+        // Custom-tint Right or Up from Match (not on the Apply path).
         if (m_detailFocusArea == DetailFocusArea::Preview) {
+            if (showSelectedIconTintControls()) {
+                m_detailFocusArea = DetailFocusArea::MatchThemeToggle;
+                if (m_navSfxCb) m_navSfxCb();
+                return true;
+            }
             if (detailButtonCount() > 0) {
                 m_detailFocusArea = DetailFocusArea::Buttons;
                 if (m_navSfxCb) m_navSfxCb();
@@ -1407,23 +1646,7 @@ bool ThemeShopScreen::handleCustomNavDown() {
             }
         }
         if (showSelectedIconTintControls()) {
-            if (m_detailFocusArea == DetailFocusArea::TintToggle) {
-                m_detailFocusArea = DetailFocusArea::FlattenToggle;
-                if (m_navSfxCb) m_navSfxCb();
-            } else if (m_detailFocusArea == DetailFocusArea::FlattenToggle) {
-                m_detailFocusArea = DetailFocusArea::GrayscaleToggle;
-                if (m_navSfxCb) m_navSfxCb();
-            } else if (m_detailFocusArea == DetailFocusArea::GrayscaleToggle) {
-                // Toggles → sliders (when Custom tint is on) → Apply.
-                if (selectedIconCustomTint()) {
-                    m_detailFocusArea = selectedIconShowsHueSat()
-                        ? DetailFocusArea::TintHue : DetailFocusArea::TintLight;
-                    if (m_navSfxCb) m_navSfxCb();
-                } else if (detailButtonCount() > 0) {
-                    m_detailFocusArea = DetailFocusArea::Buttons;
-                    if (m_navSfxCb) m_navSfxCb();
-                }
-            } else if (m_detailFocusArea == DetailFocusArea::TintHue) {
+            if (m_detailFocusArea == DetailFocusArea::TintHue) {
                 m_detailFocusArea = selectedIconShowsHueSat()
                     ? DetailFocusArea::TintSat : DetailFocusArea::TintLight;
                 if (m_navSfxCb) m_navSfxCb();
@@ -1431,8 +1654,22 @@ bool ThemeShopScreen::handleCustomNavDown() {
                 m_detailFocusArea = DetailFocusArea::TintLight;
                 if (m_navSfxCb) m_navSfxCb();
             } else if (m_detailFocusArea == DetailFocusArea::TintLight) {
-                m_detailFocusArea = DetailFocusArea::Buttons;
+                m_detailFocusArea = DetailFocusArea::MatchThemeToggle;
                 if (m_navSfxCb) m_navSfxCb();
+            } else if (m_detailFocusArea == DetailFocusArea::MatchThemeToggle) {
+                m_detailFocusArea = DetailFocusArea::TintToggle;
+                if (m_navSfxCb) m_navSfxCb();
+            } else if (m_detailFocusArea == DetailFocusArea::TintToggle) {
+                m_detailFocusArea = DetailFocusArea::FlattenToggle;
+                if (m_navSfxCb) m_navSfxCb();
+            } else if (m_detailFocusArea == DetailFocusArea::FlattenToggle) {
+                m_detailFocusArea = DetailFocusArea::GrayscaleToggle;
+                if (m_navSfxCb) m_navSfxCb();
+            } else if (m_detailFocusArea == DetailFocusArea::GrayscaleToggle) {
+                if (detailButtonCount() > 0) {
+                    m_detailFocusArea = DetailFocusArea::Buttons;
+                    if (m_navSfxCb) m_navSfxCb();
+                }
             }
         }
         return true;
@@ -1485,6 +1722,7 @@ bool ThemeShopScreen::handleCustomNavLeft() {
         }
 
         if (m_detailFocusArea == DetailFocusArea::TintToggle
+            || m_detailFocusArea == DetailFocusArea::MatchThemeToggle
             || m_detailFocusArea == DetailFocusArea::FlattenToggle
             || m_detailFocusArea == DetailFocusArea::GrayscaleToggle) {
             // Prefer returning to the preview; A toggles on/off.
@@ -1580,23 +1818,28 @@ bool ThemeShopScreen::handleCustomNavRight() {
             if (before != m_detailScreenshotIndex && m_navSfxCb) m_navSfxCb();
             return true;
         }
-        // Icons: Preview Right -> Custom tint (when the pack supports it).
+        // Icons: Preview Right -> Match theme (when the pack supports tint).
         if (isIconsTab() && m_detailFocusArea == DetailFocusArea::Preview
             && showSelectedIconTintControls()) {
-            m_detailFocusArea = DetailFocusArea::TintToggle;
+            m_detailFocusArea = DetailFocusArea::MatchThemeToggle;
             if (m_navSfxCb) m_navSfxCb();
             return true;
         }
         // Icons: Apply Right stays on buttons; colour packs also allow
-        // Apply → Tint when only one primary action is focused.
+        // Apply → Match when only one primary action is focused.
         if (isIconsTab() && m_detailFocusArea == DetailFocusArea::Buttons
             && m_detailButtonIndex + 1 >= detailButtonCount()
             && showSelectedIconTintControls()) {
-            m_detailFocusArea = DetailFocusArea::TintToggle;
+            m_detailFocusArea = DetailFocusArea::MatchThemeToggle;
             if (m_navSfxCb) m_navSfxCb();
             return true;
         }
 
+        if (m_detailFocusArea == DetailFocusArea::MatchThemeToggle) {
+            m_detailFocusArea = DetailFocusArea::TintToggle;
+            if (m_navSfxCb) m_navSfxCb();
+            return true;
+        }
         if (m_detailFocusArea == DetailFocusArea::TintToggle) {
             setIconCustomTintEnabled(true);
             m_detailFocusArea = selectedIconShowsHueSat()
@@ -1781,7 +2024,13 @@ bool ThemeShopScreen::handleCustomTouch(nxui::Input& input, const nxui::Rect&, c
             if (showSelectedIconTintControls()) {
                 nxui::Rect previewRect = colourIconPreviewBounds(dialog);
                 IconTintLayout tintLayout = makeIconTintLayout(
-                    colourIconTintBand(dialog, previewRect, selectedIconCustomTint()));
+                    colourIconTintBand(dialog, previewRect, selectedIconCustomTint()),
+                    selectedIconCustomTint(),
+                    selectedIconShowsHueSat());
+                if (tintLayout.matchPill.expanded(8.f).contains(x, y)) {
+                    m_themeTouchTarget = ThemeTouchTarget::DetailMatchThemeToggle;
+                    return true;
+                }
                 if (tintLayout.tintPill.expanded(8.f).contains(x, y)) {
                     m_themeTouchTarget = ThemeTouchTarget::DetailTintToggle;
                     return true;
@@ -1871,7 +2120,9 @@ bool ThemeShopScreen::handleCustomTouch(nxui::Input& input, const nxui::Rect&, c
             nxui::Rect dialog = detailDialogRect(content);
             nxui::Rect previewRect = colourIconPreviewBounds(dialog);
             IconTintLayout tintLayout = makeIconTintLayout(
-                colourIconTintBand(dialog, previewRect, selectedIconCustomTint()));
+                colourIconTintBand(dialog, previewRect, selectedIconCustomTint()),
+                selectedIconCustomTint(),
+                selectedIconShowsHueSat());
             const nxui::Rect* track = &tintLayout.hueTrack;
             if (m_themeTouchTarget == ThemeTouchTarget::DetailTintSat)
                 track = &tintLayout.satTrack;
@@ -2000,6 +2251,14 @@ bool ThemeShopScreen::handleCustomTouch(nxui::Input& input, const nxui::Rect&, c
                         ? (selectedIconShowsHueSat() ? DetailFocusArea::TintHue
                                                      : DetailFocusArea::TintLight)
                         : DetailFocusArea::TintToggle;
+                    if (m_activateSfxCb) m_activateSfxCb();
+                }
+                return true;
+            }
+            case ThemeTouchTarget::DetailMatchThemeToggle: {
+                if (showSelectedIconTintControls()) {
+                    setIconMatchThemeEnabled(!selectedIconPackTint().matchTheme);
+                    m_detailFocusArea = DetailFocusArea::MatchThemeToggle;
                     if (m_activateSfxCb) m_activateSfxCb();
                 }
                 return true;
@@ -2185,6 +2444,17 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
                         m_uiTime,
                         m_theme->cursorNormal,
                         contentOpacity);
+            nxui::Rect track = {
+                statusChip.x + 10.f,
+                statusChip.bottom() + 4.f,
+                statusChip.width - 20.f,
+                6.f
+            };
+            drawTransferProgressTrack(ren,
+                                      track,
+                                      m_packageTransferState.progress01(),
+                                      contentOpacity,
+                                      m_theme->cursorNormal);
         }
     }
 
@@ -2265,12 +2535,14 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
     }
 
     if (isCommunityTab() && m_communityTransferState.isRunning() && count == 0) {
-        nxui::Vec2 center = {layout.grid.x + layout.grid.width * 0.5f, layout.grid.y + layout.grid.height * 0.42f};
-        drawSpinner(ren, center, 22.f, m_uiTime, m_theme->cursorNormal, contentOpacity);
+        // High + roomy gap — breathe peaks ~1.2× and must clear the label.
+        nxui::Vec2 center = {layout.grid.x + layout.grid.width * 0.5f,
+                             layout.grid.y + layout.grid.height * 0.30f};
+        drawCatalogLoadingCube(ren, center, 112.f, m_uiTime, m_theme->cursorNormal, contentOpacity);
         std::string loadingLabel = i18n.tr("themeshop.community.loading", "Loading theme catalog...");
         nxui::Vec2 size = measureTextCached(m_font, loadingLabel);
         ren.drawText(loadingLabel,
-                     {center.x - size.x * 0.40f, center.y + 28.f},
+                     {center.x - size.x * 0.40f, center.y + 108.f},
                      m_font,
                      m_theme->textPrimary.withAlpha(contentOpacity),
                      0.88f);
@@ -2331,15 +2603,18 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
     float reveal = std::clamp(m_tabReveal.value(), 0.f, 1.f);
     const float gridDetailT = std::clamp(m_detailSheetAnim.value(), 0.f, 1.f);
     const bool gridFocusLive = !m_detailOpen && gridDetailT <= 0.01f;
+    const float pageSlideT = std::clamp(m_pageSlideAnim.value(), 0.f, 1.f);
+    const float pageSlideX = m_pageSlideFrom * pageSlideT * (layout.grid.width * 0.18f);
 
     for (int globalIndex = start; globalIndex < end; ++globalIndex) {
         int localIndex = globalIndex - start;
         nxui::Rect card = gridCardRect(layout, localIndex);
         float delay = std::min(0.42f, localIndex * 0.03f);
         float localReveal = std::clamp((reveal - delay) / 0.30f, 0.f, 1.f);
-        float rowOpacity = contentOpacity * localReveal;
+        float rowOpacity = contentOpacity * localReveal * (1.f - 0.18f * pageSlideT);
         float rise = (1.f - localReveal) * 14.f;
         card.y += rise;
+        card.x += pageSlideX;
 
         bool cardSelected = (globalIndex == selected);
         std::string titleText;
@@ -2434,6 +2709,47 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
                          nullptr,
                          !isIconsTab());
 
+        // On-card install progress for the transferring Community / Icons pack.
+        const bool cardTransferring = !m_packageTransferThemeId.empty()
+            && !m_packageTransferState.label().empty()
+            && ((isCommunityTab()
+                    && m_communityEntries[(size_t)globalIndex].id == m_packageTransferThemeId)
+                || (isIconsTab()
+                    && m_iconPackEntries[(size_t)globalIndex].id == m_packageTransferThemeId));
+        if (cardTransferring) {
+            ren.drawRoundedRect({preview.x, preview.bottom() - 44.f, preview.width, 44.f},
+                                nxui::Color(0.f, 0.f, 0.f, 0.55f * rowOpacity),
+                                12.f);
+            nxui::Rect track = {
+                preview.x + 12.f,
+                preview.bottom() - 18.f,
+                preview.width - 24.f,
+                8.f
+            };
+            drawTransferProgressTrack(ren,
+                                      track,
+                                      m_packageTransferState.progress01(),
+                                      rowOpacity,
+                                      m_theme->cursorNormal);
+            if (m_packageTransferState.isRunning()) {
+                drawSpinner(ren,
+                            {preview.x + 18.f, preview.bottom() - 32.f},
+                            6.f,
+                            m_uiTime,
+                            m_theme->cursorNormal,
+                            rowOpacity);
+            }
+            const std::string status = ellipsize(m_smallFont,
+                                                 transferLabel(m_packageTransferState),
+                                                 preview.width - 48.f,
+                                                 0.62f);
+            ren.drawText(status,
+                         {preview.x + 34.f, preview.bottom() - 40.f},
+                         m_smallFont,
+                         m_theme->textPrimary.withAlpha(rowOpacity),
+                         0.62f);
+        }
+
         if (!versionText.empty()) {
             float chipWidth = std::max(74.f, std::min(108.f, 32.f + measureTextCached(m_smallFont, versionText).x * 0.64f));
             nxui::Rect versionChip = {preview.right() - chipWidth - 10.f, preview.y + 10.f, chipWidth, 26.f};
@@ -2463,22 +2779,34 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
                      0.66f);
         }
 
-                const bool showSpectrumBadge = isIconsTab() && !isCommunityTab()
-            && iconPackTintFor(m_iconPackEntries[(size_t)globalIndex].id).enabled;
-        constexpr float kSpectrumBadgeW = 40.f;
-        constexpr float kSpectrumBadgeH = 14.f;
-        constexpr float kSpectrumBadgeGap = 8.f;
+        const auto shelfTint = (isIconsTab() && !isCommunityTab())
+            ? iconPackTintFor(m_iconPackEntries[(size_t)globalIndex].id)
+            : IconPackTintState{};
+        // Tint/Auto chips (same language as the detail header) — no spectrum strip.
+        const bool showTintBadge = isIconsTab() && !isCommunityTab() && shelfTint.enabled;
+        const bool showAutoBadge = isIconsTab() && !isCommunityTab() && shelfTint.matchTheme;
+        constexpr float kBadgeGap = 8.f;
+        const std::string tintBadgeLabel = i18n.tr("themeshop.badge.tint", "Tint");
+        const float tintBadgeW = showTintBadge
+            ? std::max(48.f, std::min(72.f, 24.f + measureTextCached(m_smallFont, tintBadgeLabel).x * 0.62f))
+            : 0.f;
+        const std::string autoBadgeLabel = i18n.tr("themeshop.badge.auto", "Auto");
+        const float autoBadgeW = showAutoBadge
+            ? std::max(48.f, std::min(72.f, 24.f + measureTextCached(m_smallFont, autoBadgeLabel).x * 0.62f))
+            : 0.f;
+        constexpr float kAutoBadgeH = 22.f;
         const std::string iconsBadgeLabel = i18n.tr("themeshop.badge.icons", "Icons");
         const float iconsBadgeW = showIconsBadge
             ? std::max(58.f, std::min(86.f, 28.f + measureTextCached(m_smallFont, iconsBadgeLabel).x * 0.62f))
             : 0.f;
         constexpr float kIconsBadgeH = 22.f;
-        constexpr float kIconsBadgeGap = 8.f;
         float titleReserve = 0.f;
-        if (showSpectrumBadge)
-            titleReserve += kSpectrumBadgeW + kSpectrumBadgeGap;
+        if (showTintBadge)
+            titleReserve += tintBadgeW + kBadgeGap;
+        if (showAutoBadge)
+            titleReserve += autoBadgeW + kBadgeGap;
         if (showIconsBadge)
-            titleReserve += iconsBadgeW + kIconsBadgeGap;
+            titleReserve += iconsBadgeW + kBadgeGap;
         const float titleMaxW = titleReserve > 0.f
             ? std::max(40.f, card.width - 18.f - titleReserve)
             : (card.width - 18.f);
@@ -2489,24 +2817,47 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
                      m_font,
                      m_theme->textPrimary.withAlpha(rowOpacity),
                      0.82f);
-        float badgeX = card.x + 12.f + measureTextCached(m_font, titleFitted).x * 0.82f + kSpectrumBadgeGap;
+        float badgeX = card.x + 12.f + measureTextCached(m_font, titleFitted).x * 0.82f + kBadgeGap;
         const float titleH = measureTextCached(m_font, titleFitted).y * 0.82f;
-        if (showSpectrumBadge) {
-            nxui::Rect spectrum = {
+        if (showTintBadge) {
+            nxui::Rect tintChip = {
                 badgeX,
-                titleY + std::max(0.f, (titleH - kSpectrumBadgeH) * 0.5f),
-                kSpectrumBadgeW,
-                kSpectrumBadgeH
+                titleY + std::max(0.f, (titleH - kAutoBadgeH) * 0.5f),
+                tintBadgeW,
+                kAutoBadgeH
             };
-            drawSpectrumBadge(ren, spectrum, rowOpacity);
-            badgeX = spectrum.right() + kIconsBadgeGap;
+            drawChip(ren,
+                     m_smallFont,
+                     tintChip,
+                     tintBadgeLabel,
+                     nxui::Color(0.28f, 0.18f, 0.42f, 0.42f),
+                     nxui::Color(0.82f, 0.55f, 1.f, 0.55f),
+                     m_theme->textPrimary,
+                     rowOpacity,
+                     0.62f);
+            badgeX = tintChip.right() + kBadgeGap;
+        }
+        if (showAutoBadge) {
+            nxui::Rect autoChip = {
+                badgeX,
+                titleY + std::max(0.f, (titleH - kAutoBadgeH) * 0.5f),
+                autoBadgeW,
+                kAutoBadgeH
+            };
+            drawChip(ren,
+                     m_smallFont,
+                     autoChip,
+                     autoBadgeLabel,
+                     nxui::Color(0.12f, 0.28f, 0.48f, 0.40f),
+                     nxui::Color(0.45f, 0.78f, 1.f, 0.55f),
+                     m_theme->textPrimary,
+                     rowOpacity,
+                     0.62f);
+            badgeX = autoChip.right() + kBadgeGap;
         }
         if (showIconsBadge) {
             nxui::Rect iconsChip = {
-                showSpectrumBadge ? badgeX
-                                  : (card.x + 12.f
-                                     + measureTextCached(m_font, titleFitted).x * 0.82f
-                                     + kIconsBadgeGap),
+                badgeX,
                 titleY + std::max(0.f, (titleH - kIconsBadgeH) * 0.5f),
                 iconsBadgeW,
                 kIconsBadgeH
@@ -2567,7 +2918,9 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
     // Soft store scrim — dim the shelf, lift the product sheet.
     ren.drawRoundedRect(content, nxui::Color(0.f, 0.f, 0.f, 0.52f * detailOpacity), 26.f);
     nxui::Rect dialog = detailDialogRect(content);
+    // Scale + slight rise so the sheet feels like it settles onto the shelf.
     dialog = scaledRect(dialog, 0.97f + 0.03f * detailT);
+    dialog.y += (1.f - detailT) * 26.f;
     drawFrostedInsetPanel(ren, m_theme, dialog, 26.f, detailOpacity, 1.2f);
 
     // Tint only applies to packs that live on the console.
@@ -2718,6 +3071,47 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
                      nullptr,
                      !isIconsTab());
 
+    // Tint / Auto chips on the product preview tile (same language as the shelf caption).
+    if (showIconTintControls) {
+        const bool tileTint = selectedIconCustomTint();
+        const bool tileAuto = selectedIconPackTint().matchTheme;
+        if (tileTint || tileAuto) {
+            const std::string tintLabel = i18n.tr("themeshop.badge.tint", "Tint");
+            const std::string autoLabel = i18n.tr("themeshop.badge.auto", "Auto");
+            float chipX = preview.x + 10.f;
+            const float chipY = preview.y + 10.f;
+            if (tileTint) {
+                const float tintW = std::max(48.f,
+                    std::min(72.f, 24.f + measureTextCached(m_smallFont, tintLabel).x * 0.62f));
+                nxui::Rect tintChip = {chipX, chipY, tintW, 22.f};
+                drawChip(ren,
+                         m_smallFont,
+                         tintChip,
+                         tintLabel,
+                         nxui::Color(0.28f, 0.18f, 0.42f, 0.42f),
+                         nxui::Color(0.82f, 0.55f, 1.f, 0.55f),
+                         m_theme->textPrimary,
+                         detailOpacity,
+                         0.62f);
+                chipX = tintChip.right() + 8.f;
+            }
+            if (tileAuto) {
+                const float autoW = std::max(48.f,
+                    std::min(72.f, 24.f + measureTextCached(m_smallFont, autoLabel).x * 0.62f));
+                nxui::Rect autoChip = {chipX, chipY, autoW, 22.f};
+                drawChip(ren,
+                         m_smallFont,
+                         autoChip,
+                         autoLabel,
+                         nxui::Color(0.12f, 0.28f, 0.48f, 0.40f),
+                         nxui::Color(0.45f, 0.78f, 1.f, 0.55f),
+                         m_theme->textPrimary,
+                         detailOpacity,
+                         0.62f);
+            }
+        }
+    }
+
     if (detailPreviewRequested) {
         auto previewButtons = detailPreviewControlRects(previewControls, preview, detailScreenshotTotal);
         if (isCommunityTab() && detailScreenshotTotal > 1) {
@@ -2760,7 +3154,7 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
     }
 
     if (showIconTintControls) {
-        // Header above the preview; tint controls stacked underneath.
+        // Header above the preview; Tint/Auto live on the preview tile itself.
         const float headerX = dialog.x + 36.f;
         const float headerW = dialog.width - 72.f;
         ren.drawText(ellipsize(m_font, detailTitle, headerW * 0.62f, 1.10f),
@@ -2780,7 +3174,9 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
                      0.78f);
 
         IconTintLayout tintLayout = makeIconTintLayout(
-            colourIconTintBand(dialog, preview, selectedIconCustomTint()));
+            colourIconTintBand(dialog, preview, selectedIconCustomTint()),
+            selectedIconCustomTint(),
+            selectedIconShowsHueSat());
         auto drawToggleRow = [&](const nxui::Rect& labelRow, const nxui::Rect& pill,
                                  const std::string& label, bool enabled, bool focused) {
             ren.drawText(ellipsize(m_smallFont, label, pill.x - labelRow.x - 12.f, 0.86f),
@@ -2790,12 +3186,16 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
                          0.86f);
             drawTintTogglePill(ren, m_smallFont, pill, enabled, detailOpacity, focused);
         };
+        drawToggleRow(tintLayout.matchLabelRow, tintLayout.matchPill,
+                      i18n.tr("themeshop.icons.match_theme", "Match theme"),
+                      selectedIconPackTint().matchTheme,
+                      m_detailFocusArea == DetailFocusArea::MatchThemeToggle);
         drawToggleRow(tintLayout.tintLabelRow, tintLayout.tintPill,
                       i18n.tr("themeshop.icons.custom_tint", "Custom tint"),
                       selectedIconCustomTint(),
                       m_detailFocusArea == DetailFocusArea::TintToggle);
         drawToggleRow(tintLayout.flattenLabelRow, tintLayout.flattenPill,
-                      i18n.tr("themeshop.icons.flatten", "Flatten"),
+                      i18n.tr("themeshop.icons.flatten", "Solid"),
                       selectedIconPackTint().flatten,
                       m_detailFocusArea == DetailFocusArea::FlattenToggle);
         drawToggleRow(tintLayout.grayLabelRow, tintLayout.grayPill,
@@ -2805,8 +3205,6 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
 
         if (selectedIconCustomTint()) {
             constexpr float kLabelScale = 0.80f;
-            nxui::Rect lightLabel = tintLayout.lightLabel;
-            nxui::Rect lightTrack = tintLayout.lightTrack;
             if (selectedIconShowsHueSat()) {
                 ren.drawText(i18n.tr("themeshop.icons.tint_hue", "Hue"),
                              {tintLayout.hueLabel.x, tintLayout.hueLabel.y},
@@ -2828,11 +3226,12 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
                                        [](float t) {
                                            return nxui::Color::fromHSL(0.58f, t, 0.55f, 1.f);
                                        });
-            } else {
-                // Pack Lightness under the toggles when H/S are hidden.
-                lightLabel = tintLayout.hueLabel;
-                lightTrack = tintLayout.hueTrack;
             }
+            // Lightness uses dedicated slots (or the hue slots when H/S are hidden).
+            const nxui::Rect lightLabel = selectedIconShowsHueSat()
+                ? tintLayout.lightLabel : tintLayout.hueLabel;
+            const nxui::Rect lightTrack = selectedIconShowsHueSat()
+                ? tintLayout.lightTrack : tintLayout.hueTrack;
             ren.drawText(i18n.tr("themeshop.icons.tint_lightness", "Lightness"),
                          {lightLabel.x, lightLabel.y},
                          m_smallFont,
@@ -2849,6 +3248,8 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
 
         if (m_detailOpen && m_detailFocusArea == DetailFocusArea::TintToggle) {
             m_focusCursor.moveTo(tintLayout.tintPill.expanded(6.f), 18.f, 0.08f);
+        } else if (m_detailOpen && m_detailFocusArea == DetailFocusArea::MatchThemeToggle) {
+            m_focusCursor.moveTo(tintLayout.matchPill.expanded(6.f), 18.f, 0.08f);
         } else if (m_detailOpen && m_detailFocusArea == DetailFocusArea::FlattenToggle) {
             m_focusCursor.moveTo(tintLayout.flattenPill.expanded(6.f), 18.f, 0.08f);
         } else if (m_detailOpen && m_detailFocusArea == DetailFocusArea::GrayscaleToggle) {
@@ -2919,13 +3320,25 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
                      0.76f);
     }
 
-    if (isCommunityTab() && !m_packageTransferState.label().empty()) {
-        nxui::Rect infoBounds = {
+    if ((isCommunityTab() || isIconsTab()) && !m_packageTransferState.label().empty()
+        && (m_packageTransferThemeId.empty()
+            || (isCommunityTab()
+                    && selectedCommunityThemeEntry()
+                    && selectedCommunityThemeEntry()->id == m_packageTransferThemeId)
+            || (isIconsTab()
+                    && selectedThemeShopEntry()
+                    && selectedThemeShopEntry()->id == m_packageTransferThemeId))) {
+        // Thin progress sheet under the product copy — stay on the eShop sheet
+        // instead of a modal that nukes focus / covers.
+        nxui::Rect sheet = {
             preview.right() + 28.f,
-            dialog.y + 36.f,
+            dialog.bottom() - 132.f,
             dialog.right() - preview.right() - 52.f,
-            dialog.height - 130.f
+            50.f
         };
+        ren.drawRoundedRect(sheet, m_theme->panelBase.withAlpha(0.22f * detailOpacity), 14.f);
+        ren.drawRoundedRectOutline(sheet, m_theme->panelBorder.withAlpha(0.28f * detailOpacity), 14.f, 1.f);
+
         nxui::Color statusColor = m_theme->textSecondary;
         if (m_packageTransferState.isRunning())
             statusColor = m_theme->textPrimary;
@@ -2934,19 +3347,24 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
         else if (m_packageTransferState.hasFailed())
             statusColor = nxui::Color(1.f, 0.56f, 0.52f, 1.f);
 
-        ren.drawText(ellipsize(m_smallFont, transferLabel(m_packageTransferState), infoBounds.width, 0.76f),
-                     {infoBounds.x, infoBounds.bottom() - 36.f},
-                     m_smallFont,
-                     statusColor.withAlpha(detailOpacity),
-                     0.76f);
         if (m_packageTransferState.isRunning()) {
             drawSpinner(ren,
-                        {infoBounds.x + infoBounds.width - 18.f, infoBounds.bottom() - 24.f},
+                        {sheet.x + 18.f, sheet.y + 18.f},
                         7.f,
                         m_uiTime,
                         m_theme->cursorNormal,
                         detailOpacity);
         }
+        ren.drawText(ellipsize(m_smallFont, transferLabel(m_packageTransferState), sheet.width - 44.f, 0.74f),
+                     {sheet.x + (m_packageTransferState.isRunning() ? 34.f : 14.f), sheet.y + 10.f},
+                     m_smallFont,
+                     statusColor.withAlpha(detailOpacity),
+                     0.74f);
+        drawTransferProgressTrack(ren,
+                                  {sheet.x + 14.f, sheet.bottom() - 16.f, sheet.width - 28.f, 7.f},
+                                  m_packageTransferState.progress01(),
+                                  detailOpacity,
+                                  m_theme->cursorNormal);
     }
 
     float fullscreenT = std::clamp(m_detailFullscreenAnim.value(), 0.f, 1.f);
@@ -3062,6 +3480,7 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
     }
 
     const bool tintFocus = m_detailFocusArea == DetailFocusArea::TintToggle
+        || m_detailFocusArea == DetailFocusArea::MatchThemeToggle
         || m_detailFocusArea == DetailFocusArea::FlattenToggle
         || m_detailFocusArea == DetailFocusArea::GrayscaleToggle
         || m_detailFocusArea == DetailFocusArea::TintHue
