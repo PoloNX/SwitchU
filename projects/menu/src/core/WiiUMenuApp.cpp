@@ -5868,13 +5868,7 @@ void WiiUMenuApp::buildGrid() {
             m_navigator.navigate(switchu::navigation::Route::Settings);
             if (m_themeShop && m_themeShop->isActive())
                 m_themeShop->hide();
-            // Keep Audio / Display prefs current (moved from Theme Shop Options).
-            m_settings->setMusicState(m_audio.isPlaying(), m_audio.volume(), m_audio.sfxVolume());
             m_settings->setGridLayoutState(m_config.gridColumns, m_config.gridRows);
-            m_settings->setSortLargeTilesState(m_config.sortLargeTiles);
-            m_settings->setActionHintStyleState(m_config.actionHintStyle == "panel" ? 0 : 1);
-            m_settings->setCursorMotionModeState(m_config.cursorMotionMode);
-            m_settings->setPageTransitionModeState(m_config.pageTransitionMode);
             m_settings->rebuildCurrentTab();
             m_settings->show();
             focusManager().setFocus(m_settings.get());

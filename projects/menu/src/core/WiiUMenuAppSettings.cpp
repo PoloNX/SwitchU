@@ -249,12 +249,7 @@ void WiiUMenuApp::createSettings() {
     m_settings->setTheme(&m_theme);
     m_settings->setInstantCursorMotion(m_config.cursorMotionMode == 1);
     m_settings->setWireframeState(m_showWireframe);
-    m_settings->setMusicState(m_audio.isPlaying(), m_audio.volume(), m_audio.sfxVolume());
     m_settings->setGridLayoutState(m_config.gridColumns, m_config.gridRows);
-    m_settings->setSortLargeTilesState(m_config.sortLargeTiles);
-    m_settings->setActionHintStyleState(m_config.actionHintStyle == "panel" ? 0 : 1);
-    m_settings->setCursorMotionModeState(m_config.cursorMotionMode);
-    m_settings->setPageTransitionModeState(m_config.pageTransitionMode);
     m_settings->setUiLanguageOverride(m_config.uiLanguageOverride);
     m_settings->setClockUse12HourState(m_config.clockUse12Hour);
     m_settings->setWebClockSyncState(m_config.webClockSyncEnabled);
@@ -296,23 +291,6 @@ void WiiUMenuApp::createSettings() {
         m_showWireframe = enabled;
         app().renderer().setBoxWireframeEnabled(enabled);
     });
-    m_settings->onMusicEnabledChange([this](bool enabled) {
-        m_config.musicEnabled = enabled;
-        if (enabled)
-            m_audio.play();
-        else
-            m_audio.pause();
-        persistMusicPlaybackState(false);
-        m_config.save();
-    });
-    m_settings->onMusicVolumeChange([this](float v) {
-        m_audio.setVolume(v);
-        m_config.musicVolume = v;
-    });
-    m_settings->onSfxVolumeChange([this](float v) {
-        m_audio.setSfxVolume(v);
-        m_config.sfxVolume = v;
-    });
     m_settings->onGridColumnsChange([this](int cols) {
         cols = std::clamp(cols, 1, 8);
         if (m_config.gridColumns == cols)
@@ -326,35 +304,6 @@ void WiiUMenuApp::createSettings() {
             return;
         m_config.gridRows = rows;
         reflowHomeGrid();
-    });
-    m_settings->onSortLargeTilesChange([this](bool enabled) {
-        if (m_config.sortLargeTiles == enabled)
-            return;
-        m_config.sortLargeTiles = enabled;
-        m_config.save();
-        reflowHomeGrid();
-    });
-    m_settings->onActionHintStyleChange([this](int style) {
-        m_config.actionHintStyle = style == 0 ? "panel" : "capsules";
-    });
-    m_settings->onCursorMotionModeChange([this](int mode) {
-        m_config.cursorMotionMode = std::clamp(mode, 0, 1);
-        const bool instant = m_config.cursorMotionMode == 1;
-        if (m_cursor) m_cursor->setInstantMotion(instant);
-        if (m_settings) m_settings->setInstantCursorMotion(instant);
-        if (m_themeShop) m_themeShop->setInstantCursorMotion(instant);
-        if (m_gameOptions) m_gameOptions->setInstantCursorMotion(instant);
-        if (m_folderOptions) m_folderOptions->setInstantCursorMotion(instant);
-        if (m_quickSettings) m_quickSettings->setInstantCursorMotion(instant);
-        if (m_dialog) m_dialog->cursor().setInstantMotion(instant);
-        if (m_userSelect) m_userSelect->cursor().setInstantMotion(instant);
-        updateCursor();
-    });
-    m_settings->onPageTransitionModeChange([this](int mode) {
-        m_config.pageTransitionMode = std::clamp(mode, 0, 1);
-        if (m_grid)
-            m_grid->setSlideTransition(m_config.pageTransitionMode == 0);
-        m_config.save();
     });
     m_settings->onUiLanguageChange([this](const std::string& tag) {
         m_config.uiLanguageOverride = tag;
@@ -2781,11 +2730,15 @@ void WiiUMenuApp::refreshThemeShopState(bool rebuildTab) {
 
     m_themeShop->setTheme(&m_theme);
     m_themeShop->setMusicState(m_audio.isPlaying(), m_audio.volume(), m_audio.sfxVolume());
+    m_themeShop->setGridLayoutState(m_config.gridColumns, m_config.gridRows);
+    m_themeShop->setActionHintStyleState(m_config.actionHintStyle);
     m_themeShop->setSortLargeTilesState(m_config.sortLargeTiles);
     m_themeShop->setIconContrastAdaptState(m_config.iconContrastAdapt);
     m_themeShop->setThemeMusicOverrideState(m_config.themeMusicOverride);
     m_themeShop->setThemeMusicAddToPlaylistState(m_config.themeMusicAddToPlaylist);
     m_themeShop->setThemeMusicPlayOnApplyState(m_config.themeMusicPlayOnApply);
+    m_themeShop->setCursorMotionModeState(m_config.cursorMotionMode);
+    m_themeShop->setPageTransitionModeState(m_config.pageTransitionMode);
     m_themeShop->setThemeMatchAccent(m_activeColors.accentH,
                                      m_activeColors.accentS,
                                      m_activeColors.accentL);

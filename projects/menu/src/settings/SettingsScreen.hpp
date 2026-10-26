@@ -24,15 +24,8 @@ public:
     ~SettingsScreen() override = default;
 
     void onWireframeChange(BoolCb cb)   { m_wireframeCb = std::move(cb); }
-    void onMusicEnabledChange(BoolCb cb) { m_musicEnabledCb = std::move(cb); }
-    void onMusicVolumeChange(FloatCb cb) { m_musicVolumeCb = std::move(cb); }
-    void onSfxVolumeChange(FloatCb cb)   { m_sfxVolumeCb = std::move(cb); }
     void onGridColumnsChange(IntCb cb)  { m_gridColumnsCb = std::move(cb); }
     void onGridRowsChange(IntCb cb)     { m_gridRowsCb = std::move(cb); }
-    void onSortLargeTilesChange(BoolCb cb) { m_sortLargeTilesCb = std::move(cb); }
-    void onActionHintStyleChange(IntCb cb) { m_actionHintStyleCb = std::move(cb); }
-    void onCursorMotionModeChange(IntCb cb) { m_cursorMotionModeCb = std::move(cb); }
-    void onPageTransitionModeChange(IntCb cb) { m_pageTransitionModeCb = std::move(cb); }
     void onUiLanguageChange(StringCb cb) { m_uiLanguageCb = std::move(cb); }
     void onClockUse12HourChange(BoolCb cb) { m_clockUse12HourCb = std::move(cb); }
     void onWebClockSyncChange(BoolCb cb) { m_webClockSyncCb = std::move(cb); }
@@ -74,24 +67,9 @@ public:
     void onRebootRequest(VoidCb cb)     { m_rebootCb = std::move(cb); }
 
     void setWireframeState(bool enabled) { m_wireframeEnabled = enabled; }
-    void setMusicState(bool enabled, float musicVol, float sfxVol) {
-        m_musicEnabled = enabled;
-        m_musicVolume = musicVol;
-        m_sfxVolume = sfxVol;
-    }
     void setGridLayoutState(int columns, int rows) {
         m_gridColumns = std::clamp(columns, 1, 8);
         m_gridRows = std::clamp(rows, 1, 5);
-    }
-    void setSortLargeTilesState(bool enabled) { m_sortLargeTiles = enabled; }
-    void setActionHintStyleState(int style) {
-        m_actionHintStyle = std::clamp(style, 0, 1);
-    }
-    void setCursorMotionModeState(int mode) {
-        m_cursorMotionMode = std::clamp(mode, 0, 1);
-    }
-    void setPageTransitionModeState(int mode) {
-        m_pageTransitionMode = std::clamp(mode, 0, 1);
     }
     void setUiLanguageOverride(const std::string& tag) {
         m_uiLanguageOverride = tag.empty() ? "auto" : tag;
@@ -161,15 +139,8 @@ private:
     friend class settings::tabs::AboutTab;
 
     BoolCb m_wireframeCb;
-    BoolCb m_musicEnabledCb;
-    FloatCb m_musicVolumeCb;
-    FloatCb m_sfxVolumeCb;
     IntCb m_gridColumnsCb;
     IntCb m_gridRowsCb;
-    BoolCb m_sortLargeTilesCb;
-    IntCb m_actionHintStyleCb;
-    IntCb m_cursorMotionModeCb;
-    IntCb m_pageTransitionModeCb;
     StringCb m_uiLanguageCb;
     BoolCb m_clockUse12HourCb;
     BoolCb m_webClockSyncCb;
@@ -196,15 +167,8 @@ private:
     VoidCb m_rebootCb;
 
     bool m_wireframeEnabled = false;
-    bool m_musicEnabled = true;
-    float m_musicVolume = 0.4f;
-    float m_sfxVolume = 0.7f;
     int m_gridColumns = 5;
     int m_gridRows = 3;
-    bool m_sortLargeTiles = true;
-    int m_actionHintStyle = 1;
-    int m_cursorMotionMode = 0;
-    int m_pageTransitionMode = 0;
     std::string m_uiLanguageOverride = "auto";
     bool m_clockUse12Hour = false;
     bool m_webClockSyncEnabled = false;

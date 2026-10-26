@@ -2,56 +2,15 @@
 #include <nxui/core/I18n.hpp>
 #include <switch.h>
 #include <algorithm>
-#include <cmath>
 
 SettingsScreen::Tab settings::tabs::AudioTab::build(SettingsScreen& screen) {
+    (void)screen;
     using Tab = SettingsScreen::Tab;
     using SettingItem = SettingsScreen::SettingItem;
     using ItemType = SettingsScreen::ItemType;
     auto& i18n = nxui::I18n::instance();
     Tab t;
     t.name = i18n.tr("settings.tabs.audio", "Audio");
-
-    {
-        SettingItem it;
-        it.label = i18n.tr("settings.music.menu_music", "Menu Music");
-        it.type = ItemType::Toggle;
-        it.boolVal = screen.m_musicEnabled;
-        it.anim01 = it.boolVal ? 1.f : 0.f;
-        it.onChange = [&screen](SettingItem& self) {
-            screen.m_musicEnabled = self.boolVal;
-            if (screen.m_musicEnabledCb) screen.m_musicEnabledCb(self.boolVal);
-        };
-        t.items.push_back(std::move(it));
-    }
-
-    {
-        SettingItem it;
-        it.label = i18n.tr("settings.music.music_volume", "Music Volume");
-        it.type = ItemType::Slider;
-        it.floatVal = std::clamp(screen.m_musicVolume, 0.f, 1.f);
-        it.anim01 = it.floatVal;
-        it.onChange = [&screen](SettingItem& self) {
-            self.anim01 = self.floatVal;
-            screen.m_musicVolume = std::clamp(self.floatVal, 0.f, 1.f);
-            if (screen.m_musicVolumeCb) screen.m_musicVolumeCb(screen.m_musicVolume);
-        };
-        t.items.push_back(std::move(it));
-    }
-
-    {
-        SettingItem it;
-        it.label = i18n.tr("settings.music.sfx_volume", "SFX Volume");
-        it.type = ItemType::Slider;
-        it.floatVal = std::clamp(screen.m_sfxVolume, 0.f, 1.f);
-        it.anim01 = it.floatVal;
-        it.onChange = [&screen](SettingItem& self) {
-            self.anim01 = self.floatVal;
-            screen.m_sfxVolume = std::clamp(self.floatVal, 0.f, 1.f);
-            if (screen.m_sfxVolumeCb) screen.m_sfxVolumeCb(screen.m_sfxVolume);
-        };
-        t.items.push_back(std::move(it));
-    }
 
     {
         SettingItem it; it.label = i18n.tr("settings.audio.speaker_auto_mute", "Speaker Auto-Mute"); it.type = ItemType::Toggle;
