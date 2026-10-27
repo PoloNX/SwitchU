@@ -784,7 +784,13 @@ void WiiUMenuApp::updateLeaveSplashHandoff(float dt) {
             if (preferSingleRowPosters()) {
                 m_deferBackdropPreloadSec = 2.0f;
                 m_returnPreloadPaceSec = 4.0f; // paced heroes past defer
-                m_iconStreamer.startSoftLanding(2.0f, 2, 1.75f, 3);
+                // With an FT viewer, stay at ±2 (light path); don't widen to 3
+                // and refill past what launch reclaim just freed.
+                m_frameTapStatus.probe(0.f, 0.f);
+                if (m_frameTapStatus.viewerConnected())
+                    m_iconStreamer.startSoftLanding(2.0f, 2, 0.f, 2);
+                else
+                    m_iconStreamer.startSoftLanding(2.0f, 2, 1.75f, 3);
                 if (m_steamGridDbBackdrop)
                     m_steamGridDbBackdrop->setPreloadMinInterval(0.45f);
             }
@@ -4739,6 +4745,7 @@ void WiiUMenuApp::resumeSuspendedApplication(std::uint64_t titleId,
     if (titleId == 0 || !m_launchAnim)
         return;
     scheduleLeaveCapture([this, titleId, launchTitle]() {
+        reclaimForFrameTapLaunch("resume");
         m_audio.playSfx(Sfx::LaunchGame);
         m_launchAnim->startResume([this, titleId, launchTitle]() {
             m_config.noteOpened(titleId);
@@ -4790,6 +4797,7 @@ void WiiUMenuApp::activateApplication(GlossyIcon* source, AppEntry* entry,
                         titleId, launchTitle](AccountUid uid) {
         scheduleLeaveCapture([this, frame, texture, radius, base, border,
                               titleId, launchTitle, uid]() {
+            reclaimForFrameTapLaunch("launch");
             m_audio.playSfx(Sfx::LaunchGame);
             m_launchAnim->start(frame, texture, radius, base, border, titleId, uid,
                 [this, launchTitle](std::uint64_t id, AccountUid selectedUid) {
@@ -5777,7 +5785,11 @@ void WiiUMenuApp::buildGrid() {
             // covered; soft-land arms at handoff. No-splash return arms here.
             if (m_fastReturnRequested && !leaveSplashActive()) {
                 m_returnPreloadPaceSec = 4.0f;
-                m_iconStreamer.startSoftLanding(2.0f, 2, 1.75f, 3);
+                m_frameTapStatus.probe(0.f, 0.f);
+                if (m_frameTapStatus.viewerConnected())
+                    m_iconStreamer.startSoftLanding(2.0f, 2, 0.f, 2);
+                else
+                    m_iconStreamer.startSoftLanding(2.0f, 2, 1.75f, 3);
                 if (m_steamGridDbBackdrop)
                     m_steamGridDbBackdrop->setPreloadMinInterval(0.45f);
             }
@@ -6620,12 +6632,9 @@ void WiiUMenuApp::enterFrameTapLightPath(const char* reason) {
         return;
     m_frameTapLightActive = true;
 
-#ifdef NXUI_BACKEND_DEKO3D
-    app().gpu().setAllocationHeadroom(
-        nxui::GpuDevice::kFrameTapLightAllocationHeadroom);
-#endif
-    // Hold HOME fill: keep only the current page neighborhood warm.
-    m_iconStreamer.setPageCacheRadiusCap(1);
+    // Hold HOME fill: focus ±2 posters (was ±1 — too sparse). Cap also
+    // applies to grid. Cancel prefetch so soft-landing cannot refill past it.
+    m_iconStreamer.setPageCacheRadiusCap(2);
     m_iconStreamer.cancelShadowPrefetch();
     m_iconStreamer.cancelPending();
     if (m_steamGridDbBackdrop)
@@ -6637,19 +6646,110 @@ void WiiUMenuApp::enterFrameTapLightPath(const char* reason) {
     m_folderPeekCompositeCache.clear();
     m_folderPeekCompositeBakeQueued.clear();
 
-    if (m_grid) {
-        int page = 0;
-        int pageSize = 1;
-        if (m_grid->iconsPerPage() > 0) {
-            page = m_grid->currentPage();
-            pageSize = std::max(1, m_grid->iconsPerPage());
-        }
+    if (m_grid && m_grid->iconsPerPage() > 0) {
+        const int page = preferSingleRowPosters()
+            ? std::max(0, m_grid->focusedGlobalIndex())
+            : m_grid->currentPage();
+        const int pageSize = preferSingleRowPosters()
+            ? 1
+            : std::max(1, m_grid->iconsPerPage());
         m_iconStreamer.onPageChanged(page, pageSize, app().gpu(), app().renderer(),
                                      m_grid->allIcons());
+        // Eviction only unbinds slots — free GPU MemBlocks so FT can remount.
+        m_iconStreamer.releaseUnusedGpuMemory();
     }
+
+#ifdef NXUI_BACKEND_DEKO3D
+    // Raise refuse headroom only after reclaim, and never above free − UI
+    // reserve. Soak showed free≈8 MiB + headroom=28 MiB → 7000+ refuses and an
+    // empty shell (menus/art/fonts all starved).
+    u64 total = 0, used = 0, freeBytes = 0;
+    if (R_SUCCEEDED(svcGetInfo(&total, InfoType_TotalMemorySize, CUR_PROCESS_HANDLE, 0)) &&
+        R_SUCCEEDED(svcGetInfo(&used, InfoType_UsedMemorySize, CUR_PROCESS_HANDLE, 0)) &&
+        total > used) {
+        freeBytes = total - used;
+    }
+    u64 headroom = nxui::GpuDevice::kFrameTapLightAllocationHeadroom;
+    const u64 uiReserve = nxui::GpuDevice::kFrameTapLightUiReserve;
+    if (freeBytes > uiReserve + nxui::GpuDevice::kDefaultAllocationHeadroom)
+        headroom = std::min(headroom, freeBytes - uiReserve);
+    else
+        headroom = nxui::GpuDevice::kDefaultAllocationHeadroom;
+    app().gpu().setAllocationHeadroom(headroom);
+    DebugLog::log("[ft-light] headroom clamped to %lluKB (free=%lluKB target=%lluKB reserve=%lluKB)",
+                  static_cast<unsigned long long>(headroom / 1024ull),
+                  static_cast<unsigned long long>(freeBytes / 1024ull),
+                  static_cast<unsigned long long>(
+                      nxui::GpuDevice::kFrameTapLightAllocationHeadroom / 1024ull),
+                  static_cast<unsigned long long>(uiReserve / 1024ull));
+#endif
 
     DebugLog::log("[ft-light] ENTER reason=%s", reason ? reason : "-");
     logFrameTapLightSoak("enter");
+}
+
+void WiiUMenuApp::reclaimForFrameTapLaunch(const char* reason) {
+    m_frameTapStatus.probe(0.f, 0.f);
+    if (!m_frameTapStatus.viewerConnected())
+        return;
+
+    // Focus-only while leaving HOME — posters elsewhere return to process free
+    // so FT's donor can remount on the second+ resume (soak: donor starved).
+    m_iconStreamer.setPageCacheRadiusCap(0);
+    m_iconStreamer.cancelShadowPrefetch();
+    m_iconStreamer.cancelPending();
+    if (m_steamGridDbBackdrop)
+        m_steamGridDbBackdrop->setPreloadPaused(true);
+    m_folderPeekCache.clear();
+    m_folderPeekBorrowed.clear();
+    m_folderPeekCompositeCache.clear();
+    m_folderPeekCompositeBakeQueued.clear();
+
+    int keepApp = -1;
+    if (m_grid) {
+        keepApp = m_grid->focusedGlobalIndex();
+        // Detach non-keep icons before destroying their MemBlocks.
+        for (int i = 0; i < (int)m_grid->allIcons().size(); ++i) {
+            if (i == keepApp)
+                continue;
+            if (auto& icon = m_grid->allIcons()[(size_t)i])
+                icon->setTexture(nullptr);
+        }
+        m_iconStreamer.releaseAllGpuExcept(keepApp);
+        if (keepApp >= 0 && m_grid->iconsPerPage() > 0) {
+            const int page = preferSingleRowPosters() ? keepApp : m_grid->currentPage();
+            const int pageSize = preferSingleRowPosters()
+                ? 1
+                : std::max(1, m_grid->iconsPerPage());
+            m_iconStreamer.onPageChanged(page, pageSize, app().gpu(), app().renderer(),
+                                         m_grid->allIcons());
+        }
+    }
+
+#ifdef NXUI_BACKEND_DEKO3D
+    m_fontNormal.trimCache();
+    m_fontSmall.trimCache();
+#endif
+
+    // Stay in light with focus-only cap until HOME return reticks enter/leave.
+    m_frameTapLightActive = true;
+#ifdef NXUI_BACKEND_DEKO3D
+    u64 total = 0, used = 0, freeBytes = 0;
+    if (R_SUCCEEDED(svcGetInfo(&total, InfoType_TotalMemorySize, CUR_PROCESS_HANDLE, 0)) &&
+        R_SUCCEEDED(svcGetInfo(&used, InfoType_UsedMemorySize, CUR_PROCESS_HANDLE, 0)) &&
+        total > used) {
+        freeBytes = total - used;
+    }
+    u64 headroom = nxui::GpuDevice::kFrameTapLightAllocationHeadroom;
+    const u64 uiReserve = nxui::GpuDevice::kFrameTapLightUiReserve;
+    if (freeBytes > uiReserve + nxui::GpuDevice::kDefaultAllocationHeadroom)
+        headroom = std::min(headroom, freeBytes - uiReserve);
+    else
+        headroom = nxui::GpuDevice::kDefaultAllocationHeadroom;
+    app().gpu().setAllocationHeadroom(headroom);
+#endif
+    DebugLog::log("[ft-light] LAUNCH-RECLAIM reason=%s", reason ? reason : "-");
+    logFrameTapLightSoak("launch");
 }
 
 void WiiUMenuApp::leaveFrameTapLightPath(const char* reason) {
@@ -6663,7 +6763,12 @@ void WiiUMenuApp::leaveFrameTapLightPath(const char* reason) {
 #endif
     m_iconStreamer.setPageCacheRadiusCap(-1);
     // Pace refill so exit does not instantly re-eat FT headroom.
-    m_iconStreamer.startSoftLanding(2.0f, 2, 1.75f, 3);
+    // If FT is still installed/available, stay tight (±2) — full soft-land
+    // refill after a brief viewer blip was starving the donor (free→8KB).
+    if (m_frameTapStatus.available())
+        m_iconStreamer.startSoftLanding(2.0f, 2, 0.f, 2);
+    else
+        m_iconStreamer.startSoftLanding(2.0f, 2, 1.75f, 3);
     if (m_steamGridDbBackdrop)
         m_steamGridDbBackdrop->setPreloadPaused(false);
 
@@ -6672,12 +6777,62 @@ void WiiUMenuApp::leaveFrameTapLightPath(const char* reason) {
 }
 
 void WiiUMenuApp::tickFrameTapLightPath(float dt) {
-    m_frameTapStatus.probe(dt, 500.f);
-    const bool wantLight = m_frameTapStatus.viewerConnected();
-    if (wantLight && !m_frameTapLightActive)
+    // Poll faster while FT is asking for headroom (donor remount handshake).
+    const float pollMs = m_frameTapStatus.needsHeadroom() ? 100.f : 500.f;
+    m_frameTapStatus.probe(dt, pollMs);
+    const bool viewer = m_frameTapStatus.viewerConnected();
+    if (viewer) {
+        m_frameTapViewerGoneSec = 0.f;
+    } else if (m_frameTapLightActive) {
+        m_frameTapViewerGoneSec += dt;
+    }
+
+    bool justAckedHeadroom = false;
+    if (m_frameTapStatus.needsHeadroom()) {
+        const std::uint32_t needMb = m_frameTapStatus.headroomNeedMb();
+        reclaimForFrameTapLaunch("need-headroom");
+        std::uint32_t freeKb = 0;
+#ifdef NXUI_BACKEND_DEKO3D
+        u64 total = 0, used = 0;
+        if (R_SUCCEEDED(svcGetInfo(&total, InfoType_TotalMemorySize, CUR_PROCESS_HANDLE, 0)) &&
+            R_SUCCEEDED(svcGetInfo(&used, InfoType_UsedMemorySize, CUR_PROCESS_HANDLE, 0)) &&
+            total > used) {
+            freeKb = static_cast<std::uint32_t>((total - used) / 1024ull);
+        }
+#endif
+        m_frameTapStatus.ackHeadroom(freeKb);
+        justAckedHeadroom = true;
+        DebugLog::log("[ft-light] ACK-HEADROOM need=%uMB free=%uKB", needMb, freeKb);
+    }
+
+    const bool wantLight = viewer
+        || (m_frameTapLightActive && m_frameTapViewerGoneSec < kFrameTapViewerGoneLeaveSec);
+
+    if (wantLight && !m_frameTapLightActive) {
         enterFrameTapLightPath(m_frameTapStatus.available() ? "viewer" : "force-file");
-    else if (!wantLight && m_frameTapLightActive)
+    } else if (!wantLight && m_frameTapLightActive) {
         leaveFrameTapLightPath("viewer-gone");
+        m_frameTapViewerGoneSec = 0.f;
+    } else if (viewer && m_frameTapLightActive
+               && m_iconStreamer.pageCacheRadiusCap() == 0
+               && !(m_launchAnim && m_launchAnim->isPlaying())
+               && !justAckedHeadroom) {
+        // Launch reclaim left focus-only; widen for HOME browsing again.
+        // Skip the same tick as a NeedHeadroom ACK so the donor can remount.
+        m_iconStreamer.setPageCacheRadiusCap(2);
+        if (m_grid && m_grid->iconsPerPage() > 0) {
+            const int page = preferSingleRowPosters()
+                ? std::max(0, m_grid->focusedGlobalIndex())
+                : m_grid->currentPage();
+            const int pageSize = preferSingleRowPosters()
+                ? 1
+                : std::max(1, m_grid->iconsPerPage());
+            m_iconStreamer.onPageChanged(page, pageSize, app().gpu(), app().renderer(),
+                                         m_grid->allIcons());
+        }
+        DebugLog::log("[ft-light] restore browse radius=2 after launch reclaim");
+        logFrameTapLightSoak("restore");
+    }
 }
 
 void WiiUMenuApp::onUpdateAwake(float dt) {

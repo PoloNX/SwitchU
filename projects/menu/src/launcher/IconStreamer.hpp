@@ -81,6 +81,14 @@ public:
     void setPageCacheRadiusCap(int radius);
     int pageCacheRadiusCap() const { return m_pageCacheRadiusCap; }
 
+    // Destroy GPU textures on free pool slots. onPageChanged normally keeps
+    // them for reuse; Frame Tap needs the bytes returned to process free.
+    void releaseUnusedGpuMemory();
+
+    // Hard reclaim: destroy every pool texture except keepAppIndex (−1 = none).
+    // Launch/resume path — soft eviction left ~25 MiB bound (soak 2026-10-27).
+    void releaseAllGpuExcept(int keepAppIndex);
+
     // Off-screen art prefetch for layout transitions: decode destination art
     // (poster or icon) by titleId without touching textures already shown on
     // tiles. pumpShadowPrefetch() uploads a few GPU textures per frame so the

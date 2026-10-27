@@ -383,6 +383,8 @@ private:
     void enterFrameTapLightPath(const char* reason);
     void leaveFrameTapLightPath(const char* reason);
     void logFrameTapLightSoak(const char* tag);
+    // Free GPU icon/poster memory before resume/launch so FT can remount.
+    void reclaimForFrameTapLaunch(const char* reason);
     void closeQuickSettings();
     void createThemeShop();
     void createGameOptions();
@@ -494,6 +496,10 @@ private:
     switchu::services::AutoThemeService m_autoTheme;
     switchu::services::FrameTapStatus m_frameTapStatus;
     bool                     m_frameTapLightActive = false;
+    // Delay leave-light on brief viewer drops so soft-land cannot refill
+    // past FT remount needs (soak: LEAVE→img 34MB→free 8KB).
+    float                    m_frameTapViewerGoneSec = 0.f;
+    static constexpr float   kFrameTapViewerGoneLeaveSec = 4.f;
     float                    m_autoThemeCheckTimer = 0.f;
 
     struct GeoFetchResult {

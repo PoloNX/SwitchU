@@ -350,6 +350,47 @@ void IconStreamer::setPageCacheRadiusCap(int radius) {
     DebugLog::log("[streamer] page-cache radius cap=%d", radius);
 }
 
+void IconStreamer::releaseUnusedGpuMemory() {
+    int released = 0;
+    for (auto& slot : m_pool) {
+        if (!slot || slot->appIndex >= 0 || !slot->texture.valid())
+            continue;
+        // Move-assign empty Texture → retireGpuResources() (waitIdle + free).
+        slot->texture = nxui::Texture{};
+        ++released;
+    }
+    if (released > 0)
+        DebugLog::log("[streamer] released %d unused GPU textures for FT headroom", released);
+}
+
+void IconStreamer::releaseAllGpuExcept(int keepAppIndex) {
+    clearPinnedIndex();
+    int released = 0;
+    m_freeSlots.clear();
+    for (int i = 0; i < (int)m_pool.size(); ++i) {
+        auto& slot = m_pool[(size_t)i];
+        if (!slot)
+            continue;
+        const int app = slot->appIndex;
+        if (app >= 0 && app == keepAppIndex) {
+            if (app < (int)m_appToSlot.size())
+                m_appToSlot[(size_t)app] = i;
+            continue;
+        }
+        if (app >= 0 && app < (int)m_appToSlot.size())
+            m_appToSlot[(size_t)app] = -1;
+        slot->appIndex = -1;
+        if (slot->texture.valid()) {
+            slot->texture = nxui::Texture{};
+            ++released;
+        }
+        m_freeSlots.push_back(i);
+    }
+    cancelPending();
+    DebugLog::log("[streamer] hard-released %d GPU textures (kept app=%d) for FT",
+                  released, keepAppIndex);
+}
+
 void IconStreamer::startSoftLanding(float tightSeconds, int tightRadius,
                                     float widenSeconds, int widenRadius) {
     const auto now = std::chrono::steady_clock::now();
@@ -385,8 +426,11 @@ void IconStreamer::onPageChanged(int currentPage, int iconsPerPage,
     int visibleEndApp   = std::min(totalApps, visibleStartApp + iconsPerPage);
     // Soft-landing can temporarily shrink the single-row radius so post-HOME
     // SD work does not stack on the first interactive seconds. Grid stays ±1.
-    const int cacheRadius = iconsPerPage == 1
-        ? pageCacheRadius() : kGridPageCacheRadius;
+    // Single-row uses soft-landing / light-path caps. Grid stays ±1 unless a
+    // light/launch cap shrinks it further (cap 0 = focused page only).
+    int cacheRadius = iconsPerPage == 1 ? pageCacheRadius() : kGridPageCacheRadius;
+    if (m_pageCacheRadiusCap >= 0 && cacheRadius > m_pageCacheRadiusCap)
+        cacheRadius = m_pageCacheRadiusCap;
     int cacheStartPage  = std::max(0, currentPage - cacheRadius);
     int cacheEndPage    = std::min(totalPages - 1, currentPage + cacheRadius);
     int cacheStartApp   = cacheStartPage * iconsPerPage;
