@@ -68,6 +68,21 @@ private:
                           const std::string& webpPath, AppletButton* button,
                           nxui::Texture* staticIcon);
 
+    // Chrome glide for a layout flip: each side button travels from its grid
+    // column to the single-row strip (and back) on the same easing/duration as
+    // the tile morph, so the buttons never snap ahead of the icons.
+    struct ButtonGlide {
+        AppletButton* button  = nullptr;
+        nxui::Rect    from{};
+        nxui::Rect    to{};
+        float         elapsed = 0.f;
+        float         delay   = 0.f;
+        bool          active  = false;
+    };
+    void glideButtonTo(AppletButton* button, const nxui::Rect& target,
+                       float delay);
+    void updateButtonGlides(float dt);
+
     std::vector<nxui::Texture> m_icons;
     // White×alpha twins for colour glyphs (empty/invalid when icon is mono).
     std::vector<nxui::Texture> m_iconContrastMasks;
@@ -86,6 +101,10 @@ private:
         nxui::Texture*   staticTex = nullptr;
     };
     std::vector<AnimEntry> m_anims;
+    std::vector<ButtonGlide> m_buttonGlides;
+    // The first arrangement (boot / first build) snaps into place; only later
+    // layout flips glide.
+    bool m_layoutArranged = false;
     std::string m_loadedAssetsBase;
     std::string m_loadedCustomIconsBase;
     std::string m_loadedIconPackId;
