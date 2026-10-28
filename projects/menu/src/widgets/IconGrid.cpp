@@ -602,47 +602,38 @@ void IconGrid::startAppearAnimation(const IconAppearOptions& opt) {
     }
 }
 
-void IconGrid::animateSwap(int heldPrevious, int heldCurrent,
-                           int displacedPrevious, int displacedCurrent) {
+void IconGrid::animateDisplacedTile(int displacedPrevious, int displacedCurrent) {
     if (m_layoutMode != AppLayoutMode::Grid || m_sliding || m_bumping)
         return;
 
     const int count = static_cast<int>(m_allIcons.size());
     const int perPage = std::max(1, iconsPerPage());
     const int page = m_page;
-    const auto iconAt = [&](int index) -> GlossyIcon* {
-        if (index < 0 || index >= count)
-            return nullptr;
-        return m_allIcons[static_cast<std::size_t>(index)].get();
-    };
-    const auto onVisiblePage = [&](int index) {
-        return index >= 0 && index < count && index / perPage == page;
-    };
+    if (displacedCurrent < 0 || displacedCurrent >= count ||
+        displacedCurrent / perPage != page)
+        return;
+    GlossyIcon* icon = m_allIcons[static_cast<std::size_t>(displacedCurrent)].get();
+    if (!icon)
+        return;
 
-    const auto animateTile = [&](int previous, int current) {
-        if (!onVisiblePage(current))
-            return;
-        GlossyIcon* icon = iconAt(current);
-        if (!icon)
-            return;
-        const int spanColumns = std::max(1, icon->gridSpanColumns());
-        const int spanRows = std::max(1, icon->gridSpanRows());
-        if (onVisiblePage(previous)) {
-            icon->startGlideFrom(
-                gridSpanRect(previous, spanColumns, spanRows), kSwapGlideDuration);
-            return;
-        }
-        // Came from another page: enter from the side that page sits on, the
-        // same direction a page slide would have travelled.
-        nxui::Rect from = gridSpanRect(current, spanColumns, spanRows);
-        const bool fromEarlierPage = previous < 0 || (current / perPage) > (previous / perPage);
-        from.x += (fromEarlierPage ? -1.f : 1.f) * pageStride();
-        icon->setAppearOrigin(from);
-        icon->startAppear(0.f);
-    };
-
-    animateTile(heldPrevious, heldCurrent);
-    animateTile(displacedPrevious, displacedCurrent);
+    const int spanColumns = std::max(1, icon->gridSpanColumns());
+    const int spanRows = std::max(1, icon->gridSpanRows());
+    if (displacedPrevious >= 0 && displacedPrevious < count &&
+        displacedPrevious / perPage == page) {
+        icon->startGlideFrom(
+            gridSpanRect(displacedPrevious, spanColumns, spanRows),
+            kSwapGlideDuration);
+        return;
+    }
+    // Came from another page: enter from the side that page sits on, the same
+    // direction a page slide would have travelled.
+    nxui::Rect from = gridSpanRect(displacedCurrent, spanColumns, spanRows);
+    const bool fromEarlierPage =
+        displacedPrevious < 0 ||
+        (displacedCurrent / perPage) > (displacedPrevious / perPage);
+    from.x += (fromEarlierPage ? -1.f : 1.f) * pageStride();
+    icon->setAppearOrigin(from);
+    icon->startAppear(0.f);
 }
 
 void IconGrid::startDisappearAnimation(const IconAppearOptions& opt, float dur) {

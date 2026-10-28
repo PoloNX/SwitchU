@@ -11,7 +11,10 @@
 #include <cstdio>
 #include <ctime>
 #include <filesystem>
+#include <limits>
 #include <unordered_set>
+#include <utility>
+#include <vector>
 #include <nxui/core/I18n.hpp>
 
 namespace {
@@ -689,80 +692,84 @@ bool WiiUMenuApp::commitEditModePlacement() {
     }
 
     if (m_openFolderId == 0) {
-        const auto sizeForTitle = [this](std::uint64_t titleId) {
-            const auto widgetId = switchu::widgets::widgetIdFromTitleId(titleId);
-            if (const auto* widget = widgetId ? m_widgetStore.find(widgetId) : nullptr)
-                return switchu::widgets::validatedSize(
-                    widget->type, widget->size, AppLayoutMode::Grid);
-            return gameGridSize(titleId, AppLayoutMode::Grid);
-        };
-        const std::uint64_t displacedTitleId = m_model.at(target).titleId;
-        const auto heldSize = sizeForTitle(m_editHeldTitleId);
-        const auto displacedSize = sizeForTitle(displacedTitleId);
-        const int columns = std::max(1, m_grid->columns());
-        const auto footprintsOverlap = [columns](
-                int firstAnchor, switchu::widgets::WidgetSize first,
-                int secondAnchor, switchu::widgets::WidgetSize second) {
-            for (int firstY = 0; firstY < first.rows; ++firstY) {
-                for (int firstX = 0; firstX < first.columns; ++firstX) {
-                    const int firstCell = firstAnchor + firstY * columns + firstX;
-                    for (int secondY = 0; secondY < second.rows; ++secondY)
-                        for (int secondX = 0; secondX < second.columns; ++secondX)
-                            if (firstCell == secondAnchor + secondY * columns + secondX)
-                                return true;
-                }
-            }
-            return false;
-        };
-        if (!canPlaceGridItem(target, heldSize, m_editHeldTitleId,
-                              displacedTitleId))
+        // Dropping out of a folder is handled earlier and only accepts a free
+        // cell; anything else must not slip into the root layout, which would
+        // leave the title in the folder as well.
+        if (m_editOriginFolderId != 0)
             return false;
 
-        int displacedAnchor = from;
-        if (displacedTitleId != 0 &&
-            (!canPlaceGridItem(displacedAnchor, displacedSize,
-                               m_editHeldTitleId, displacedTitleId) ||
-             footprintsOverlap(target, heldSize,
-                               displacedAnchor, displacedSize))) {
-            displacedAnchor = -1;
-            int bestDistance = std::numeric_limits<int>::max();
-            for (int candidate = 0;
-                 candidate < static_cast<int>(m_layoutSlots.size()); ++candidate) {
-                if (!canPlaceGridItem(candidate, displacedSize,
-                                      m_editHeldTitleId, displacedTitleId) ||
-                    footprintsOverlap(target, heldSize, candidate, displacedSize))
+        const auto heldSize = layoutSlotSpan(m_editHeldTitleId);
+        const int columns = std::max(1, m_grid->columns());
+
+        // Tiles the drop would land on. A wide tile keeps its id in its anchor
+        // cell only, so a drop on its second half used to look like an empty
+        // slot — the fit check then found those cells taken by that very tile
+        // and refused, and A did nothing whenever a large tile was targeted.
+        std::vector<int> displacedAnchors;
+        for (int dy = 0; dy < std::max(1, heldSize.rows); ++dy) {
+            for (int dx = 0; dx < std::max(1, heldSize.columns); ++dx) {
+                const int anchor = layoutSpanAnchorFor(target + dy * columns + dx);
+                if (anchor < 0 || anchor == from)
                     continue;
-                const int distance = std::abs(candidate - from);
+                if (std::find(displacedAnchors.begin(), displacedAnchors.end(),
+                              anchor) == displacedAnchors.end())
+                    displacedAnchors.push_back(anchor);
+            }
+        }
+
+        // Resolve the whole drop on a copy so a refused placement leaves the
+        // layout untouched, and so several displaced tiles can be parked one
+        // after the other in the cells the others just freed.
+        std::vector<std::uint64_t> slots = m_layoutSlots;
+        std::replace(slots.begin(), slots.end(), m_editHeldTitleId, std::uint64_t{0});
+        std::vector<std::pair<std::uint64_t, int>> displaced;
+        for (int anchor : displacedAnchors) {
+            const std::uint64_t titleId = slots[static_cast<std::size_t>(anchor)];
+            if (titleId == 0)
+                continue;
+            std::replace(slots.begin(), slots.end(), titleId, std::uint64_t{0});
+            displaced.emplace_back(titleId, anchor);
+        }
+        if (!layoutFitsAt(slots, target, heldSize))
+            return false;
+        slots[static_cast<std::size_t>(target)] = m_editHeldTitleId;
+
+        std::vector<std::pair<int, int>> displacedMoves;
+        displacedMoves.reserve(displaced.size());
+        for (const auto& [titleId, previous] : displaced) {
+            const auto size = layoutSlotSpan(titleId);
+            int best = -1;
+            int bestDistance = std::numeric_limits<int>::max();
+            for (int candidate = 0; candidate < static_cast<int>(slots.size());
+                 ++candidate) {
+                if (!layoutFitsAt(slots, candidate, size))
+                    continue;
+                const int distance = std::abs(candidate - previous);
                 if (distance < bestDistance) {
-                    displacedAnchor = candidate;
                     bestDistance = distance;
+                    best = candidate;
                 }
             }
-            if (displacedAnchor < 0)
+            if (best < 0)
                 return false;
+            slots[static_cast<std::size_t>(best)] = titleId;
+            displacedMoves.emplace_back(previous, best);
         }
 
         if (changed) {
             detachEditSourceIcon();
             unbindEditActions();
-            std::replace(m_layoutSlots.begin(), m_layoutSlots.end(),
-                         m_editHeldTitleId, std::uint64_t{0});
-            if (displacedTitleId != 0)
-                std::replace(m_layoutSlots.begin(), m_layoutSlots.end(),
-                             displacedTitleId, std::uint64_t{0});
-            m_layoutSlots[static_cast<std::size_t>(target)] = m_editHeldTitleId;
-            if (displacedTitleId != 0)
-                m_layoutSlots[static_cast<std::size_t>(displacedAnchor)] = displacedTitleId;
+            m_layoutSlots = std::move(slots);
             m_editSourceIndex = target;
             m_editOriginRootSlot = target;
             m_layoutDirty = true;
             applyDisplayModel(buildRootFolderModel(), m_editHeldTitleId, false);
             reattachEditSourceIcon();
-            // Both tiles traded places: glide each one across the gap the other
-            // left. Started after the rebuild, which force-visibles every icon.
-            m_grid->animateSwap(from, target,
-                                displacedTitleId != 0 ? target : -1,
-                                displacedTitleId != 0 ? displacedAnchor : -1);
+            // Only the pushed-out tiles travel: the held one already sits where
+            // the player dropped it (the ghost is drawn there), so gliding it
+            // from its previous slot made it snap back before sliding in.
+            for (const auto& [previous, current] : displacedMoves)
+                m_grid->animateDisplacedTile(previous, current);
             if (auto* focused = m_grid->focusManager().current()) {
                 focusManager().setFocus(focused);
                 if (focused->tag() == "glossy_icon")
@@ -809,10 +816,11 @@ bool WiiUMenuApp::commitEditModePlacement() {
         if (icon)
             icon->forceVisible();
     }
-    // Same-page swap inside a folder: the two icons glide past each other. The
-    // forced refresh above would cancel an earlier start, so arm it afterwards.
+    // Same-page swap inside a folder: the tile that was pushed out glides into
+    // the slot the held one left. The held tile itself is already drawn at its
+    // destination (the ghost sits on it), so it must not glide from its origin.
     if (changed)
-        m_grid->animateSwap(from, target, target, from);
+        m_grid->animateDisplacedTile(target, from);
 
     if (auto* cur = m_grid->focusManager().current())
         focusManager().setFocus(cur);
@@ -1016,7 +1024,10 @@ bool WiiUMenuApp::moveFocusedIcon(nxui::FocusDirection dir) {
             if (col > 0)
                 target = from - 1;
             else if (page > 0)
-                target = (page - 1) * perPage + row * cols + (cols - 1);
+                // A wide tile cannot be anchored in the last column: land on the
+                // rightmost column where its whole footprint still fits.
+                target = (page - 1) * perPage + row * cols +
+                         std::max(0, cols - spanColumns);
             else
                 return false;
             break;

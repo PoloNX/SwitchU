@@ -81,13 +81,14 @@ public:
     // Mirror of a fromTile appear: icons fly back into opt.origin, last in, first out.
     void startDisappearAnimation(const IconAppearOptions& opt, float dur);
 
-    // Move-mode swap effect. Each pair is (previous, current) global index of a
-    // tile that traded places with the other. Tiles that stay on the visible
-    // page glide across the gap their partner left behind; a tile arriving from
-    // another page slides in from the side that page lies on. Call after the
-    // model rebuild, since the rebuild force-visibles every icon.
-    void animateSwap(int heldPrevious, int heldCurrent,
-                     int displacedPrevious, int displacedCurrent);
+    // Move-mode swap effect. Glides the tile that a placement displaced from
+    // (displacedPrevious) into the slot it ended up in (displacedCurrent).
+    // Tiles that stay on the visible page glide across the gap; one arriving
+    // from another page slides in from the side that page lies on. Call after
+    // the model rebuild, since the rebuild force-visibles every icon. The tile
+    // the player was holding is deliberately left alone: it is already drawn
+    // where it was dropped, under the edit ghost.
+    void animateDisplacedTile(int displacedPrevious, int displacedCurrent);
 
     void startPageTransition(int targetPage);
     bool isTransitioning() const { return m_sliding; }
