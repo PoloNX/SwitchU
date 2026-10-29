@@ -118,7 +118,10 @@ static constexpr float kMusicNowPlayingThumbSize = 36.f;
 static constexpr float kMusicNowPlayingThumbGap = 10.f;
 
 static constexpr float kStatusY = kTitleY + kTitleLineH + kTitleBreath;
-static constexpr float kMusicY = kStatusY + kStatusH + kWidgetGap;
+// Battery Saver sits under battery/thermals; Airplane + Wi-Fi share one row
+// so panel height stays even after the extra widget.
+static constexpr float kBatterySaverY = kStatusY + kStatusH + kWidgetGap;
+static constexpr float kMusicY = kBatterySaverY + kToggleH + kWidgetGap;
 static constexpr float kMusicNowPlayingPadY = 5.f;
 static constexpr float kMusicNowPlayingH = 44.f;
 static constexpr float kMusicControlsY = kMusicNowPlayingPadY + kMusicNowPlayingH + 5.f;
@@ -130,10 +133,12 @@ static constexpr float kMusicH = kMusicProgressTrackY + kSliderTrackH + 14.f;
 static constexpr float kBgmY = kMusicY + kMusicH + kWidgetGap;
 static constexpr float kSfxY = kBgmY + kSliderItemH + kWidgetGap;
 static constexpr float kBrightnessY = kSfxY + kSliderItemH + kWidgetGap;
-static constexpr float kAirplaneY = kBrightnessY + kSliderItemH + kWidgetGap;
-static constexpr float kWifiY = kAirplaneY + kToggleH + kWidgetGap;
+static constexpr float kNetRowY = kBrightnessY + kSliderItemH + kWidgetGap;
+static constexpr float kAirplaneY = kNetRowY;
+static constexpr float kWifiY = kNetRowY;
+static constexpr float kNetRowGap = kWidgetGap;
 // Power row sits where the old section title was — same gap as every other widget.
-static constexpr float kPowerBtnY = kWifiY + kToggleH + kWidgetGap;
+static constexpr float kPowerBtnY = kNetRowY + kToggleH + kWidgetGap;
 // Fullscreen cover overlay player.
 static constexpr float kCoverFsCardW = 560.f;
 static constexpr float kCoverFsCardH = 168.f;
@@ -202,6 +207,60 @@ static void drawWifiIcon(nxui::Renderer& ren, nxui::Vec2 center, const nxui::Col
             prev = pt;
         }
     }
+}
+
+// Classic leaf silhouette (Battery Saver) — filled almond + midrib, sized like Wi-Fi.
+static void drawLeafIcon(nxui::Renderer& ren, nxui::Vec2 center, const nxui::Color& color, float scale = 1.0f) {
+    constexpr float kPi = 3.14159265358979323846f;
+    const float s = scale;
+    const float tipY = center.y - 11.5f * s;
+    const float baseY = center.y + 9.0f * s;
+    const float maxW = 8.5f * s;
+
+    // Filled leaf body via horizontal spans (reads clearly at QS toggle size).
+    const int y0 = static_cast<int>(std::floor(tipY));
+    const int y1 = static_cast<int>(std::ceil(baseY));
+    for (int yi = y0; yi <= y1; ++yi) {
+        const float y = static_cast<float>(yi);
+        const float t = std::clamp((y - tipY) / std::max(1.f, baseY - tipY), 0.f, 1.f);
+        const float w = std::sin(t * kPi) * maxW;
+        if (w < 0.6f * s) continue;
+        ren.drawLine({center.x - w, y}, {center.x + w, y}, color, 1.15f * s);
+    }
+
+    // Midrib + short side veins.
+    ren.drawLine({center.x, tipY + 1.5f * s}, {center.x, baseY - 1.0f * s},
+                 color.withAlpha(color.a * 0.55f), 1.4f * s);
+    for (float t : {0.32f, 0.50f, 0.68f}) {
+        const float y = tipY + (baseY - tipY) * t;
+        const float w = std::sin(t * kPi) * maxW * 0.72f;
+        ren.drawLine({center.x, y}, {center.x - w, y + 2.2f * s},
+                     color.withAlpha(color.a * 0.7f), 1.15f * s);
+        ren.drawLine({center.x, y}, {center.x + w, y + 2.2f * s},
+                     color.withAlpha(color.a * 0.7f), 1.15f * s);
+    }
+}
+
+// Compact airplane mark — same visual weight as drawWifiIcon at equal scale.
+static void drawAirplaneIcon(nxui::Renderer& ren, nxui::Vec2 center, const nxui::Color& color, float scale = 1.0f) {
+    const float s = scale;
+    const float thick = 1.9f * s;
+    // Nose → tail fuselage (slight climb).
+    const nxui::Vec2 nose = {center.x + 11.0f * s, center.y - 1.5f * s};
+    const nxui::Vec2 tail = {center.x - 10.5f * s, center.y + 1.0f * s};
+    ren.drawLine(tail, nose, color, thick);
+    // Main wings.
+    ren.drawLine({center.x - 1.5f * s, center.y - 0.2f * s},
+                 {center.x - 5.5f * s, center.y - 8.5f * s}, color, thick);
+    ren.drawLine({center.x - 1.5f * s, center.y - 0.2f * s},
+                 {center.x - 5.5f * s, center.y + 8.5f * s}, color, thick);
+    // Tailplane.
+    ren.drawLine({center.x - 8.0f * s, center.y + 0.6f * s},
+                 {center.x - 11.0f * s, center.y - 4.5f * s}, color, 1.6f * s);
+    ren.drawLine({center.x - 8.0f * s, center.y + 0.6f * s},
+                 {center.x - 11.0f * s, center.y + 4.5f * s}, color, 1.6f * s);
+    // Nose tip accent.
+    ren.drawCircle(nose, 1.6f * s, color);
 }
 
 static void drawMoonIcon(nxui::Renderer& ren, nxui::Vec2 center, const nxui::Color& color, float scale = 1.0f) {
@@ -379,6 +438,7 @@ static void drawPlaylistHandle(nxui::Renderer& ren, const nxui::Rect& handle,
 
 void QuickSettingsOverlay::invalidateMusicControlIcons() {
     m_musicIconsLoadAttempted = false;
+    m_toggleIconsLoadAttempted = false;
     m_iconPrev = nxui::Texture();
     m_iconNext = nxui::Texture();
     m_iconPlay = nxui::Texture();
@@ -386,6 +446,8 @@ void QuickSettingsOverlay::invalidateMusicControlIcons() {
     m_iconRepeat = nxui::Texture();
     m_iconShuffle = nxui::Texture();
     m_iconPlaylist = nxui::Texture();
+    m_iconLeaf = nxui::Texture();
+    m_iconAirplane = nxui::Texture();
 }
 
 void QuickSettingsOverlay::ensureMusicControlIcons(nxui::Renderer& ren) {
@@ -412,6 +474,42 @@ void QuickSettingsOverlay::ensureMusicControlIcons(nxui::Renderer& ren) {
     load(m_iconRepeat, "repeat.png");
     load(m_iconShuffle, "shuffle.png");
     load(m_iconPlaylist, "playlist.png");
+}
+
+void QuickSettingsOverlay::ensureToggleIcons(nxui::Renderer& ren) {
+    if (m_toggleIconsLoadAttempted)
+        return;
+    m_toggleIconsLoadAttempted = true;
+
+    auto load = [&](nxui::Texture& tex, const char* file) {
+        std::string path;
+        if (m_iconGlyphResolve)
+            path = m_iconGlyphResolve(file);
+        if (!path.empty() && tex.loadFromFile(ren.gpu(), ren, path, 128))
+            return;
+        if (tex.loadFromFile(ren.gpu(), ren, std::string("romfs:/icons/default/") + file, 128))
+            return;
+        tex.loadFromFile(ren.gpu(), ren,
+                         std::string("sdmc:/switch/SwitchU/icons/default/") + file, 128);
+    };
+    load(m_iconLeaf, "leaf.png");
+    load(m_iconAirplane, "airplane.png");
+}
+
+bool QuickSettingsOverlay::drawToggleGlyph(nxui::Renderer& ren, ItemIndex idx,
+                                           nxui::Vec2 center, const nxui::Color& color,
+                                           float edge) const {
+    const nxui::Texture* tex = nullptr;
+    if (idx == ItemIndex::BatterySaver)
+        tex = m_iconLeaf.valid() ? &m_iconLeaf : nullptr;
+    else if (idx == ItemIndex::AirplaneMode)
+        tex = m_iconAirplane.valid() ? &m_iconAirplane : nullptr;
+    if (!tex)
+        return false;
+    ren.drawTexture(tex,
+                    {center.x - edge * 0.5f, center.y - edge * 0.5f, edge, edge},
+                    color);
+    return true;
 }
 
 const nxui::Texture* QuickSettingsOverlay::musicControlIcon(MusicControl control,
@@ -1313,6 +1411,9 @@ void QuickSettingsOverlay::setupNavigationActions() {
         int next = static_cast<int>(m_selectedItem) - 1;
         if (next < 0)
             next = static_cast<int>(ItemIndex::Count) - 1;
+        // Airplane + Wi-Fi share a row — skip Wi-Fi on vertical nav.
+        if (static_cast<ItemIndex>(next) == ItemIndex::Wifi)
+            next = static_cast<int>(ItemIndex::AirplaneMode);
         m_selectedItem = static_cast<ItemIndex>(next);
         updateCursorTarget();
         if (m_callbacks.onNavigateSfx) m_callbacks.onNavigateSfx();
@@ -1388,6 +1489,9 @@ void QuickSettingsOverlay::setupNavigationActions() {
         int next = static_cast<int>(m_selectedItem) + 1;
         if (next >= static_cast<int>(ItemIndex::Count))
             next = 0;
+        // Airplane + Wi-Fi share a row — skip Wi-Fi on vertical nav.
+        if (static_cast<ItemIndex>(next) == ItemIndex::Wifi)
+            next = static_cast<int>(ItemIndex::PowerActions);
         m_selectedItem = static_cast<ItemIndex>(next);
         updateCursorTarget();
         if (m_callbacks.onNavigateSfx) m_callbacks.onNavigateSfx();
@@ -1422,7 +1526,8 @@ void QuickSettingsOverlay::setupNavigationActions() {
             const bool hopFromPrev = m_selectedItem == ItemIndex::MusicTransport
                 && (m_nowPlayingFocused || m_selectedMusicControl == MusicControl::Prev);
             const bool hopFromToggle = m_selectedItem == ItemIndex::AirplaneMode
-                || m_selectedItem == ItemIndex::Wifi;
+                || m_selectedItem == ItemIndex::Wifi
+                || m_selectedItem == ItemIndex::BatterySaver;
             const bool hopFromSleep = m_selectedItem == ItemIndex::PowerActions
                 && m_selectedPower == PowerAction::Sleep;
             if (hopFromPrev || hopFromToggle || hopFromSleep) {
@@ -1457,9 +1562,14 @@ void QuickSettingsOverlay::setupNavigationActions() {
             case ItemIndex::SfxVolume:
                 adjustSlider(ItemIndex::SfxVolume, -0.05f);
                 break;
-            case ItemIndex::AirplaneMode:
             case ItemIndex::Wifi:
-                // A / tap toggles; Left does not.
+                m_selectedItem = ItemIndex::AirplaneMode;
+                updateCursorTarget();
+                if (m_callbacks.onNavigateSfx) m_callbacks.onNavigateSfx();
+                break;
+            case ItemIndex::AirplaneMode:
+            case ItemIndex::BatterySaver:
+                // A / tap toggles; Left stays (or hops to playlist above).
                 break;
             case ItemIndex::PowerActions: {
                 int p = static_cast<int>(m_selectedPower) - 1;
@@ -1531,8 +1641,13 @@ void QuickSettingsOverlay::setupNavigationActions() {
                 adjustSlider(ItemIndex::SfxVolume, 0.05f);
                 break;
             case ItemIndex::AirplaneMode:
+                m_selectedItem = ItemIndex::Wifi;
+                updateCursorTarget();
+                if (m_callbacks.onNavigateSfx) m_callbacks.onNavigateSfx();
+                break;
             case ItemIndex::Wifi:
-                // A / tap toggles; Right does not.
+            case ItemIndex::BatterySaver:
+                // A / tap toggles; Right stays on Wi-Fi / Battery Saver.
                 break;
             case ItemIndex::PowerActions: {
                 int p = static_cast<int>(m_selectedPower) + 1;
@@ -1579,6 +1694,9 @@ void QuickSettingsOverlay::setupNavigationActions() {
         switch (m_selectedItem) {
             case ItemIndex::MusicTransport:
                 activateMusicControl();
+                break;
+            case ItemIndex::BatterySaver:
+                toggleItem(ItemIndex::BatterySaver);
                 break;
             case ItemIndex::AirplaneMode:
                 toggleItem(ItemIndex::AirplaneMode);
@@ -1773,6 +1891,14 @@ void QuickSettingsOverlay::setInitialValues(float brightness, float bgmVolume, f
 void QuickSettingsOverlay::setBatteryStatus(int percent, bool charging) {
     m_batteryPercent = percent;
     m_batteryCharging = charging;
+}
+
+void QuickSettingsOverlay::setBatterySaver(bool enabled) {
+    m_batterySaver = enabled;
+}
+
+void QuickSettingsOverlay::setFrameTapLiteEngaged(bool engaged) {
+    m_frameTapLiteEngaged = engaged;
 }
 
 void QuickSettingsOverlay::show() {
@@ -1972,6 +2098,20 @@ void QuickSettingsOverlay::toggleItem(ItemIndex item) {
         } else {
             if (m_callbacks.onToggleOffSfx) m_callbacks.onToggleOffSfx();
         }
+    } else if (item == ItemIndex::BatterySaver) {
+        if (m_frameTapLiteEngaged) {
+            // FT viewer owns lite — deny toggle, keep preference as-is.
+            if (m_callbacks.onToggleOffSfx) m_callbacks.onToggleOffSfx();
+            return;
+        }
+        m_batterySaver = !m_batterySaver;
+        if (m_callbacks.onBatterySaverToggled)
+            m_callbacks.onBatterySaverToggled(m_batterySaver);
+        if (m_batterySaver) {
+            if (m_callbacks.onActivateSfx) m_callbacks.onActivateSfx();
+        } else {
+            if (m_callbacks.onToggleOffSfx) m_callbacks.onToggleOffSfx();
+        }
     }
 }
 
@@ -2010,23 +2150,28 @@ nxui::Rect QuickSettingsOverlay::computeItemRect(ItemIndex item) const {
     nxui::Rect panel = computePanelRect();
     float cx = panel.x + 22.f;
     float cw = panel.width - 44.f;
+    const float rowLeft = cx - 4.f;
+    const float rowW = cw + 8.f;
+    const float halfW = (rowW - kNetRowGap) * 0.5f;
 
     switch (item) {
+        case ItemIndex::BatterySaver:
+            return {rowLeft, panel.y + kBatterySaverY, rowW, kToggleH};
         case ItemIndex::Brightness:
-            return {cx - 4.f, panel.y + kBrightnessY, cw + 8.f, kSliderItemH};
+            return {rowLeft, panel.y + kBrightnessY, rowW, kSliderItemH};
         case ItemIndex::MusicTransport:
-            return {cx - 4.f, panel.y + kMusicY, cw + 8.f, kMusicH};
+            return {rowLeft, panel.y + kMusicY, rowW, kMusicH};
         case ItemIndex::MusicProgress:
-            return {cx - 4.f, panel.y + kMusicY + kMusicProgressLabelY - 4.f, cw + 8.f,
+            return {rowLeft, panel.y + kMusicY + kMusicProgressLabelY - 4.f, rowW,
                     (kMusicProgressTrackY - kMusicProgressLabelY) + kSliderTrackH + 8.f};
         case ItemIndex::BgmVolume:
-            return {cx - 4.f, panel.y + kBgmY, cw + 8.f, kSliderItemH};
+            return {rowLeft, panel.y + kBgmY, rowW, kSliderItemH};
         case ItemIndex::SfxVolume:
-            return {cx - 4.f, panel.y + kSfxY, cw + 8.f, kSliderItemH};
+            return {rowLeft, panel.y + kSfxY, rowW, kSliderItemH};
         case ItemIndex::AirplaneMode:
-            return {cx - 4.f, panel.y + kAirplaneY, cw + 8.f, kToggleH};
+            return {rowLeft, panel.y + kAirplaneY, halfW, kToggleH};
         case ItemIndex::Wifi:
-            return {cx - 4.f, panel.y + kWifiY, cw + 8.f, kToggleH};
+            return {rowLeft + halfW + kNetRowGap, panel.y + kWifiY, halfW, kToggleH};
         case ItemIndex::PowerActions:
             return computePowerButtonRect(m_selectedPower);
         default:
@@ -2521,6 +2666,14 @@ void QuickSettingsOverlay::handleTouch(nxui::Input& input) {
                 updateCursorTarget();
                 return;
             }
+        }
+
+        nxui::Rect bsRect = computeItemRect(ItemIndex::BatterySaver);
+        if (bsRect.contains(tx, ty)) {
+            m_selectedItem = ItemIndex::BatterySaver;
+            toggleItem(ItemIndex::BatterySaver);
+            updateCursorTarget();
+            return;
         }
 
         nxui::Rect apRect = computeItemRect(ItemIndex::AirplaneMode);
@@ -3157,29 +3310,65 @@ void QuickSettingsOverlay::render(nxui::Renderer& ren) {
     drawSlider(ItemIndex::Brightness, i18n.tr("quicksettings.brightness", "Brightness"),
                m_brightness, nxui::Color(0.15f, 0.75f, 0.98f, 1.f));
 
-    auto drawToggle = [&](ItemIndex idx, const std::string& label, bool enabled) {
+    auto drawToggle = [&](ItemIndex idx, const std::string& label, bool enabled,
+                          bool compact = false, bool locked = false) {
         nxui::Rect card = computeItemRect(idx);
-        ren.drawRoundedRect(card, cardFill, 12.f);
-        ren.drawRoundedRectOutline(card, neutralBorder, 12.f, 1.f);
+        const float cardAlpha = locked ? 0.72f : 1.f;
+        ren.drawRoundedRect(card, cardFill.withAlpha(cardFill.a * cardAlpha), 12.f);
+        ren.drawRoundedRectOutline(card, neutralBorder.withAlpha(neutralBorder.a * cardAlpha),
+                                   12.f, 1.f);
 
-        float textX = card.x + 14.f;
-        if (idx == ItemIndex::Wifi) {
-            drawWifiIcon(ren, {card.x + 24.f, card.y + card.height * 0.5f + 3.f},
-                         primaryText, 0.95f);
-            textX = card.x + 40.f;
+        // Compact pills need room for "OFF" + knob (48 clipped the label).
+        const float pillW = compact ? 58.f : 56.f;
+        const float pillH = 28.f;
+        const float pillPad = compact ? 6.f : 12.f;
+        nxui::Rect pill = {card.x + card.width - pillW - pillPad,
+                           card.y + (card.height - pillH) * 0.5f, pillW, pillH};
+
+        const nxui::Color labelCol = locked
+            ? mutedText
+            : primaryText;
+
+        float textX = card.x + (compact ? 10.f : 14.f);
+        if (idx == ItemIndex::Wifi
+            || idx == ItemIndex::AirplaneMode
+            || idx == ItemIndex::BatterySaver) {
+            ensureToggleIcons(ren);
+            // Match Wi-Fi / Sleep-Reboot-Power glyph weight (~18–22px).
+            const float edge = compact ? 20.f : 22.f;
+            const float iconX = card.x + (compact ? 16.f : 22.f);
+            const float iconY = card.y + card.height * 0.5f
+                + (idx == ItemIndex::Wifi ? 3.f : 0.f);
+            const nxui::Color iconCol = (idx == ItemIndex::BatterySaver)
+                ? labelCol : primaryText;
+            bool drew = false;
+            if (idx == ItemIndex::AirplaneMode || idx == ItemIndex::BatterySaver)
+                drew = drawToggleGlyph(ren, idx, {iconX, iconY}, iconCol, edge);
+            if (!drew) {
+                if (idx == ItemIndex::Wifi) {
+                    drawWifiIcon(ren, {iconX, iconY}, primaryText,
+                                 compact ? 0.82f : 0.95f);
+                } else if (idx == ItemIndex::AirplaneMode) {
+                    drawAirplaneIcon(ren, {iconX, iconY}, primaryText,
+                                     compact ? 0.72f : 0.85f);
+                } else {
+                    drawLeafIcon(ren, {iconX, iconY}, labelCol, 0.95f);
+                }
+            }
+            // Icon right edge + pad — Airplane PNG fills the slot so the old
+            // shared compact textX sat flush against the glyph.
+            textX = iconX + edge * 0.5f + (compact ? 8.f : 10.f);
         }
-
         if (m_smallFont) {
-            float ty = card.y + (card.height - m_smallFont->measure(label).y * 0.82f) * 0.5f;
-            ren.drawText(label, {textX, ty}, m_smallFont,
-                         primaryText, 0.82f);
+            const float textScale = compact ? 0.74f : (locked ? 0.76f : 0.82f);
+            const float textMaxW = std::max(8.f, pill.x - textX - 6.f);
+            std::string shown = ellipsize(m_smallFont, label, textMaxW, textScale);
+            float ty = card.y + (card.height - m_smallFont->measure(shown).y * textScale) * 0.5f;
+            ren.drawText(shown, {textX, ty}, m_smallFont, labelCol, textScale);
         }
 
-        float pillW = 56.f;
-        float pillH = 28.f;
-        nxui::Rect pill = {card.x + card.width - pillW - 12.f, card.y + (card.height - pillH) * 0.5f, pillW, pillH};
         nxui::Color pillBg = enabled
-            ? nxui::Color(0.20f, 0.82f, 0.45f, 0.90f * alpha)
+            ? nxui::Color(0.20f, 0.82f, 0.45f, (locked ? 0.70f : 0.90f) * alpha)
             : nxui::Color(0.35f, 0.38f, 0.45f, 0.75f * alpha);
 
         ren.drawRoundedRect(pill, pillBg, pillH * 0.5f);
@@ -3193,20 +3382,32 @@ void QuickSettingsOverlay::render(nxui::Renderer& ren) {
                 ? i18n.tr("quicksettings.on", "ON")
                 : i18n.tr("quicksettings.off", "OFF");
             nxui::Vec2 ssz = m_smallFont->measure(stateStr);
-            float stx = enabled ? (pill.x + 8.f) : (pill.x + pill.width - ssz.x * 0.65f - 8.f);
-            ren.drawText(stateStr, {stx, pill.y + (pillH - ssz.y * 0.65f) * 0.5f}, m_smallFont,
+            float stx = enabled ? (pill.x + 6.f) : (pill.x + pill.width - ssz.x * 0.62f - 6.f);
+            ren.drawText(stateStr, {stx, pill.y + (pillH - ssz.y * 0.62f) * 0.5f}, m_smallFont,
                          lightMode
                             ? nxui::Color(0.04f, 0.05f, 0.07f, 0.95f * alpha)
                             : nxui::Color(1.f, 1.f, 1.f, 0.95f * alpha),
-                         0.65f);
+                         0.62f);
         }
     };
 
-    drawToggle(ItemIndex::AirplaneMode, i18n.tr("quicksettings.airplane_mode", "Airplane Mode"),
-               m_airplaneMode);
+    {
+        const bool ftEngaged = m_frameTapLiteEngaged;
+        drawToggle(ItemIndex::BatterySaver,
+                   ftEngaged
+                       ? i18n.tr("quicksettings.frame_tap_engaged", "Frame Tap Engaged")
+                       : i18n.tr("quicksettings.battery_saver", "Battery Saver"),
+                   m_batterySaver || ftEngaged,
+                   false,
+                   ftEngaged);
+    }
+
+    drawToggle(ItemIndex::AirplaneMode,
+               i18n.tr("quicksettings.airplane_mode_short", "Airplane"),
+               m_airplaneMode, true);
 
     drawToggle(ItemIndex::Wifi, i18n.tr("quicksettings.wifi", "Wi-Fi"),
-               m_wifiEnabled);
+               m_wifiEnabled, true);
 
     auto drawPowerBtn = [&](PowerAction pa, const std::string& label) {
         nxui::Rect btn = computePowerButtonRect(pa);

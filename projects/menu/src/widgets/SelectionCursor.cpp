@@ -25,6 +25,21 @@ void SelectionCursor::setInstantMotion(bool instant) {
     m_teleportPulse = 1.f;
 }
 
+void SelectionCursor::setMotionPaused(bool paused) {
+    if (paused == m_motionPaused)
+        return;
+    if (paused && m_initialized) {
+        // Tweens live on AnimationManager (not onUpdate) — kill in-flight
+        // translates so leave-splash / freeze cannot bake a mid-journey ring.
+        m_x.setImmediate(m_x.value());
+        m_y.setImmediate(m_y.value());
+        m_w.setImmediate(m_w.value());
+        m_h.setImmediate(m_h.value());
+        m_cornerRadius.setImmediate(m_cornerRadius.value());
+    }
+    m_motionPaused = paused;
+}
+
 float SelectionCursor::computeAdaptiveDuration(const nxui::Rect& target,
                                                float targetCornerRadius,
                                                float baseDuration) const {
@@ -81,7 +96,7 @@ void SelectionCursor::moveTo(const nxui::Rect& target, float duration) {
         std::abs(m_w.target() - target.width) < eps &&
         std::abs(m_h.target() - target.height) < eps)
         return;
-    if (m_instantMotion || duration <= 0.f) {
+    if (m_instantMotion || m_motionPaused || duration <= 0.f) {
         m_x.setImmediate(target.x);
         m_y.setImmediate(target.y);
         m_w.setImmediate(target.width);
@@ -113,7 +128,7 @@ void SelectionCursor::moveTo(const nxui::Rect& target, float cornerRadius, float
         std::abs(m_h.target() - target.height) < eps &&
         std::abs(m_cornerRadius.target() - cornerRadius) < eps)
         return;
-    if (m_instantMotion || duration <= 0.f) {
+    if (m_instantMotion || m_motionPaused || duration <= 0.f) {
         m_x.setImmediate(target.x);
         m_y.setImmediate(target.y);
         m_w.setImmediate(target.width);

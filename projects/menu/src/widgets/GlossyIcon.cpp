@@ -914,19 +914,27 @@ void GlossyIcon::onContentRender(nxui::Renderer& ren) {
             std::strftime(timeBuffer, sizeof(timeBuffer), "%H:%M", &local);
             std::strftime(dateBuffer, sizeof(dateBuffer), "%a %d %b", &local);
             primary = timeBuffer;
-            if (m_widgetColumns > 1) secondary = dateBuffer;
+            // Wide grid clocks and tall single-row posters both get the date.
+            if (m_widgetColumns > 1 || m_posterFrame) secondary = dateBuffer;
         }
 
         const nxui::Vec2 primaryMeasure = m_font->measure(primary);
-        float primaryScale = m_widgetType == switchu::widgets::WidgetType::Clock
-            ? (m_widgetColumns > 1 ? 1.55f : 1.18f) : 0.78f;
+        float primaryScale = 0.78f;
+        if (m_widgetType == switchu::widgets::WidgetType::Clock) {
+            if (m_posterFrame)
+                primaryScale = 1.92f;
+            else if (m_widgetColumns > 1)
+                primaryScale = 1.55f;
+            else
+                primaryScale = 1.18f;
+        }
         if (primaryMeasure.x > 0.f)
             primaryScale = std::min(primaryScale,
                 (inner.width - 18.f) / primaryMeasure.x);
         primaryScale = std::max(0.48f, primaryScale);
         const float primaryHeight = primaryMeasure.y * primaryScale;
         float totalHeight = primaryHeight;
-        float secondaryScale = 0.62f;
+        float secondaryScale = m_posterFrame ? 0.78f : 0.62f;
         nxui::Vec2 secondaryMeasure{};
         if (!secondary.empty()) {
             secondaryMeasure = m_font->measure(secondary);
@@ -934,14 +942,15 @@ void GlossyIcon::onContentRender(nxui::Renderer& ren) {
                 secondaryScale = std::min(secondaryScale,
                     (inner.width - 18.f) / secondaryMeasure.x);
             secondaryScale = std::max(0.42f, secondaryScale);
-            totalHeight += 7.f + secondaryMeasure.y * secondaryScale;
+            totalHeight += (m_posterFrame ? 12.f : 7.f)
+                + secondaryMeasure.y * secondaryScale;
         }
         float textY = inner.y + (inner.height - totalHeight) * 0.5f;
         ren.drawText(primary,
             {inner.x + (inner.width - primaryMeasure.x * primaryScale) * 0.5f, textY},
             m_font, nxui::Color::white().withAlpha(0.98f * m_opacity), primaryScale);
         if (!secondary.empty()) {
-            textY += primaryHeight + 7.f;
+            textY += primaryHeight + (m_posterFrame ? 12.f : 7.f);
             ren.drawText(secondary,
                 {inner.x + (inner.width - secondaryMeasure.x * secondaryScale) * 0.5f,
                  textY},
@@ -971,8 +980,14 @@ void GlossyIcon::onContentRender(nxui::Renderer& ren) {
         args.peekCoverCount = m_folderPeekCount;
         args.showCover = m_folderShowCover;
         args.focused = m_focused;
-        // Single-row already shows the folder name in the title pill.
-        args.drawName = !m_posterFrame;
+        // Grid: name inside the tile. Single-row with peeks/covers: title pill
+        // only. Empty poster folders (FT lite suppresses peeks) get the same
+        // centered in-tile name as grid so the tile is not a blank plate.
+        const bool hasFolderArt =
+            (m_folderCover && m_folderCover->valid())
+            || m_folderPeekCount > 0
+            || m_folderPeekComposite;
+        args.drawName = !m_posterFrame || !hasFolderArt;
         args.posterAspect = m_posterFrame;
         args.coverIsFolderPoster = m_folderCoverIsPoster;
         args.coverIsPeekComposite = m_folderPeekComposite;
@@ -980,12 +995,22 @@ void GlossyIcon::onContentRender(nxui::Renderer& ren) {
         return;
     }
 
-    if (m_entryKind == GridEntryKind::Application && m_widgetRows > 1) {
+    // Landscape wide face: 2x1 only (3x2 removed — SGDB grid aspect didn't fit).
+    const bool landscapeWideTile =
+        m_widgetColumns == 2 && m_widgetRows == 1;
+    // Tall poster face: 2x3 (and legacy 1x2). 2x2 / 1x1 always use the icon path.
+    const bool tallPosterTile =
+        (m_widgetColumns == 2 && m_widgetRows == 3)
+        || (m_widgetColumns == 1 && m_widgetRows == 2);
+
+    if (m_entryKind == GridEntryKind::Application && tallPosterTile) {
         const nxui::Rect card = r.shrunk(std::max(8.f, 10.f * s));
         const float contentRadius = std::max(8.f, rad - 5.f);
         if (m_tex && m_tex->valid()) {
-            ren.drawTextureRounded(m_tex, card, contentRadius,
-                                   nxui::Color::white().withAlpha(m_opacity));
+            // Cover-fit so poster/icon aspect is never stretched into the cell.
+            ren.drawTextureSubRounded(
+                m_tex, centeredCoverSource(*m_tex, card), card,
+                contentRadius, nxui::Color::white().withAlpha(m_opacity));
         } else {
             ren.drawRoundedRect(card,
                 m_loadingColor.withAlpha(0.18f * m_opacity), contentRadius);
@@ -993,7 +1018,9 @@ void GlossyIcon::onContentRender(nxui::Renderer& ren) {
         return;
     }
 
-    if (m_entryKind == GridEntryKind::Application && m_widgetColumns > 1) {
+    // Single-row posters use m_tex; never draw landscape wide faces there.
+    if (m_entryKind == GridEntryKind::Application && landscapeWideTile
+        && !m_posterFrame) {
         const nxui::Rect card = r.shrunk(std::max(8.f, 10.f * s));
         const float contentRadius = std::max(8.f, rad - 5.f);
         if (m_wideGameHero && m_wideGameHero->valid()) {
@@ -1024,7 +1051,10 @@ void GlossyIcon::onContentRender(nxui::Renderer& ren) {
             }
             ren.drawTexture(m_wideGameLogo, logoRect,
                             nxui::Color::white().withAlpha(0.98f * m_opacity));
-        } else if (m_font && !m_title.empty()) {
+        } else if (m_font && !m_title.empty()
+                   && !(m_wideGameHero && m_wideGameHero->valid())
+                   && !(m_tex && m_tex->valid())) {
+            // Title fallback only on empty wide cards — never overlay hero/icon.
             const auto measured = m_font->measure(m_title);
             float textScale = 0.68f * s;
             if (measured.x > 0.f)

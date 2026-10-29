@@ -4,6 +4,7 @@
 #include "core/Config.hpp"
 #include "tutorial/TutorialActivity.hpp"
 #include "screen_fit.hpp"
+#include "usb/Mtp.hpp"
 #include <nxui/Application.hpp>
 #include <nxui/core/GpuDevice.hpp>
 #include <fmt/format.h>
@@ -417,11 +418,15 @@ int main(int argc, char* argv[]) {
             app.setActivity(std::make_unique<TutorialActivity>(makeMenuActivity));
         DebugLog::log("[menu] app.initialize...");
         if (app.initialize()) {
+            DebugLog::log("[menu] starting USB MTP server...");
+            switchu::usb::mtpStart();
             DebugLog::log("[menu] app.run...");
             app.run();
         } else {
             DebugLog::log("[menu] app.initialize FAILED");
         }
+        DebugLog::log("[menu] stopping USB MTP server...");
+        switchu::usb::mtpStop();
         DebugLog::log("[menu] app.shutdown...");
         app.shutdown();
 #endif

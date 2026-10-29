@@ -68,6 +68,8 @@ bool FrameTapStatus::refresh() {
     m_status = st;
     const bool netViewer = (st.reserved3 & kReserved3NetViewer) != 0;
     const bool streaming = st.state == LiveState_Streaming;
+    // Net viewer bit is durable; Streaming covers USB / older FT. Also treat
+    // WaitViewer with the net bit as connected (viewer present, not yet live).
     m_viewerConnected = m_forceLight || netViewer || streaming;
     m_needsHeadroom = (st.reserved3 & kReserved3NeedHeadroom) != 0;
     m_headroomNeedMb = m_needsHeadroom ? st.shot_fails : 0;
@@ -78,6 +80,10 @@ bool FrameTapStatus::refresh() {
 
 bool FrameTapStatus::probe(float dtSeconds, float pollIntervalMs) {
     m_pollAccumMs += dtSeconds * 1000.f;
+    // File fallback must not wait on sftap open/backoff — FT often writes
+    // need_headroom while detach-on-home briefly drops the service.
+    if (!m_needsHeadroom)
+        pollNeedHeadroomFile();
     if (!m_serviceOpen) {
         // Back off when FT is absent so we do not spam smGetService every frame.
         m_retryAccumMs += dtSeconds * 1000.f;

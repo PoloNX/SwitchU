@@ -183,8 +183,84 @@ struct PreviewData {
     std::string cover;
     std::vector<std::string> screenshots;
     bool hasIcons = false;
+    bool hasMusic = false;
+    bool hasSounds = false;
     bool fetchedManifest = false;
 };
+
+bool jsonDeclaresBundledAudioDir(const nlohmann::json& j, const char* key) {
+    auto it = j.find(key);
+    if (it == j.end())
+        return false;
+    if (it->is_boolean())
+        return it->get<bool>();
+    if (it->is_string())
+        return !it->get<std::string>().empty();
+    if (it->is_array())
+        return !it->empty();
+    if (it->is_object())
+        return true;
+    return false;
+}
+
+bool jsonDeclaresMusic(const nlohmann::json& j) {
+    if (j.contains("hasMusic") && j["hasMusic"].is_boolean())
+        return j["hasMusic"].get<bool>();
+    if (j.contains("has_music") && j["has_music"].is_boolean())
+        return j["has_music"].get<bool>();
+    if (jsonDeclaresBundledAudioDir(j, "music"))
+        return true;
+    auto audioIt = j.find("audio");
+    if (audioIt != j.end() && audioIt->is_object()) {
+        if (jsonDeclaresBundledAudioDir(*audioIt, "music"))
+            return true;
+        std::string preset;
+        if (audioIt->contains("preset") && (*audioIt)["preset"].is_string())
+            preset = (*audioIt)["preset"].get<std::string>();
+        else if (audioIt->contains("soundPreset") && (*audioIt)["soundPreset"].is_string())
+            preset = (*audioIt)["soundPreset"].get<std::string>();
+            // package:/bundled without an explicit music key still usually ships BGM.
+        if (preset == "bundled" || preset == "theme" || preset == "package"
+            || preset.rfind("package:", 0) == 0)
+            return true;
+    }
+    std::string soundPreset;
+    if (j.contains("soundPreset") && j["soundPreset"].is_string())
+        soundPreset = j["soundPreset"].get<std::string>();
+    if (soundPreset == "bundled" || soundPreset == "theme" || soundPreset == "package"
+        || soundPreset.rfind("package:", 0) == 0)
+        return true;
+    return false;
+}
+
+bool jsonDeclaresSounds(const nlohmann::json& j) {
+    if (j.contains("hasSounds") && j["hasSounds"].is_boolean())
+        return j["hasSounds"].get<bool>();
+    if (j.contains("has_sounds") && j["has_sounds"].is_boolean())
+        return j["has_sounds"].get<bool>();
+    if (j.contains("hasSfx") && j["hasSfx"].is_boolean())
+        return j["hasSfx"].get<bool>();
+    if (jsonDeclaresBundledAudioDir(j, "sfx") || jsonDeclaresBundledAudioDir(j, "sounds"))
+        return true;
+    auto audioIt = j.find("audio");
+    if (audioIt != j.end() && audioIt->is_object()) {
+        if (jsonDeclaresBundledAudioDir(*audioIt, "sfx")
+            || jsonDeclaresBundledAudioDir(*audioIt, "sounds"))
+            return true;
+        // Explicit music-only packages should not claim Sounds.
+        if (jsonDeclaresBundledAudioDir(*audioIt, "music"))
+            return false;
+    }
+    if (jsonDeclaresBundledAudioDir(j, "music"))
+        return false;
+    std::string soundPreset;
+    if (j.contains("soundPreset") && j["soundPreset"].is_string())
+        soundPreset = j["soundPreset"].get<std::string>();
+    if (soundPreset == "bundled" || soundPreset == "theme" || soundPreset == "package"
+        || soundPreset.rfind("package:", 0) == 0)
+        return true;
+    return false;
+}
 
 PreviewData derivePreviewDataFromManifest(const std::string& catalogUrl,
                                           const ThemeCatalogClient::Entry& entry) {
@@ -208,6 +284,8 @@ PreviewData derivePreviewDataFromManifest(const std::string& catalogUrl,
     PreviewData data;
     data.fetchedManifest = true;
     data.hasIcons = jsonDeclaresIcons(manifest);
+    data.hasMusic = jsonDeclaresMusic(manifest);
+    data.hasSounds = jsonDeclaresSounds(manifest);
     std::string cover;
     readStringOpt(manifest, "cover", cover);
     if (!cover.empty())
@@ -426,31 +504,41 @@ ThemeCatalogClient::Snapshot ThemeCatalogClient::loadCatalog(const std::string& 
         readStringOpt(item, "screenshot", screenshot);
         appendUniqueString(entry.screenshots, screenshot);
 
-        // Catalog may advertise icons; otherwise peek theme.json (rare today).
+        // Catalog may advertise icons/audio; otherwise peek theme.json (rare today).
         if (item.contains("hasIcons") && item["hasIcons"].is_boolean())
             entry.hasIcons = item["hasIcons"].get<bool>();
         else if (item.contains("has_icons") && item["has_icons"].is_boolean())
             entry.hasIcons = item["has_icons"].get<bool>();
         else if (item.contains("icons"))
             entry.hasIcons = jsonDeclaresIcons(item);
+        entry.hasMusic = jsonDeclaresMusic(item);
+        entry.hasSounds = jsonDeclaresSounds(item);
 
         if (entry.id.empty() || entry.name.empty())
             continue;
         if (entry.manifest.empty())
             entry.manifest = deriveManifestPath(entry.path);
-        // Only hit the network for themes missing cover/screenshots. Do NOT
-        // fetch every manifest just to learn hasIcons - that made first Community
-        // open take many seconds. Badge can come from catalog flags or from the
-        // same fetch when we already need preview metadata.
-        if ((entry.cover.empty() || entry.screenshots.empty()) && !entry.manifest.empty()) {
+        // Fetch theme.json when preview art OR audio/icon badges are unknown.
+        // Catalog load is already async; theme.json is small. Skipping this when
+        // covers exist left Community Music/Sounds badges blank.
+        const bool needManifest = !entry.manifest.empty()
+            && (entry.cover.empty() || entry.screenshots.empty()
+                || !entry.hasIcons || !entry.hasMusic || !entry.hasSounds);
+        if (needManifest) {
             try {
                 PreviewData preview = derivePreviewDataFromManifest(url, entry);
                 if (entry.cover.empty())
                     entry.cover = preview.cover;
                 for (auto& screenshotPath : preview.screenshots)
                     appendUniqueString(entry.screenshots, std::move(screenshotPath));
-                if (!entry.hasIcons && preview.fetchedManifest)
-                    entry.hasIcons = preview.hasIcons;
+                if (preview.fetchedManifest) {
+                    if (!entry.hasIcons)
+                        entry.hasIcons = preview.hasIcons;
+                    if (!entry.hasMusic)
+                        entry.hasMusic = preview.hasMusic;
+                    if (!entry.hasSounds)
+                        entry.hasSounds = preview.hasSounds;
+                }
             } catch (const std::exception& ex) {
                 DebugLog::log("[themeshop] manifest preview fallback failed for %s: %s",
                               entry.id.c_str(),

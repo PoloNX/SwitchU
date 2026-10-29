@@ -23,7 +23,8 @@ class Renderer;
 class QuickSettingsOverlay : public nxui::Widget {
 public:
     enum class ItemIndex {
-        MusicTransport = 0,
+        BatterySaver = 0,
+        MusicTransport,
         MusicProgress,
         BgmVolume,
         SfxVolume,
@@ -73,6 +74,7 @@ public:
         std::function<void(float)> onSfxVolumeChanged;
         std::function<void(bool)>  onAirplaneModeToggled;
         std::function<void(bool)>  onWifiToggled;
+        std::function<void(bool)>  onBatterySaverToggled;
         std::function<void()>      onSleepRequested;
         std::function<void()>      onRebootRequested;
         std::function<void()>      onShutdownRequested;
@@ -124,6 +126,12 @@ public:
     bool hasAlbumFolders() const { return m_music.hasAlbumFolders; }
 
     void setBatteryStatus(int percent, bool charging);
+    void setBatterySaver(bool enabled);
+    bool batterySaver() const { return m_batterySaver; }
+    // When Frame Tap's viewer holds lite, lock the Battery Saver row ON and
+    // relabel it — preference underneath is unchanged.
+    void setFrameTapLiteEngaged(bool engaged);
+    bool frameTapLiteEngaged() const { return m_frameTapLiteEngaged; }
     void setInitialValues(float brightness, float bgmVolume, float sfxVolume,
                           bool airplaneMode, bool wifiEnabled);
     void refreshMusicState();
@@ -201,10 +209,13 @@ private:
     float playlistMaxScroll() const;
     void syncMusicFromCallbacks();
     void ensureMusicControlIcons(nxui::Renderer& ren);
+    void ensureToggleIcons(nxui::Renderer& ren);
     const nxui::Texture* musicControlIcon(MusicControl control, bool playing) const;
     void drawMusicControlIcon(nxui::Renderer& ren, MusicControl control,
                               const MusicUiState& music, const nxui::Rect& btn,
                               const nxui::Color& color);
+    bool drawToggleGlyph(nxui::Renderer& ren, ItemIndex idx, nxui::Vec2 center,
+                         const nxui::Color& color, float edge) const;
 
     nxui::Font*        m_font = nullptr;
     nxui::Font*        m_smallFont = nullptr;
@@ -231,6 +242,8 @@ private:
     float m_sfxVolume = 0.5f;
     bool  m_airplaneMode = false;
     bool  m_wifiEnabled = true;
+    bool  m_batterySaver = false;
+    bool  m_frameTapLiteEngaged = false;
 
     MusicUiState m_music;
 
@@ -300,7 +313,10 @@ private:
     nxui::Texture m_iconRepeat;
     nxui::Texture m_iconShuffle;
     nxui::Texture m_iconPlaylist;
+    nxui::Texture m_iconLeaf;
+    nxui::Texture m_iconAirplane;
     bool  m_musicIconsLoadAttempted = false;
+    bool  m_toggleIconsLoadAttempted = false;
     std::function<std::string(const char*)> m_iconGlyphResolve;
 
     int   m_batteryPercent = -1;

@@ -64,6 +64,10 @@ public:
     void setMotionPaused(bool paused) { m_motionPaused = paused; }
     bool motionPaused() const { return m_motionPaused; }
 
+    // Lite / Frame Tap: drop animated shapes only; theme wallpaper stays.
+    void setLiteSuppressed(bool suppressed);
+    bool liteSuppressed() const { return m_liteSuppressed; }
+
     /// Shapes (+ optional theme image) without the opaque gradient fill —
     /// for compositing over blurred letterbox regions.
     void renderLetterboxOverlay(nxui::Renderer& ren, float opacityMul = 1.f);
@@ -101,5 +105,6 @@ private:
     nxui::Texture m_backgroundImage;
     float m_time = 0.f;
     bool m_motionPaused = false;
+    bool m_liteSuppressed = false;
 };
 

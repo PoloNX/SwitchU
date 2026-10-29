@@ -90,14 +90,16 @@ void SidebarManager::build(nxui::GpuDevice& gpu, nxui::Renderer& ren,
         ctrl->setRect({rightX, startY + 0.f * (btnSize + gap), btnSize, btnSize});
         m_rightButtons.push_back(std::move(ctrl));
 
-        auto sleep = makeBtn(&m_icons[3], "sidebar.sleep", "Sleep", actions.onSleep);
-        sleep->setRect({rightX, startY + 1.f * (btnSize + gap), btnSize, btnSize});
-        m_rightButtons.push_back(std::move(sleep));
-
+        // Theme Shop middle / Power (Sleep) bottom — matches left stack rhythm
+        // (utility → destination → system action).
         auto themeShop = makeBtn(&m_icons[4], "sidebar.theme_shop", "Theme Shop", actions.onMiiverse);
         m_themeShopButton = themeShop.get();
-        themeShop->setRect({rightX, startY + 2.f * (btnSize + gap), btnSize, btnSize});
+        themeShop->setRect({rightX, startY + 1.f * (btnSize + gap), btnSize, btnSize});
         m_rightButtons.push_back(std::move(themeShop));
+
+        auto sleep = makeBtn(&m_icons[3], "sidebar.sleep", "Sleep", actions.onSleep);
+        sleep->setRect({rightX, startY + 2.f * (btnSize + gap), btnSize, btnSize});
+        m_rightButtons.push_back(std::move(sleep));
     }
 
     if (!m_leftButtons.empty()) {
@@ -320,11 +322,13 @@ void SidebarManager::loadAssets(nxui::GpuDevice& gpu, nxui::Renderer& ren,
 
     for (const auto& def : animDefs) {
         AppletButton* btn = nullptr;
+        // Map by glyph meaning (not old slot order): Theme Shop is middle,
+        // Sleep/Power is bottom on the right stack.
         if (def.iconIdx == 0) btn = m_leftButtons[0].get();
         else if (def.iconIdx == 1) btn = m_leftButtons[1].get();
         else if (def.iconIdx == 2) btn = m_rightButtons[0].get();
-        else if (def.iconIdx == 3) btn = m_rightButtons[1].get();
-        else if (def.iconIdx == 4) btn = m_rightButtons[2].get();
+        else if (def.iconIdx == 3) btn = m_rightButtons[2].get(); // power → Sleep
+        else if (def.iconIdx == 4) btn = m_rightButtons[1].get(); // themes → Theme Shop
         else if (def.iconIdx == 5) btn = m_leftButtons[2].get();
         if (!btn)
             continue;

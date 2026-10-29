@@ -31,11 +31,12 @@ void GameOptionsScreen::setGame(const GameInfo& info) {
 }
 
 void GameOptionsScreen::refreshArtworkPresence(bool hasHero, bool hasLogo, bool hasIcon,
-                                               bool hasPoster) {
+                                               bool hasPoster, bool hasPosterWide) {
     m_game.hasHeroArt = hasHero;
     m_game.hasLogoArt = hasLogo;
     m_game.hasIconArt = hasIcon;
     m_game.hasPosterArt = hasPoster;
+    m_game.hasPosterWideArt = hasPosterWide;
     if (!m_active && !m_animating)
         return;
     const int tab = m_tabIndex;
@@ -77,10 +78,13 @@ void GameOptionsScreen::buildTabs() {
         size.description = i18n.tr(
             "game.tile_size_desc", "Changes the size of this game on the grid.");
         size.type = ItemType::Selector;
-        size.options = {"1×1", "2×1", "2×2"};
-        size.intVal = std::clamp(m_game.sizeIndex, 0, 2);
+        // ASCII "x" avoids mojibake if the source encoding is wrong.
+        // 1x2 dropped — cell aspect (~1:2) can't match poster (2:3); use 2x3.
+        // 3x2 dropped — SGDB "Poster wide" (460x215) crops badly in a 3x2 cell.
+        size.options = {"1x1", "2x1", "2x2", "2x3"};
+        size.intVal = std::clamp(m_game.sizeIndex, 0, 3);
         size.onChange = [this](SettingItem& self) {
-            m_game.sizeIndex = std::clamp(self.intVal, 0, 2);
+            m_game.sizeIndex = std::clamp(self.intVal, 0, 3);
             if (m_resizeCb) m_resizeCb(m_game.sizeIndex);
         };
         data.items.push_back(std::move(size));
@@ -158,8 +162,15 @@ void GameOptionsScreen::buildTabs() {
                       ArtworkKind::Logo, m_game.hasLogoArt);
     addArtworkActions("game.steamgriddb.poster", "Poster",
                       "game.steamgriddb.poster_desc",
-                      "Tall cover for the single-row carousel.",
+                      "Tall cover for single-row and 2x3 grid tiles.",
                       ArtworkKind::Poster, m_game.hasPosterArt);
+    // 2x1 tiles can use a landscape SGDB grid instead of Hero+Logo.
+    if (m_game.sizeIndex == 1) {
+        addArtworkActions("game.steamgriddb.poster_wide", "Poster wide",
+                          "game.steamgriddb.poster_wide_desc",
+                          "Landscape grid art for this 2x1 tile.",
+                          ArtworkKind::PosterWide, m_game.hasPosterWideArt);
+    }
     addArtworkActions("game.steamgriddb.icon", "Replacement icon",
                       "game.steamgriddb.icon_desc",
                       "Choose an icon.",

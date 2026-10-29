@@ -112,6 +112,17 @@ std::uint64_t estimateVertexCount(const WaraWaraBackground::Config& config, int 
 
 WaraWaraBackground::WaraWaraBackground() { regenerate(30); }
 
+void WaraWaraBackground::setLiteSuppressed(bool suppressed) {
+    const bool changed = m_liteSuppressed != suppressed;
+    m_liteSuppressed = suppressed;
+    if (suppressed) {
+        // Always clear — theme setConfig can race and leave shapes briefly.
+        m_shapes.clear();
+    } else if (changed) {
+        regenerate(0);
+    }
+}
+
 void WaraWaraBackground::setConfig(const Config& config) {
     m_config = config;
     m_config.shapeCount = std::max(1, m_config.shapeCount);
@@ -170,6 +181,10 @@ WaraWaraBackground::ShapeType WaraWaraBackground::pickShapeType() const {
 }
 
 void WaraWaraBackground::regenerate(int count) {
+    if (m_liteSuppressed) {
+        m_shapes.clear();
+        return;
+    }
     float areaX = m_rect.x;
     float areaY = m_rect.y;
     float areaW = (m_rect.width > 1.f) ? m_rect.width : 1280.f;
@@ -232,7 +247,7 @@ void WaraWaraBackground::regenerate(int count) {
 }
 
 void WaraWaraBackground::onUpdate(float dt) {
-    if (m_motionPaused)
+    if (m_motionPaused || m_liteSuppressed)
         return;
     m_time += dt;
     for (auto& s : m_shapes) {
@@ -285,8 +300,11 @@ void WaraWaraBackground::onRender(nxui::Renderer& ren) {
                         nxui::Color::white().withAlpha(m_config.imageOpacity * m_opacity));
     }
 
-    for (const auto& s : m_shapes)
-        drawShapeWithSymmetry(ren, s);
+    // Lite keeps wallpaper; only the floating/grid glass shapes are skipped.
+    if (!m_liteSuppressed) {
+        for (const auto& s : m_shapes)
+            drawShapeWithSymmetry(ren, s);
+    }
 
     ren.flush();
 }
@@ -300,8 +318,10 @@ void WaraWaraBackground::renderLetterboxOverlay(nxui::Renderer& ren, float opaci
                         backgroundImageRect(),
                         nxui::Color::white().withAlpha(m_config.imageOpacity * m_opacity * 0.55f));
     }
-    for (const auto& s : m_shapes)
-        drawShapeWithSymmetry(ren, s);
+    if (!m_liteSuppressed) {
+        for (const auto& s : m_shapes)
+            drawShapeWithSymmetry(ren, s);
+    }
     ren.flush();
     m_opacity = prev;
 }

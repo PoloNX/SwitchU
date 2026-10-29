@@ -189,11 +189,10 @@ nxui::Texture* WiiUMenuApp::adoptEditGhostTexture(GlossyIcon* sourceIcon) {
     // recycled at that point, replacing the carried icon with a spinner (or,
     // worse, another game's icon). Give the ghost one stable texture for the
     // complete edit operation. The source bytes include custom SGDB icons.
-    // In single-row poster view the tile on screen is the tall SteamGridDB
-    // poster, so carry that same artwork instead of the square icon.
-    const bool preferPoster = preferSingleRowPosters()
-        && sourceIcon->entryKind() == GridEntryKind::Application
-        && SteamGridDbManager::hasPoster(sourceIcon->titleId());
+    // Match on-tile art: single-row posters and grid 2x3 posters both carry
+    // tall artwork — never fall back to a square icon while a poster exists.
+    const bool preferPoster = sourceIcon->entryKind() == GridEntryKind::Application
+        && preferPosterIconData(sourceIcon->titleId());
     const auto bytes = AppListLoader::loadIconData(sourceIcon->titleId(), preferPoster);
     if (!bytes.empty()) {
         auto owned = std::make_unique<nxui::Texture>();
@@ -867,46 +866,8 @@ bool WiiUMenuApp::activateEditModeTarget() {
         // intact made page-2+ folders keep an out-of-range target, which pinned
         // the edit ghost at (0,0) and blocked further movement (#95).
         m_editTargetIndex = -1;
-        // Widgets are HOME-grid only: the folder model resolves titles from the
-        // app catalogue, so storing one there would hide it for good.
-        if (!switchu::widgets::isWidgetTitleId(m_editHeldTitleId)) {
-            // A game released on a folder tile goes inside it, whatever the
-            // input (touch drag, D-pad + A) and whatever the layout. The folder
-            // then opens on the moved tile. Keeping the move alive here used to
-            // strand the gesture — the drag flags were cleared on touch-up while
-            // the ghost stayed afloat with no bound icon, so the tile could not
-            // be picked up again.
-            const std::uint32_t folderId = targetEntry.folderId;
-            const std::uint64_t titleId = m_editHeldTitleId;
-            const int originSlot = m_editOriginRootSlot;
-            if (!m_folderStore.placeTitle(folderId, titleId, 0) ||
-                !saveFoldersOrReport("place_in_folder")) {
-                // Folder full: reuse the carry flow so the move is not stranded
-                // — the ghost stays bound to the opened folder and B cancels it.
-                detachEditSourceIcon();
-                unbindEditActions();
-                requestOpenFolder(folderId);
-                return false;
-            }
-            // Moving a game out of another folder into this one must leave the
-            // origin folder too, or it would live in both.
-            if (m_editOriginFolderId != 0 && m_editOriginFolderId != folderId) {
-                m_folderStore.removeTitle(m_editOriginFolderId, titleId);
-                refreshFolderPeekComposite(m_editOriginFolderId);
-            }
-            if (originSlot >= 0 && originSlot < static_cast<int>(m_layoutSlots.size())) {
-                m_layoutSlots[static_cast<std::size_t>(originSlot)] = 0;
-                m_layoutDirty = true;
-            }
-            exitEditMode();
-            // Refresh the root grid first: the folder frame is captured from the
-            // current render, so the moved tile must already be gone from it.
-            // Focus lands on the folder tile, the anchor the folder returns to.
-            applyDisplayModel(buildRootFolderModel(), folderTitleId(folderId), false);
-            refreshFolderPeekComposite(folderId);
-            requestOpenFolder(folderId, titleId);
-            return true;
-        }
+        // Open the folder and keep Move mode — placement is chosen inside
+        // (same as hover-open). Auto-placing at slot 0 was a regression.
         detachEditSourceIcon();
         unbindEditActions();
         requestOpenFolder(targetEntry.folderId);
@@ -1102,9 +1063,18 @@ void WiiUMenuApp::wireFocusCallback() {
                     }
                 }
             }
-            if (m_steamGridDbBackdrop && icon->titleId() != 0
-                && icon->titleId() < kFolderTitleIdPrefix)
-                m_steamGridDbBackdrop->showTitle(icon->titleId());
+            // While carrying a title, never flash the hovered tile's hero —
+            // pin the held title before any showTitle(hover) path.
+            if (m_steamGridDbBackdrop) {
+                if (m_editMode && m_editHeldTitleId != 0
+                    && m_editHeldTitleId < kFolderTitleIdPrefix
+                    && !switchu::widgets::isWidgetTitleId(m_editHeldTitleId)) {
+                    m_steamGridDbBackdrop->showTitle(m_editHeldTitleId);
+                } else if (icon->titleId() != 0
+                           && icon->titleId() < kFolderTitleIdPrefix) {
+                    m_steamGridDbBackdrop->showTitle(icon->titleId());
+                }
+            }
             auto& i18n = nxui::I18n::instance();
             if (m_editMode) {
                 bindEditActions(icon);
@@ -1529,8 +1499,14 @@ void WiiUMenuApp::showGameContextMenu(GlossyIcon* icon) {
     game.canMove = m_openFolderId == 0;
     game.canResize = m_openFolderId == 0;
     const auto currentSize = gameGridSize(titleId, AppLayoutMode::Grid);
-    game.sizeIndex = currentSize == switchu::widgets::WidgetSize{2, 2}
-        ? 2 : (currentSize == switchu::widgets::WidgetSize{2, 1} ? 1 : 0);
+    if (currentSize == switchu::widgets::WidgetSize{2, 1})
+        game.sizeIndex = 1;
+    else if (currentSize == switchu::widgets::WidgetSize{2, 2})
+        game.sizeIndex = 2;
+    else if (currentSize == switchu::widgets::WidgetSize{2, 3})
+        game.sizeIndex = 3;
+    else
+        game.sizeIndex = 0;
     {
         std::error_code ec;
         game.hasHeroArt = std::filesystem::exists(
@@ -1540,6 +1516,7 @@ void WiiUMenuApp::showGameContextMenu(GlossyIcon* icon) {
             SteamGridDbManager::logoPath(titleId), ec);
         game.hasIconArt = SteamGridDbManager::hasIcon(titleId);
         game.hasPosterArt = SteamGridDbManager::hasPoster(titleId);
+        game.hasPosterWideArt = SteamGridDbManager::hasGridWide(titleId);
     }
     m_gameOptions->setGame(game);
     m_gameOptions->onMove([this]() {
@@ -1552,13 +1529,20 @@ void WiiUMenuApp::showGameContextMenu(GlossyIcon* icon) {
         m_audio.playSfx(Sfx::Activate);
     });
     m_gameOptions->onResize([this, titleId](int sizeIndex) {
-        const switchu::widgets::WidgetSize requested = sizeIndex == 2
-            ? switchu::widgets::WidgetSize{2, 2}
-            : (sizeIndex == 1 ? switchu::widgets::WidgetSize{2, 1}
-                              : switchu::widgets::WidgetSize{1, 1});
+        switchu::widgets::WidgetSize requested{1, 1};
+        switch (sizeIndex) {
+            case 1: requested = {2, 1}; break;
+            case 2: requested = {2, 2}; break;
+            case 3: requested = {2, 3}; break;
+            default: break;
+        }
         m_gameSizes[titleId] = requested;
-        if (requested == switchu::widgets::WidgetSize{1, 1})
+        if (requested.columns == 2 && requested.rows == 1) {
             m_gameArtwork.erase(titleId);
+            ensureGameArtwork(titleId);
+        } else {
+            m_gameArtwork.erase(titleId);
+        }
         normalizeWidgetPlacements();
         m_layoutDirty = true;
         saveMenuLayout();
@@ -1566,6 +1550,14 @@ void WiiUMenuApp::showGameContextMenu(GlossyIcon* icon) {
         m_navigator.resetToHome();
         if (m_openFolderId == 0)
             applyDisplayModel(buildRootFolderModel(), titleId, false);
+        // Always re-decode after resize: 2x3 ↔ icon sizes must not keep the
+        // previous art kind (poster stuck on 1x1/2x2, or icon stuck on 2x3).
+        if (m_grid) {
+            m_iconStreamer.reloadTitle(titleId, m_grid->currentPage(),
+                                       m_grid->iconsPerPage(),
+                                       app().gpu(), app().renderer(),
+                                       m_grid->allIcons());
+        }
     });
     m_gameOptions->onCloseSoftware([this]() { m_launcher.terminateApplication(); });
     m_gameOptions->onDeleteSoftware([this, titleId, title]() {
@@ -2119,7 +2111,10 @@ void WiiUMenuApp::updateCursor() {
         // carousel's far-right ghost position.
         const bool carouselScrolling = movingLineFocus
                                     && (morphing || m_grid->isDynamicLineScrolling());
-        const float dur = (carouselScrolling || morphJustEnded) ? 0.f : 0.2f;
+        const bool snap = m_snapHomeFocus || m_leaveCaptureLockCursor
+                       || m_forceCursorTeleport
+                       || carouselScrolling || morphJustEnded;
+        const float dur = snap ? 0.f : 0.2f;
         if (movingLineFocus) {
             // Card rect only — SelectionCursor expands outward like the green
             // suspended ring (no pre-pad that insets into poster art).
@@ -2128,10 +2123,13 @@ void WiiUMenuApp::updateCursor() {
             m_cursor->moveTo(fr.expanded(4.f), dur);
         }
         m_cursor->setVisible(true);
+        if (m_snapHomeFocus)
+            m_snapHomeFocus = false;
         if (m_grid && m_grid->isDynamicLine())
             syncSteamGridDbLogoArea();
     } else {
         m_wasLayoutMorphing = false;
         m_cursor->setVisible(false);
+        m_snapHomeFocus = false;
     }
 }

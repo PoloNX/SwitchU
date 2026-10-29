@@ -25,6 +25,9 @@ public:
     // titles known to have none) so the next showTitle() re-reads the card.
     // Needed whenever SteamGridDB settings change what is available.
     void invalidateArtworkCaches();
+    // Destroy hero/logo MemBlocks (FT NeedHeadroom). invalidateArtworkCaches
+    // alone keeps GPU textures alive for crossfade reuse.
+    void releaseGpuArtwork();
     void setLayoutMode(AppLayoutMode mode) { m_layoutMode = mode; }
     // True when a hero texture is on-screen at meaningful opacity.
     bool hasDisplayedHero() const;

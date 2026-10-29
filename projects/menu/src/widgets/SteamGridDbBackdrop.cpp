@@ -42,6 +42,26 @@ void SteamGridDbBackdrop::invalidateArtworkCaches() {
     m_missingArtworkTitleIds.clear();
 }
 
+void SteamGridDbBackdrop::releaseGpuArtwork() {
+    if (m_pendingDecode && m_pendingDecode->state)
+        m_pendingDecode->state->cancelled.store(true);
+    m_pendingDecode.reset();
+    m_readyArtwork.reset();
+    m_decodedCache.clear();
+    m_missingArtworkTitleIds.clear();
+    m_preloadTitleIds.clear();
+    for (auto& set : m_sets) {
+        set.hero = nxui::Texture{};
+        set.logo = nxui::Texture{};
+        set.titleId = 0;
+        set.hasHero = false;
+        set.hasLogo = false;
+        set.heroLuminance = -1.f;
+    }
+    m_uploadStage = 0;
+    m_waitForGpuBeforeUpload = false;
+}
+
 bool SteamGridDbBackdrop::hasGpuArtwork(std::uint64_t titleId) const {
     return std::any_of(m_sets.begin(), m_sets.end(), [titleId](const ArtworkSet& set) {
         return set.titleId == titleId && (set.hasHero || set.hasLogo);

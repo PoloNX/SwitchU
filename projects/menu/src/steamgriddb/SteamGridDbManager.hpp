@@ -13,7 +13,7 @@
 class SteamGridDbManager {
 public:
     using ProgressCallback = std::function<void(const std::string&, float)>;
-    enum class ArtworkKind { None, Hero, Logo, Icon, Poster };
+    enum class ArtworkKind { None, Hero, Logo, Icon, Poster, GridWide };
 
     struct Candidate {
         long long id = 0;
@@ -98,12 +98,13 @@ public:
                                       const Candidate& candidate,
                                       const ProgressCallback& onProgress = {},
                                       const AbortCheck& shouldAbort = {});
-    /// Clear cached art. Pass ArtworkKind::None to clear hero+logo+icon+poster.
+    /// Clear cached art. Pass ArtworkKind::None to clear all kinds.
     static bool clearArtwork(std::uint64_t titleId, ArtworkKind kind);
     static bool hasIcon(std::uint64_t titleId);
     static bool hasPoster(std::uint64_t titleId);
+    static bool hasGridWide(std::uint64_t titleId);
 
-    /// Per-title SteamGridDB search string shared by Hero/Logo/Icon/Poster.
+    /// Per-title SteamGridDB search string shared by Hero/Logo/Icon/Poster/GridWide.
     static std::string savedSearchQuery(std::uint64_t titleId);
     static void saveSearchQuery(std::uint64_t titleId, const std::string& query);
 
@@ -112,6 +113,7 @@ public:
     static std::string logoPath(std::uint64_t titleId);
     static std::string iconPath(std::uint64_t titleId);
     static std::string posterPath(std::uint64_t titleId);
+    static std::string gridWidePath(std::uint64_t titleId);
     static bool hasArtwork(std::uint64_t titleId);
 
 private:

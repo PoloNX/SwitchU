@@ -31,6 +31,10 @@ inline constexpr const char* kPath = "sdmc:/config/SwitchU/leave_frame.bin";
 bool save(const LeaveFrameSession& session,
           const std::uint8_t* rgba, int width, int height);
 
+/// Soft-blur + light chroma so half-res splash reads as frosted glass rather
+/// than a soft upscale. Safe on 640×360 leave captures.
+void frostRgbaInPlace(std::uint8_t* rgba, int width, int height);
+
 bool load(LeaveFrameSession& session, LeaveFrameImage& image);
 
 bool loadSessionOnly(LeaveFrameSession& session);

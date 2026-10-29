@@ -13,7 +13,7 @@ public:
     void setColor(const nxui::Color& c) { m_color = c; }
     void setCornerRadius(float r)  { m_cornerRadius.setImmediate(r); }
     void setBorderWidth(float w)   { m_borderWidth = w; }
-    void setMotionPaused(bool paused) { m_motionPaused = paused; }
+    void setMotionPaused(bool paused);
     bool motionPaused() const { return m_motionPaused; }
     void setInstantMotion(bool instant);
     bool instantMotion() const { return m_instantMotion; }

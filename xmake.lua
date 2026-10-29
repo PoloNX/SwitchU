@@ -165,6 +165,24 @@ target("atmosphere-stratosphere")
     end)
 target_end()
 
+-- Atmosphère haze MTP (GPLv2) — USB SD file transfer while HOME is up.
+target("haze")
+    set_kind("static")
+    set_default(false)
+    if not is_plat("cross") then return end
+
+    set_toolchains("devkita64")
+    set_languages("c++20")
+
+    add_includedirs("lib/haze/include", {public = true})
+    add_includedirs("lib/Atmosphere-libs/libvapours/include", {public = true})
+    add_files("lib/haze/source/*.cpp")
+    add_cxxflags("-frtti", "-fexceptions", {force = true})
+    if is_mode("release") then
+        add_cxflags("-O3", "-ffast-math", {force = true})
+    end
+target_end()
+
 target("SwitchU")
     set_kind("binary")
     if not is_plat("cross") then return end
@@ -173,9 +191,11 @@ target("SwitchU")
     set_languages("c++20")
     add_rules("switch")
 
-    add_deps("nxui")
+    add_deps("nxui", "haze")
     add_includedirs("projects/common/include", {public = false})
     add_includedirs("projects/menu/src", {public = false})
+    add_includedirs("lib/haze/include", {public = false})
+    add_includedirs("lib/Atmosphere-libs/libvapours/include", {public = false})
     add_files("projects/menu/src/**.cpp")
     add_packages("nlohmann_json", "fmt", "libsdl", "libsdl_mixer", "libsdl_ttf", "zlib", "libwebp", "libcurl", "curlpp")
     add_linkgroups("SDL2_ttf", "harfbuzz-subset", "harfbuzz", "freetype", "png16", "bz2", "z", {group = true})
