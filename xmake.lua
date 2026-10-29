@@ -165,7 +165,7 @@ target("atmosphere-stratosphere")
     end)
 target_end()
 
--- Atmosphère haze MTP (GPLv2) — USB SD file transfer while HOME is up.
+-- Atmosphère haze (GPLv2) — only linked into the optional SwitchU-MTP sysmodule.
 target("haze")
     set_kind("static")
     set_default(false)
@@ -191,11 +191,9 @@ target("SwitchU")
     set_languages("c++20")
     add_rules("switch")
 
-    add_deps("nxui", "haze")
+    add_deps("nxui")
     add_includedirs("projects/common/include", {public = false})
     add_includedirs("projects/menu/src", {public = false})
-    add_includedirs("lib/haze/include", {public = false})
-    add_includedirs("lib/Atmosphere-libs/libvapours/include", {public = false})
     add_files("projects/menu/src/**.cpp")
     add_packages("nlohmann_json", "fmt", "libsdl", "libsdl_mixer", "libsdl_ttf", "zlib", "libwebp", "libcurl", "curlpp")
     add_linkgroups("SDL2_ttf", "harfbuzz-subset", "harfbuzz", "freetype", "png16", "bz2", "z", {group = true})
@@ -378,4 +376,65 @@ target("switchu-daemon")
     set_values("switch.tid",     "0100000000001000")
     set_values("switch.json",    "projects/daemon/daemon.json")
     set_values("switch.format",  "nsp")
+target_end()
+
+-- Optional GPLv2 MTP sysmodule (haze). Not a dependency of SwitchU-menu.
+-- Ships under sd_out/optional/switchu-mtp/ — copy onto the SD only if wanted.
+target("switchu-mtp")
+    set_kind("binary")
+    if not is_plat("cross") then return end
+    set_default(not has_config("homebrew"))
+
+    set_toolchains("devkita64")
+    set_languages("c++20")
+    add_rules("switch")
+
+    add_deps("haze")
+    add_files("projects/mtp/src/**.cpp")
+    add_includedirs("lib/haze/include", {public = false})
+    add_includedirs("lib/Atmosphere-libs/libvapours/include", {public = false})
+    add_cxxflags("-frtti", "-fexceptions", {force = true})
+    add_syslinks("nx")
+
+    if is_mode("release") then
+        add_cxflags("-O3", "-ffast-math", {force = true})
+    end
+
+    set_values("switch.name",    "switchu-mtp")
+    set_values("switch.author",  "PoloNX")
+    set_values("switch.version", version)
+    set_values("switch.tid",     "01000000000008FE")
+    set_values("switch.json",    "projects/mtp/mtp.json")
+    set_values("switch.format",  "nsp")
+    -- Keep out of the main atmosphere/contents tree used by SwitchU itself.
+    set_values("switch.install_contents", false)
+    set_values("switch.raw_exefs_dir",
+        "optional/switchu-mtp/atmosphere/contents/01000000000008FE/exefs")
+
+    after_install(function(target)
+        local installdir = target:installdir()
+        local flags = path.join(installdir,
+            "optional/switchu-mtp/atmosphere/contents/01000000000008FE/flags")
+        os.mkdir(flags)
+        local boot2 = path.join(os.projectdir(), "projects/mtp/flags/boot2.flag")
+        if os.isfile(boot2) then
+            os.cp(boot2, path.join(flags, "boot2.flag"))
+        else
+            io.writefile(path.join(flags, "boot2.flag"), "")
+        end
+        local readme = path.join(os.projectdir(), "projects/mtp/README.md")
+        if os.isfile(readme) then
+            os.cp(readme, path.join(installdir, "optional/switchu-mtp/README.md"))
+        end
+        -- Also drop the packed NSP beside the unpacked ExeFS for convenience.
+        local nsp = path.join(target:targetdir(), "switchu-mtp.nsp")
+        if os.isfile(nsp) then
+            local dest = path.join(installdir,
+                "optional/switchu-mtp/atmosphere/contents/01000000000008FE")
+            os.mkdir(dest)
+            os.cp(nsp, path.join(dest, "exefs.nsp"))
+        end
+        cprint("${bright green}installed${clear} optional SwitchU-MTP → %s",
+               path.join(installdir, "optional/switchu-mtp"))
+    end)
 target_end()

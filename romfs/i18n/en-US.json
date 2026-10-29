@@ -241,7 +241,7 @@
       "clock_12h": "12-Hour Clock",
       "clock_12h_desc": "Show the home clock with AM and PM.",
       "usb30": "USB 3.0",
-      "usb30_desc": "Faster USB when the PC mounts the SD over MTP (plug in while HOME is open).",
+      "usb30_desc": "Faster USB for optional SwitchU-MTP (SD mount while HOME is open).",
       "usb30_restart": "USB 3.0 changes take effect after a restart.",
       "battery_lot": "Battery Lot",
       "ui_language": "UI Language",

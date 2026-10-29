@@ -1,126 +1,59 @@
 #include "Mtp.hpp"
-#include <core/DebugLog.hpp>
+#include "core/DebugLog.hpp"
 
-#if defined(__SWITCH__)
-#include <haze.hpp>
-#include <haze/transfer_status.hpp>
-#include <atomic>
+#include <cstdio>
 #include <cstring>
+#include <filesystem>
+#include <system_error>
 
 namespace switchu::usb {
-
 namespace {
 
-    class StopConsumer : public haze::EventConsumer {
-    public:
-        haze::EventReactor* reactor = nullptr;
-        void ProcessEvent() override {
-            if (reactor) {
-                reactor->SetResult(haze::ResultStopRequested());
-            }
-        }
-    };
+constexpr const char* kEnableFlag = "sdmc:/config/SwitchU/mtp_enable";
 
-    haze::PtpObjectHeap g_heap;
-    haze::EventReactor  g_reactor;
-    haze::PtpResponder  g_responder;
-    StopConsumer        g_stop;
-    UEvent              g_stop_event;
-    Thread              g_thread;
-    bool                g_started = false;
-    std::atomic<bool>   g_serving{false};
-    std::atomic<bool>   g_connected{false};
+// Menu never links haze (GPLv2). Optional SwitchU-MTP sysmodule watches this
+// flag and owns the USB MTP responder for the HOME session only.
 
-    void run(void*) {
-        if (R_FAILED(haze::LoadDeviceProperties())) {
-            DebugLog::log("[mtp] LoadDeviceProperties failed");
-            return;
-        }
-
-        // Fails when something else still holds USB; the menu runs without file transfer
-        if (R_FAILED(g_responder.Initialize(&g_reactor, &g_heap))) {
-            DebugLog::log("[mtp] Responder Initialize failed (USB in use?)");
-            g_responder.Finalize();
-            return;
-        }
-
-        g_stop.reactor = &g_reactor;
-        if (g_reactor.AddConsumer(&g_stop, waiterForUEvent(&g_stop_event))) {
-            g_serving = true;
-            DebugLog::log("[mtp] MTP server active and listening on USB");
-            (void)g_responder.LoopProcess();
-            g_serving = false;
-            g_reactor.RemoveConsumer(&g_stop);
-            DebugLog::log("[mtp] MTP server stopped");
-        }
-        g_responder.Finalize();
-    }
+void ensureConfigDir() {
+    std::error_code ec;
+    std::filesystem::create_directories("sdmc:/config/SwitchU", ec);
+}
 
 } // namespace
 
 void mtpStart() {
-    if (g_started) return;
-    ueventCreate(&g_stop_event, false);
-    g_reactor.SetResult(haze::ResultSuccess());
-
-    // Core 2: priority 0x2E, 64 KB stack
-    if (R_FAILED(threadCreate(&g_thread, run, nullptr, nullptr, 0x10000, 0x2E, 2)) &&
-        R_FAILED(threadCreate(&g_thread, run, nullptr, nullptr, 0x10000, 0x2E, -2))) {
-        DebugLog::log("[mtp] threadCreate failed");
+#if defined(__SWITCH__)
+    ensureConfigDir();
+    FILE* f = std::fopen(kEnableFlag, "wb");
+    if (!f) {
+        DebugLog::log("[mtp] could not create enable flag (optional SwitchU-MTP sysmodule?)");
         return;
     }
-
-    threadStart(&g_thread);
-    g_started = true;
-    DebugLog::log("[mtp] thread started");
+    std::fclose(f);
+    DebugLog::log("[mtp] enable flag set (optional sumtp/haze sysmodule)");
+#else
+    (void)kEnableFlag;
+#endif
 }
 
 void mtpStop() {
-    if (!g_started) return;
-    ueventSignal(&g_stop_event);
-    threadWaitForExit(&g_thread);
-    threadClose(&g_thread);
-    g_started = false;
-    g_serving = false;
-    g_connected = false;
-    DebugLog::log("[mtp] thread joined and closed");
+#if defined(__SWITCH__)
+    std::error_code ec;
+    std::filesystem::remove(kEnableFlag, ec);
+    DebugLog::log("[mtp] enable flag cleared");
+#endif
 }
 
 bool mtpConnected() {
-    UsbState st = UsbState_Detached;
-    const bool c = g_serving && R_SUCCEEDED(usbDsGetState(&st)) && st == UsbState_Configured;
-    g_connected = c;
-    return c;
+    // Without IPC into the GPL module we cannot see usb:ds state from the menu.
+    // Presence of the flag means we *asked* for MTP; PC mount status is opaque.
+    std::error_code ec;
+    return std::filesystem::is_regular_file(kEnableFlag, ec);
 }
 
 void mtpGetStatus(MtpStatus& out) {
-    const auto& s = haze::GetTransferStatus();
-    out.connected = g_connected;
-    out.op        = static_cast<MtpOp>(s.op.load(std::memory_order_acquire));
-    out.done      = s.done.load(std::memory_order_relaxed);
-    out.total     = s.total.load(std::memory_order_relaxed);
-    out.bytes     = s.bytes.load(std::memory_order_relaxed);
-    out.received  = s.received.load(std::memory_order_relaxed);
-    out.sent      = s.sent.load(std::memory_order_relaxed);
-    out.deleted   = s.deleted.load(std::memory_order_relaxed);
-
-    char name[sizeof(out.name)];
-    if (haze::TransferName(name, sizeof(name))) {
-        std::memcpy(out.name, name, sizeof(name));
-    }
+    out = {};
+    out.connected = mtpConnected();
 }
 
 } // namespace switchu::usb
-
-#else // !__SWITCH__
-
-namespace switchu::usb {
-
-void mtpStart() {}
-void mtpStop() {}
-bool mtpConnected() { return false; }
-void mtpGetStatus(MtpStatus& out) { out = {}; }
-
-} // namespace switchu::usb
-
-#endif

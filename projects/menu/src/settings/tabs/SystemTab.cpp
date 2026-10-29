@@ -467,7 +467,7 @@ SettingsScreen::Tab settings::tabs::SystemTab::build(SettingsScreen& screen) {
         SettingItem it; it.label = i18n.tr("settings.system.usb30", "USB 3.0"); it.type = ItemType::Toggle;
         it.description = i18n.tr(
             "settings.system.usb30_desc",
-            "Faster USB when the PC mounts the SD over MTP (plug in while HOME is open). "
+            "Faster USB for optional SwitchU-MTP (SD mount while HOME is open). "
             "Takes effect after a restart.");
         bool val = false;
         setsysGetUsb30EnableFlag(&val);

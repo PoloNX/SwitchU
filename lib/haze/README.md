@@ -3,7 +3,10 @@
 MTP server from Atmosphère (`troposphere/haze`, tag 1.11.2), GPLv2.
 Copyright (c) Atmosphère-NX. https://github.com/Atmosphere-NX/Atmosphere
 
-Vendored for sMenu's USB file transfer (`projects/sMenu/source/sl/menu/usb`).
+Vendored **only** for the optional `switchu-mtp` Atmosphère sysmodule
+(`projects/mtp/`). SwitchU-menu does **not** link this library (flag-file
+handshake only). Copy `sd_out/optional/switchu-mtp/` onto the SD if you want MTP.
+
 Changes from upstream:
 
 - Dropped the standalone app: `main.cpp`, `console_main_loop.hpp`, `gpu_console.c`

@@ -189,7 +189,7 @@ function Get-ExpectedOutputs {
     if ($Variant -eq 'homebrew') {
         $names += 'SwitchU.nro'
     } else {
-        $names += 'switchu-menu.nsp', 'switchu-daemon.nsp'
+        $names += 'switchu-menu.nsp', 'switchu-daemon.nsp', 'switchu-mtp.nsp'
     }
     return $names | ForEach-Object { Join-Path $outDir $_ }
 }
