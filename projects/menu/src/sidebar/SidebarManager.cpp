@@ -4,6 +4,8 @@
 #include "widgets/AdaptiveIconLoad.hpp"
 #include <nxui/core/I18n.hpp>
 #include <nxui/core/Input.hpp>
+#include <nxui/core/Animation.hpp>
+#include <cmath>
 #include <filesystem>
 #include <system_error>
 #include <array>
@@ -19,6 +21,10 @@ constexpr float kDynamicStripGap = 10.f;
 constexpr float kDynamicStripY = 17.f;
 constexpr float kDynamicLeftGroupX = 190.f;
 constexpr float kDynamicRightGroupX = 902.f;
+// Mirrors IconGrid::kLayoutMorphDuration so chrome and tiles land together.
+constexpr float kSidebarGlideDuration = 0.40f;
+// Tiny cascade across the six buttons: reads as one gesture, not six snaps.
+constexpr float kSidebarGlideStagger = 0.022f;
 
 bool pathExists(const std::string& path) {
     std::error_code ec;
@@ -51,6 +57,8 @@ void SidebarManager::build(nxui::GpuDevice& gpu, nxui::Renderer& ren,
     m_settingsButton = nullptr;
     m_themeShopButton = nullptr;
     m_albumButton    = nullptr;
+    m_buttonGlides.clear();
+    m_layoutArranged = false;
     m_anims.clear();
     m_icons.clear();
     m_icons.resize(kSidebarIconCount);
@@ -116,6 +124,57 @@ void SidebarManager::build(nxui::GpuDevice& gpu, nxui::Renderer& ren,
     (void)assetsBase;
 }
 
+void SidebarManager::glideButtonTo(AppletButton* button, const nxui::Rect& target,
+                                   float delay) {
+    if (!button)
+        return;
+    const nxui::Rect current = button->rect();
+    const auto near = [](float a, float b) { return std::abs(a - b) < 0.01f; };
+    if (near(current.x, target.x) && near(current.y, target.y) &&
+        near(current.width, target.width) && near(current.height, target.height)) {
+        button->setRect(target);
+        for (auto& glide : m_buttonGlides)
+            if (glide.button == button)
+                glide.active = false;
+        return;
+    }
+
+    ButtonGlide* slot = nullptr;
+    for (auto& glide : m_buttonGlides)
+        if (glide.button == button)
+            slot = &glide;
+    if (!slot) {
+        m_buttonGlides.push_back(ButtonGlide{});
+        slot = &m_buttonGlides.back();
+    }
+    // Retarget from the in-flight rect so a flip interrupted mid-glide keeps
+    // travelling instead of jumping back to the previous layout.
+    slot->button  = button;
+    slot->from    = current;
+    slot->to      = target;
+    slot->elapsed = 0.f;
+    slot->delay   = delay;
+    slot->active  = true;
+}
+
+void SidebarManager::updateButtonGlides(float dt) {
+    for (auto& glide : m_buttonGlides) {
+        if (!glide.active || !glide.button)
+            continue;
+        glide.elapsed += dt;
+        const float t = (glide.elapsed - glide.delay) / kSidebarGlideDuration;
+        if (t <= 0.f)
+            continue;
+        if (t >= 1.f) {
+            glide.button->setRect(glide.to);
+            glide.active = false;
+            continue;
+        }
+        glide.button->setRect(nxui::Rect::lerp(glide.from, glide.to,
+                                               nxui::Easing::inOutCubic(t)));
+    }
+}
+
 void SidebarManager::setDynamicLineLayout(bool enabled) {
     std::vector<AppletButton*> ordered;
     ordered.reserve(m_leftButtons.size() + m_rightButtons.size());
@@ -130,17 +189,31 @@ void SidebarManager::setDynamicLineLayout(bool enabled) {
         button->setCustomNavigation(nxui::FocusDirection::DOWN, nullptr);
     }
 
+    // Boot snaps to the configured layout; later flips glide into place.
+    const bool animate = m_layoutArranged;
+    m_layoutArranged = true;
+    const auto place = [&](AppletButton* button, const nxui::Rect& target, int order) {
+        if (!animate) {
+            button->setRect(target);
+            return;
+        }
+        glideButtonTo(button, target,
+                      static_cast<float>(order) * kSidebarGlideStagger);
+    };
+
     if (enabled) {
         for (std::size_t i = 0; i < ordered.size(); ++i) {
             auto* button = ordered[i];
             const bool rightGroup = i >= m_leftButtons.size();
             const std::size_t groupIndex = rightGroup ? i - m_leftButtons.size() : i;
             const float groupX = rightGroup ? kDynamicRightGroupX : kDynamicLeftGroupX;
-            button->setRect({groupX + static_cast<float>(groupIndex) *
-                                      (kDynamicStripButtonSize + kDynamicStripGap),
-                             kDynamicStripY,
-                             kDynamicStripButtonSize,
-                             kDynamicStripButtonSize});
+            place(button,
+                  {groupX + static_cast<float>(groupIndex) *
+                                (kDynamicStripButtonSize + kDynamicStripGap),
+                   kDynamicStripY,
+                   kDynamicStripButtonSize,
+                   kDynamicStripButtonSize},
+                  static_cast<int>(groupIndex));
             button->setCustomNavigation(nxui::FocusDirection::LEFT,
                                         i > 0 ? ordered[i - 1] : button);
             button->setCustomNavigation(nxui::FocusDirection::RIGHT,
@@ -153,16 +226,18 @@ void SidebarManager::setDynamicLineLayout(bool enabled) {
     const float startY = 360.f - totalH * 0.5f;
     const float rightX = 1280.f - kSidebarMarginX - kSidebarButtonSize;
     for (std::size_t i = 0; i < m_leftButtons.size(); ++i) {
-        m_leftButtons[i]->setRect({kSidebarMarginX,
-                                   startY + static_cast<float>(i) *
-                                       (kSidebarButtonSize + kSidebarColumnGap),
-                                   kSidebarButtonSize, kSidebarButtonSize});
+        place(m_leftButtons[i].get(),
+              {kSidebarMarginX,
+               startY + static_cast<float>(i) * (kSidebarButtonSize + kSidebarColumnGap),
+               kSidebarButtonSize, kSidebarButtonSize},
+              static_cast<int>(i));
     }
     for (std::size_t i = 0; i < m_rightButtons.size(); ++i) {
-        m_rightButtons[i]->setRect({rightX,
-                                    startY + static_cast<float>(i) *
-                                        (kSidebarButtonSize + kSidebarColumnGap),
-                                    kSidebarButtonSize, kSidebarButtonSize});
+        place(m_rightButtons[i].get(),
+              {rightX,
+               startY + static_cast<float>(i) * (kSidebarButtonSize + kSidebarColumnGap),
+               kSidebarButtonSize, kSidebarButtonSize},
+              static_cast<int>(i));
     }
     if (!m_leftButtons.empty()) {
         m_leftButtons.front()->setCustomNavigation(nxui::FocusDirection::UP,
@@ -372,6 +447,7 @@ void SidebarManager::tryLoadAnimation(nxui::GpuDevice& gpu, nxui::Renderer& ren,
 }
 
 void SidebarManager::update(float dt, nxui::Widget* focusedWidget) {
+    updateButtonGlides(dt);
     for (auto& e : m_anims) {
         if (!e.button) continue;
         bool focused = (focusedWidget == e.button);

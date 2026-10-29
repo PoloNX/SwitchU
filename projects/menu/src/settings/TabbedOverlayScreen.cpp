@@ -268,13 +268,18 @@ void TabbedOverlayScreen::setTheme(const nxui::Theme* t) {
     setLiquidGlassShade(m_theme->mode == nxui::ThemeMode::Dark ? 0.08f : -0.03f);
     invalidateBackdropCache();
 
-    if (!usesCustomContentLayout()) {
-        m_cachedTabContentWidgets.clear();
-        m_cachedTabContentWidgets.resize(m_tabs.size());
+    // Row widgets cache the colours they took from the theme (label/description
+    // text, values), and they key that cache on the theme pointer. The menu
+    // recolours one and the same Theme object in place, so those colours would
+    // otherwise survive a theme switch: Theme Shop -> Sounds / Interface kept
+    // black text over a black theme (or white on white). Drop the cache for
+    // every tab, including the ones a custom layout renders itself, so the
+    // settings-style tabs rebuild on next use.
+    m_cachedTabContentWidgets.clear();
+    m_cachedTabContentWidgets.resize(m_tabs.size());
 
-        if (isActive())
-            rebuildContentItems();
-    }
+    if (!usesCustomContentLayout() && isActive())
+        rebuildContentItems();
 }
 
 void TabbedOverlayScreen::show() {

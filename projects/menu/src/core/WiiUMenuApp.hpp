@@ -198,6 +198,16 @@ private:
     void syncGameArtworkTextures(std::uint64_t titleId);
     switchu::widgets::WidgetSize gameGridSize(std::uint64_t titleId,
                                                AppLayoutMode mode) const;
+    // Footprint a title occupies in the grid layout. Widgets carry their own
+    // size; games may be configured as 2x1 or 2x2 tiles.
+    switchu::widgets::WidgetSize layoutSlotSpan(std::uint64_t titleId) const;
+    // Anchor cell of the tile covering `cell`, or -1 when the cell is free.
+    int layoutSpanAnchorFor(int cell) const;
+    int layoutSpanAnchorFor(const std::vector<std::uint64_t>& slots, int cell) const;
+    // True when a tile of `size` can be anchored at `anchor` in `slots`
+    // (page bounds respected, every covered cell empty).
+    bool layoutFitsAt(const std::vector<std::uint64_t>& slots, int anchor,
+                      switchu::widgets::WidgetSize size) const;
     bool canPlaceGridItem(int targetSlot, switchu::widgets::WidgetSize size,
                           std::uint64_t ignoringTitleId = 0,
                           std::uint64_t alsoIgnoringTitleId = 0) const;
@@ -326,7 +336,8 @@ private:
     void closeActiveOverlays(bool closeFolders = true);
     void handleTouch();
     std::shared_ptr<GlossyIcon> makeIcon(const AppEntry& entry);
-    nxui::Texture* folderCoverTexture(std::uint64_t titleId, bool preferPoster = false);
+    nxui::Texture* folderCoverTexture(std::uint64_t titleId, bool preferPoster = false,
+                                      bool allowColdLoad = true);
     /// Small square icon for folder peek stacks (never loads posters).
     /// When allowBorrow is true, may return a live IconStreamer/grid texture
     /// (tracked in m_folderPeekBorrowed) to avoid sync decode on morph commit.
@@ -343,8 +354,12 @@ private:
     bool preferPosterIconData(std::uint64_t titleId) const;
     // centerIndex < 0 or radius < 0 → all folders; otherwise only nearby slots
     // (used by slim layout morph so commit stays cheap).
-    void applyFolderCoversToIcons(int centerIndex = -1, int radius = -1);
-    // FT light: drop peeks/composites/covers on folder tiles (grid + single-row).
+    // allowColdLoad == false keeps SD-card reads and GPU uploads off the frame:
+    // tiles whose art is not cached already stay queued for the incremental
+    // one-folder-per-frame fill instead of stalling the view toggle.
+    void applyFolderCoversToIcons(int centerIndex = -1, int radius = -1,
+                                  bool allowColdLoad = true);
+    // FT light / Battery Saver: drop peeks/composites/covers on folder tiles.
     void clearFolderCoversForFrameTapLight();
     bool folderTileNeedsArt(int index) const;
     void markFolderCoverFilled(int index);
@@ -358,7 +373,8 @@ private:
     int nextFolderCoverFillIndex(int focus) const;
     /// Grid: on first/last page, ZL/ZR snaps to start/end of the current row.
     bool snapGridRowEdge(int dir);
-    nxui::Texture* folderPeekCompositeTexture(std::uint32_t folderId);
+    nxui::Texture* folderPeekCompositeTexture(std::uint32_t folderId,
+                                              bool allowColdLoad = true);
     void requestFolderPeekCompositeBake(std::uint32_t folderId);
     void pumpFolderPeekComposites();
     void invalidateFolderPeekComposite(std::uint32_t folderId);
@@ -830,6 +846,10 @@ private:
     bool m_retainLayoutFlipFocus = false;
     void placeLayoutFlipButton();
     void wireLayoutFlipNavigation();
+    // True while a view toggle started from the Change View button must leave
+    // focus on it: the grid rebuild must not hand focus to a tile and drag the
+    // ring off the button and back.
+    bool keepLayoutFlipFocus() const;
     void restoreLayoutFlipFocusIfNeeded();
     // Cursor snap when a layout morph just finished (index remap safety).
     bool m_wasLayoutMorphing = false;

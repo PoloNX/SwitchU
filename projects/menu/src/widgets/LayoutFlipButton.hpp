@@ -27,11 +27,17 @@ public:
 
 protected:
     void onContentRender(nxui::Renderer& ren) override;
+    void onUpdate(float dt) override;
 
 private:
     void refreshAccessibility();
-    void drawFallbackIcon(nxui::Renderer& ren, const nxui::Color& ink);
+    void drawFallbackIcon(nxui::Renderer& ren, const nxui::Color& ink, float scale);
     void resolveDrawStyle(nxui::Color& ink, const nxui::Texture*& tex) const;
+
+    // Short glyph pulse when the view actually flips, mirroring the tile morph.
+    static constexpr float kPulseDuration = 0.34f;
+    float m_pulseT = kPulseDuration;
+    bool  m_pulseArmed = false;
 
     const nxui::Theme* m_theme = nullptr;
     bool m_singleRow = false;

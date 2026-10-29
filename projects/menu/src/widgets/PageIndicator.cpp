@@ -1,6 +1,7 @@
 #include "PageIndicator.hpp"
 #include <nxui/core/Renderer.hpp>
 #include <algorithm>
+#include <cmath>
 
 PageIndicator::PageIndicator() {
     setPadding(10.f, 18.f, 10.f, 18.f);
@@ -19,6 +20,12 @@ void PageIndicator::setCurrentPage(int page) {
     int clamped = std::clamp(page, 0, std::max(0, m_total - 1));
     if (clamped == m_current) return;
     m_current = clamped;
+    m_popT = 0.f;
+}
+
+void PageIndicator::onUpdate(float dt) {
+    if (m_popT < kDotPopDuration)
+        m_popT = std::min(kDotPopDuration, m_popT + dt);
 }
 
 void PageIndicator::updateGeometryFromContent() {
@@ -49,11 +56,24 @@ void PageIndicator::onContentRender(nxui::Renderer& ren) {
     nxui::Color active   = m_hasActiveColor
         ? m_activeColor
         : (m_theme ? m_theme->pageIndicatorActive : nxui::Color(1.f, 1.f, 1.f, 0.95f));
-    
+
+    // Pop: the fresh dot swells then settles while a ripple fades outwards,
+    // echoing the page slide without moving the pill's layout.
+    const bool popping = m_popT < kDotPopDuration;
+    const float popP = popping
+        ? std::clamp(m_popT / kDotPopDuration, 0.f, 1.f) : 1.f;
+    const float activeR = dotR * (1.f + 0.34f * std::sin(popP * 3.14159265f));
+
     for (int i = 0; i < m_total; ++i) {
         float cx = startX + i * (dotR * 2.f + gap) + dotR;
         nxui::Color c = (i == m_current) ? active : inactive;
-        ren.drawCircle({cx, cy}, dotR, c.withAlpha(c.a * op), 16);
+        if (i == m_current && popping) {
+            const float ringR = dotR + 11.f * popP;
+            ren.drawCircle({cx, cy}, ringR,
+                           active.withAlpha(active.a * 0.30f * (1.f - popP) * op), 20);
+        }
+        const float r = (i == m_current) ? activeR : dotR;
+        ren.drawCircle({cx, cy}, r, c.withAlpha(c.a * op), 16);
     }
 
 }

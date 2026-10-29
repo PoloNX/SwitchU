@@ -16,10 +16,16 @@ public:
 
 protected:
     void onContentRender(nxui::Renderer& ren) override;
+    void onUpdate(float dt) override;
     nxui::Vec2 computeContentSize() const override;
 
 private:
     void updateGeometryFromContent();
+
+    // Soft pop on the newly active dot when the page changes, so the pill
+    // echoes the sliding page instead of silently re-colouring.
+    static constexpr float kDotPopDuration = 0.30f;
+    float m_popT = kDotPopDuration;
 
     int m_total   = 1;
     int m_current = 0;

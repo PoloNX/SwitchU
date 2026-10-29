@@ -41,7 +41,16 @@ void LayoutFlipButton::setSingleRowActive(bool singleRow) {
     if (m_singleRow == singleRow)
         return;
     m_singleRow = singleRow;
+    // Boot/first build sets the initial state; only real flips pulse.
+    if (m_pulseArmed)
+        m_pulseT = 0.f;
+    m_pulseArmed = true;
     refreshAccessibility();
+}
+
+void LayoutFlipButton::onUpdate(float dt) {
+    if (m_pulseT < kPulseDuration)
+        m_pulseT = std::min(kPulseDuration, m_pulseT + dt);
 }
 
 void LayoutFlipButton::ensureIcon(nxui::GpuDevice& gpu, nxui::Renderer& ren,
@@ -90,12 +99,13 @@ void LayoutFlipButton::refreshAccessibility() {
         : i18n.tr("layout.flip_to_line", "Switch to single-row view."));
 }
 
-void LayoutFlipButton::drawFallbackIcon(nxui::Renderer& ren, const nxui::Color& ink) {
+void LayoutFlipButton::drawFallbackIcon(nxui::Renderer& ren, const nxui::Color& ink,
+                                        float scale) {
     nxui::Rect c = glassContentRect();
     const float side = std::min(c.width, c.height);
     const float cx = c.x + c.width * 0.5f;
     const float cy = c.y + c.height * 0.5f;
-    const float r = side * 0.34f;
+    const float r = side * 0.34f * scale;
     // Two opposing arcs with chevron heads (camera flip).
     constexpr int kSegs = 14;
     for (int pass = 0; pass < 2; ++pass) {
@@ -111,7 +121,7 @@ void LayoutFlipButton::drawFallbackIcon(nxui::Renderer& ren, const nxui::Color& 
             ren.drawLine(prev, p, ink, 2.4f);
             prev = p;
         }
-        const float tip = side * 0.14f;
+        const float tip = side * 0.14f * scale;
         const float ang = a1;
         const float tx = cx + std::cos(ang) * r;
         const float ty = cy + std::sin(ang) * r;
@@ -154,9 +164,17 @@ void LayoutFlipButton::onContentRender(nxui::Renderer& ren) {
     const nxui::Texture* tex = nullptr;
     resolveDrawStyle(ink, tex);
 
+    // Brief swell on the switch frame — enough feedback to read as a toggle
+    // without competing with the tiles morphing underneath.
+    float scale = 1.f;
+    if (m_pulseT < kPulseDuration) {
+        const float t = std::clamp(m_pulseT / kPulseDuration, 0.f, 1.f);
+        scale = 1.f + 0.16f * std::sin(t * 3.14159265f) * (1.f - t * 0.5f);
+    }
+
     if (tex && tex->valid()) {
         nxui::Rect c = glassContentRect();
-        const float edge = std::min(c.width, c.height) * 0.92f;
+        const float edge = std::min(c.width, c.height) * 0.92f * scale;
         const float cx = c.x + c.width * 0.5f;
         const float cy = c.y + c.height * 0.5f;
         ren.drawTexture(tex,
@@ -164,5 +182,5 @@ void LayoutFlipButton::onContentRender(nxui::Renderer& ren) {
                         ink);
         return;
     }
-    drawFallbackIcon(ren, ink);
+    drawFallbackIcon(ren, ink, scale);
 }
