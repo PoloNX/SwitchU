@@ -602,7 +602,8 @@ void TabbedOverlayScreen::drawTabs(nxui::Renderer& ren, const nxui::Rect& panel,
         tabY += tabH + kTabCardGap;
         const float extra = tabBranchExtraHeight(i);
         if (extra > 0.5f) {
-            const float branchH = std::max(0.f, extra - 8.f);
+            // Same card height as parent tabs (pitch minus gap), just indented.
+            const float branchH = std::max(0.f, std::min(tabH, extra - kTabCardGap));
             branchDraw = {
                 i,
                 {
