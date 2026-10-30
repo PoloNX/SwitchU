@@ -153,10 +153,14 @@ public:
 
     void setThreadPool(nxui::ThreadPool* pool);
     void setRenderContext(nxui::GpuDevice* gpu, nxui::Renderer* renderer);
+    void show() override;
     void refreshCommunityCatalog(bool forceNetwork = false);
     void requestRenderDiagnostics(int frames = 6) {
         if (frames > m_renderDebugFrames)
             m_renderDebugFrames = frames;
+    }
+    bool showsCatalogRefresh() const {
+        return isCommunityTab() || isIconsTab();
     }
 
     void setThemeShopState(const std::vector<ThemeShopEntry>& entries,
@@ -459,6 +463,9 @@ private:
     bool m_hasPendingCommunityPreviewWork = false;
     bool m_hasPendingInstalledPreviewWork = false;
     std::uint64_t m_communityRevision = 0;
+    // Set on each Theme Shop open so Community/Icons re-pull index.json even
+    // when a disk cache already exists (renames, new themes, badge flags).
+    bool m_catalogNeedsNetworkRefresh = true;
     bool m_detailOpen = false;
     bool m_detailFullscreen = false;
     // Snap blue ring to grid selection after detail close (no Apply->card lerp).

@@ -173,9 +173,9 @@ std::vector<nxui::Rect> detailButtonRects(const nxui::Rect& dialog, int count) {
     return rects;
 }
 
-std::vector<nxui::Rect> headerButtonRects(const GridLayout& layout, bool communityTab) {
+std::vector<nxui::Rect> headerButtonRects(const GridLayout& layout, bool showRefresh) {
     std::vector<nxui::Rect> rects;
-    if (communityTab)
+    if (showRefresh)
         rects.push_back(layout.refreshButton);
     rects.push_back(layout.searchButton);
     return rects;
@@ -1409,7 +1409,7 @@ void ThemeShopScreen::updateCustomContent(float dt) {
         syncFinishedCommunityPreviewLoads();
     }
 
-    int headerButtonCount = isCommunityTab() ? 2 : 1;
+    int headerButtonCount = showsCatalogRefresh() ? 2 : 1;
     m_headerButtonIndex = std::clamp(m_headerButtonIndex, 0, std::max(0, headerButtonCount - 1));
 
     if (m_lastCustomTabIndex != m_tabIndex) {
@@ -1502,10 +1502,10 @@ bool ThemeShopScreen::handleCustomPressA() {
             return true;
         }
 
-        if ((isCommunityTab() ? 2 : 1) > 0) {
+        if ((showsCatalogRefresh() ? 2 : 1) > 0) {
             m_focusArea = FocusArea::Content;
             m_contentFocusArea = ContentFocusArea::Header;
-            m_headerButtonIndex = isCommunityTab() ? 0 : 0;
+            m_headerButtonIndex = 0;
             if (m_navSfxCb) m_navSfxCb();
             return true;
         }
@@ -1513,7 +1513,7 @@ bool ThemeShopScreen::handleCustomPressA() {
     }
 
     if (!m_detailOpen && m_contentFocusArea == ContentFocusArea::Header) {
-        if (isCommunityTab() && m_headerButtonIndex == 0) {
+        if (showsCatalogRefresh() && m_headerButtonIndex == 0) {
             refreshCommunityCatalog(true);
         } else {
             promptSearchQuery();
@@ -1840,7 +1840,7 @@ bool ThemeShopScreen::handleCustomNavUp() {
         ensureSelectionVisible();
     } else {
         m_contentFocusArea = ContentFocusArea::Header;
-        m_headerButtonIndex = isCommunityTab() ? std::clamp(selected % kGridCols, 0, 1) : 0;
+        m_headerButtonIndex = showsCatalogRefresh() ? std::clamp(selected % kGridCols, 0, 1) : 0;
     }
     if (m_navSfxCb) m_navSfxCb();
     return true;
@@ -2096,7 +2096,7 @@ bool ThemeShopScreen::handleCustomNavRight() {
             if (m_navSfxCb) m_navSfxCb();
             return true;
         }
-        if ((isCommunityTab() ? 2 : 1) > 0) {
+        if ((showsCatalogRefresh() ? 2 : 1) > 0) {
             m_focusArea = FocusArea::Content;
             m_contentFocusArea = ContentFocusArea::Header;
             m_headerButtonIndex = 0;
@@ -2107,7 +2107,7 @@ bool ThemeShopScreen::handleCustomNavRight() {
     }
 
     if (m_contentFocusArea == ContentFocusArea::Header) {
-        int headerButtonCount = isCommunityTab() ? 2 : 1;
+        int headerButtonCount = showsCatalogRefresh() ? 2 : 1;
         if (m_headerButtonIndex + 1 < headerButtonCount) {
             ++m_headerButtonIndex;
         } else if (currentEntryCount() > 0) {
@@ -2160,7 +2160,7 @@ bool ThemeShopScreen::handleCustomTouch(nxui::Input& input, const nxui::Rect&, c
         return makeGridLayout(content).searchButton.contains(x, y);
     };
     auto refreshHit = [&](float x, float y) {
-        return isCommunityTab() && makeGridLayout(content).refreshButton.contains(x, y);
+        return showsCatalogRefresh() && makeGridLayout(content).refreshButton.contains(x, y);
     };
     auto pagePrevHit = [&](float x, float y) {
         return pageCount() > 1 && makeGridLayout(content).pagePrevButton.contains(x, y);
@@ -2598,7 +2598,7 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
         ? i18n.tr("themeshop.search.button", "Search")
         : m_searchQuery;
     bool searchSelected = !m_detailOpen && m_focusArea == FocusArea::Content && m_contentFocusArea == ContentFocusArea::Header
-        && (!isCommunityTab() || m_headerButtonIndex == 1);
+        && (!showsCatalogRefresh() || m_headerButtonIndex == 1);
     drawActionButtonChip(ren,
                          m_smallFont,
                          layout.searchButton,
@@ -2620,7 +2620,7 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
         counterText = "0 / 0";
     }
     nxui::Vec2 countSize = measureTextCached(m_font, counterText);
-    float countRight = (isCommunityTab() ? layout.refreshButton.x : layout.searchButton.x) - 18.f;
+    float countRight = (showsCatalogRefresh() ? layout.refreshButton.x : layout.searchButton.x) - 18.f;
     ren.drawText(counterText,
                  {countRight - countSize.x * 0.90f, layout.header.y + 4.f},
                  m_font,
@@ -2677,7 +2677,7 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
         }
     }
 
-    if (isCommunityTab()) {
+    if (showsCatalogRefresh()) {
         std::string refreshLabel = m_communityTransferState.isRunning()
             ? i18n.tr("themeshop.community.refreshing", "Refreshing")
             : i18n.tr("themeshop.community.refresh", "Refresh");
@@ -2806,7 +2806,7 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
                      m_theme->textSecondary.withAlpha(0.90f * contentOpacity),
                      0.76f);
         if (!m_detailOpen && m_focusArea == FocusArea::Content && m_contentFocusArea == ContentFocusArea::Header) {
-            auto headerButtons = headerButtonRects(layout, isCommunityTab());
+            auto headerButtons = headerButtonRects(layout, showsCatalogRefresh());
             if (!headerButtons.empty()) {
                 int headerIndex = std::clamp(m_headerButtonIndex, 0, (int)headerButtons.size() - 1);
                 m_focusCursor.moveTo(headerButtons[(size_t)headerIndex].expanded(2.f), 20.f, 0.08f);
@@ -3107,7 +3107,7 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
 
     if (gridFocusLive
         && m_focusArea == FocusArea::Content && m_contentFocusArea == ContentFocusArea::Header) {
-        auto headerButtons = headerButtonRects(layout, isCommunityTab());
+        auto headerButtons = headerButtonRects(layout, showsCatalogRefresh());
         if (!headerButtons.empty()) {
             int headerIndex = std::clamp(m_headerButtonIndex, 0, (int)headerButtons.size() - 1);
             m_focusCursor.moveTo(headerButtons[(size_t)headerIndex].expanded(2.f), 20.f, 0.08f);

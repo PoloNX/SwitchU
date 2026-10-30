@@ -45,7 +45,7 @@ public:
     void setTheme(const nxui::Theme* t);
     void setInstantCursorMotion(bool instant) { m_focusCursor.setInstantMotion(instant); }
 
-    void show();
+    virtual void show();
     void hide();
     bool isActive() const { return m_active || m_animating; }
     bool isFullyVisible() const { return m_active && !m_animating; }
