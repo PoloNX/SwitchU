@@ -1211,8 +1211,8 @@ void ThemeShopScreen::drawTabBranch(nxui::Renderer& ren,
     ren.drawRoundedRectOutline(r, border, 18.f, shopActive ? 1.2f : 1.f);
 
     const std::string label = isIconsTab()
-        ? i18n.tr("themeshop.icons.shop_item", "Icons Shop")
-        : i18n.tr("themeshop.themes.shop_item", "Themes Shop");
+        ? i18n.tr("themeshop.icons.shop_item", "Icon Shop")
+        : i18n.tr("themeshop.themes.shop_item", "Theme Shop");
     float scale = shopActive ? 0.91f : 0.87f;
     nxui::Vec2 size = measureTextCached(m_font, label);
     if (size.x > 0.f && r.width > 44.f)
@@ -1779,8 +1779,8 @@ void ThemeShopScreen::currentAccessibilityParts(std::string& context,
         }
         if (tabBranchConsumesFocus()) {
             const std::string shopName = isIconsTab()
-                ? i18n.tr("themeshop.icons.shop_item", "Icons Shop")
-                : i18n.tr("themeshop.themes.shop_item", "Themes Shop");
+                ? i18n.tr("themeshop.icons.shop_item", "Icon Shop")
+                : i18n.tr("themeshop.themes.shop_item", "Theme Shop");
             summary = shopName;
             if (m_accessibilitySpeakHints)
                 summary += ". " + i18n.tr("accessibility.themeshop.shop_branch",
@@ -2779,13 +2779,13 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
     std::string subtitle;
     if (isIconsTab()) {
         title = isIconsShopMode()
-            ? i18n.tr("themeshop.icons.title_shop", "Icons Shop")
+            ? i18n.tr("themeshop.icons.title_shop", "Icon Shop")
             : i18n.tr("themeshop.icons.title_installed", "Installed Icons");
         subtitle = isIconsShopMode()
             ? i18n.tr("themeshop.icons.subtitle_shop", "Download icon packs from the catalog.")
             : i18n.tr("themeshop.icons.subtitle_installed", "Icon packs on this console.");
     } else if (isCommunityTab()) {
-        title = i18n.tr("themeshop.themes.title_shop", "Themes Shop");
+        title = i18n.tr("themeshop.themes.title_shop", "Theme Shop");
         subtitle = i18n.tr("themeshop.themes.subtitle_shop", "Download themes from the catalog.");
     } else {
         title = i18n.tr("themeshop.themes.title_installed", "Installed Themes");
