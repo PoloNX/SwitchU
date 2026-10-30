@@ -1127,6 +1127,11 @@ void ThemeShopScreen::setActiveShelfMode(ShelfMode mode) {
         && m_focusArea == FocusArea::Tabs;
     if (!modeChanged)
         return;
+    // Same cadence as the rail Shop branch: content rises from below into Shop,
+    // settles from above into Installed.
+    m_shelfSlideFrom = (mode == ShelfMode::Shop) ? 1.f : -1.f;
+    m_shelfSlideAnim.setImmediate(1.f);
+    m_shelfSlideAnim.set(0.f, 0.22f, nxui::Easing::outCubic);
     closeDetail();
     currentScrollRowRef() = 0;
     applySearchFilter();
@@ -1510,6 +1515,7 @@ void ThemeShopScreen::updateCustomContent(float dt) {
     m_detailSheetAnim.update(std::min(dt, 0.03f));
     m_detailFullscreenAnim.update(std::min(dt, 0.03f));
     m_pageSlideAnim.update(std::min(dt, 0.03f));
+    m_shelfSlideAnim.update(std::min(dt, 0.03f));
 
     if (!m_showing) {
         closeDetail();
@@ -2743,7 +2749,9 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
     GridLayout layout = makeGridLayout(content, showsCatalogRefresh());
     float slideT = std::clamp(m_contentSlideAnim.value(), 0.f, 1.f);
     float slideOffset = (1.f - slideT) * 24.f * (float)m_tabSwitchDir;
-    float contentOpacity = opacity * slideT;
+    const float shelfT = std::clamp(m_shelfSlideAnim.value(), 0.f, 1.f);
+    const float shelfOffset = m_shelfSlideFrom * shelfT * 22.f;
+    float contentOpacity = opacity * slideT * (1.f - 0.38f * shelfT);
     int count = currentEntryCount();
 
     if (m_renderDebugFrames > 0) {
@@ -2767,13 +2775,13 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
         --m_renderDebugFrames;
     }
 
-    layout.header.y += slideOffset;
-    layout.refreshButton.y += slideOffset;
-    layout.searchButton.y += slideOffset;
-    layout.pagePrevButton.y += slideOffset;
-    layout.pageCounter.y += slideOffset;
-    layout.pageNextButton.y += slideOffset;
-    layout.grid.y += slideOffset;
+    layout.header.y += slideOffset + shelfOffset;
+    layout.refreshButton.y += slideOffset + shelfOffset;
+    layout.searchButton.y += slideOffset + shelfOffset;
+    layout.pagePrevButton.y += slideOffset + shelfOffset;
+    layout.pageCounter.y += slideOffset + shelfOffset;
+    layout.pageNextButton.y += slideOffset + shelfOffset;
+    layout.grid.y += slideOffset + shelfOffset;
 
     std::string title;
     std::string subtitle;
