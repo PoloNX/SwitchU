@@ -376,20 +376,11 @@ void collectManifestAssets(const nlohmann::json& root, std::vector<std::string>&
         if (hasParentTraversal(path))
             return false;
 
-        const bool hasAssetExtension = hasKnownAssetExtension(path);
-        const bool hasDirectory = path.find('/') != std::string::npos;
-        if (hasAssetExtension)
-            return true;
-        if (!hasDirectory)
-            return false;
-
-        static constexpr const char* kPathKeys[] = {
-            "path", "file", "src", "image", "font", "regular", "normal", "ui",
-            "small", "secondary", "caption", "cover", "screenshot", "background"
-        };
-        return std::any_of(std::begin(kPathKeys), std::end(kPathKeys), [&](const char* pathKey) {
-            return key == pathKey;
-        });
+        // Only concrete files are downloadable. Directory roots such as
+        // theme.icons.path ("assets/icons") must not be fetched as raw URLs —
+        // GitHub returns 404 for directories and aborts the whole package transfer.
+        (void)key;
+        return hasKnownAssetExtension(path);
     };
 
     std::function<void(const nlohmann::json&, const std::string&)> collectRecursive =
@@ -659,6 +650,12 @@ ThemePackageInstaller::Result ThemePackageInstaller::run(const std::string& cata
 
     for (std::size_t i = 0; i < files.size(); ++i) {
         const auto& file = files[i];
+        // Skip directory placeholders that may still appear in older catalogs.
+        if (file.relativePath.empty() || !hasKnownAssetExtension(file.relativePath)) {
+            DebugLog::log("[themeshop] skipping non-file package path: %s",
+                          file.relativePath.c_str());
+            continue;
+        }
         float progress = files.size() > 1 ? (float)i / (float)files.size() : 0.f;
         if (onProgress) {
             auto& i18n = nxui::I18n::instance();
