@@ -59,8 +59,9 @@ up to 2 s, then (today) may launch the donor.
 | FT | On ACK / ready file → proceed when pool has room; **`HeadroomClear` after map** |
 | FT | HBL 100D counts as Album for Beside margins (not “random heavy applet”) |
 
-While NeedHeadroom is set, `shot_fails` carries the requested MB (GetDonorCap
-still works). File fallback keeps older FT / brief service gaps working.
+While NeedHeadroom is set, requested MB is via **`GetDonorCap` (cmd 13)** (not
+`shot_fails` — overlay/app show that as screenshot failures). File fallback
+`need_headroom` keeps older FT / brief service gaps working.
 
 NeedHeadroom reclaim (SwitchU): drop **all** streamer GPU (incl. focus), SGDB
 heroes, peeks/covers, fonts, leave-splash — soft keep-one left pool free stuck

@@ -22,7 +22,7 @@ public:
         std::uint32_t sessions = 0;
         std::uint32_t shot_enabled = 0;
         std::uint32_t shots = 0;
-        std::uint32_t shot_fails = 0;  // while NeedHeadroom: requested MB
+        std::uint32_t shot_fails = 0;
         std::uint32_t reserved = 0;
         std::uint64_t app_tid = 0;
         std::uint32_t app_excluded = 0;
