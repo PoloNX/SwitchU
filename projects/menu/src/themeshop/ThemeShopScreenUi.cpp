@@ -1557,8 +1557,12 @@ void ThemeShopScreen::updateCustomContent(float dt) {
         if (showsShelfBranch()) {
             m_shopBranchReveal.setImmediate(0.f);
             m_shopBranchReveal.set(1.f, 0.22f, nxui::Easing::outCubic);
-            // Always land on the parent tab; user Downs into Shop explicitly.
+            // Always land on the parent tab with its Installed shelf.
+            // (Shelf mode is per-tab; leaving Shop focused the parent but left
+            // Shop content visible until the user bounced through the child.)
             m_shopBranchFocused = false;
+            if (activeShelfMode() != ShelfMode::Installed)
+                setActiveShelfMode(ShelfMode::Installed);
         } else {
             m_shopBranchReveal.set(0.f, 0.16f, nxui::Easing::outQuad);
             m_shopBranchFocused = false;
