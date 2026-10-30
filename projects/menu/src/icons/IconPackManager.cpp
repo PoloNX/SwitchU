@@ -67,15 +67,43 @@ bool readThemeJson(const fs::path& themeDir, nlohmann::json& out) {
     return out.is_object();
 }
 
+const nlohmann::json* themeIconsObject(const nlohmann::json& manifest) {
+    if (!manifest.is_object())
+        return nullptr;
+    auto icons = manifest.find("icons");
+    if (icons != manifest.end() && icons->is_object())
+        return &(*icons);
+    auto theme = manifest.find("theme");
+    if (theme != manifest.end() && theme->is_object()) {
+        auto themeIcons = theme->find("icons");
+        if (themeIcons != theme->end() && themeIcons->is_object())
+            return &(*themeIcons);
+    }
+    return nullptr;
+}
+
 // Reads theme.icons.basePath (or the legacy base_path / path aliases) from an
 // already parsed theme.json.
 std::string iconsBaseFromThemeJson(const nlohmann::json& manifest) {
-    if (!manifest.is_object())
-        return {};
-    auto icons = manifest.find("icons");
-    if (icons == manifest.end() || !icons->is_object())
+    const nlohmann::json* icons = themeIconsObject(manifest);
+    if (!icons)
         return {};
     for (const char* key : {"basePath", "base_path", "path"}) {
+        auto it = icons->find(key);
+        if (it != icons->end() && it->is_string()) {
+            const std::string value = it->get<std::string>();
+            if (!value.empty())
+                return value;
+        }
+    }
+    return {};
+}
+
+std::string iconsPackIdFromThemeJson(const nlohmann::json& manifest) {
+    const nlohmann::json* icons = themeIconsObject(manifest);
+    if (!icons)
+        return {};
+    for (const char* key : {"packId", "pack_id", "pack", "iconPack", "icon_pack"}) {
         auto it = icons->find(key);
         if (it != icons->end() && it->is_string()) {
             const std::string value = it->get<std::string>();
@@ -91,6 +119,49 @@ std::string readThemeJsonIconsBase(const fs::path& themeDir) {
     if (!readThemeJson(themeDir, manifest))
         return {};
     return iconsBaseFromThemeJson(manifest);
+}
+
+std::string readJsonStringMember(const nlohmann::json& object, const char* key) {
+    auto it = object.find(key);
+    if (it != object.end() && it->is_string()) {
+        const std::string value = it->get<std::string>();
+        if (!value.empty())
+            return value;
+    }
+    return {};
+}
+
+std::string readPackJsonName(const fs::path& packDir) {
+    const fs::path manifest = packDir / "pack.json";
+    std::error_code ec;
+    if (!fs::is_regular_file(manifest, ec))
+        return {};
+    std::ifstream in(manifest, std::ios::binary);
+    if (!in)
+        return {};
+    try {
+        nlohmann::json root = nlohmann::json::parse(in, nullptr, true, true);
+        if (!root.is_object())
+            return {};
+        return readJsonStringMember(root, "name");
+    } catch (...) {
+        return {};
+    }
+}
+
+std::string resolvePackDisplayName(const std::string& packId, const fs::path& packDir) {
+    const std::string fromPack = readPackJsonName(packDir);
+    if (!fromPack.empty())
+        return fromPack;
+
+    nlohmann::json themeManifest;
+    if (readThemeJson(fs::path(kInstalledThemesDir) / packId, themeManifest)) {
+        const std::string fromTheme = readJsonStringMember(themeManifest, "name");
+        if (!fromTheme.empty())
+            return fromTheme;
+    }
+
+    return displayNameForPack(packId);
 }
 
 } // namespace
@@ -158,13 +229,19 @@ std::vector<IconPackInfo> discoverPacks(const std::string& assetsBase) {
             return;
         IconPackInfo info;
         info.id = id;
-        info.name = displayNameForPack(id);
+        info.name = resolvePackDisplayName(id, dir);
         if (id == kDefaultPackId)
             info.author = "Built-in";
         else if (id == kAtmosPackId)
             info.author = "bshurikan";
         else
             info.author = "Icon pack";
+        nlohmann::json themeManifest;
+        if (readThemeJson(fs::path(kInstalledThemesDir) / id, themeManifest)) {
+            const std::string author = readJsonStringMember(themeManifest, "author");
+            if (!author.empty())
+                info.author = author;
+        }
         info.directory = dir.generic_string();
         info.isDefault = (id == kDefaultPackId);
         info.fromTheme = false;

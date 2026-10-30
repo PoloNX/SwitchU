@@ -21,6 +21,7 @@
 #include <system_error>
 #include <utility>
 #include <unordered_map>
+#include <unordered_set>
 #include <cmath>
 
 // Defined in WiiUMenuApp.cpp (shared theme-sound helpers).
@@ -53,6 +54,50 @@ std::string joinPath(const std::string& base, const std::string& name) {
     if (base.back() == '/')
         return base + name;
     return base + "/" + name;
+}
+
+std::string themeFolderFromInstallPath(const std::string& installPath) {
+    if (installPath.empty())
+        return {};
+    const auto pos = installPath.find_last_of("/\\");
+    return (pos == std::string::npos) ? installPath : installPath.substr(pos + 1);
+}
+
+std::string themeFolderFromPreset(const ThemePreset& preset) {
+    std::string folder = themeFolderFromInstallPath(preset.installPath);
+    if (!folder.empty())
+        return folder;
+    std::string id = preset.id.empty() ? preset.name : preset.id;
+    if (id.rfind("package:", 0) == 0)
+        id = id.substr(8);
+    return id;
+}
+
+std::string resolvedThemeIconPackId(const ThemePreset& preset, const std::string& themeFolder) {
+    if (!preset.icons.packId.empty())
+        return preset.icons.packId;
+    return themeFolder;
+}
+
+bool writeIconPackManifest(const std::string& destDir,
+                           const std::string& packId,
+                           const std::string& name,
+                           const std::string& author) {
+    if (destDir.empty() || packId.empty())
+        return false;
+    nlohmann::json root = {
+        {"id", packId},
+        {"name", name.empty() ? packId : name},
+        {"author", author.empty() ? "Theme" : author},
+        {"version", "1.0.0"},
+    };
+    std::error_code ec;
+    std::filesystem::create_directories(destDir, ec);
+    std::ofstream out(joinPath(destDir, "pack.json"), std::ios::binary | std::ios::trunc);
+    if (!out)
+        return false;
+    out << root.dump(2) << '\n';
+    return static_cast<bool>(out);
 }
 
 bool isAbsoluteThemePath(const std::string& path) {
@@ -2436,20 +2481,76 @@ void WiiUMenuApp::extractThemeIconPack(const std::string& packId, const std::str
     if (packId.empty() || themeRoot.empty())
         return;
 
+    const std::string themeFolder = themeFolderFromInstallPath(themeRoot);
+    std::string targetPackId = packId;
+    std::string themeName;
+    std::string themeAuthor;
+    {
+        // Prefer theme.icons.packId when present (e.g. Atmosphere → atmos).
+        nlohmann::json manifest;
+        std::ifstream input(joinPath(themeRoot, "theme.json"));
+        if (input) {
+            try {
+                input >> manifest;
+            } catch (...) {
+                manifest = nlohmann::json{};
+            }
+        }
+        if (manifest.is_object()) {
+            readJsonString(manifest, "name", themeName);
+            readJsonString(manifest, "author", themeAuthor);
+            auto readPackId = [&](const nlohmann::json& iconsNode) {
+                if (!iconsNode.is_object())
+                    return;
+                for (const char* key : {"packId", "pack_id", "pack", "iconPack", "icon_pack"}) {
+                    std::string value;
+                    if (readJsonString(iconsNode, key, value)) {
+                        targetPackId = std::move(value);
+                        return;
+                    }
+                }
+            };
+            if (auto icons = manifest.find("icons"); icons != manifest.end())
+                readPackId(*icons);
+            if (auto theme = manifest.find("theme"); theme != manifest.end() && theme->is_object()) {
+                if (auto icons = theme->find("icons"); icons != theme->end())
+                    readPackId(*icons);
+            }
+        }
+    }
+
     const std::string sourceDir = themeRoot + "/assets/icons";
     const std::string destDir =
-        switchu::icons::IconPackInstaller::destinationRootFor(packId);
+        switchu::icons::IconPackInstaller::destinationRootFor(targetPackId);
+
+    // Companion pack already on the console (builtin atmos, prior download):
+    // drop the theme-local copy and any slug-named orphan clone.
+    const std::string existing =
+        switchu::icons::resolvePackIconsDirectory(SD_ASSETS, targetPackId);
+    if (!existing.empty()) {
+        std::error_code ec;
+        if (switchu::icons::iconDirLooksUsable(sourceDir))
+            std::filesystem::remove_all(sourceDir, ec);
+        if (!themeFolder.empty() && themeFolder != targetPackId) {
+            const std::string orphan =
+                switchu::icons::IconPackInstaller::destinationRootFor(themeFolder);
+            if (orphan != existing && pathExists(orphan)) {
+                std::filesystem::remove_all(orphan, ec);
+                DebugLog::log("[icon-pack] removed orphan theme clone pack=%s",
+                              themeFolder.c_str());
+            }
+            if (m_config.iconPack == themeFolder) {
+                m_config.iconPack = targetPackId;
+                m_config.save();
+            }
+        }
+        DebugLog::log("[icon-pack] theme icons skipped; pack %s already present at %s",
+                      targetPackId.c_str(), existing.c_str());
+        return;
+    }
 
     if (!switchu::icons::iconDirLooksUsable(sourceDir))
         return;
-    // Never clobber a pack the user already has on the console under this id
-    // (a downloaded or hand-made pack wins over the theme copy).
-    const std::string existing = switchu::icons::resolvePackIconsDirectory(SD_ASSETS, packId);
-    if (!existing.empty() && existing != destDir) {
-        DebugLog::log("[icon-pack] theme icons kept inside %s: pack %s already present",
-                      themeRoot.c_str(), packId.c_str());
-        return;
-    }
 
     std::error_code ec;
     std::filesystem::create_directories(destDir, ec);
@@ -2480,11 +2581,21 @@ void WiiUMenuApp::extractThemeIconPack(const std::string& packId, const std::str
         return;
     }
 
+    writeIconPackManifest(destDir, targetPackId,
+                          themeName.empty() ? targetPackId : themeName,
+                          themeAuthor);
+
     // The pack now lives in the shared icon directory: drop the copy inside the
     // theme so it is not listed twice.
     std::filesystem::remove_all(sourceDir, ec);
+    if (!themeFolder.empty() && themeFolder != targetPackId) {
+        const std::string orphan =
+            switchu::icons::IconPackInstaller::destinationRootFor(themeFolder);
+        if (pathExists(orphan))
+            std::filesystem::remove_all(orphan, ec);
+    }
     DebugLog::log("[icon-pack] theme icons extracted: theme=%s pack=%s files=%d",
-                  themeRoot.c_str(), packId.c_str(), copied);
+                  themeFolder.c_str(), targetPackId.c_str(), copied);
 }
 
 void WiiUMenuApp::syncThemePackageTransfer() {
@@ -2631,8 +2742,20 @@ std::vector<ThemeShopScreen::ThemeShopEntry> WiiUMenuApp::buildThemeShopEntries(
         entry.active = (entry.id == activeId);
         entry.removable = (preset.source != ThemePresetSource::BuiltIn);
         {
+            const std::string folder = themeFolderFromPreset(preset);
+            const std::string companionId = resolvedThemeIconPackId(preset, folder);
             const std::string iconsDir = resolveThemeAssetPath(preset, preset.icons.basePath);
             entry.hasIcons = switchu::icons::iconDirLooksUsable(iconsDir);
+            if (!entry.hasIcons && !companionId.empty()) {
+                const std::string packDir =
+                    switchu::icons::resolvePackIconsDirectory(SD_ASSETS, companionId);
+                entry.hasIcons = switchu::icons::iconDirLooksUsable(packDir);
+            }
+            if (!entry.hasIcons && !folder.empty() && folder != companionId) {
+                const std::string folderPackDir =
+                    switchu::icons::resolvePackIconsDirectory(SD_ASSETS, folder);
+                entry.hasIcons = switchu::icons::iconDirLooksUsable(folderPackDir);
+            }
         }
         // Cheap local dir checks — no I/O beyond a couple of is_directory calls.
         if (!preset.installPath.empty()) {
@@ -2691,7 +2814,59 @@ std::vector<ThemeShopScreen::ThemeShopEntry> WiiUMenuApp::buildIconPackEntries()
     std::vector<ThemeShopScreen::ThemeShopEntry> entries;
     const std::string activeId = resolvedIconPackId();
 
+    // Companion pack ids claimed by installed themes (theme.icons.packId).
+    std::unordered_map<std::string, std::string> companionByThemeFolder;
+    std::unordered_set<std::string> companionPackIds;
+    for (const auto& preset : m_allPresets) {
+        if (preset.source != ThemePresetSource::InstalledPackage)
+            continue;
+        const std::string folder = themeFolderFromPreset(preset);
+        if (folder.empty())
+            continue;
+        if (!preset.icons.packId.empty()) {
+            companionByThemeFolder[folder] = preset.icons.packId;
+            companionPackIds.insert(preset.icons.packId);
+        }
+    }
+
+    // Heal slug-named clones when the theme now points at a companion pack.
+    for (const auto& [folder, companionId] : companionByThemeFolder) {
+        if (folder.empty() || folder == companionId)
+            continue;
+        const std::string companionDir =
+            switchu::icons::resolvePackIconsDirectory(SD_ASSETS, companionId);
+        if (companionDir.empty())
+            continue;
+        const std::string orphan =
+            switchu::icons::IconPackInstaller::destinationRootFor(folder);
+        if (!pathExists(orphan))
+            continue;
+        std::error_code ec;
+        std::filesystem::remove_all(orphan, ec);
+        DebugLog::log("[icon-pack] healed orphan clone pack=%s -> %s",
+                      folder.c_str(), companionId.c_str());
+        if (m_config.iconPack == folder) {
+            m_config.iconPack = companionId;
+            m_config.save();
+        }
+    }
+
     auto addPack = [&](const switchu::icons::IconPackInfo& pack) {
+        // Hide theme-folder clones that duplicate a companion pack id.
+        if (companionByThemeFolder.count(pack.id)
+            && companionByThemeFolder[pack.id] != pack.id
+            && companionPackIds.count(companionByThemeFolder[pack.id])) {
+            const std::string& companion = companionByThemeFolder[pack.id];
+            if (!switchu::icons::resolvePackIconsDirectory(SD_ASSETS, companion).empty())
+                return;
+        }
+
+        const bool alreadyListed = std::any_of(
+            entries.begin(), entries.end(),
+            [&](const ThemeShopScreen::ThemeShopEntry& e) { return e.id == pack.id; });
+        if (alreadyListed)
+            return;
+
         ThemeShopScreen::ThemeShopEntry entry;
         entry.id = pack.id;
         entry.name = pack.name;
@@ -2699,11 +2874,11 @@ std::vector<ThemeShopScreen::ThemeShopEntry> WiiUMenuApp::buildIconPackEntries()
         entry.version = "1.0.0";
         entry.builtin = isBuiltinIconPack(pack.id);
         entry.source = pack.fromTheme ? "Theme"
-            : (entry.builtin ? "Built-in" : "Downloaded");
+            : (entry.builtin ? "Built-in" : "Installed");
         entry.coverPath = switchu::icons::ensurePackPreview(pack.directory, pack.id);
         entry.active = (pack.id == activeId);
-        // Downloaded packs live in the SD icons directory and can be removed;
-        // theme-bundled ones belong to their theme.
+        // Downloaded / extracted packs on SD can be removed; builtins and
+        // in-theme glyphs stay tied to their theme.
         entry.installed = true;
         entry.removable = !pack.fromTheme && !entry.builtin;
         entry.colourPack = pack.colourPack;
@@ -2728,6 +2903,21 @@ std::vector<ThemeShopScreen::ThemeShopEntry> WiiUMenuApp::buildIconPackEntries()
                 [&](const ThemeShopScreen::ThemeShopEntry& e) { return e.id == icon.id; });
             if (alreadyListed)
                 continue;
+            // Catalog row whose theme companion is already installed as another id.
+            if (!icon.theme.empty()) {
+                std::string linkedPack;
+                if (auto it = companionByThemeFolder.find(icon.theme);
+                    it != companionByThemeFolder.end())
+                    linkedPack = it->second;
+                const bool themeCompanionInstalled = std::any_of(
+                    entries.begin(), entries.end(),
+                    [&](const ThemeShopScreen::ThemeShopEntry& e) {
+                        return e.installed && (e.id == icon.theme
+                            || (!linkedPack.empty() && e.id == linkedPack));
+                    });
+                if (themeCompanionInstalled)
+                    continue;
+            }
 
             ThemeShopScreen::ThemeShopEntry entry;
             entry.id = icon.id;
@@ -2888,29 +3078,27 @@ void WiiUMenuApp::activateThemePreset(ThemePreset* preset, bool applyBundledSoun
 
     // Themes that ship icons become the active Icons-library pack (overrideable).
     {
-        std::string folder;
-        if (!preset->installPath.empty()) {
-            const auto pos = preset->installPath.find_last_of("/\\");
-            folder = (pos == std::string::npos)
-                ? preset->installPath
-                : preset->installPath.substr(pos + 1);
-        }
+        std::string folder = themeFolderFromPreset(*preset);
         if (folder.empty())
             folder = presetRef;
-        // Newer downloads install their glyphs as a regular pack named after
-        // the theme folder; older installs keep them inside the package and are
-        // still addressed with the theme: prefix.
+        const std::string companionId = resolvedThemeIconPackId(*preset, folder);
+        // Prefer theme.icons.packId (e.g. atmos), then folder extract, then theme:*.
         std::string selectedId;
-        std::string selectedDir =
-            switchu::icons::resolvePackIconsDirectory(SD_ASSETS, folder);
-        if (!selectedDir.empty()) {
-            selectedId = folder;
-        } else {
-            const std::string themePackId = switchu::icons::makeThemePackId(folder);
-            selectedDir = switchu::icons::resolvePackIconsDirectory(SD_ASSETS, themePackId);
-            if (!selectedDir.empty())
-                selectedId = themePackId;
-        }
+        std::string selectedDir;
+        auto tryPack = [&](const std::string& id) {
+            if (id.empty() || !selectedId.empty())
+                return;
+            const std::string dir =
+                switchu::icons::resolvePackIconsDirectory(SD_ASSETS, id);
+            if (dir.empty())
+                return;
+            selectedId = id;
+            selectedDir = dir;
+        };
+        tryPack(companionId);
+        if (folder != companionId)
+            tryPack(folder);
+        tryPack(switchu::icons::makeThemePackId(folder));
         if (!selectedId.empty() && m_config.iconPack != selectedId) {
             m_config.iconPack = selectedId;
             DebugLog::log("[icon-pack] theme apply selected pack=%s dir=%s",
@@ -3694,14 +3882,29 @@ void WiiUMenuApp::deletePreset(const std::string& presetId) {
             folder = folder.substr(8);
         const std::string themePackId = switchu::icons::makeThemePackId(folder);
         const std::string legacyPackId = switchu::icons::makeThemePackId(idToDelete);
+        std::string companionPackId;
+        if (const ThemePreset* dying = findPresetPtr(idToDelete))
+            companionPackId = dying->icons.packId;
+        // Snapshot before preset list changes: folder-named extract is orphaned
+        // when the theme goes away (unless it is a builtin like atmos).
+        if (!folder.empty() && !isBuiltinIconPack(folder)) {
+            const std::string orphan =
+                switchu::icons::IconPackInstaller::destinationRootFor(folder);
+            if (pathExists(orphan)) {
+                switchu::icons::IconPackInstaller::remove(folder);
+                DebugLog::log("[icon-pack] removed theme orphan pack=%s", folder.c_str());
+            }
+        }
         if ((!themePackId.empty() && m_config.iconPack == themePackId)
             || (!legacyPackId.empty() && m_config.iconPack == legacyPackId)
+            || (!folder.empty() && m_config.iconPack == folder)
             || (switchu::icons::isThemePackId(m_config.iconPack)
                 && switchu::icons::themeFolderFromPackId(m_config.iconPack) == folder)) {
             m_config.iconPack = switchu::icons::kDefaultPackId;
             m_config.save();
             DebugLog::log("[icon-pack] theme removed; pack reset to default");
         }
+        (void)companionPackId; // builtins referenced via packId are kept
     }
 
     // Leave the package BEFORE deleting files — otherwise open fonts/textures can
