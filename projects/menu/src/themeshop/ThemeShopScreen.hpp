@@ -497,9 +497,6 @@ private:
     // Soft eShop page flip: 1 → 0 after stepPage (sign in m_pageSlideFrom).
     nxui::AnimatedFloat m_pageSlideAnim{0.f};
     float m_pageSlideFrom = 0.f;
-    // Installed ↔ Shop content settle (sign in m_shelfSlideFrom: +Shop / -Installed).
-    nxui::AnimatedFloat m_shelfSlideAnim{0.f};
-    float m_shelfSlideFrom = 0.f;
     bool m_previewPausedWhileHidden = false;
     int m_installedScrollRow = 0;
     int m_communityScrollRow = 0;
