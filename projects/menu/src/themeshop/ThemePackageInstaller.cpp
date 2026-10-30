@@ -503,12 +503,24 @@ std::vector<PackageFile> listThemeFiles(const std::string& catalogUrl,
             addRelativeFile(manifestRelativePath, manifestUrl);
     }
 
-    if (usingFallbackListing && !manifestUrl.empty()) {
+    nlohmann::json manifestJson;
+    bool haveManifest = false;
+    if (!manifestUrl.empty()) {
         try {
             manifestText = themeshop::http::getText(manifestUrl);
-            nlohmann::json manifest = nlohmann::json::parse(manifestText);
+            manifestJson = nlohmann::json::parse(manifestText);
+            haveManifest = true;
+        } catch (const std::exception& ex) {
+            DebugLog::log("[themeshop] manifest load failed for %s: %s",
+                          manifestPath.c_str(),
+                          ex.what());
+        }
+    }
+
+    if (usingFallbackListing && haveManifest) {
+        try {
             std::vector<std::string> manifestAssets;
-            collectManifestAssets(manifest, manifestAssets);
+            collectManifestAssets(manifestJson, manifestAssets);
             for (const auto& assetPath : manifestAssets) {
                 std::string remotePath = assetPath;
                 if (!themePath.empty())
@@ -519,6 +531,56 @@ std::vector<PackageFile> listThemeFiles(const std::string& catalogUrl,
             DebugLog::log("[themeshop] manifest asset fallback failed for %s: %s",
                           manifestPath.c_str(),
                           ex.what());
+        }
+    }
+
+    // theme.icons.path is a directory. Expand it to concrete glyph files so
+    // installs still get icons when the recursive tree listing fails/falls back.
+    if (haveManifest && !repo.owner.empty()) {
+        std::string iconsDir;
+        auto readIconsDir = [&](const nlohmann::json& iconsNode) {
+            if (!iconsNode.is_object())
+                return;
+            for (const char* key : {"path", "basePath", "base_path", "base", "directory", "dir"}) {
+                auto it = iconsNode.find(key);
+                if (it != iconsNode.end() && it->is_string()) {
+                    iconsDir = trimSlashes(it->get<std::string>());
+                    if (!iconsDir.empty())
+                        return;
+                }
+            }
+        };
+        auto iconsIt = manifestJson.find("icons");
+        if (iconsIt != manifestJson.end())
+            readIconsDir(*iconsIt);
+        auto themeIt = manifestJson.find("theme");
+        if (iconsDir.empty() && themeIt != manifestJson.end() && themeIt->is_object()) {
+            auto themeIcons = themeIt->find("icons");
+            if (themeIcons != themeIt->end())
+                readIconsDir(*themeIcons);
+        }
+
+        if (!iconsDir.empty()) {
+            const bool alreadyHasIconFile = std::any_of(
+                files.begin(), files.end(), [&](const PackageFile& file) {
+                    return startsWith(file.relativePath, iconsDir + "/");
+                });
+            if (!alreadyHasIconFile) {
+                try {
+                    std::vector<PackageFile> iconFiles;
+                    const std::string iconsRepoPath = joinPath(themePath, iconsDir);
+                    listThemeFilesFromContentsRecursive(repo, themePath, iconsRepoPath, iconFiles);
+                    for (const auto& iconFile : iconFiles)
+                        addRelativeFile(iconFile.relativePath, iconFile.downloadUrl);
+                    DebugLog::log("[themeshop] expanded icons dir %s -> %zu file(s)",
+                                  iconsDir.c_str(),
+                                  iconFiles.size());
+                } catch (const std::exception& ex) {
+                    DebugLog::log("[themeshop] icons dir expand failed for %s: %s",
+                                  iconsDir.c_str(),
+                                  ex.what());
+                }
+            }
         }
     }
 
