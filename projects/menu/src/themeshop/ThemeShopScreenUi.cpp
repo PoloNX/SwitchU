@@ -1496,6 +1496,26 @@ void ThemeShopScreen::activateDetailButton(int buttonIndex) {
 }
 
 void ThemeShopScreen::updateCustomContent(float dt) {
+    // Track tab changes even on Sounds/Interface. Those tabs early-out below, and
+    // skipping this left m_lastCustomTabIndex stuck on Icons — Sounds→Icons then
+    // looked like "no change" and kept Icon Shop content under a focused parent.
+    if (m_lastCustomTabIndex != m_tabIndex) {
+        m_lastCustomTabIndex = m_tabIndex;
+        m_contentFocusArea = ContentFocusArea::Grid;
+        closeDetail();
+        if (isThemesTab() || isIconsTab()) {
+            m_shopBranchReveal.setImmediate(0.f);
+            m_shopBranchReveal.set(1.f, 0.22f, nxui::Easing::outCubic);
+            m_shopBranchFocused = false;
+            if (activeShelfMode() != ShelfMode::Installed)
+                setActiveShelfMode(ShelfMode::Installed);
+        } else {
+            m_shopBranchReveal.set(0.f, 0.16f, nxui::Easing::outQuad);
+            m_shopBranchFocused = false;
+            m_shopBranchRect = {};
+        }
+    }
+
     if (!usesCustomContentLayout())
         return;
 
@@ -1549,32 +1569,7 @@ void ThemeShopScreen::updateCustomContent(float dt) {
     const int headerButtonCount = (showsCatalogRefresh() ? 1 : 0) + 1;
     m_headerButtonIndex = std::clamp(m_headerButtonIndex, 0, std::max(0, headerButtonCount - 1));
 
-    if (m_lastCustomTabIndex != m_tabIndex) {
-        const int previousTab = m_lastCustomTabIndex;
-        m_lastCustomTabIndex = m_tabIndex;
-        m_contentFocusArea = ContentFocusArea::Grid;
-        closeDetail();
-        if (showsShelfBranch()) {
-            m_shopBranchReveal.setImmediate(0.f);
-            m_shopBranchReveal.set(1.f, 0.22f, nxui::Easing::outCubic);
-            // Always land on the parent tab with its Installed shelf.
-            // (Shelf mode is per-tab; leaving Shop focused the parent but left
-            // Shop content visible until the user bounced through the child.)
-            m_shopBranchFocused = false;
-            if (activeShelfMode() != ShelfMode::Installed)
-                setActiveShelfMode(ShelfMode::Installed);
-        } else {
-            m_shopBranchReveal.set(0.f, 0.16f, nxui::Easing::outQuad);
-            m_shopBranchFocused = false;
-            m_shopBranchRect = {};
-        }
-        // Don't clearCommunityPreviewCache() here - nuking every texture waitIdle's
-        // and is the major hitch when cycling past Community. Soft-trim drips below.
-        // Entering Community: cancel installed/icon decode workers so covers get
-        // the thread pool (Match/Apply storms were starving first focus).
-        if (isCommunityTab() && previousTab != m_tabIndex)
-            pauseInstalledPreviewDecodes();
-    } else if (showsShelfBranch() && m_shopBranchReveal.value() < 0.999f) {
+    if (showsShelfBranch() && m_shopBranchReveal.value() < 0.999f) {
         // Keep reveal animating toward open while staying on Themes/Icons.
         if (m_shopBranchReveal.target() < 0.999f)
             m_shopBranchReveal.set(1.f, 0.22f, nxui::Easing::outCubic);
