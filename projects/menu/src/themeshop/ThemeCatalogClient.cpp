@@ -404,28 +404,40 @@ ThemeCatalogClient::Snapshot ThemeCatalogClient::snapshot() const {
 ThemeCatalogClient::Snapshot ThemeCatalogClient::loadCatalog(const std::string& url) {
     Snapshot snapshot;
 
-    // Disk-first catalog: revisiting Community should paint from SD immediately.
-    // Network is used when no cache exists; Refresh can delete the cache file.
+    // Prefer a fresh network catalog; keep the SD copy as an offline fallback
+    // so Community still paints when raw.githubusercontent.com is unreachable.
+    // (Previously disk-only after the first fetch, so renames/new themes never
+    // appeared until the user hit Refresh.)
     constexpr const char* kCatalogDiskPath = "sdmc:/config/SwitchU/community_preview_cache/catalog_index.json";
-    std::string body;
+    std::string diskBody;
     {
         std::ifstream in(kCatalogDiskPath, std::ios::binary);
         if (in) {
-            body.assign((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+            diskBody.assign((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
         }
     }
-    if (body.empty()) {
+
+    std::string body;
+    try {
         body = themeshop::http::getText(url);
-        if (body.empty())
-            throw std::runtime_error("Catalog body empty");
+    } catch (const std::exception& ex) {
+        DebugLog::log("[themeshop] catalog network fetch failed: %s", ex.what());
+    } catch (...) {
+        DebugLog::log("[themeshop] catalog network fetch failed: unknown error");
+    }
+
+    if (!body.empty()) {
         std::error_code ec;
         std::filesystem::create_directories("sdmc:/config/SwitchU/community_preview_cache", ec);
         std::ofstream out(kCatalogDiskPath, std::ios::binary | std::ios::trunc);
         if (out)
             out.write(body.data(), static_cast<std::streamsize>(body.size()));
         DebugLog::log("[themeshop] catalog fetched and cached (%zu bytes)", body.size());
-    } else {
+    } else if (!diskBody.empty()) {
+        body = std::move(diskBody);
         DebugLog::log("[themeshop] catalog loaded from disk cache (%zu bytes)", body.size());
+    } else {
+        throw std::runtime_error("Catalog body empty");
     }
 
     nlohmann::json root;

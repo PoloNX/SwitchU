@@ -175,11 +175,18 @@ void ThemeShopScreen::setRenderContext(nxui::GpuDevice* gpu, nxui::Renderer* ren
     m_renderer = renderer;
 }
 
+void ThemeShopScreen::show() {
+    m_catalogNeedsNetworkRefresh = true;
+    TabbedOverlayScreen::show();
+}
+
 void ThemeShopScreen::refreshCommunityCatalog(bool forceNetwork) {
     if (!m_threadPool)
         return;
 
-    // Only bust disk cache on explicit Refresh - auto-open must stay disk-first.
+    // Explicit Refresh still deletes the SD copy so a corrupt/partial cache
+    // cannot stick. Routine opens re-fetch over the network while keeping the
+    // file as an offline fallback (see ThemeCatalogClient::loadCatalog).
     if (forceNetwork) {
         std::error_code ec;
         const std::string catalogIndex =
@@ -187,6 +194,7 @@ void ThemeShopScreen::refreshCommunityCatalog(bool forceNetwork) {
         std::filesystem::remove(catalogIndex, ec);
     }
 
+    m_catalogNeedsNetworkRefresh = false;
     m_catalogClient.refresh(*m_threadPool);
     syncCommunityCatalog(m_catalogClient.snapshot());
 }
@@ -194,8 +202,9 @@ void ThemeShopScreen::refreshCommunityCatalog(bool forceNetwork) {
 void ThemeShopScreen::ensureCommunityCatalogWarm() {
     if (!m_threadPool)
         return;
-    if (m_communityRevision == 0
-        && !m_communityTransferState.isRunning()) {
+    if (m_communityTransferState.isRunning())
+        return;
+    if (m_communityRevision == 0 || m_catalogNeedsNetworkRefresh) {
         refreshCommunityCatalog(false);
         return;
     }
