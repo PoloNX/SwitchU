@@ -223,16 +223,131 @@ nxui::Rect fitAspectRect(const nxui::Rect& bounds, float aspect) {
     };
 }
 
+nxui::Rect fitAspectRectTop(const nxui::Rect& bounds, float aspect) {
+    if (bounds.width <= 0.f || bounds.height <= 0.f || aspect <= 0.f)
+        return bounds;
+
+    float width = std::min(bounds.width, bounds.height * aspect);
+    float height = width / aspect;
+    if (height > bounds.height) {
+        height = bounds.height;
+        width = height * aspect;
+    }
+
+    return {
+        bounds.x + (bounds.width - width) * 0.5f,
+        bounds.y,
+        width,
+        height
+    };
+}
+
 nxui::Rect detailPreviewRect(const nxui::Rect& dialog) {
-    constexpr float kBodyTopInset = 28.f;
+    // Leave a title band above the 16:9 screenshot (full-width name).
+    // Preview sits on the right; meta text owns the left column.
+    // Top-align so the shot sits under the title (no vertical centering gap).
+    constexpr float kBodyTopInset = 78.f;
     constexpr float kBodyBottomInset = 92.f;
+    const float previewW = dialog.width * 0.58f;
     nxui::Rect bounds = {
-        dialog.x + 28.f,
+        dialog.right() - 28.f - previewW,
         dialog.y + kBodyTopInset,
-        dialog.width * 0.58f,
+        previewW,
         dialog.height - kBodyTopInset - kBodyBottomInset
     };
-    return fitAspectRect(bounds, kPreviewAspect);
+    return fitAspectRectTop(bounds, kPreviewAspect);
+}
+
+std::vector<std::string> wrapTextLines(nxui::Font* font,
+                                       const std::string& text,
+                                       float maxWidth,
+                                       float scale,
+                                       int maxLines) {
+    std::vector<std::string> lines;
+    if (!font || text.empty() || maxWidth <= 0.f || maxLines <= 0)
+        return lines;
+
+    auto fits = [&](const std::string& s) {
+        return measureTextCached(font, s).x * scale <= maxWidth;
+    };
+
+    std::string remaining = text;
+    while (!remaining.empty() && (int)lines.size() < maxLines) {
+        if (fits(remaining) || (int)lines.size() + 1 >= maxLines) {
+            if (!fits(remaining) && (int)lines.size() + 1 >= maxLines) {
+                std::string clipped = remaining;
+                while (!clipped.empty() && !fits(clipped + "..."))
+                    clipped.pop_back();
+                lines.push_back(clipped.empty() ? "..." : clipped + "...");
+            } else {
+                lines.push_back(remaining);
+            }
+            break;
+        }
+
+        // Prefer breaking on spaces; fall back to hard cut.
+        std::string candidate;
+        std::string lastFit;
+        for (std::size_t i = 0; i < remaining.size(); ++i) {
+            candidate.push_back(remaining[i]);
+            if (fits(candidate)) {
+                if (remaining[i] == ' ')
+                    lastFit = candidate;
+            } else {
+                break;
+            }
+        }
+        if (lastFit.empty()) {
+            // Single long token — hard-cut to width.
+            candidate.clear();
+            for (char c : remaining) {
+                candidate.push_back(c);
+                if (!fits(candidate)) {
+                    candidate.pop_back();
+                    break;
+                }
+            }
+            if (candidate.empty())
+                candidate = remaining.substr(0, 1);
+            lines.push_back(candidate);
+            remaining = remaining.substr(candidate.size());
+            while (!remaining.empty() && remaining.front() == ' ')
+                remaining.erase(remaining.begin());
+            continue;
+        }
+        while (!lastFit.empty() && lastFit.back() == ' ')
+            lastFit.pop_back();
+        lines.push_back(lastFit);
+        remaining = remaining.substr(lastFit.size());
+        while (!remaining.empty() && remaining.front() == ' ')
+            remaining.erase(remaining.begin());
+    }
+    return lines;
+}
+
+float drawWrappedText(nxui::Renderer& ren,
+                      nxui::Font* font,
+                      const std::string& text,
+                      nxui::Vec2 origin,
+                      float maxWidth,
+                      const nxui::Color& color,
+                      float scale,
+                      float lineGap,
+                      int maxLines) {
+    if (!font || text.empty())
+        return 0.f;
+    const auto lines = wrapTextLines(font, text, maxWidth, scale, maxLines);
+    float y = origin.y;
+    float total = 0.f;
+    for (const auto& line : lines) {
+        const float h = measureTextCached(font, line).y * scale;
+        ren.drawText(line, {origin.x, y}, font, color, scale);
+        y += h + lineGap;
+        total += h + lineGap;
+    }
+    if (total > 0.f)
+        total -= lineGap;
+    return total;
 }
 
 struct DetailPreviewControls {
@@ -467,6 +582,62 @@ void drawChip(nxui::Renderer& ren, nxui::Font* font, const nxui::Rect& rect,
                      textColor.withAlpha(opacity),
                      scale);
     }
+}
+
+enum class ShelfBadgeKind { Icons, Music, Sounds };
+
+void drawShelfBadgeGlyph(nxui::Renderer& ren, ShelfBadgeKind kind,
+                         nxui::Vec2 center, const nxui::Color& color) {
+    const float s = 1.f;
+    if (kind == ShelfBadgeKind::Icons) {
+        // 2×2 tile grid — reads as "icons" at chip size.
+        const float cell = 3.2f * s;
+        const float gap = 1.6f * s;
+        const float originX = center.x - cell - gap * 0.5f;
+        const float originY = center.y - cell - gap * 0.5f;
+        for (int row = 0; row < 2; ++row) {
+            for (int col = 0; col < 2; ++col) {
+                ren.drawRoundedRect(
+                    {originX + col * (cell + gap), originY + row * (cell + gap), cell, cell},
+                    color, 1.1f);
+            }
+        }
+        return;
+    }
+    if (kind == ShelfBadgeKind::Music) {
+        // Note head + stem (QS music-family weight).
+        ren.drawCircle({center.x - 2.2f * s, center.y + 2.8f * s}, 2.6f * s, color);
+        ren.drawLine({center.x + 0.2f * s, center.y + 2.8f * s},
+                     {center.x + 0.2f * s, center.y - 5.5f * s}, color, 1.7f * s);
+        ren.drawLine({center.x + 0.2f * s, center.y - 5.5f * s},
+                     {center.x + 4.5f * s, center.y - 3.8f * s}, color, 1.5f * s);
+        return;
+    }
+    // Sounds — mute speaker (body only; waves clipped the chip outline).
+    const float cx = center.x - 0.6f * s;
+    ren.drawLine({cx - 3.6f * s, center.y - 2.0f * s},
+                 {cx - 1.2f * s, center.y - 2.0f * s}, color, 1.6f * s);
+    ren.drawLine({cx - 3.6f * s, center.y + 2.0f * s},
+                 {cx - 1.2f * s, center.y + 2.0f * s}, color, 1.6f * s);
+    ren.drawLine({cx - 3.6f * s, center.y - 2.0f * s},
+                 {cx - 3.6f * s, center.y + 2.0f * s}, color, 1.6f * s);
+    ren.drawLine({cx - 1.2f * s, center.y - 2.0f * s},
+                 {cx + 1.6f * s, center.y - 3.8f * s}, color, 1.6f * s);
+    ren.drawLine({cx - 1.2f * s, center.y + 2.0f * s},
+                 {cx + 1.6f * s, center.y + 3.8f * s}, color, 1.6f * s);
+    ren.drawLine({cx + 1.6f * s, center.y - 3.8f * s},
+                 {cx + 1.6f * s, center.y + 3.8f * s}, color, 1.6f * s);
+}
+
+void drawIconBadgeChip(nxui::Renderer& ren, const nxui::Rect& rect, ShelfBadgeKind kind,
+                       const nxui::Color& fill, const nxui::Color& border,
+                       const nxui::Color& glyph, float opacity) {
+    const float radius = rect.height * 0.5f;
+    ren.drawRoundedRect(rect, fill.withAlpha(fill.a * opacity), radius);
+    ren.drawRoundedRectOutline(rect, border.withAlpha(border.a * opacity), radius, 1.3f);
+    drawShelfBadgeGlyph(ren, kind,
+                        {rect.x + rect.width * 0.5f, rect.y + rect.height * 0.5f},
+                        glyph.withAlpha(opacity));
 }
 
 void drawActionButtonChip(nxui::Renderer& ren,
@@ -2623,6 +2794,8 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
         bool activeTheme = false;
 
         bool showIconsBadge = false;
+        bool showMusicBadge = false;
+        bool showSoundsBadge = false;
         if (isCommunityTab()) {
             const auto& entry = m_communityEntries[(size_t)globalIndex];
             titleText = entry.name;
@@ -2632,6 +2805,8 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
             previewPhase = communityPreviewPhase(entry);
             previewRequested = !entry.cover.empty();
             showIconsBadge = entry.hasIcons;
+            showMusicBadge = entry.hasMusic;
+            showSoundsBadge = entry.hasSounds;
         } else {
             const auto& entry = isIconsTab()
                 ? m_iconPackEntries[(size_t)globalIndex]
@@ -2645,6 +2820,8 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
             activeTheme = entry.active;
             previewRequested = !entry.coverPath.empty() || !entry.coverUrl.empty();
             showIconsBadge = !isIconsTab() && entry.hasIcons;
+            showMusicBadge = !isIconsTab() && entry.hasMusic;
+            showSoundsBadge = !isIconsTab() && entry.hasSounds;
             if (previewRequested && !entry.coverUrl.empty()) {
                 // Catalog pack that is not on the console yet: fetch the cover.
                 primeCommunityPreview(entry.coverUrl);
@@ -2791,18 +2968,20 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
             ? std::max(48.f, std::min(72.f, 24.f + measureTextCached(m_smallFont, autoBadgeLabel).x * 0.62f))
             : 0.f;
         constexpr float kAutoBadgeH = 22.f;
-        const std::string iconsBadgeLabel = i18n.tr("themeshop.badge.icons", "Icons");
-        const float iconsBadgeW = showIconsBadge
-            ? std::max(58.f, std::min(86.f, 28.f + measureTextCached(m_smallFont, iconsBadgeLabel).x * 0.62f))
-            : 0.f;
-        constexpr float kIconsBadgeH = 22.f;
+        // Icon-only chips so Icons + Music + Sounds fit on one caption row.
+        constexpr float kGlyphBadge = 22.f;
+        constexpr float kGlyphBadgeGap = 6.f;
         float titleReserve = 0.f;
         if (showTintBadge)
             titleReserve += tintBadgeW + kBadgeGap;
         if (showAutoBadge)
             titleReserve += autoBadgeW + kBadgeGap;
         if (showIconsBadge)
-            titleReserve += iconsBadgeW + kBadgeGap;
+            titleReserve += kGlyphBadge + kGlyphBadgeGap;
+        if (showMusicBadge)
+            titleReserve += kGlyphBadge + kGlyphBadgeGap;
+        if (showSoundsBadge)
+            titleReserve += kGlyphBadge + kGlyphBadgeGap;
         const float titleMaxW = titleReserve > 0.f
             ? std::max(40.f, card.width - 18.f - titleReserve)
             : (card.width - 18.f);
@@ -2815,58 +2994,54 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
                      0.82f);
         float badgeX = card.x + 12.f + measureTextCached(m_font, titleFitted).x * 0.82f + kBadgeGap;
         const float titleH = measureTextCached(m_font, titleFitted).y * 0.82f;
-        if (showTintBadge) {
-            nxui::Rect tintChip = {
+        auto drawCaptionBadge = [&](float width, const std::string& label,
+                                    const nxui::Color& fill, const nxui::Color& border) {
+            nxui::Rect chip = {
                 badgeX,
                 titleY + std::max(0.f, (titleH - kAutoBadgeH) * 0.5f),
-                tintBadgeW,
+                width,
                 kAutoBadgeH
             };
-            drawChip(ren,
-                     m_smallFont,
-                     tintChip,
-                     tintBadgeLabel,
-                     nxui::Color(0.28f, 0.18f, 0.42f, 0.42f),
-                     nxui::Color(0.82f, 0.55f, 1.f, 0.55f),
-                     m_theme->textPrimary,
-                     rowOpacity,
-                     0.62f);
-            badgeX = tintChip.right() + kBadgeGap;
+            drawChip(ren, m_smallFont, chip, label, fill, border,
+                     m_theme->textPrimary, rowOpacity, 0.62f);
+            badgeX = chip.right() + kBadgeGap;
+        };
+        auto drawGlyphBadge = [&](ShelfBadgeKind kind,
+                                  const nxui::Color& fill, const nxui::Color& border) {
+            nxui::Rect chip = {
+                badgeX,
+                titleY + std::max(0.f, (titleH - kGlyphBadge) * 0.5f),
+                kGlyphBadge,
+                kGlyphBadge
+            };
+            drawIconBadgeChip(ren, chip, kind, fill, border,
+                              m_theme->textPrimary, rowOpacity);
+            badgeX = chip.right() + kGlyphBadgeGap;
+        };
+        if (showTintBadge) {
+            drawCaptionBadge(tintBadgeW, tintBadgeLabel,
+                             nxui::Color(0.28f, 0.18f, 0.42f, 0.42f),
+                             nxui::Color(0.82f, 0.55f, 1.f, 0.55f));
         }
         if (showAutoBadge) {
-            nxui::Rect autoChip = {
-                badgeX,
-                titleY + std::max(0.f, (titleH - kAutoBadgeH) * 0.5f),
-                autoBadgeW,
-                kAutoBadgeH
-            };
-            drawChip(ren,
-                     m_smallFont,
-                     autoChip,
-                     autoBadgeLabel,
-                     nxui::Color(0.12f, 0.28f, 0.48f, 0.40f),
-                     nxui::Color(0.45f, 0.78f, 1.f, 0.55f),
-                     m_theme->textPrimary,
-                     rowOpacity,
-                     0.62f);
-            badgeX = autoChip.right() + kBadgeGap;
+            drawCaptionBadge(autoBadgeW, autoBadgeLabel,
+                             nxui::Color(0.12f, 0.28f, 0.48f, 0.40f),
+                             nxui::Color(0.45f, 0.78f, 1.f, 0.55f));
         }
         if (showIconsBadge) {
-            nxui::Rect iconsChip = {
-                badgeX,
-                titleY + std::max(0.f, (titleH - kIconsBadgeH) * 0.5f),
-                iconsBadgeW,
-                kIconsBadgeH
-            };
-            drawChip(ren,
-                     m_smallFont,
-                     iconsChip,
-                     iconsBadgeLabel,
-                     nxui::Color(0.12f, 0.28f, 0.48f, 0.38f),
-                     nxui::Color(0.45f, 0.72f, 1.f, 0.48f),
-                     m_theme->textPrimary,
-                     rowOpacity,
-                     0.62f);
+            drawGlyphBadge(ShelfBadgeKind::Icons,
+                           nxui::Color(0.12f, 0.28f, 0.48f, 0.38f),
+                           nxui::Color(0.45f, 0.72f, 1.f, 0.48f));
+        }
+        if (showMusicBadge) {
+            drawGlyphBadge(ShelfBadgeKind::Music,
+                           nxui::Color(0.32f, 0.16f, 0.28f, 0.40f),
+                           nxui::Color(0.95f, 0.55f, 0.78f, 0.50f));
+        }
+        if (showSoundsBadge) {
+            drawGlyphBadge(ShelfBadgeKind::Sounds,
+                           nxui::Color(0.18f, 0.30f, 0.16f, 0.40f),
+                           nxui::Color(0.55f, 0.90f, 0.48f, 0.50f));
         }
         // Author only — eShop shelves don't dump source/version in the caption.
         std::string subtitleFitted = ellipsize(m_smallFont, subtitleText, card.width - 24.f, 0.70f);
@@ -2931,6 +3106,11 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
     std::string detailInfoA;
     std::string detailInfoB;
     std::string detailInfoC;
+    // Row 1: status / version. Row 2: Icons / Music / Sounds (shelf colors).
+    std::vector<std::string> detailStatusBadges;
+    bool detailShowIconsBadge = false;
+    bool detailShowMusicBadge = false;
+    bool detailShowSoundsBadge = false;
     const nxui::Texture* detailPreviewTexture = nullptr;
     PreviewPhase detailPreviewPhase = PreviewPhase::Failed;
     bool detailPreviewRequested = false;
@@ -2943,6 +3123,11 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
             return;
         detailTitle = entry->name;
         detailSubtitle = entry->author.empty() ? i18n.tr("themeshop.community.author_unknown", "Unknown") : entry->author;
+        if (!entry->version.empty())
+            detailStatusBadges.push_back(entry->version);
+        detailShowIconsBadge = entry->hasIcons;
+        detailShowMusicBadge = entry->hasMusic;
+        detailShowSoundsBadge = entry->hasSounds;
         detailInfoA = i18n.tr("themeshop.community.version", "Version") + std::string(": ")
             + (entry->version.empty() ? i18n.tr("themeshop.community.version_unknown", "Unknown") : entry->version);
         detailInfoB = i18n.tr("themeshop.community.manifest", "Manifest") + std::string(": ")
@@ -2977,6 +3162,14 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
             : (entry->installed
                 ? i18n.tr("themeshop.installed.status_available", "Available")
                 : i18n.tr("themeshop.icons.status_online", "Available online"));
+        detailStatusBadges.push_back(statusText);
+        if (!entry->version.empty())
+            detailStatusBadges.push_back(entry->version);
+        if (!isIconsTab()) {
+            detailShowIconsBadge = entry->hasIcons;
+            detailShowMusicBadge = entry->hasMusic;
+            detailShowSoundsBadge = entry->hasSounds;
+        }
         detailInfoA = i18n.tr("themeshop.installed.status", "Status") + std::string(": ")
             + statusText;
         if (isIconsTab()) {
@@ -3266,54 +3459,111 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
             m_detailFocusArea = DetailFocusArea::TintToggle;
         }
     } else {
-        // Product copy: title, author, one soft line — no settings-style dump.
-        nxui::Rect infoBounds = {
-            preview.right() + 28.f,
-            dialog.y + 36.f,
-            dialog.right() - preview.right() - 52.f,
-            dialog.height - 130.f
-        };
-        ren.drawText(ellipsize(m_font, detailTitle, infoBounds.width, 1.22f),
-                     {infoBounds.x, infoBounds.y + 4.f},
+        // Full-width title above the screenshot — long theme names fit here.
+        const float titleX = dialog.x + 28.f;
+        const float titleW = dialog.width - 56.f;
+        ren.drawText(ellipsize(m_font, detailTitle, titleW, 1.18f),
+                     {titleX, dialog.y + 22.f},
                      m_font,
                      m_theme->textPrimary.withAlpha(detailOpacity),
-                     1.22f);
+                     1.18f);
+
+        // Meta column on the left: author, status/version, content badges, hint.
+        nxui::Rect infoBounds = {
+            dialog.x + 28.f,
+            preview.y,
+            std::max(80.f, preview.x - dialog.x - 56.f),
+            std::max(80.f, preview.height)
+        };
         ren.drawText(ellipsize(m_smallFont, detailSubtitle, infoBounds.width, 0.86f),
-                     {infoBounds.x, infoBounds.y + 52.f},
+                     {infoBounds.x, infoBounds.y + 2.f},
                      m_smallFont,
                      m_theme->textSecondary.withAlpha(0.88f * detailOpacity),
                      0.86f);
 
-        // Soft status chip (Active / Available) instead of "Status: …" prose.
-        if (!detailInfoA.empty()) {
-            const std::string statusChipLabel = [&]() -> std::string {
-                if (detailInfoA.find(':') != std::string::npos)
-                    return detailInfoA.substr(detailInfoA.find(':') + 1);
-                return detailInfoA;
-            }();
-            std::string trimmed = statusChipLabel;
-            while (!trimmed.empty() && trimmed.front() == ' ')
-                trimmed.erase(trimmed.begin());
-            const float chipW = std::max(96.f,
-                std::min(infoBounds.width * 0.72f,
-                         36.f + measureTextCached(m_smallFont, trimmed).x * 0.72f));
-            nxui::Rect statusChip = {infoBounds.x, infoBounds.y + 96.f, chipW, 30.f};
+        float badgeY = infoBounds.y + 42.f;
+        float badgeX = infoBounds.x;
+        constexpr float kBadgeH = 30.f;
+        constexpr float kBadgeGap = 8.f;
+        constexpr float kBadgeScale = 0.70f;
+        auto placeChip = [&](float chipW) -> nxui::Rect {
+            if (badgeX > infoBounds.x
+                && badgeX + chipW > infoBounds.right() + 0.5f) {
+                badgeX = infoBounds.x;
+                badgeY += kBadgeH + kBadgeGap;
+            }
+            nxui::Rect chip = {badgeX, badgeY, chipW, kBadgeH};
+            badgeX = chip.right() + kBadgeGap;
+            return chip;
+        };
+        for (const auto& label : detailStatusBadges) {
+            if (badgeY + kBadgeH > infoBounds.bottom() - 56.f)
+                break;
+            const float chipW = std::max(72.f,
+                std::min(infoBounds.width,
+                         28.f + measureTextCached(m_smallFont, label).x * kBadgeScale));
             drawChip(ren,
                      m_smallFont,
-                     statusChip,
-                     trimmed,
+                     placeChip(chipW),
+                     label,
                      m_theme->panelBase.withAlpha(0.22f),
                      m_theme->panelBorder.withAlpha(0.28f),
                      m_theme->textPrimary,
                      detailOpacity,
-                     0.72f);
+                     kBadgeScale);
+        }
+        // Icons / Music / Sounds on the next row — text labels, shelf colors
+        // (shelf itself stays glyph-only for caption space).
+        if (detailShowIconsBadge || detailShowMusicBadge || detailShowSoundsBadge) {
+            badgeX = infoBounds.x;
+            badgeY += kBadgeH + kBadgeGap;
+            auto drawContentText = [&](const std::string& label,
+                                       const nxui::Color& fill,
+                                       const nxui::Color& border) {
+                if (badgeY + kBadgeH > infoBounds.bottom() - 56.f)
+                    return;
+                const float chipW = std::max(72.f,
+                    std::min(infoBounds.width,
+                             28.f + measureTextCached(m_smallFont, label).x * kBadgeScale));
+                drawChip(ren,
+                         m_smallFont,
+                         placeChip(chipW),
+                         label,
+                         fill,
+                         border,
+                         m_theme->textPrimary,
+                         detailOpacity,
+                         kBadgeScale);
+            };
+            if (detailShowIconsBadge) {
+                drawContentText(i18n.tr("themeshop.badge.icons", "Icons"),
+                                nxui::Color(0.12f, 0.28f, 0.48f, 0.38f),
+                                nxui::Color(0.45f, 0.72f, 1.f, 0.48f));
+            }
+            if (detailShowMusicBadge) {
+                drawContentText(i18n.tr("themeshop.badge.music", "Music"),
+                                nxui::Color(0.32f, 0.16f, 0.28f, 0.40f),
+                                nxui::Color(0.95f, 0.55f, 0.78f, 0.50f));
+            }
+            if (detailShowSoundsBadge) {
+                drawContentText(i18n.tr("themeshop.badge.sounds", "Sounds"),
+                                nxui::Color(0.18f, 0.30f, 0.16f, 0.40f),
+                                nxui::Color(0.55f, 0.90f, 0.48f, 0.50f));
+            }
         }
 
-        ren.drawText(ellipsize(m_smallFont, detailInfoC, infoBounds.width, 0.76f),
-                     {infoBounds.x, infoBounds.y + 146.f},
-                     m_smallFont,
-                     m_theme->textSecondary.withAlpha(0.80f * detailOpacity),
-                     0.76f);
+        const float hintY = std::max(badgeY + kBadgeH + 16.f, infoBounds.y + 96.f);
+        const float hintMaxH = std::max(0.f, infoBounds.bottom() - hintY);
+        const int hintLines = std::max(1, (int)(hintMaxH / 22.f));
+        drawWrappedText(ren,
+                        m_smallFont,
+                        detailInfoC,
+                        {infoBounds.x, hintY},
+                        infoBounds.width,
+                        m_theme->textSecondary.withAlpha(0.80f * detailOpacity),
+                        0.76f,
+                        4.f,
+                        hintLines);
     }
 
     if ((isCommunityTab() || isIconsTab()) && !m_packageTransferState.label().empty()
@@ -3327,9 +3577,9 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
         // Thin progress sheet under the product copy — stay on the eShop sheet
         // instead of a modal that nukes focus / covers.
         nxui::Rect sheet = {
-            preview.right() + 28.f,
+            dialog.x + 28.f,
             dialog.bottom() - 132.f,
-            dialog.right() - preview.right() - 52.f,
+            std::max(120.f, preview.x - dialog.x - 56.f),
             50.f
         };
         ren.drawRoundedRect(sheet, m_theme->panelBase.withAlpha(0.22f * detailOpacity), 14.f);

@@ -1,10 +1,13 @@
 #include "LeaveFrameCache.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <system_error>
+#include <vector>
 
 namespace LeaveFrameCache {
 namespace {
@@ -46,7 +49,67 @@ bool readHeader(std::ifstream& in, Header& header) {
     return true;
 }
 
+void boxBlurPass(const std::uint8_t* src, std::uint8_t* dst,
+                 int width, int height, int radius, bool horizontal) {
+    const int r = std::max(1, radius);
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            int sum[4] = {0, 0, 0, 0};
+            int count = 0;
+            if (horizontal) {
+                for (int k = -r; k <= r; ++k) {
+                    const int sx = std::clamp(x + k, 0, width - 1);
+                    const std::uint8_t* p = src + (static_cast<std::size_t>(y) * width + sx) * 4u;
+                    sum[0] += p[0]; sum[1] += p[1]; sum[2] += p[2]; sum[3] += p[3];
+                    ++count;
+                }
+            } else {
+                for (int k = -r; k <= r; ++k) {
+                    const int sy = std::clamp(y + k, 0, height - 1);
+                    const std::uint8_t* p = src + (static_cast<std::size_t>(sy) * width + x) * 4u;
+                    sum[0] += p[0]; sum[1] += p[1]; sum[2] += p[2]; sum[3] += p[3];
+                    ++count;
+                }
+            }
+            std::uint8_t* out = dst + (static_cast<std::size_t>(y) * width + x) * 4u;
+            out[0] = static_cast<std::uint8_t>(sum[0] / count);
+            out[1] = static_cast<std::uint8_t>(sum[1] / count);
+            out[2] = static_cast<std::uint8_t>(sum[2] / count);
+            out[3] = static_cast<std::uint8_t>(sum[3] / count);
+        }
+    }
+}
+
 } // namespace
+
+void frostRgbaInPlace(std::uint8_t* rgba, int width, int height) {
+    if (!rgba || width <= 0 || height <= 0)
+        return;
+    const std::size_t bytes = static_cast<std::size_t>(width)
+                            * static_cast<std::size_t>(height) * 4u;
+    std::vector<std::uint8_t> tmp(bytes);
+    // Two separable passes (r=2) ≈ gentle frost at 640×360 without smear.
+    boxBlurPass(rgba, tmp.data(), width, height, 2, true);
+    boxBlurPass(tmp.data(), rgba, width, height, 2, false);
+    boxBlurPass(rgba, tmp.data(), width, height, 2, true);
+    boxBlurPass(tmp.data(), rgba, width, height, 2, false);
+
+    // Chromatic fringe (±2px at half-res ≈ ±4px on screen): R left, B right.
+    constexpr int kChromaPx = 2;
+    std::memcpy(tmp.data(), rgba, bytes);
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            const std::size_t i = (static_cast<std::size_t>(y) * width + x) * 4u;
+            const int xl = std::max(0, x - kChromaPx);
+            const int xr = std::min(width - 1, x + kChromaPx);
+            const std::size_t il = (static_cast<std::size_t>(y) * width + xl) * 4u;
+            const std::size_t ir = (static_cast<std::size_t>(y) * width + xr) * 4u;
+            rgba[i]     = tmp[il];
+            rgba[i + 1] = tmp[i + 1];
+            rgba[i + 2] = tmp[ir + 2];
+        }
+    }
+}
 
 bool save(const LeaveFrameSession& session,
           const std::uint8_t* rgba, int width, int height) {
@@ -66,6 +129,8 @@ bool save(const LeaveFrameSession& session,
     header.focusTitleId = session.focusTitleId;
 
     const std::size_t bytes = static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4u;
+    std::vector<std::uint8_t> frosted(rgba, rgba + bytes);
+    frostRgbaInPlace(frosted.data(), width, height);
     const std::string tmpPath = std::string(kPath) + ".tmp";
 
     {
@@ -73,7 +138,8 @@ bool save(const LeaveFrameSession& session,
         if (!out)
             return false;
         out.write(reinterpret_cast<const char*>(&header), sizeof(header));
-        out.write(reinterpret_cast<const char*>(rgba), static_cast<std::streamsize>(bytes));
+        out.write(reinterpret_cast<const char*>(frosted.data()),
+                  static_cast<std::streamsize>(bytes));
         if (!out)
             return false;
     }

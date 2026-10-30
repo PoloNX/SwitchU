@@ -271,9 +271,6 @@ void drawFolderStyle(const FolderStyleDrawArgs& args) {
     const float sliceH = std::max(4.f, shell.height * 0.09f);
     const ThemeShell theme = themeShell(args.themeMode, opacity);
     const int style = std::clamp(args.styleIndex, 0, kFolderStyleCount - 1);
-    // Single-row uses the title pill below — skip in-tile names.
-    const bool named = !poster && args.drawName && args.font && args.title
-        && !args.title->empty();
     const nxui::Texture* cover = (args.cover && args.cover->valid()) ? args.cover : nullptr;
     const bool peekComposite = args.coverIsPeekComposite && cover;
     int peekCount = std::clamp(args.peekCoverCount, 0, kFolderPeekMax);
@@ -285,9 +282,18 @@ void drawFolderStyle(const FolderStyleDrawArgs& args) {
         }
     }
     const bool hasArt = cover || args.schematicPlaceholder || peekCount > 0 || peekComposite;
+    // Caller sets drawName. Poster+art stays title-pill-only; empty poster
+    // tiles (e.g. FT lite) still get a centered in-tile name like grid.
+    const bool named = args.drawName && args.font && args.title
+        && !args.title->empty();
     const bool useCover = hasArt && (
         (style != kFolderStyleClassic && folderShouldShowCover(style, args.showCover))
         || (poster && (cover || peekCount > 0 || peekComposite)));
+    // Poster tiles are ~2× taller than grid icons — use a larger preferred
+    // scale (still width-clamped) so empty single-row folders read clearly.
+    const float namePref = poster ? 1.48f : 0.92f;
+    const float nameMin = poster ? 0.55f : 0.40f;
+    const float classicPref = poster ? 1.55f : 1.05f;
 
     auto drawCenteredName = [&](bool halo, float preferred, float minScale, float yBias) {
         if (!named)
@@ -372,7 +378,7 @@ void drawFolderStyle(const FolderStyleDrawArgs& args) {
             if (named) {
                 const FittedTitle fit = measureTitle(args.font, *args.title,
                                                      std::max(8.f, shell.width - 6.f * s),
-                                                     1.05f * s, 0.38f * s);
+                                                     classicPref * s, nameMin * s);
                 const nxui::Vec2 pos{shell.x + (shell.width - fit.width) * 0.5f,
                                      shell.y + (shell.height - fit.height) * 0.5f};
                 drawHaloTitle(ren, args.font, *args.title, pos, fit.scale, s, opacity);
@@ -410,7 +416,7 @@ void drawFolderStyle(const FolderStyleDrawArgs& args) {
         } else if (named) {
             const FittedTitle fit = measureTitle(args.font, *args.title,
                                                  std::max(8.f, body.width - 18.f * s),
-                                                 0.92f * s, 0.40f * s);
+                                                 namePref * s, nameMin * s);
             const nxui::Vec2 pos{body.x + (body.width - fit.width) * 0.5f,
                                  body.y + (body.height - fit.height) * 0.52f};
             ren.drawText(*args.title, pos, args.font, theme.title, fit.scale);
@@ -476,12 +482,12 @@ void drawFolderStyle(const FolderStyleDrawArgs& args) {
     if (style == kFolderStyleLabel && named) {
         const FittedTitle fit = measureTitle(args.font, *args.title,
                                              std::max(8.f, shell.width - 18.f * s),
-                                             0.92f * s, 0.40f * s);
+                                             namePref * s, nameMin * s);
         const float nameY = shell.y + (shell.height - sliceH - fit.height) * 0.50f;
         const nxui::Vec2 pos{shell.x + (shell.width - fit.width) * 0.5f, nameY};
         ren.drawText(*args.title, pos, args.font, theme.title, fit.scale);
     } else if (named) {
-        drawCenteredName(false, 0.92f, 0.40f, 0.52f);
+        drawCenteredName(false, namePref, nameMin, 0.52f);
     } else if (!args.schematicPlaceholder &&
                (style == kFolderStyleSimple || style == kFolderStyleMinimal ||
                 style == kFolderStyleTab || style == kFolderStyleRing)) {

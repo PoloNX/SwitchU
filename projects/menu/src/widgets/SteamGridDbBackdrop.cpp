@@ -42,6 +42,26 @@ void SteamGridDbBackdrop::invalidateArtworkCaches() {
     m_missingArtworkTitleIds.clear();
 }
 
+void SteamGridDbBackdrop::releaseGpuArtwork() {
+    if (m_pendingDecode && m_pendingDecode->state)
+        m_pendingDecode->state->cancelled.store(true);
+    m_pendingDecode.reset();
+    m_readyArtwork.reset();
+    m_decodedCache.clear();
+    m_missingArtworkTitleIds.clear();
+    m_preloadTitleIds.clear();
+    for (auto& set : m_sets) {
+        set.hero = nxui::Texture{};
+        set.logo = nxui::Texture{};
+        set.titleId = 0;
+        set.hasHero = false;
+        set.hasLogo = false;
+        set.heroLuminance = -1.f;
+    }
+    m_uploadStage = 0;
+    m_waitForGpuBeforeUpload = false;
+}
+
 bool SteamGridDbBackdrop::hasGpuArtwork(std::uint64_t titleId) const {
     return std::any_of(m_sets.begin(), m_sets.end(), [titleId](const ArtworkSet& set) {
         return set.titleId == titleId && (set.hasHero || set.hasLogo);
@@ -305,13 +325,18 @@ void SteamGridDbBackdrop::startPendingDecode(std::uint64_t titleId) {
             // Fixed canvases let both double-buffer slots reuse their existing
             // MemBlocks. Variable source dimensions previously triggered a
             // free + waitIdle on the render thread during focus changes.
+            //
+            // 640×360 (not 1280×720): same canvas SteamGridDbManager preps for
+            // UI cards. Full-screen fillRect stretch looks fine with the soft
+            // scrim; quarter the RGBA (~0.9 MiB vs ~3.6 MiB) cuts the SD hitch
+            // that made single-row + heroes feel sticky vs theme-only.
             state->artwork.hero = decodeImage(
-                SteamGridDbManager::heroPath(titleId), 1280, 720, true);
+                SteamGridDbManager::heroPath(titleId), 640, 360, true);
             if (!state->cancelled.load())
                 state->artwork.heroLuminance = sampleLuminance(state->artwork.hero);
             if (!state->cancelled.load())
                 state->artwork.logo = decodeImage(
-                    SteamGridDbManager::logoPath(titleId), 640, 180, false);
+                    SteamGridDbManager::logoPath(titleId), 384, 192, false);
         }
         state->artwork.decodeMilliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now() - started).count();

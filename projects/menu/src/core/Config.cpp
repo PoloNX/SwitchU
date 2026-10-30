@@ -102,6 +102,7 @@ bool AppConfig::load() {
     readJsonOpt(j, "sortMode", sortMode);
     readJsonOpt(j, "sortLargeTiles", sortLargeTiles);
     readJsonOpt(j, "iconContrastAdapt", iconContrastAdapt);
+    readJsonOpt(j, "batterySaver", batterySaver);
     readJsonOpt(j, "themeMusicOverride", themeMusicOverride);
     readJsonOpt(j, "themeMusicAddToPlaylist", themeMusicAddToPlaylist);
     readJsonOpt(j, "themeMusicPlayOnApply", themeMusicPlayOnApply);
@@ -285,6 +286,7 @@ bool AppConfig::save() const {
     j["sortMode"] = std::clamp(sortMode, 0, 2);
     j["sortLargeTiles"] = sortLargeTiles;
     j["iconContrastAdapt"] = iconContrastAdapt;
+    j["batterySaver"] = batterySaver;
     j["themeMusicOverride"] = themeMusicOverride;
     j["themeMusicAddToPlaylist"] = themeMusicAddToPlaylist;
     j["themeMusicPlayOnApply"] = themeMusicPlayOnApply;

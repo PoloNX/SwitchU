@@ -44,6 +44,9 @@ public:
         bool colourPack = false;
         // Theme ships sidebar/chrome icons (Community/Installed badge).
         bool hasIcons = false;
+        // Theme ships bundled BGM / SFX folders (Music / Sounds badges).
+        bool hasMusic = false;
+        bool hasSounds = false;
         // Icon packs: present on the console / shipped with SwitchU / online.
         bool installed = true;
         bool builtin = false;
@@ -63,6 +66,7 @@ public:
     void onGridRowsChange(IntCb cb)      { m_gridRowsCb = std::move(cb); }
     void onActionHintStyleChange(IntCb cb) { m_actionHintStyleCb = std::move(cb); }
     void onSortLargeTilesChange(BoolCb cb) { m_sortLargeTilesCb = std::move(cb); }
+    void onBatterySaverChange(BoolCb cb) { m_batterySaverCb = std::move(cb); }
     void onIconContrastAdaptChange(BoolCb cb) { m_iconContrastAdaptCb = std::move(cb); }
     void onThemeMusicOverrideChange(BoolCb cb) { m_themeMusicOverrideCb = std::move(cb); }
     void onThemeMusicAddToPlaylistChange(BoolCb cb) { m_themeMusicAddToPlaylistCb = std::move(cb); }
@@ -108,6 +112,8 @@ public:
         m_gridRows = std::clamp(rows, 1, 5);
     }
     void setSortLargeTilesState(bool enabled) { m_sortLargeTiles = enabled; }
+    void setBatterySaverState(bool enabled) { m_batterySaver = enabled; }
+    void setFrameTapLiteEngaged(bool engaged) { m_frameTapLiteEngaged = engaged; }
     void setIconContrastAdaptState(bool enabled) { m_iconContrastAdapt = enabled; }
     void setThemeMusicOverrideState(bool enabled) { m_themeMusicOverride = enabled; }
     void setThemeMusicAddToPlaylistState(bool enabled) { m_themeMusicAddToPlaylist = enabled; }
@@ -376,6 +382,7 @@ private:
     IntCb m_gridRowsCb;
     IntCb m_actionHintStyleCb;
     BoolCb m_sortLargeTilesCb;
+    BoolCb m_batterySaverCb;
     BoolCb m_iconContrastAdaptCb;
     BoolCb m_themeMusicOverrideCb;
     BoolCb m_themeMusicAddToPlaylistCb;
@@ -404,6 +411,8 @@ private:
     int m_gridRows = 3;
     int m_actionHintStyle = 1;
     bool m_sortLargeTiles = true;
+    bool m_batterySaver = false;
+    bool m_frameTapLiteEngaged = false;
     bool m_iconContrastAdapt = true;
     bool m_themeMusicOverride = true;
     bool m_themeMusicAddToPlaylist = true;

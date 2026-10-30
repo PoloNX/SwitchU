@@ -24,6 +24,8 @@ public:
         std::string cover;
         std::vector<std::string> screenshots;
         bool hasIcons = false;
+        bool hasMusic = false;
+        bool hasSounds = false;
     };
 
     // Icon pack published in the same catalog (index.json -> "icons").

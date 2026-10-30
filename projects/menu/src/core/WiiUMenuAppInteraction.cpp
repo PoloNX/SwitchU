@@ -192,11 +192,10 @@ nxui::Texture* WiiUMenuApp::adoptEditGhostTexture(GlossyIcon* sourceIcon) {
     // recycled at that point, replacing the carried icon with a spinner (or,
     // worse, another game's icon). Give the ghost one stable texture for the
     // complete edit operation. The source bytes include custom SGDB icons.
-    // In single-row poster view the tile on screen is the tall SteamGridDB
-    // poster, so carry that same artwork instead of the square icon.
-    const bool preferPoster = preferSingleRowPosters()
-        && sourceIcon->entryKind() == GridEntryKind::Application
-        && SteamGridDbManager::hasPoster(sourceIcon->titleId());
+    // Match on-tile art: single-row posters and grid 2x3 posters both carry
+    // tall artwork — never fall back to a square icon while a poster exists.
+    const bool preferPoster = sourceIcon->entryKind() == GridEntryKind::Application
+        && preferPosterIconData(sourceIcon->titleId());
     const auto bytes = AppListLoader::loadIconData(sourceIcon->titleId(), preferPoster);
     if (!bytes.empty()) {
         auto owned = std::make_unique<nxui::Texture>();
@@ -700,74 +699,307 @@ bool WiiUMenuApp::commitEditModePlacement() {
 
         const auto heldSize = layoutSlotSpan(m_editHeldTitleId);
         const int columns = std::max(1, m_grid->columns());
+        const int rowsPerPage = std::clamp(m_config.gridRows, 1, 5);
+        const int perPage = std::max(1, columns * rowsPerPage);
 
-        // Tiles the drop would land on. A wide tile keeps its id in its anchor
-        // cell only, so a drop on its second half used to look like an empty
-        // slot — the fit check then found those cells taken by that very tile
-        // and refused, and A did nothing whenever a large tile was targeted.
-        std::vector<int> displacedAnchors;
-        for (int dy = 0; dy < std::max(1, heldSize.rows); ++dy) {
-            for (int dx = 0; dx < std::max(1, heldSize.columns); ++dx) {
-                const int anchor = layoutSpanAnchorFor(target + dy * columns + dx);
-                if (anchor < 0 || anchor == from)
-                    continue;
-                if (std::find(displacedAnchors.begin(), displacedAnchors.end(),
-                              anchor) == displacedAnchors.end())
-                    displacedAnchors.push_back(anchor);
-            }
-        }
-
-        // Resolve the whole drop on a copy so a refused placement leaves the
-        // layout untouched, and so several displaced tiles can be parked one
-        // after the other in the cells the others just freed.
+        // Resolve on a copy so a refused placement leaves the layout untouched.
+        // Clear the held tile first so its old cells can host a displacee
+        // (4x2 ↔ 2x1).
         std::vector<std::uint64_t> slots = m_layoutSlots;
         std::replace(slots.begin(), slots.end(), m_editHeldTitleId, std::uint64_t{0});
+
+        auto collectOverlappingAnchors = [&](int footprintAnchor) {
+            std::vector<int> out;
+            if (footprintAnchor < 0)
+                return out;
+            for (int dy = 0; dy < std::max(1, heldSize.rows); ++dy) {
+                for (int dx = 0; dx < std::max(1, heldSize.columns); ++dx) {
+                    const int cellAnchor = layoutSpanAnchorFor(
+                        slots, footprintAnchor + dy * columns + dx);
+                    if (cellAnchor < 0 || cellAnchor == from)
+                        continue;
+                    if (std::find(out.begin(), out.end(), cellAnchor) == out.end())
+                        out.push_back(cellAnchor);
+                }
+            }
+            return out;
+        };
+
+        // Anchors that any held-size footprint covering `target` could hit —
+        // used when the drop cell is blocked and we must clear neighbours first.
+        auto collectBlockingAnchors = [&]() {
+            std::vector<int> out;
+            const int under = layoutSpanAnchorFor(slots, target);
+            if (under >= 0 && under != from)
+                out.push_back(under);
+            const int page0 = (target / perPage) * perPage;
+            const int dropLocal = target % perPage;
+            const int dropCol = dropLocal % columns;
+            const int dropRow = dropLocal / columns;
+            for (int dy = 0; dy < std::max(1, heldSize.rows); ++dy) {
+                for (int dx = 0; dx < std::max(1, heldSize.columns); ++dx) {
+                    const int anchorCol = dropCol - dx;
+                    const int anchorRow = dropRow - dy;
+                    if (anchorCol < 0 || anchorRow < 0)
+                        continue;
+                    if (anchorCol + heldSize.columns > columns ||
+                        anchorRow + heldSize.rows > rowsPerPage)
+                        continue;
+                    const int cand = page0 + anchorRow * columns + anchorCol;
+                    for (int hit : collectOverlappingAnchors(cand)) {
+                        if (std::find(out.begin(), out.end(), hit) == out.end())
+                            out.push_back(hit);
+                    }
+                }
+            }
+            return out;
+        };
+
         std::vector<std::pair<std::uint64_t, int>> displaced;
-        for (int anchor : displacedAnchors) {
-            const std::uint64_t titleId = slots[static_cast<std::size_t>(anchor)];
-            if (titleId == 0)
-                continue;
-            std::replace(slots.begin(), slots.end(), titleId, std::uint64_t{0});
-            displaced.emplace_back(titleId, anchor);
+        auto clearAnchors = [&](const std::vector<int>& anchors) {
+            for (int anchor : anchors) {
+                if (anchor < 0 || anchor >= static_cast<int>(slots.size()))
+                    continue;
+                const std::uint64_t titleId = slots[static_cast<std::size_t>(anchor)];
+                if (titleId == 0)
+                    continue;
+                if (std::any_of(displaced.begin(), displaced.end(),
+                        [titleId](const auto& e) { return e.first == titleId; }))
+                    continue;
+                std::replace(slots.begin(), slots.end(), titleId, std::uint64_t{0});
+                displaced.emplace_back(titleId, anchor);
+            }
+        };
+
+        // Always clear tiles under any held-size footprint that covers the
+        // ghost anchor first. A 4x2 moved down only advances its top-left by
+        // one row; without this, layoutDropAnchorFor happily re-fits the tile
+        // into the vacated rows above and never sees the shelf on the row
+        // below (placeAt == from → silent no-op).
+        clearAnchors(collectBlockingAnchors());
+
+        // Snap held to a legal top-left covering the drop cell (so a 4x2 can
+        // land on a 2x1 that is not itself a valid 4-wide origin). Prefer a
+        // real move over snapping back to `from` when the ghost has moved.
+        int placeAt = layoutDropAnchorFor(slots, target, heldSize);
+        if (placeAt == from && target != from) {
+            // Temporarily occupy from so the search must pick a shifted seat.
+            slots[static_cast<std::size_t>(from)] = m_editHeldTitleId;
+            const int shifted = layoutDropAnchorFor(slots, target, heldSize);
+            slots[static_cast<std::size_t>(from)] = 0;
+            if (shifted >= 0)
+                placeAt = shifted;
         }
-        if (!layoutFitsAt(slots, target, heldSize))
+        if (placeAt < 0)
             return false;
-        slots[static_cast<std::size_t>(target)] = m_editHeldTitleId;
+
+        clearAnchors(collectOverlappingAnchors(placeAt));
+        // Clearing may open a tighter snap — re-evaluate, still avoiding no-op.
+        {
+            int refined = layoutDropAnchorFor(slots, target, heldSize);
+            if (refined == from && target != from) {
+                slots[static_cast<std::size_t>(from)] = m_editHeldTitleId;
+                const int shifted = layoutDropAnchorFor(slots, target, heldSize);
+                slots[static_cast<std::size_t>(from)] = 0;
+                if (shifted >= 0)
+                    refined = shifted;
+            }
+            if (refined >= 0)
+                placeAt = refined;
+        }
+        if (!layoutFitsAt(slots, placeAt, heldSize))
+            return false;
+        if (placeAt == from && displaced.empty())
+            return false;
+
+        // Prefer a clean trade: held → placeAt, single displacee → from.
+        // Avoids shoving tiles into corners / other pages when a swap works.
+        if (displaced.size() == 1 && from >= 0 && from != placeAt) {
+            const auto otherSize = layoutSlotSpan(displaced.front().first);
+            // Tentatively occupy placeAt so the trade target cannot overlap it.
+            slots[static_cast<std::size_t>(placeAt)] = m_editHeldTitleId;
+            if (layoutFitsAt(slots, from, otherSize)) {
+                slots[static_cast<std::size_t>(from)] = displaced.front().first;
+                const std::vector<std::pair<int, int>> tradeMoves{
+                    {displaced.front().second, from}};
+                detachEditSourceIcon();
+                unbindEditActions();
+                m_layoutSlots = std::move(slots);
+                m_editSourceIndex = placeAt;
+                m_editOriginRootSlot = placeAt;
+                m_layoutDirty = true;
+                applyDisplayModel(buildRootFolderModel(), m_editHeldTitleId, false);
+                reattachEditSourceIcon();
+                for (const auto& [previous, current] : tradeMoves)
+                    m_grid->animateDisplacedTile(previous, current);
+                if (auto* focused = m_grid->focusManager().current()) {
+                    focusManager().setFocus(focused);
+                    if (focused->tag() == "glossy_icon")
+                        bindEditActions(static_cast<GlossyIcon*>(focused));
+                }
+                return true;
+            }
+            // Trade failed — clear placeAt and fall through to parking.
+            slots[static_cast<std::size_t>(placeAt)] = 0;
+        }
+
+        slots[static_cast<std::size_t>(placeAt)] = m_editHeldTitleId;
+
+        // Keep relative reading order so a 2x1+1x1 shelf above a 4x2 stays a
+        // shelf when packed into the vacated hole (not largest-wins → sideways).
+        std::sort(displaced.begin(), displaced.end(),
+            [](const auto& a, const auto& b) { return a.second < b.second; });
+
+        // layoutSlots only stores the anchor id; continuation cells stay 0.
+        std::vector<std::pair<int, switchu::widgets::WidgetSize>> reserved;
+        reserved.emplace_back(placeAt, heldSize);
+        auto spansOverlap = [&](int a, switchu::widgets::WidgetSize sa,
+                                int b, switchu::widgets::WidgetSize sb) {
+            sa.columns = std::max(1, sa.columns);
+            sa.rows = std::max(1, sa.rows);
+            sb.columns = std::max(1, sb.columns);
+            sb.rows = std::max(1, sb.rows);
+            for (int dy = 0; dy < sa.rows; ++dy) {
+                for (int dx = 0; dx < sa.columns; ++dx) {
+                    const int cell = a + dy * columns + dx;
+                    for (int ey = 0; ey < sb.rows; ++ey) {
+                        for (int ex = 0; ex < sb.columns; ++ex) {
+                            if (cell == b + ey * columns + ex)
+                                return true;
+                        }
+                    }
+                }
+            }
+            return false;
+        };
+        auto fitsPark = [&](int cand, switchu::widgets::WidgetSize size) {
+            if (!layoutFitsAt(slots, cand, size))
+                return false;
+            for (const auto& [anchor, span] : reserved) {
+                if (spansOverlap(cand, size, anchor, span))
+                    return false;
+            }
+            return true;
+        };
+
+        // Vacated held footprint — pack displacees here before scanning the page.
+        const int vacPage = from >= 0 ? (from / perPage) * perPage : -1;
+        const int vacLocal = from >= 0 ? from % perPage : 0;
+        const int vacCol = vacLocal % columns;
+        const int vacRow = vacLocal / columns;
+        const int vacCols = std::max(1, heldSize.columns);
+        const int vacRows = std::max(1, heldSize.rows);
+        auto containedInVacated = [&](int cand, switchu::widgets::WidgetSize size) {
+            if (from < 0 || cand < 0 || (cand / perPage) * perPage != vacPage)
+                return false;
+            size.columns = std::max(1, size.columns);
+            size.rows = std::max(1, size.rows);
+            const int local = cand % perPage;
+            const int col = local % columns;
+            const int row = local / columns;
+            return col >= vacCol && row >= vacRow
+                && col + size.columns <= vacCol + vacCols
+                && row + size.rows <= vacRow + vacRows;
+        };
 
         std::vector<std::pair<int, int>> displacedMoves;
         displacedMoves.reserve(displaced.size());
-        for (const auto& [titleId, previous] : displaced) {
-            const auto size = layoutSlotSpan(titleId);
-            int best = -1;
-            int bestDistance = std::numeric_limits<int>::max();
-            for (int candidate = 0; candidate < static_cast<int>(slots.size());
-                 ++candidate) {
-                if (!layoutFitsAt(slots, candidate, size))
-                    continue;
-                const int distance = std::abs(candidate - previous);
-                if (distance < bestDistance) {
-                    bestDistance = distance;
-                    best = candidate;
+
+        // Phase A: shelf-pack everyone into the vacated hole (row-major first-fit).
+        bool packedVacated = from >= 0 && !displaced.empty();
+        if (packedVacated) {
+            std::vector<std::uint64_t> trial = slots;
+            std::vector<std::pair<int, switchu::widgets::WidgetSize>> trialReserved = reserved;
+            std::vector<std::pair<int, int>> trialMoves;
+            auto trialFits = [&](int cand, switchu::widgets::WidgetSize size) {
+                if (!layoutFitsAt(trial, cand, size))
+                    return false;
+                for (const auto& [anchor, span] : trialReserved) {
+                    if (spansOverlap(cand, size, anchor, span))
+                        return false;
                 }
+                return containedInVacated(cand, size);
+            };
+            for (const auto& [titleId, previous] : displaced) {
+                const auto size = layoutSlotSpan(titleId);
+                int seat = -1;
+                for (int dy = 0; dy < vacRows && seat < 0; ++dy) {
+                    for (int dx = 0; dx < vacCols; ++dx) {
+                        const int cand = vacPage + (vacRow + dy) * columns
+                            + (vacCol + dx);
+                        if (!trialFits(cand, size))
+                            continue;
+                        seat = cand;
+                        break;
+                    }
+                }
+                if (seat < 0) {
+                    packedVacated = false;
+                    break;
+                }
+                trial[static_cast<std::size_t>(seat)] = titleId;
+                trialReserved.emplace_back(seat, size);
+                trialMoves.emplace_back(previous, seat);
             }
-            if (best < 0)
-                return false;
-            slots[static_cast<std::size_t>(best)] = titleId;
-            displacedMoves.emplace_back(previous, best);
+            if (packedVacated) {
+                slots = std::move(trial);
+                reserved = std::move(trialReserved);
+                displacedMoves = std::move(trialMoves);
+            }
         }
 
-        if (changed) {
+        // Phase B: same-page park for anything not packed (refuse > other page).
+        if (!packedVacated) {
+            displacedMoves.clear();
+            // Reset reservations to held only; slots still has placeAt occupied.
+            reserved.clear();
+            reserved.emplace_back(placeAt, heldSize);
+            // Clear any partial trial ids if we aborted mid-pack (slots unchanged
+            // on failed trial — trial was a copy). Re-clear displacee ids just
+            // in case, then re-seat.
+            for (const auto& [titleId, previous] : displaced) {
+                (void)previous;
+                std::replace(slots.begin(), slots.end(), titleId, std::uint64_t{0});
+            }
+            slots[static_cast<std::size_t>(placeAt)] = m_editHeldTitleId;
+
+            for (const auto& [titleId, previous] : displaced) {
+                const auto size = layoutSlotSpan(titleId);
+                int best = -1;
+                int bestScore = std::numeric_limits<int>::max();
+                const int homePage = (previous / perPage) * perPage;
+                const int homeEnd = std::min(homePage + perPage,
+                                             static_cast<int>(slots.size()));
+                for (int candidate = homePage; candidate < homeEnd; ++candidate) {
+                    if (!fitsPark(candidate, size))
+                        continue;
+                    // Prefer vacated hole, then closeness to previous seat.
+                    const int score =
+                        (containedInVacated(candidate, size) ? 0 : 10000)
+                        + std::abs(candidate - previous);
+                    if (score < bestScore) {
+                        bestScore = score;
+                        best = candidate;
+                    }
+                }
+                if (best < 0)
+                    return false;
+                slots[static_cast<std::size_t>(best)] = titleId;
+                reserved.emplace_back(best, size);
+                displacedMoves.emplace_back(previous, best);
+            }
+        }
+
+        if (from != placeAt || !displacedMoves.empty()) {
             detachEditSourceIcon();
             unbindEditActions();
             m_layoutSlots = std::move(slots);
-            m_editSourceIndex = target;
-            m_editOriginRootSlot = target;
+            m_editSourceIndex = placeAt;
+            m_editOriginRootSlot = placeAt;
             m_layoutDirty = true;
             applyDisplayModel(buildRootFolderModel(), m_editHeldTitleId, false);
             reattachEditSourceIcon();
-            // Only the pushed-out tiles travel: the held one already sits where
-            // the player dropped it (the ghost is drawn there), so gliding it
-            // from its previous slot made it snap back before sliding in.
+            // Only pushed-out tiles travel; the held tile already sits at placeAt.
             for (const auto& [previous, current] : displacedMoves)
                 m_grid->animateDisplacedTile(previous, current);
             if (auto* focused = m_grid->focusManager().current()) {
@@ -875,46 +1107,8 @@ bool WiiUMenuApp::activateEditModeTarget() {
         // intact made page-2+ folders keep an out-of-range target, which pinned
         // the edit ghost at (0,0) and blocked further movement (#95).
         m_editTargetIndex = -1;
-        // Widgets are HOME-grid only: the folder model resolves titles from the
-        // app catalogue, so storing one there would hide it for good.
-        if (!switchu::widgets::isWidgetTitleId(m_editHeldTitleId)) {
-            // A game released on a folder tile goes inside it, whatever the
-            // input (touch drag, D-pad + A) and whatever the layout. The folder
-            // then opens on the moved tile. Keeping the move alive here used to
-            // strand the gesture — the drag flags were cleared on touch-up while
-            // the ghost stayed afloat with no bound icon, so the tile could not
-            // be picked up again.
-            const std::uint32_t folderId = targetEntry.folderId;
-            const std::uint64_t titleId = m_editHeldTitleId;
-            const int originSlot = m_editOriginRootSlot;
-            if (!m_folderStore.placeTitle(folderId, titleId, 0) ||
-                !saveFoldersOrReport("place_in_folder")) {
-                // Folder full: reuse the carry flow so the move is not stranded
-                // — the ghost stays bound to the opened folder and B cancels it.
-                detachEditSourceIcon();
-                unbindEditActions();
-                requestOpenFolder(folderId);
-                return false;
-            }
-            // Moving a game out of another folder into this one must leave the
-            // origin folder too, or it would live in both.
-            if (m_editOriginFolderId != 0 && m_editOriginFolderId != folderId) {
-                m_folderStore.removeTitle(m_editOriginFolderId, titleId);
-                refreshFolderPeekComposite(m_editOriginFolderId);
-            }
-            if (originSlot >= 0 && originSlot < static_cast<int>(m_layoutSlots.size())) {
-                m_layoutSlots[static_cast<std::size_t>(originSlot)] = 0;
-                m_layoutDirty = true;
-            }
-            exitEditMode();
-            // Refresh the root grid first: the folder frame is captured from the
-            // current render, so the moved tile must already be gone from it.
-            // Focus lands on the folder tile, the anchor the folder returns to.
-            applyDisplayModel(buildRootFolderModel(), folderTitleId(folderId), false);
-            refreshFolderPeekComposite(folderId);
-            requestOpenFolder(folderId, titleId);
-            return true;
-        }
+        // Open the folder and keep Move mode — placement is chosen inside
+        // (same as hover-open). Auto-placing at slot 0 was a regression.
         detachEditSourceIcon();
         unbindEditActions();
         requestOpenFolder(targetEntry.folderId);
@@ -1113,9 +1307,18 @@ void WiiUMenuApp::wireFocusCallback() {
                     }
                 }
             }
-            if (m_steamGridDbBackdrop && icon->titleId() != 0
-                && icon->titleId() < kFolderTitleIdPrefix)
-                m_steamGridDbBackdrop->showTitle(icon->titleId());
+            // While carrying a title, never flash the hovered tile's hero —
+            // pin the held title before any showTitle(hover) path.
+            if (m_steamGridDbBackdrop) {
+                if (m_editMode && m_editHeldTitleId != 0
+                    && m_editHeldTitleId < kFolderTitleIdPrefix
+                    && !switchu::widgets::isWidgetTitleId(m_editHeldTitleId)) {
+                    m_steamGridDbBackdrop->showTitle(m_editHeldTitleId);
+                } else if (icon->titleId() != 0
+                           && icon->titleId() < kFolderTitleIdPrefix) {
+                    m_steamGridDbBackdrop->showTitle(icon->titleId());
+                }
+            }
             auto& i18n = nxui::I18n::instance();
             if (m_editMode) {
                 bindEditActions(icon);
@@ -1540,8 +1743,16 @@ void WiiUMenuApp::showGameContextMenu(GlossyIcon* icon) {
     game.canMove = m_openFolderId == 0;
     game.canResize = m_openFolderId == 0;
     const auto currentSize = gameGridSize(titleId, AppLayoutMode::Grid);
-    game.sizeIndex = currentSize == switchu::widgets::WidgetSize{2, 2}
-        ? 2 : (currentSize == switchu::widgets::WidgetSize{2, 1} ? 1 : 0);
+    if (currentSize == switchu::widgets::WidgetSize{2, 1})
+        game.sizeIndex = 1;
+    else if (currentSize == switchu::widgets::WidgetSize{4, 2})
+        game.sizeIndex = 2;
+    else if (currentSize == switchu::widgets::WidgetSize{2, 2})
+        game.sizeIndex = 3;
+    else if (currentSize == switchu::widgets::WidgetSize{2, 3})
+        game.sizeIndex = 4;
+    else
+        game.sizeIndex = 0;
     {
         std::error_code ec;
         game.hasHeroArt = std::filesystem::exists(
@@ -1551,6 +1762,7 @@ void WiiUMenuApp::showGameContextMenu(GlossyIcon* icon) {
             SteamGridDbManager::logoPath(titleId), ec);
         game.hasIconArt = SteamGridDbManager::hasIcon(titleId);
         game.hasPosterArt = SteamGridDbManager::hasPoster(titleId);
+        game.hasPosterWideArt = SteamGridDbManager::hasGridWide(titleId);
     }
     m_gameOptions->setGame(game);
     m_gameOptions->onMove([this]() {
@@ -1563,13 +1775,21 @@ void WiiUMenuApp::showGameContextMenu(GlossyIcon* icon) {
         m_audio.playSfx(Sfx::Activate);
     });
     m_gameOptions->onResize([this, titleId](int sizeIndex) {
-        const switchu::widgets::WidgetSize requested = sizeIndex == 2
-            ? switchu::widgets::WidgetSize{2, 2}
-            : (sizeIndex == 1 ? switchu::widgets::WidgetSize{2, 1}
-                              : switchu::widgets::WidgetSize{1, 1});
+        switchu::widgets::WidgetSize requested{1, 1};
+        switch (sizeIndex) {
+            case 1: requested = {2, 1}; break;
+            case 2: requested = {4, 2}; break;
+            case 3: requested = {2, 2}; break;
+            case 4: requested = {2, 3}; break;
+            default: break;
+        }
         m_gameSizes[titleId] = requested;
-        if (requested == switchu::widgets::WidgetSize{1, 1})
+        if (switchu::widgets::isLandscapeWideGameTile(requested)) {
             m_gameArtwork.erase(titleId);
+            ensureGameArtwork(titleId);
+        } else {
+            m_gameArtwork.erase(titleId);
+        }
         normalizeWidgetPlacements();
         m_layoutDirty = true;
         saveMenuLayout();
@@ -1577,6 +1797,14 @@ void WiiUMenuApp::showGameContextMenu(GlossyIcon* icon) {
         m_navigator.resetToHome();
         if (m_openFolderId == 0)
             applyDisplayModel(buildRootFolderModel(), titleId, false);
+        // Always re-decode after resize: 2x3 ↔ icon sizes must not keep the
+        // previous art kind (poster stuck on 1x1/2x2, or icon stuck on 2x3).
+        if (m_grid) {
+            m_iconStreamer.reloadTitle(titleId, m_grid->currentPage(),
+                                       m_grid->iconsPerPage(),
+                                       app().gpu(), app().renderer(),
+                                       m_grid->allIcons());
+        }
     });
     m_gameOptions->onCloseSoftware([this]() { m_launcher.terminateApplication(); });
     m_gameOptions->onDeleteSoftware([this, titleId, title]() {
@@ -2101,19 +2329,37 @@ void WiiUMenuApp::updateCursor() {
                                   && cur->tag() == "glossy_icon";
         // Single-row keeps the outline ring: centred scale alone is not a
         // focus cue (chrome above can own focus while a tile stays large).
+        // Grid 2x3 / 4x2 (and 2x1) need the same outside-fit: focusScale grows
+        // the drawn card past focusRect, so a pre-padded ring reads inset.
         nxui::Rect fr = movingLineFocus
             ? m_grid->focusedDisplayRect()
             : cur->focusRect();
         float corner = m_theme.cursorCornerRadius;
+        const bool glossyFocus = cur->tag() == "glossy_icon";
+        bool outsideFitCursor = movingLineFocus;
+        if (!outsideFitCursor && glossyFocus && !m_editMode) {
+            auto* icon = static_cast<GlossyIcon*>(cur);
+            const int cols = icon->gridSpanColumns();
+            const int rows = icon->gridSpanRows();
+            const bool tallPosterTile =
+                (cols == 2 && rows == 3) || (cols == 1 && rows == 2);
+            outsideFitCursor = tallPosterTile
+                || switchu::widgets::isLandscapeWideGameTile(cols, rows);
+        }
         if (m_editMode && m_editGhostIcon && m_grid) {
             fr = m_grid->gridSpanRect(m_editTargetIndex,
                                       m_editGhostIcon->gridSpanColumns(),
                                       m_editGhostIcon->gridSpanRows());
-        } else if (movingLineFocus) {
+            outsideFitCursor = false;
+        } else if (outsideFitCursor && glossyFocus) {
             // GlossyIcon also applies focusScale at draw time; without it the
-            // blue ring sits inside tall posters (especially folder covers).
+            // blue ring sits inside tall/wide tiles (same as single-row posters).
+            // Grid only calls updateCursor on focus-change (not every frame), so
+            // use the focus-scale *target* — value is still ~1.0 on the gain
+            // frame and would lock an inset ring while the tile eases to 1.075.
             auto* icon = static_cast<GlossyIcon*>(cur);
-            const float fs = icon->focusScaleValue();
+            const float fs = std::max(icon->focusScaleValue(),
+                                      icon->focusScaleTarget());
             if (fs > 1.001f) {
                 const float w = fr.width * fs;
                 const float h = fr.height * fs;
@@ -2130,19 +2376,25 @@ void WiiUMenuApp::updateCursor() {
         // carousel's far-right ghost position.
         const bool carouselScrolling = movingLineFocus
                                     && (morphing || m_grid->isDynamicLineScrolling());
-        const float dur = (carouselScrolling || morphJustEnded) ? 0.f : 0.2f;
-        if (movingLineFocus) {
+        const bool snap = m_snapHomeFocus || m_leaveCaptureLockCursor
+                       || m_forceCursorTeleport
+                       || carouselScrolling || morphJustEnded;
+        const float dur = snap ? 0.f : 0.2f;
+        if (outsideFitCursor) {
             // Card rect only — SelectionCursor expands outward like the green
-            // suspended ring (no pre-pad that insets into poster art).
+            // suspended ring (no pre-pad that insets into poster/wide art).
             m_cursor->moveTo(fr, corner, dur);
         } else {
             m_cursor->moveTo(fr.expanded(4.f), dur);
         }
         m_cursor->setVisible(true);
+        if (m_snapHomeFocus)
+            m_snapHomeFocus = false;
         if (m_grid && m_grid->isDynamicLine())
             syncSteamGridDbLogoArea();
     } else {
         m_wasLayoutMorphing = false;
         m_cursor->setVisible(false);
+        m_snapHomeFocus = false;
     }
 }

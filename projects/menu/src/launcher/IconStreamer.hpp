@@ -32,6 +32,12 @@ public:
     // Prepare icon metadata for all apps after the app list has been fetched.
     void init(int appCount);
     void setIconDataLoader(IconDataLoader loader);
+    /// Per-title poster preference (e.g. 2x3 grid tiles) layered on top of the
+    /// global single-row poster flag. Queried during decode scheduling.
+    using PreferPosterQuery = std::function<bool(std::uint64_t)>;
+    void setPreferPosterQuery(PreferPosterQuery query) {
+        m_preferPosterQuery = std::move(query);
+    }
     // Prefer tall Poster files vs square icons. When the preference flips,
     // compressed bytes are dropped and loaded GPU textures are marked stale so
     // the next onPageChanged() can swap art in place without blanking tiles.
@@ -65,6 +71,10 @@ public:
                      nxui::GpuDevice& gpu, nxui::Renderer& ren,
                      const std::vector<std::shared_ptr<GlossyIcon>>& allIcons);
 
+    /// Drop cached compressed bytes for one title so the next page stream
+    /// re-reads via the icon data loader (e.g. 2x3 grid tiles switching to poster).
+    void invalidateTitleArt(uint64_t titleId);
+
     // Temporarily allow more decodes and uploads per frame, e.g. right after a
     // fast HOME return so the visible page fills in at once instead of one icon
     // per frame. Reverts to the normal limits by itself.
@@ -75,6 +85,21 @@ public:
     void startSoftLanding(float tightSeconds, int tightRadius = 2,
                           float widenSeconds = 0.f, int widenRadius = 3);
     bool softLandingActive() const { return inSoftLanding(); }
+
+    // Cap neighbor page radius while Frame Tap viewer light path is active.
+    // Pass <0 to clear the cap (restore normal kPageCacheRadius behavior).
+    void setPageCacheRadiusCap(int radius);
+    int pageCacheRadiusCap() const { return m_pageCacheRadiusCap; }
+
+    // Destroy GPU textures on free pool slots. onPageChanged normally keeps
+    // them for reuse; Frame Tap needs the bytes returned to process free.
+    void releaseUnusedGpuMemory();
+    // Retire at most maxCount free-slot MemBlocks (1/frame idle drip).
+    int releaseUnusedGpuMemoryDrip(int maxCount = 1);
+
+    // Hard reclaim: destroy every pool texture except keepAppIndex (−1 = none).
+    // Launch/resume path — soft eviction left ~25 MiB bound (soak 2026-10-27).
+    void releaseAllGpuExcept(int keepAppIndex);
 
     // Off-screen art prefetch for layout transitions: decode destination art
     // (poster or icon) by titleId without touching textures already shown on
@@ -109,6 +134,17 @@ public:
     bool hasData(int index)  const;
     bool needsVisibleLoads(int currentPage, int iconsPerPage) const;
 
+    // Soak inventory: bound slots vs free-with-MemBlock vs empty free.
+    struct PoolInventory {
+        int slots = 0;
+        int bound = 0;
+        int freeWithTex = 0;
+        int freeEmpty = 0;
+        std::size_t compressedBytes = 0;
+        int pendingDecodes = 0;
+    };
+    PoolInventory poolInventory() const;
+
 private:
     struct DecodeState {
         DecodedIcon decoded;
@@ -129,6 +165,7 @@ private:
     // Per-app: GPU slot still shows the previous art kind and needs a swap-in.
     std::vector<uint8_t> m_artStale;
     bool m_preferPosterArt = false;
+    PreferPosterQuery m_preferPosterQuery;
     IconDataLoader m_iconLoader;
     nxui::ThreadPool* m_threadPool = nullptr;
     std::vector<PendingDecode> m_pendingDecodes;
@@ -188,16 +225,20 @@ private:
     }
     int pageCacheRadius() const {
         const auto now = std::chrono::steady_clock::now();
-        auto clampRadius = [](int radius) {
+        auto clampRadius = [this](int radius) {
             if (radius <= 0)
                 return 0;
-            return radius < kPageCacheRadius ? radius : kPageCacheRadius;
+            int capped = radius < kPageCacheRadius ? radius : kPageCacheRadius;
+            if (m_pageCacheRadiusCap >= 0 && capped > m_pageCacheRadiusCap)
+                capped = m_pageCacheRadiusCap;
+            return capped;
         };
         if (now < m_softLandingUntil)
             return clampRadius(m_softLandingRadius);
         if (now < m_softLandingWidenUntil)
             return clampRadius(m_softLandingWidenRadius);
-        return kPageCacheRadius;
+        return clampRadius(kPageCacheRadius);
     }
+    int m_pageCacheRadiusCap = -1;
     static constexpr std::uint64_t kGpuImageReserve = 4u * 1024u * 1024u;
 };

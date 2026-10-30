@@ -1015,6 +1015,8 @@ void TabbedOverlayScreen::handleTouch(nxui::Input& input) {
                         int rawIdx = rawIndexFromFocusable(m_touchHitIndex);
                         auto& item = m_tabs[m_tabIndex].items[rawIdx];
                         if (item.type == ItemType::Toggle) {
+                            if (!item.enabled)
+                                break;
                             item.boolVal = !item.boolVal;
                             item.anim01 = item.boolVal ? 1.f : 0.f;
                             if (item.onChange) item.onChange(item);

@@ -62,6 +62,9 @@ struct AppConfig {
     // Colour HOME chrome icons follow single-row hero light/dark chrome when on
     // (Theme > Options). Default on — matches pre-PoloNX enjoyment.
     bool iconContrastAdapt = true;
+    // Battery Saver = user-forced lite HOME path (same reclaim as Frame Tap
+    // coexistence). Quick Settings + Theme Shop → Interface, synced.
+    bool batterySaver = false;
     // Theme Shop → Options: applying a theme with bundled music.
     // Override on = replace the current playlist (legacy). Off = keep the
     // user's library; optionally append theme tracks and/or start them.

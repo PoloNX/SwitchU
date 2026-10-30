@@ -483,6 +483,7 @@ std::string SteamGridDbPickerScreen::kindLabel() const {
     return m_result.kind == SteamGridDbManager::ArtworkKind::Hero ? "Hero"
          : m_result.kind == SteamGridDbManager::ArtworkKind::Logo ? "Logo"
          : m_result.kind == SteamGridDbManager::ArtworkKind::Poster ? "Poster"
+         : m_result.kind == SteamGridDbManager::ArtworkKind::GridWide ? "Poster wide"
          : "Icon";
 }
 

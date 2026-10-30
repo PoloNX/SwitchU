@@ -19,9 +19,10 @@ constexpr std::uint32_t kArtworkCacheMagic = 0x43415553; // "SUAC"
 constexpr std::uint32_t kArtworkCacheVersion = 1;
 
 // Decoded fit RGBA in RAM so neighbour poster warm after layout morph skips
-// repeated SD .fit320x480.rgba-cache reads (~10–30ms each). ~16×320×480×4 ≈ 9.4MB.
-constexpr std::size_t kFitRamMaxEntries = 16;
-constexpr std::size_t kFitRamMaxBytes = 10ull * 1024ull * 1024ull;
+// repeated SD .fit320x480.rgba-cache reads (~10–30ms each). Disk cache remains.
+// Cap ~4 MiB / 6 entries (was 10 MiB / 16) — MEMORY_OPTIMIZATION_PLAN.
+constexpr std::size_t kFitRamMaxEntries = 6;
+constexpr std::size_t kFitRamMaxBytes = 4ull * 1024ull * 1024ull;
 
 struct ArtworkCacheHeader {
     std::uint32_t magic = kArtworkCacheMagic;

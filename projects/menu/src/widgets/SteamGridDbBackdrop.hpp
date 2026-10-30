@@ -25,6 +25,9 @@ public:
     // titles known to have none) so the next showTitle() re-reads the card.
     // Needed whenever SteamGridDB settings change what is available.
     void invalidateArtworkCaches();
+    // Destroy hero/logo MemBlocks (FT NeedHeadroom). invalidateArtworkCaches
+    // alone keeps GPU textures alive for crossfade reuse.
+    void releaseGpuArtwork();
     void setLayoutMode(AppLayoutMode mode) { m_layoutMode = mode; }
     // True when a hero texture is on-screen at meaningful opacity.
     bool hasDisplayedHero() const;
@@ -108,7 +111,9 @@ private:
     std::vector<DecodedArtwork> m_decodedCache;
     int m_uploadStage = 0;
     bool m_waitForGpuBeforeUpload = false;
-    float m_preloadMinInterval = 0.f;
+    // Cruise neighbour warm (~0.9 MiB hero reads). 0 = as soon as free (too
+    // aggressive on SD while browsing single-row with heroes).
+    float m_preloadMinInterval = 0.35f;
     float m_preloadGapSec = 0.f;
     bool m_preloadPaused = false;
     AppLayoutMode m_layoutMode = AppLayoutMode::Grid;

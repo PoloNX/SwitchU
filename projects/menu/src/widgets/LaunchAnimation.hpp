@@ -15,10 +15,14 @@ public:
     LaunchAnimation() = default;
 
     // Cold launch: zoom to center, hold, fade, then black, then launch.
+    // When preservePosterAspect is set, remap `from` to a 2:3 frame (same as
+    // single-row posters) so grid 2x3 cells that are not exactly 2:3 don't
+    // squash the art during the zoom.
     void start(const nxui::Rect& from, const nxui::Texture* tex, float cornerRadius,
                const nxui::Color& panelColor, const nxui::Color& borderColor,
                uint64_t titleId, AccountUid uid,
-               LaunchCallback onLaunch = {}, nxui::VoidCallback onDone = {});
+               LaunchCallback onLaunch = {}, nxui::VoidCallback onDone = {},
+               bool preservePosterAspect = false);
 
     // Resume an already-open title: brief fade to black, then onDone.
     void startResume(nxui::VoidCallback onDone);

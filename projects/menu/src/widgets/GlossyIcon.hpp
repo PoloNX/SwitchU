@@ -125,6 +125,8 @@ public:
         m_wideGameHero = hero;
         m_wideGameLogo = logo;
     }
+    nxui::Texture* wideGameHero() const { return m_wideGameHero; }
+    nxui::Texture* wideGameLogo() const { return m_wideGameLogo; }
     int gridSpanColumns() const { return m_widgetColumns; }
     int gridSpanRows() const { return m_widgetRows; }
 
@@ -150,6 +152,7 @@ public:
     void onFocusLost() override;
     /// Live focus pop applied at draw time (SelectionCursor must match this).
     float focusScaleValue() const { return m_focusScale.value(); }
+    float focusScaleTarget() const { return m_focusScale.target(); }
 
 protected:
     void onRender(nxui::Renderer& ren) override;

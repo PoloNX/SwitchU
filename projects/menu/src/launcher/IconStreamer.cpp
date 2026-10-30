@@ -8,6 +8,7 @@
 #include <chrono>
 #include <cstring>
 #include <future>
+#include <limits>
 #include <unordered_map>
 
 namespace {
@@ -345,6 +346,80 @@ void IconStreamer::startBurst(float seconds) {
         std::chrono::milliseconds(static_cast<int>(seconds * 1000.f));
 }
 
+void IconStreamer::setPageCacheRadiusCap(int radius) {
+    m_pageCacheRadiusCap = radius;
+    DebugLog::log("[streamer] page-cache radius cap=%d", radius);
+}
+
+IconStreamer::PoolInventory IconStreamer::poolInventory() const {
+    PoolInventory inv;
+    inv.slots = (int)m_pool.size();
+    inv.pendingDecodes = (int)m_pendingDecodes.size();
+    for (const auto& slot : m_pool) {
+        if (!slot)
+            continue;
+        if (slot->appIndex >= 0)
+            ++inv.bound;
+        else if (slot->texture.valid())
+            ++inv.freeWithTex;
+        else
+            ++inv.freeEmpty;
+    }
+    for (const auto& bytes : m_compressed)
+        inv.compressedBytes += bytes.size();
+    return inv;
+}
+
+void IconStreamer::releaseUnusedGpuMemory() {
+    const int released = releaseUnusedGpuMemoryDrip(std::numeric_limits<int>::max());
+    if (released > 0)
+        DebugLog::log("[streamer] released %d unused GPU textures for FT headroom", released);
+}
+
+int IconStreamer::releaseUnusedGpuMemoryDrip(int maxCount) {
+    if (maxCount <= 0)
+        return 0;
+    int released = 0;
+    for (auto& slot : m_pool) {
+        if (released >= maxCount)
+            break;
+        if (!slot || slot->appIndex >= 0 || !slot->texture.valid())
+            continue;
+        // Move-assign empty Texture → retireGpuResources() (waitIdle + free).
+        slot->texture = nxui::Texture{};
+        ++released;
+    }
+    return released;
+}
+
+void IconStreamer::releaseAllGpuExcept(int keepAppIndex) {
+    clearPinnedIndex();
+    int released = 0;
+    m_freeSlots.clear();
+    for (int i = 0; i < (int)m_pool.size(); ++i) {
+        auto& slot = m_pool[(size_t)i];
+        if (!slot)
+            continue;
+        const int app = slot->appIndex;
+        if (app >= 0 && app == keepAppIndex) {
+            if (app < (int)m_appToSlot.size())
+                m_appToSlot[(size_t)app] = i;
+            continue;
+        }
+        if (app >= 0 && app < (int)m_appToSlot.size())
+            m_appToSlot[(size_t)app] = -1;
+        slot->appIndex = -1;
+        if (slot->texture.valid()) {
+            slot->texture = nxui::Texture{};
+            ++released;
+        }
+        m_freeSlots.push_back(i);
+    }
+    cancelPending();
+    DebugLog::log("[streamer] hard-released %d GPU textures (kept app=%d) for FT",
+                  released, keepAppIndex);
+}
+
 void IconStreamer::startSoftLanding(float tightSeconds, int tightRadius,
                                     float widenSeconds, int widenRadius) {
     const auto now = std::chrono::steady_clock::now();
@@ -380,8 +455,11 @@ void IconStreamer::onPageChanged(int currentPage, int iconsPerPage,
     int visibleEndApp   = std::min(totalApps, visibleStartApp + iconsPerPage);
     // Soft-landing can temporarily shrink the single-row radius so post-HOME
     // SD work does not stack on the first interactive seconds. Grid stays ±1.
-    const int cacheRadius = iconsPerPage == 1
-        ? pageCacheRadius() : kGridPageCacheRadius;
+    // Single-row uses soft-landing / light-path caps. Grid stays ±1 unless a
+    // light/launch cap shrinks it further (cap 0 = focused page only).
+    int cacheRadius = iconsPerPage == 1 ? pageCacheRadius() : kGridPageCacheRadius;
+    if (m_pageCacheRadiusCap >= 0 && cacheRadius > m_pageCacheRadiusCap)
+        cacheRadius = m_pageCacheRadiusCap;
     int cacheStartPage  = std::max(0, currentPage - cacheRadius);
     int cacheEndPage    = std::min(totalPages - 1, currentPage + cacheRadius);
     int cacheStartApp   = cacheStartPage * iconsPerPage;
@@ -569,7 +647,9 @@ void IconStreamer::onPageChanged(int currentPage, int iconsPerPage,
 
         auto state = std::make_shared<DecodeState>();
         IconDataLoader loader = m_iconLoader;
-        const bool preferPoster = m_preferPosterArt;
+        PreferPosterQuery preferQuery = m_preferPosterQuery;
+        const bool preferPoster = m_preferPosterArt
+            || (preferQuery && preferQuery(titleId));
         auto work = [state, titleId, loader, preferPoster,
                      compressed = std::move(compressed)]() mutable {
             if (state->cancelled.load())
@@ -578,6 +658,9 @@ void IconStreamer::onPageChanged(int currentPage, int iconsPerPage,
                 state->decoded = decodePosterFromCache(titleId);
                 if (!state->decoded.rgba.empty())
                     return;
+                // Wrong-kind square bytes must not win over a missing poster
+                // fallback — reload via the loader (which may still prefer poster).
+                compressed.clear();
             }
             if (compressed.empty() && loader)
                 compressed = loader(titleId);
@@ -667,6 +750,7 @@ void IconStreamer::startShadowPrefetch(bool preferPoster,
     if (!loader)
         return;
 
+    PreferPosterQuery preferQuery = m_preferPosterQuery;
     std::unordered_map<std::uint64_t, bool> seen;
     m_shadowPrefetch.reserve(titleIds.size());
     for (const std::uint64_t titleId : titleIds) {
@@ -678,12 +762,14 @@ void IconStreamer::startShadowPrefetch(bool preferPoster,
         entry.titleId = titleId;
         entry.state = std::make_shared<DecodeState>();
         auto state = entry.state;
-        auto work = [state, titleId, loader, preferPoster]() {
+        const bool titlePreferPoster = preferPoster
+            || (preferQuery && preferQuery(titleId));
+        auto work = [state, titleId, loader, titlePreferPoster]() {
             const auto started = std::chrono::steady_clock::now();
             if (state->cancelled.load())
                 return;
             const char* source = "jpeg";
-            if (preferPoster) {
+            if (titlePreferPoster) {
                 state->decoded = decodePosterFromCache(titleId);
                 if (!state->decoded.rgba.empty()) {
                     source = "fit-cache";
@@ -863,6 +949,28 @@ void IconStreamer::installShadowPrefetch(
     m_lastIconsPerPage = -1;
 }
 
+void IconStreamer::invalidateTitleArt(uint64_t titleId) {
+    if (titleId == 0)
+        return;
+    const auto found = std::find(m_titleIds.begin(), m_titleIds.end(), titleId);
+    if (found == m_titleIds.end())
+        return;
+    const int appIndex = static_cast<int>(found - m_titleIds.begin());
+    for (auto& pending : m_pendingDecodes) {
+        if (pending.titleId == titleId && pending.state)
+            pending.state->cancelled.store(true);
+    }
+    if (appIndex < static_cast<int>(m_compressed.size()))
+        m_compressed[static_cast<std::size_t>(appIndex)].clear();
+    if (appIndex < static_cast<int>(m_artStale.size()))
+        m_artStale[static_cast<std::size_t>(appIndex)] = 1;
+    m_failedTitleIds.erase(
+        std::remove(m_failedTitleIds.begin(), m_failedTitleIds.end(), titleId),
+        m_failedTitleIds.end());
+    m_lastPage = -1;
+    m_lastIconsPerPage = -1;
+}
+
 void IconStreamer::reloadTitle(
     uint64_t titleId, int currentPage, int iconsPerPage,
     nxui::GpuDevice& gpu, nxui::Renderer& ren,
@@ -880,6 +988,8 @@ void IconStreamer::reloadTitle(
         m_failedTitleIds.end());
     if (appIndex < static_cast<int>(m_compressed.size()))
         m_compressed[(size_t)appIndex].clear();
+    if (appIndex < static_cast<int>(m_artStale.size()))
+        m_artStale[(size_t)appIndex] = 1;
 
     const int slotIndex = appIndex < static_cast<int>(m_appToSlot.size())
         ? m_appToSlot[(size_t)appIndex] : -1;

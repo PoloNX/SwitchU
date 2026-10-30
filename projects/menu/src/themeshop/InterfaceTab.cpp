@@ -15,6 +15,52 @@ ThemeShopScreen::Tab themeshop::tabs::InterfaceTab::build(ThemeShopScreen& scree
 
     {
         SettingItem it;
+        const bool ft = screen.m_frameTapLiteEngaged;
+        it.label = ft
+            ? i18n.tr("themeshop.options.frame_tap_engaged", "Frame Tap Engaged")
+            : i18n.tr("themeshop.options.battery_saver", "Battery Saver");
+        it.description = ft
+            ? i18n.tr("themeshop.options.frame_tap_engaged_desc",
+                      "Lite mode is held while Frame Tap is streaming. "
+                      "Disconnect the viewer to change Battery Saver.")
+            : i18n.tr("themeshop.options.battery_saver_desc",
+                      "Lighten HOME memory and GPU use. Also available in Quick Settings.");
+        it.type = ItemType::Toggle;
+        it.enabled = !ft;
+        it.boolVal = screen.m_batterySaver || ft;
+        it.anim01 = it.boolVal ? 1.f : 0.f;
+        it.onChange = [&screen](SettingItem& self) {
+            if (screen.m_frameTapLiteEngaged)
+                return;
+            screen.m_batterySaver = self.boolVal;
+            if (screen.m_batterySaverCb) screen.m_batterySaverCb(self.boolVal);
+        };
+        t.items.push_back(std::move(it));
+    }
+
+    t.onUpdate = [&screen](Tab& tab, TabbedOverlayScreen&) {
+        if (tab.items.empty())
+            return;
+        auto& it = tab.items[0];
+        auto& i18n = nxui::I18n::instance();
+        const bool ft = screen.m_frameTapLiteEngaged;
+        const bool wantOn = screen.m_batterySaver || ft;
+        it.enabled = !ft;
+        it.boolVal = wantOn;
+        it.anim01 = wantOn ? 1.f : 0.f;
+        it.label = ft
+            ? i18n.tr("themeshop.options.frame_tap_engaged", "Frame Tap Engaged")
+            : i18n.tr("themeshop.options.battery_saver", "Battery Saver");
+        it.description = ft
+            ? i18n.tr("themeshop.options.frame_tap_engaged_desc",
+                      "Lite mode is held while Frame Tap is streaming. "
+                      "Disconnect the viewer to change Battery Saver.")
+            : i18n.tr("themeshop.options.battery_saver_desc",
+                      "Lighten HOME memory and GPU use. Also available in Quick Settings.");
+    };
+
+    {
+        SettingItem it;
         it.label = i18n.tr("settings.display.grid_columns", "Home Grid Columns");
         it.type = ItemType::Slider;
         it.sliderSteps = 7;

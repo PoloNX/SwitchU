@@ -447,7 +447,12 @@ bool WiiUMenuApp::presentInitialFrame(nxui::Renderer& ren) {
     if (LeaveFrameCache::load(m_leaveSession, image) && image.valid()
         && m_leaveSplashTex.loadFromPixels(app().gpu(), ren,
                                            image.rgba.data(), image.width, image.height)) {
-        ren.drawTexture(&m_leaveSplashTex, {0.f, 0.f, 1280.f, 720.f});
+        // Micro scale punch starts at 1.02× (eases to 1.0 over hold+fade).
+        constexpr float kPunch = 1.02f;
+        const float w = 1280.f * kPunch;
+        const float h = 720.f * kPunch;
+        ren.drawTexture(&m_leaveSplashTex,
+                        {(1280.f - w) * 0.5f, (720.f - h) * 0.5f, w, h});
         m_leaveSplashDrawn = true;
         m_leaveSplashPhase = LeaveSplashPhase::Hold;
         m_leaveSplashHoldRemaining = kLeaveSplashHoldDur;
@@ -460,11 +465,12 @@ bool WiiUMenuApp::presentInitialFrame(nxui::Renderer& ren) {
         return true;
     }
 
-    // No cached frame ΓÇö still avoid pure black while onCreate runs.
+    // No cached frame — still avoid pure black while onCreate runs.
     ren.drawRect({0.f, 0.f, 1280.f, 720.f}, nxui::Color(0.07f, 0.12f, 0.18f, 1.f));
     m_leaveSplashDrawn = true;
     m_leaveSplashPhase = LeaveSplashPhase::None;
     m_leaveSplashFade = 0.f;
+    releaseLeaveSplashGpu("fallback");
     DebugLog::log("[leave] splash fallback solid");
     return true;
 #else
@@ -569,17 +575,17 @@ void WiiUMenuApp::previewLeaveCaptureTitle(std::uint64_t titleId) {
     // grid (root page or open folder). Never open a folder here — that would
     // fight the splash composition.
     const int idx = findTitleIndex(titleId);
-    if (idx < 0 || !m_grid->focusGlobalIndex(idx))
+    if (idx < 0 || !m_grid->focusGlobalIndex(idx, /*instant=*/true))
         return;
 
     if (auto* cur = m_grid->focusManager().current()) {
         focusManager().setFocus(cur);
-        if (m_cursor) {
-            // Snap immediately so the captured splash does not bake in a
-            // mid-tween blue ring still sitting on the previous title.
-            m_cursor->moveTo(cur->focusRect().expanded(4.f), 0.f);
-            m_cursor->setVisible(true);
-        }
+        // Always Teleport for leave-capture — Translate would bake a mid-journey
+        // blue ring into the splash even when Cursor movement is Translate.
+        beginForcedCursorTeleport();
+        m_leaveCaptureLockCursor = true;
+        m_snapHomeFocus = true;
+        updateCursor();
     }
 }
 
@@ -614,14 +620,23 @@ bool WiiUMenuApp::saveLeaveFrame(nxui::Renderer& ren) {
     std::vector<std::uint8_t> rgba;
     int width = 0;
     int height = 0;
-    if (!ren.downloadFramebufferRgba(rgba, width, height, false)) {
+    // Half-res (~640×360): ~4× smaller GPU/disk splash; stretch-draw is fine
+    // for the brief leave crossfade (MEMORY_OPTIMIZATION_PLAN).
+    if (!ren.downloadFramebufferRgba(rgba, width, height, true)) {
         DebugLog::log("[leave] framebuffer download failed");
         m_leaveCaptureFocusTitleId = 0;
+        m_leaveCaptureLockCursor = false;
+        endForcedCursorTeleport();
         return false;
     }
 
     const LeaveFrameSession session = captureLeaveSession();
     m_leaveCaptureFocusTitleId = 0;
+    m_leaveCaptureLockCursor = false;
+    // Keep forced teleport through leave-splash folder restore; splash handoff
+    // clears it when HOME is interactive again.
+    if (!leaveSplashActive())
+        endForcedCursorTeleport();
     if (!LeaveFrameCache::save(session, rgba.data(), width, height)) {
         DebugLog::log("[leave] cache write failed");
         return false;
@@ -663,13 +678,11 @@ void WiiUMenuApp::restoreLeaveSession() {
         // Do NOT openCapturedFolder here — HUD/header/sidebars/offscreen blur
         // are not built yet. Defer through requestOpenFolder after layers exist
         // so the frosted root capture runs under the leave splash.
+        // Do NOT focus the folder tile on root either — that plants the blue
+        // ring on the HOME slot and forces a Translate into the open folder.
         m_leaveRestoreFolderId = session.openFolderId;
         m_leaveRestoreFolderFocus = session.focusTitleId;
-        const int folderIdx = findTitleIndex(folderTitleId(session.openFolderId));
-        if (folderIdx >= 0 && m_grid->focusGlobalIndex(folderIdx)) {
-            if (auto* focused = m_grid->focusManager().current())
-                focusManager().setFocus(focused);
-        }
+        beginForcedCursorTeleport();
         DebugLog::log("[leave] deferred folder restore id=%u focus=%016lX",
                       session.openFolderId,
                       static_cast<unsigned long>(session.focusTitleId));
@@ -743,6 +756,7 @@ void WiiUMenuApp::updateLeaveSplashHandoff(float dt) {
         if (m_leaveSplashFade <= 0.f) {
             m_leaveSplashFade = 0.f;
             m_leaveSplashPhase = LeaveSplashPhase::None;
+            releaseLeaveSplashGpu("fade-done");
             setLeaveMotionFrozen(false);
             // Leave-restore can open the folder before the grid has its final
             // content rect; re-anchor glass + title once HOME is interactive.
@@ -770,7 +784,9 @@ void WiiUMenuApp::updateLeaveSplashHandoff(float dt) {
                             icon->forceVisible();
                     }
                 }
-                updateCursor();
+                beginForcedCursorTeleport();
+                snapCursorToFocus();
+                endForcedCursorTeleport();
                 DebugLog::log("[focus] splash handoff pin=%016lX cur=%s gridIdx=%d",
                               static_cast<unsigned long>(pin),
                               focusManager().current()
@@ -784,22 +800,33 @@ void WiiUMenuApp::updateLeaveSplashHandoff(float dt) {
             if (preferSingleRowPosters()) {
                 m_deferBackdropPreloadSec = 2.0f;
                 m_returnPreloadPaceSec = 4.0f; // paced heroes past defer
-                m_iconStreamer.startSoftLanding(2.0f, 2, 1.75f, 3);
+                // With an FT viewer, stay at ±2 (light path); don't widen to 3
+                // and refill past what launch reclaim just freed.
+                m_frameTapStatus.probe(0.f, 0.f);
+                if (m_frameTapStatus.viewerConnected())
+                    m_iconStreamer.startSoftLanding(2.0f, 2, 0.f, kFrameTapLightBrowseRadius);
+                else
+                    m_iconStreamer.startSoftLanding(2.0f, 2, 1.75f, 3);
                 if (m_steamGridDbBackdrop)
                     m_steamGridDbBackdrop->setPreloadMinInterval(0.45f);
             }
             if (m_armFolderCoverFillAfterSplash) {
                 m_armFolderCoverFillAfterSplash = false;
-                // Composites are disk/async — start immediately (no soft-land wait).
                 m_pendingFolderCoverFill = false;
                 m_folderCoverFillDelayFrames = 0;
                 m_pendingFolderCoverNext = 0;
                 m_pendingFolderCoverSkipRadius = -1;
-                warmFolderCompositesEarly();
+                // FT light: skip folder covers entirely (user rule + inventory).
+                m_frameTapStatus.probe(0.f, 0.f);
+                if (m_frameTapLightActive || m_frameTapStatus.viewerConnected())
+                    clearFolderCoversForFrameTapLight();
+                else
+                    warmFolderCompositesEarly();
             }
             // Splash is gone — stop treating later rebuilds as soft-return.
             m_fastReturnRequested = false;
             const auto handoffArt = std::chrono::steady_clock::now();
+            // No-ops / clears heroes while lite (gated inside).
             showFocusedSteamGridDbArtwork();
             DebugLog::log("[leave] splash handoff complete art=%ldms fillDelay=%d softLand=2.00+1.75 pace=%.2f",
                           static_cast<long>(std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -817,7 +844,33 @@ bool WiiUMenuApp::onCreate() {
             armTicksToNs(armGetSystemTick() - initStartTick) / 1'000'000ULL);
     };
     DebugLog::log("[init] onCreate enter");
+    // FT's NeedHeadroom 2s window starts as soon as 100D is up — handshake
+    // here before catalog/streamer fill so cold boot / first HOME can ACK.
+    m_frameTapStatus.probe(0.f, 0.f);
+    if (m_frameTapStatus.needsHeadroom()) {
+        reclaimForFrameTapLaunch("need-headroom");
+        u32 freeKb = 0;
+#ifdef NXUI_BACKEND_DEKO3D
+        u64 total = 0, used = 0;
+        if (R_SUCCEEDED(svcGetInfo(&total, InfoType_TotalMemorySize, CUR_PROCESS_HANDLE, 0)) &&
+            R_SUCCEEDED(svcGetInfo(&used, InfoType_UsedMemorySize, CUR_PROCESS_HANDLE, 0)) &&
+            total > used)
+            freeKb = static_cast<u32>((total - used) / 1024ull);
+#endif
+        m_frameTapStatus.ackHeadroom(freeKb);
+        m_ftHeadroomHoldActive = true;
+        m_ftHeadroomHoldSec = 0.f;
+        m_ftRemountBrowseRestored = false;
+        DebugLog::log("[ft-light] early-ACK free=%uKB (pre-fill)", freeKb);
+    } else if (m_frameTapStatus.viewerConnected()) {
+        enterFrameTapLightPath("viewer-prefill");
+    }
     m_iconStreamer.setThreadPool(&m_threadPool);
+    // Per-title poster (2x3 grid tiles) even when the global single-row flag
+    // is off — including Battery Saver / Frame Tap lite.
+    m_iconStreamer.setPreferPosterQuery([this](uint64_t titleId) {
+        return preferPosterIconData(titleId);
+    });
     m_config.load();
     m_appLayoutMode = m_config.appLayoutMode;
     loadMenuLayout();
@@ -1667,8 +1720,14 @@ void WiiUMenuApp::loadMenuLayout() {
             if (!hexToTitleId(encoded, titleId) || titleId == 0) continue;
             const int columns = item.value("columns", 1);
             const int rows = item.value("rows", 1);
+            // 3x2 retired (wide SGDB grid cropped poorly) — fold into 2x2.
+            if (columns == 3 && rows == 2) {
+                m_gameSizes[titleId] = {2, 2};
+                continue;
+            }
             if ((columns == 1 && rows == 1) ||
-                (columns == 2 && (rows == 1 || rows == 2)))
+                (columns == 2 && (rows == 1 || rows == 2 || rows == 3)) ||
+                (columns == 4 && rows == 2))
                 m_gameSizes[titleId] = {columns, rows};
         }
     }
@@ -1731,9 +1790,13 @@ switchu::widgets::WidgetSize WiiUMenuApp::gameGridSize(
     const auto found = m_gameSizes.find(titleId);
     if (found == m_gameSizes.end()) return {1, 1};
     const auto size = found->second;
-    if ((size.columns == 2 && (size.rows == 1 || size.rows == 2)) ||
-        (size.columns == 1 && size.rows == 1))
+    if ((size.columns == 1 && size.rows == 1) ||
+        (size.columns == 2 && (size.rows == 1 || size.rows == 2 || size.rows == 3)) ||
+        (size.columns == 4 && size.rows == 2))
         return size;
+    // Legacy 3x2 → 2x2 so saved layouts keep a multi-cell tile without wide art.
+    if (size.columns == 3 && size.rows == 2)
+        return {2, 2};
     return {1, 1};
 }
 
@@ -2378,7 +2441,7 @@ void WiiUMenuApp::completeDisplayModelApply(
 
     const bool preferPoster = preferSingleRowPosters();
     m_iconStreamer.setIconDataLoader([this](uint64_t titleId) {
-        return AppListLoader::loadIconData(titleId, preferSingleRowPosters());
+        return AppListLoader::loadIconData(titleId, preferPosterIconData(titleId));
     });
     m_grid->setLinePosterAspect(preferPoster);
 
@@ -2487,6 +2550,15 @@ void WiiUMenuApp::completeDisplayModelApply(
         m_grid->rebindLayoutMorphAnchor();
     if (artKindChanged)
         m_iconStreamer.startBurst(0.85f);
+    // 2x3 tiles always want poster when available — drop prefetch icon bytes
+    // so the loader can supply poster even with single-row posters disabled.
+    if (m_appLayoutMode == AppLayoutMode::Grid) {
+        for (int i = 0; i < m_model.count(); ++i) {
+            const auto& entry = m_model.at(i);
+            if (entry.isApplication() && preferPosterIconData(entry.titleId))
+                m_iconStreamer.invalidateTitleArt(entry.titleId);
+        }
+    }
     {
         int page = 0, pageSize = 1;
         if (m_appLayoutMode == AppLayoutMode::DynamicLine) {
@@ -2809,15 +2881,28 @@ void WiiUMenuApp::startNextGameArtworkDecode() {
     m_gameArtworkDecode = state;
     const std::string heroPath = SteamGridDbManager::heroPath(titleId);
     const std::string logoPath = SteamGridDbManager::logoPath(titleId);
-    m_gameArtworkFuture = m_threadPool.submit([state, heroPath, logoPath]() {
+    const std::string gridWidePath = SteamGridDbManager::gridWidePath(titleId);
+    m_gameArtworkFuture = m_threadPool.submit(
+        [state, heroPath, logoPath, gridWidePath]() {
         const auto started = std::chrono::steady_clock::now();
         std::error_code error;
-        if (std::filesystem::is_regular_file(heroPath, error) &&
+        bool usedGridWide = false;
+        // Prefer landscape SGDB grid for 2x1 / 4x2 tiles when present.
+        if (std::filesystem::is_regular_file(gridWidePath, error) &&
+            !state->cancelled.load()) {
+            state->hero = steamgriddb::artwork::decode(gridWidePath, 460, 215, true);
+            usedGridWide = !state->hero.rgba.empty();
+        }
+        error.clear();
+        if (!usedGridWide &&
+            std::filesystem::is_regular_file(heroPath, error) &&
             !state->cancelled.load()) {
             state->hero = steamgriddb::artwork::decode(heroPath, 640, 360, true);
         }
         error.clear();
-        if (std::filesystem::is_regular_file(logoPath, error) &&
+        // Grid-wide art is a complete card face — skip logo overlay.
+        if (!usedGridWide &&
+            std::filesystem::is_regular_file(logoPath, error) &&
             !state->cancelled.load()) {
             state->logo = steamgriddb::artwork::decode(logoPath, 384, 192, false);
         }
@@ -2831,14 +2916,18 @@ void WiiUMenuApp::startNextGameArtworkDecode() {
 
 void WiiUMenuApp::syncGameArtworkTextures(std::uint64_t titleId) {
     if (!m_grid) return;
+    // Wide faces are grid-only; single-row always uses poster/icon via streamer.
+    if (m_appLayoutMode != AppLayoutMode::Grid) return;
     const auto artwork = m_gameArtwork.find(titleId);
     if (artwork == m_gameArtwork.end()) return;
     for (const auto& icon : m_grid->allIcons()) {
         if (icon && icon->entryKind() == GridEntryKind::Application &&
-            icon->titleId() == titleId && icon->gridSpanColumns() > 1 &&
-            icon->gridSpanRows() == 1) {
-            icon->setWideGameTextures(artwork->second.hero.get(),
-                                      artwork->second.logo.get());
+            icon->titleId() == titleId) {
+            const int cols = icon->gridSpanColumns();
+            const int rows = icon->gridSpanRows();
+            if (switchu::widgets::isLandscapeWideGameTile(cols, rows))
+                icon->setWideGameTextures(artwork->second.hero.get(),
+                                          artwork->second.logo.get());
         }
     }
 }
@@ -2989,18 +3078,70 @@ bool WiiUMenuApp::layoutFitsAt(const std::vector<std::uint64_t>& slots,
     const int rows = std::clamp(m_config.gridRows, 1, 5);
     const int perPage = std::max(1, columns * rows);
     const int local = anchor % perPage;
-    if (local % columns + std::max(1, size.columns) > columns ||
-        local / columns + std::max(1, size.rows) > rows)
+    size.columns = std::max(1, size.columns);
+    size.rows = std::max(1, size.rows);
+    if (local % columns + size.columns > columns ||
+        local / columns + size.rows > rows)
         return false;
-    for (int dy = 0; dy < std::max(1, size.rows); ++dy) {
-        for (int dx = 0; dx < std::max(1, size.columns); ++dx) {
+
+    // Ids live only on the anchor cell — resolve the real owner of each cell
+    // (no heap alloc; layoutFitsAt is called in tight edit-mode loops).
+    for (int dy = 0; dy < size.rows; ++dy) {
+        for (int dx = 0; dx < size.columns; ++dx) {
             const int cell = anchor + dy * columns + dx;
-            if (cell >= static_cast<int>(slots.size()) ||
-                slots[static_cast<std::size_t>(cell)] != 0)
+            if (cell >= static_cast<int>(slots.size()))
+                return false;
+            if (layoutSpanAnchorFor(slots, cell) >= 0)
                 return false;
         }
     }
     return true;
+}
+
+int WiiUMenuApp::layoutDropAnchorFor(const std::vector<std::uint64_t>& slots,
+                                     int dropCell,
+                                     switchu::widgets::WidgetSize size) const {
+    if (dropCell < 0 || dropCell >= static_cast<int>(slots.size()))
+        return -1;
+    size.columns = std::max(1, size.columns);
+    size.rows = std::max(1, size.rows);
+    if (layoutFitsAt(slots, dropCell, size))
+        return dropCell;
+
+    const int columns = std::clamp(m_config.gridColumns, 1, 8);
+    const int rows = std::clamp(m_config.gridRows, 1, 5);
+    const int perPage = std::max(1, columns * rows);
+    const int pageStart = (dropCell / perPage) * perPage;
+    const int dropLocal = dropCell % perPage;
+    const int dropCol = dropLocal % columns;
+    const int dropRow = dropLocal / columns;
+
+    int best = -1;
+    int bestScore = std::numeric_limits<int>::max();
+    // Only top-lefts whose footprint covers dropCell. A previous "nearest
+    // empty 4x2 anywhere" fallback snapped a held 4x2 back onto its old
+    // hole when dropping onto a 2x1 — swap looked broken one direction.
+    for (int dy = 0; dy < size.rows; ++dy) {
+        for (int dx = 0; dx < size.columns; ++dx) {
+            const int anchorCol = dropCol - dx;
+            const int anchorRow = dropRow - dy;
+            if (anchorCol < 0 || anchorRow < 0)
+                continue;
+            if (anchorCol + size.columns > columns ||
+                anchorRow + size.rows > rows)
+                continue;
+            const int anchor = pageStart + anchorRow * columns + anchorCol;
+            if (!layoutFitsAt(slots, anchor, size))
+                continue;
+            const int score = std::abs(dx) + std::abs(dy) * 8
+                + std::abs(anchor - dropCell);
+            if (score < bestScore) {
+                bestScore = score;
+                best = anchor;
+            }
+        }
+    }
+    return best;
 }
 
 bool WiiUMenuApp::canPlaceGridItem(int targetSlot,
@@ -3241,8 +3382,12 @@ void WiiUMenuApp::syncWidgetPageAssets() {
     std::unordered_set<std::uint64_t> retainedGameArtwork;
     for (std::size_t i = 0; i < icons.size(); ++i) {
         const auto* icon = icons[i].get();
-        if (!icon || icon->entryKind() != GridEntryKind::Application ||
-            icon->gridSpanColumns() <= 1 || icon->gridSpanRows() != 1)
+        if (!icon || icon->entryKind() != GridEntryKind::Application)
+            continue;
+        const int cols = icon->gridSpanColumns();
+        const int rows = icon->gridSpanRows();
+        // 2x1 / 4x2 landscape tiles own hero/grid-wide GPU art.
+        if (!switchu::widgets::isLandscapeWideGameTile(cols, rows))
             continue;
         if (current[i]) {
             currentGameArtwork.insert(icon->titleId());
@@ -3293,18 +3438,29 @@ void WiiUMenuApp::syncWidgetPageAssets() {
                       static_cast<unsigned long long>(app().gpu().imageMemoryUsed()),
                       static_cast<unsigned long long>(app().gpu().imageMemoryBudget()));
     }
-    for (std::size_t i = 0; i < icons.size(); ++i) {
-        auto* icon = icons[i].get();
-        if (!icon || !current[i] ||
-            icon->entryKind() != GridEntryKind::Application ||
-            icon->gridSpanColumns() <= 1 || icon->gridSpanRows() != 1)
-            continue;
-        const auto artwork = m_gameArtwork.find(icon->titleId());
-        if (artwork != m_gameArtwork.end())
-            icon->setWideGameTextures(artwork->second.hero.get(),
-                                      artwork->second.logo.get());
-        else
-            ensureGameArtwork(icon->titleId());
+    if (m_appLayoutMode == AppLayoutMode::Grid) {
+        for (std::size_t i = 0; i < icons.size(); ++i) {
+            auto* icon = icons[i].get();
+            if (!icon || !current[i] ||
+                icon->entryKind() != GridEntryKind::Application)
+                continue;
+            const int cols = icon->gridSpanColumns();
+            const int rows = icon->gridSpanRows();
+            if (!switchu::widgets::isLandscapeWideGameTile(cols, rows))
+                continue;
+            const auto artwork = m_gameArtwork.find(icon->titleId());
+            if (artwork != m_gameArtwork.end())
+                icon->setWideGameTextures(artwork->second.hero.get(),
+                                          artwork->second.logo.get());
+            else
+                ensureGameArtwork(icon->titleId());
+        }
+    } else {
+        for (std::size_t i = 0; i < icons.size(); ++i) {
+            auto* icon = icons[i].get();
+            if (icon && icon->entryKind() == GridEntryKind::Application)
+                icon->setWideGameTextures(nullptr, nullptr);
+        }
     }
 
     if (pageChanged || transitionEnded) {
@@ -3515,9 +3671,11 @@ void WiiUMenuApp::showWidgetSizeMenu(int targetSlot, const nxui::Rect& anchor,
     std::vector<ContextMenu::Item> items;
     for (const auto size : switchu::widgets::supportedSizes(type, m_appLayoutMode)) {
         const bool available = canPlaceWidget(targetSlot, size);
-        const std::string label = std::to_string(size.columns) + "├ù"
+        // ASCII "x" — UTF-8 × was mojibaked in source and showed as ├ù.
+        const std::string label = std::to_string(size.columns) + "x"
             + std::to_string(size.rows)
-            + (available ? std::string() : " ΓÇö " + i18n.tr("widget.no_space", "No space"));
+            + (available ? std::string()
+                         : " - " + i18n.tr("widget.no_space", "No space"));
         items.push_back({label, [this, targetSlot, anchor, type, size]() {
             if (type == switchu::widgets::WidgetType::ImagePin)
                 showWidgetAssetMenu(targetSlot, anchor, type, size);
@@ -3591,7 +3749,7 @@ void WiiUMenuApp::showWidgetOptionsMenu(std::uint32_t widgetId, int slot,
     for (const auto size : switchu::widgets::supportedSizes(widget->type, m_appLayoutMode)) {
         const bool available = canPlaceWidget(slot, size, widgetId);
         const std::string label = i18n.tr("widget.resize", "Resize") + " "
-            + std::to_string(size.columns) + "├ù" + std::to_string(size.rows);
+            + std::to_string(size.columns) + "x" + std::to_string(size.rows);
         items.push_back({label, [this, widgetId, size]() {
             if (!m_widgetStore.setSize(widgetId, size)) {
                 m_contextMenu->hide();
@@ -3678,9 +3836,29 @@ void WiiUMenuApp::flipPageFromEdge(int dir) {
     m_audio.playSfx(Sfx::PageChange);
 }
 
+void WiiUMenuApp::beginForcedCursorTeleport() {
+    if (!m_cursor)
+        return;
+    if (!m_forceCursorTeleport)
+        m_savedCursorInstantMotion = m_cursor->instantMotion();
+    m_forceCursorTeleport = true;
+    m_cursor->setInstantMotion(true);
+}
+
+void WiiUMenuApp::endForcedCursorTeleport() {
+    if (!m_forceCursorTeleport)
+        return;
+    m_forceCursorTeleport = false;
+    if (m_cursor)
+        m_cursor->setInstantMotion(m_savedCursorInstantMotion
+            || m_config.cursorMotionMode == 1);
+}
+
 void WiiUMenuApp::snapCursorToFocus() {
-    if (m_cursor && focusManager().current())
-        m_cursor->moveTo(focusManager().current()->focusRect().expanded(4.f), 0.01f);
+    // Instant place (Theme Shop m_snapGridFocus pattern). updateCursor used to
+    // follow with 0.2s ease and reintroduce the blue jump on folder close /
+    // leave-restore.
+    m_snapHomeFocus = true;
     updateCursor();
 }
 
@@ -3834,6 +4012,9 @@ void WiiUMenuApp::configureDynamicLineNavigation() {
 }
 
 bool WiiUMenuApp::preferPosterForMode(AppLayoutMode mode) const {
+    // Lite / Frame Tap: icons only — posters are the big single-row GPU bite.
+    if (m_frameTapLightActive)
+        return false;
     return mode == AppLayoutMode::DynamicLine
         && m_config.steamGridDbEnabled
         && m_config.steamGridDbShowPosterInDynamicLine;
@@ -3922,8 +4103,9 @@ void WiiUMenuApp::beginLayoutArtPrefetch() {
         DebugLog::log("[layout-prefetch] branch=morphSoon (fit cache hit) + shadow warm");
         m_iconStreamer.startShadowPrefetch(
             preferPoster, {focusId},
-            [preferPoster](uint64_t titleId) {
-                return AppListLoader::loadIconData(titleId, preferPoster);
+            [this](uint64_t titleId) {
+                return AppListLoader::loadIconData(titleId,
+                                                    preferPosterIconData(titleId));
             });
         morphSoon();
         return;
@@ -3932,8 +4114,9 @@ void WiiUMenuApp::beginLayoutArtPrefetch() {
     DebugLog::log("[layout-prefetch] branch=waitShadow (decode/upload before morph)");
     m_iconStreamer.startShadowPrefetch(
         preferPoster, {focusId},
-        [preferPoster](uint64_t titleId) {
-            return AppListLoader::loadIconData(titleId, preferPoster);
+        [this](uint64_t titleId) {
+            return AppListLoader::loadIconData(titleId,
+                                                preferPosterIconData(titleId));
         });
 }
 
@@ -4026,7 +4209,7 @@ bool WiiUMenuApp::tryCommitInPlaceLayoutMorph(std::uint64_t focused) {
 
     const bool preferPoster = preferSingleRowPosters();
     m_iconStreamer.setIconDataLoader([this](uint64_t titleId) {
-        return AppListLoader::loadIconData(titleId, preferSingleRowPosters());
+        return AppListLoader::loadIconData(titleId, preferPosterIconData(titleId));
     });
     m_iconStreamer.reconcileTitleIds(titleIds);
     // Soft art-kind flip; focused poster lands via installShadowPrefetch.
@@ -4037,9 +4220,17 @@ bool WiiUMenuApp::tryCommitInPlaceLayoutMorph(std::uint64_t focused) {
     for (const auto& icon : icons) {
         if (!icon)
             continue;
+        // In-place morph reuses grid tiles — drop wide spans / grid-wide faces
+        // so single-row shows poster (or icon), never landscape wide art.
+        if (icon->entryKind() == GridEntryKind::Application
+            || icon->entryKind() == GridEntryKind::Widget) {
+            icon->setGridSpan(1, 1);
+            icon->setWideGameTextures(nullptr, nullptr);
+        }
         bool posterTile = false;
         if (preferPoster && icon->titleId() != 0) {
-            if (icon->entryKind() == GridEntryKind::Folder)
+            if (icon->entryKind() == GridEntryKind::Folder
+                || icon->entryKind() == GridEntryKind::Widget)
                 posterTile = true;
             else if (icon->entryKind() == GridEntryKind::Application)
                 posterTile = SteamGridDbManager::hasPoster(icon->titleId());
@@ -4336,6 +4527,20 @@ bool WiiUMenuApp::preferSingleRowPosters() const {
     return preferPosterForMode(m_appLayoutMode);
 }
 
+bool WiiUMenuApp::preferPosterIconData(std::uint64_t titleId) const {
+    if (titleId == 0)
+        return false;
+    // Grid: only tall poster tiles (2x3 / legacy 1x2) keep poster art — never
+    // 1x1 or 2x2. Independent of single-row / Battery Saver lite.
+    const auto size = gameGridSize(titleId, AppLayoutMode::Grid);
+    const bool tallPosterSpan =
+        (size.columns == 2 && size.rows == 3)
+        || (size.columns == 1 && size.rows == 2);
+    if (tallPosterSpan && SteamGridDbManager::hasPoster(titleId))
+        return true;
+    return preferSingleRowPosters();
+}
+
 std::uint64_t WiiUMenuApp::resolveFolderCoverTitleId(
     const switchu::folders::Folder& folder, bool preferPoster) const {
     const std::uint64_t pseudo = folderTitleId(folder.id);
@@ -4352,7 +4557,7 @@ void WiiUMenuApp::syncSingleRowPosterPresentation(bool forceReloadIcons) {
     syncLayoutFlipState();
 
     m_iconStreamer.setIconDataLoader([this](uint64_t titleId) {
-        return AppListLoader::loadIconData(titleId, preferSingleRowPosters());
+        return AppListLoader::loadIconData(titleId, preferPosterIconData(titleId));
     });
     // Soft art-kind flip: keep current textures on screen and swap in the
     // correct kind as decodes finish (no blank flash).
@@ -4364,13 +4569,14 @@ void WiiUMenuApp::syncSingleRowPosterPresentation(bool forceReloadIcons) {
     const bool wasPoster = m_grid->linePosterAspect();
     m_grid->setLinePosterAspect(preferPoster);
 
-    // Apps: tall only when they have poster art. Folders: always tall in
-    // poster mode so they match neighbouring title posters (styles adapt).
+    // Apps: tall only when they have poster art. Folders + widgets: always
+    // tall in poster mode so they match neighbouring title posters.
     for (const auto& icon : m_grid->allIcons()) {
         if (!icon) continue;
         bool posterTile = false;
         if (preferPoster && icon->titleId() != 0) {
-            if (icon->entryKind() == GridEntryKind::Folder)
+            if (icon->entryKind() == GridEntryKind::Folder
+                || icon->entryKind() == GridEntryKind::Widget)
                 posterTile = true;
             else if (icon->entryKind() == GridEntryKind::Application)
                 posterTile = SteamGridDbManager::hasPoster(icon->titleId());
@@ -4560,8 +4766,13 @@ void WiiUMenuApp::openCapturedFolder() {
             m_folderZoom->open(m_folderZoomOriginRect, folderPanelRect(), tint,
                                [this]() { snapCursorToFocus(); });
             if (m_cursor) m_cursor->setVisible(false);
-        } else
+        } else {
             m_folderZoom->showStatic(folderPanelRect(), tint);
+            // Leave-restore / refocus: Teleport onto the title (never Translate
+            // from the HOME folder tile under the splash).
+            beginForcedCursorTeleport();
+            snapCursorToFocus();
+        }
     }
     // The title lands just after the panel has reached its top edge.
     placeFolderHeader(folderPanelRect());
@@ -4853,6 +5064,7 @@ void WiiUMenuApp::resumeSuspendedApplication(std::uint64_t titleId,
     if (titleId == 0 || !m_launchAnim)
         return;
     scheduleLeaveCapture([this, titleId, launchTitle]() {
+        reclaimForFrameTapLaunch("resume");
         m_audio.playSfx(Sfx::LaunchGame);
         m_launchAnim->startResume([this, titleId, launchTitle]() {
             m_config.noteOpened(titleId);
@@ -4895,15 +5107,55 @@ void WiiUMenuApp::activateApplication(GlossyIcon* source, AppEntry* entry,
         return;
     }
 
+    // Launch zoom must match the on-grid tile: 1x1 → icon, 2x3 → tall poster,
+    // 2x1/4x2 → landscape wide art. Never force a single-row poster onto other
+    // sizes (that made 1x1s zoom as 2:3 posters).
     const nxui::Rect frame = source->focusRect();
-    const nxui::Texture* texture = source->texture();
     const float radius = source->cornerRadius();
     const nxui::Color base = m_theme.panelBase;
     const nxui::Color border = m_theme.panelBorder;
-    auto startLaunch = [this, frame, texture, radius, base, border,
+    const auto gridSize = gameGridSize(titleId, AppLayoutMode::Grid);
+    const bool landscapeTile = m_appLayoutMode == AppLayoutMode::Grid
+        && switchu::widgets::isLandscapeWideGameTile(gridSize);
+    const bool posterTile = source->usesPosterFrame();
+    const nxui::Texture* texture = source->texture();
+    if (landscapeTile) {
+        if (auto* wide = source->wideGameHero(); wide && wide->valid()) {
+            texture = wide;
+        } else if (SteamGridDbManager::hasGridWide(titleId)) {
+            auto decoded = steamgriddb::artwork::decode(
+                SteamGridDbManager::gridWidePath(titleId), 460, 215, true);
+            if (!decoded.rgba.empty()
+                && m_launchPosterTex.loadFromPixels(
+                    app().gpu(), app().renderer(), decoded.rgba.data(),
+                    decoded.width, decoded.height))
+                texture = &m_launchPosterTex;
+        } else if (SteamGridDbManager::hasArtwork(titleId)) {
+            auto decoded = steamgriddb::artwork::decode(
+                SteamGridDbManager::heroPath(titleId), 640, 360, true);
+            if (!decoded.rgba.empty()
+                && m_launchPosterTex.loadFromPixels(
+                    app().gpu(), app().renderer(), decoded.rgba.data(),
+                    decoded.width, decoded.height))
+                texture = &m_launchPosterTex;
+        }
+    } else if (posterTile) {
+        if (!(texture && texture->valid())
+            && SteamGridDbManager::hasPoster(titleId)) {
+            auto decoded = steamgriddb::artwork::decodeFit(
+                SteamGridDbManager::posterPath(titleId), 320, 480);
+            if (!decoded.rgba.empty()
+                && m_launchPosterTex.loadFromPixels(
+                    app().gpu(), app().renderer(), decoded.rgba.data(),
+                    decoded.width, decoded.height))
+                texture = &m_launchPosterTex;
+        }
+    }
+    auto startLaunch = [this, frame, texture, radius, base, border, posterTile,
                         titleId, launchTitle](AccountUid uid) {
         scheduleLeaveCapture([this, frame, texture, radius, base, border,
-                              titleId, launchTitle, uid]() {
+                              posterTile, titleId, launchTitle, uid]() {
+            reclaimForFrameTapLaunch("launch");
             m_audio.playSfx(Sfx::LaunchGame);
             m_launchAnim->start(frame, texture, radius, base, border, titleId, uid,
                 [this, launchTitle](std::uint64_t id, AccountUid selectedUid) {
@@ -4913,7 +5165,7 @@ void WiiUMenuApp::activateApplication(GlossyIcon* source, AppEntry* entry,
                         static_cast<std::int64_t>(std::time(nullptr)));
                     m_widgetStore.save();
                     m_launcher.launchApplication(id, selectedUid);
-                });
+                }, {}, posterTile);
         }, titleId);
     };
 
@@ -4972,6 +5224,8 @@ void WiiUMenuApp::activateApplication(GlossyIcon* source, AppEntry* entry,
 nxui::Texture* WiiUMenuApp::folderCoverTexture(std::uint64_t titleId,
                                                bool preferPoster,
                                                bool allowColdLoad) {
+    if (m_frameTapLightActive)
+        return nullptr;
     if (titleId == 0)
         return nullptr;
     auto it = m_folderCoverCache.find(titleId);
@@ -5019,6 +5273,8 @@ nxui::Texture* WiiUMenuApp::findResidentAppTexture(std::uint64_t titleId) const 
 
 nxui::Texture* WiiUMenuApp::folderPeekTexture(std::uint64_t titleId,
                                               bool allowBorrow) {
+    if (m_frameTapLightActive)
+        return nullptr;
     if (titleId == 0)
         return nullptr;
     auto it = m_folderPeekCache.find(titleId);
@@ -5151,6 +5407,8 @@ void WiiUMenuApp::refreshFolderPeekComposite(std::uint32_t folderId) {
 }
 
 void WiiUMenuApp::requestFolderPeekCompositeBake(std::uint32_t folderId) {
+    if (m_frameTapLightActive)
+        return;
     if (folderId == 0)
         return;
     if (m_folderPeekCompositeCache.count(folderId))
@@ -5301,8 +5559,38 @@ int WiiUMenuApp::nextFolderCoverFillIndex(int focus) const {
     return best;
 }
 
+void WiiUMenuApp::clearFolderCoversForFrameTapLight() {
+    m_folderPeekCache.clear();
+    m_folderPeekBorrowed.clear();
+    m_folderPeekCompositeCache.clear();
+    m_folderPeekCompositeBakeQueued.clear();
+    m_folderCoverCache.clear();
+    m_pendingFolderCoverFill = false;
+    m_folderCoverFillDelayFrames = 0;
+    m_pendingFolderCoverNext = 0;
+    m_pendingFolderCoverSkipRadius = -1;
+    for (auto& pending : m_pendingFolderPeekComposites) {
+        if (pending.state)
+            pending.state->cancelled.store(true);
+    }
+    m_pendingFolderPeekComposites.clear();
+    if (!m_grid)
+        return;
+    for (auto& icon : m_grid->allIcons()) {
+        if (!icon)
+            continue;
+        icon->clearFolderPeeks();
+        icon->setFolderPeekComposite(false);
+        icon->setFolderCoverTexture(nullptr);
+        icon->setFolderCoverIsPoster(false);
+    }
+    DebugLog::log("[ft-light] folder covers suppressed (peeks/composites/covers)");
+}
+
 void WiiUMenuApp::warmFolderPeeksAroundFocus(int radius) {
     if (!m_grid || !preferSingleRowPosters())
+        return;
+    if (m_frameTapLightActive)
         return;
     if (m_grid->isLayoutMorphing() || leaveSplashActive())
         return;
@@ -5327,6 +5615,8 @@ void WiiUMenuApp::warmFolderPeeksAroundFocus(int radius) {
 void WiiUMenuApp::warmFolderCompositesEarly() {
     if (!m_grid || !preferSingleRowPosters())
         return;
+    if (m_frameTapLightActive)
+        return;
     ensureFolderCoverFillDoneSize();
     const int focus = m_grid->focusedGlobalIndex();
     const int total = m_model.count();
@@ -5339,26 +5629,100 @@ void WiiUMenuApp::warmFolderCompositesEarly() {
             continue;
         const std::uint32_t folderId = m_model.at(i).folderId;
         const int dist = (focus >= 0) ? std::abs(i - focus) : i;
-        if (dist <= 4) {
-            // Nearby: try sync disk attach (cheap) or queue bake.
-            applyFolderCoversToIcons(i, 0);
-            if (m_folderPeekCompositeCache.count(folderId))
-                ++diskAttached;
-            else
-                ++bakeQueued;
-        } else {
-            requestFolderPeekCompositeBake(folderId);
-            markFolderCoverFilled(i);
+        // Nearby only — far folders bake on approach (MEMORY_OPTIMIZATION_PLAN
+        // peek LRU). Library-wide handoff bake was unbounded GPU growth.
+        if (dist > 4)
+            continue;
+        applyFolderCoversToIcons(i, 0);
+        if (m_folderPeekCompositeCache.count(folderId))
+            ++diskAttached;
+        else
             ++bakeQueued;
-        }
     }
     m_pendingFolderCoverFill = true;
     DebugLog::log("[folder-peek] early warm focus=%d disk=%d queued=%d",
                   focus, diskAttached, bakeQueued);
 }
 
+void WiiUMenuApp::trimFolderArtCachesDrip() {
+    if (m_frameTapLightActive || leaveSplashActive())
+        return;
+    if (m_grid && m_grid->isLayoutMorphing())
+        return;
+    constexpr std::size_t kMaxPeeks = 32;
+    constexpr std::size_t kMaxComposites = 24;
+    constexpr std::size_t kMaxCovers = 24;
+    if (m_folderPeekCache.size() <= kMaxPeeks
+        && m_folderPeekCompositeCache.size() <= kMaxComposites
+        && m_folderCoverCache.size() <= kMaxCovers)
+        return;
+
+    const int focus = m_grid ? m_grid->focusedGlobalIndex() : -1;
+    auto farFromFocus = [&](int index) {
+        if (focus < 0 || index < 0)
+            return true;
+        return std::abs(index - focus) > 6;
+    };
+
+    // Drop at most one of each kind per tick (Texture retire waitIdle).
+    if (m_folderPeekCache.size() > kMaxPeeks) {
+        for (auto it = m_folderPeekCache.begin(); it != m_folderPeekCache.end(); ++it) {
+            int idx = -1;
+            if (m_grid) {
+                for (int i = 0; i < m_model.count(); ++i) {
+                    if (m_model.at(i).isApplication() && m_model.at(i).titleId == it->first) {
+                        idx = i;
+                        break;
+                    }
+                }
+            }
+            if (!farFromFocus(idx) && m_folderPeekCache.size() <= kMaxPeeks + 8)
+                continue;
+            // Skip if still borrowed by a visible folder peek stack.
+            if (m_folderPeekBorrowed.count(it->first))
+                continue;
+            m_folderPeekCache.erase(it);
+            break;
+        }
+    }
+    if (m_folderPeekCompositeCache.size() > kMaxComposites) {
+        for (auto it = m_folderPeekCompositeCache.begin();
+             it != m_folderPeekCompositeCache.end(); ++it) {
+            int idx = -1;
+            for (int i = 0; i < m_model.count(); ++i) {
+                if (m_model.at(i).isFolder() && m_model.at(i).folderId == it->first) {
+                    idx = i;
+                    break;
+                }
+            }
+            if (!farFromFocus(idx) && m_folderPeekCompositeCache.size() <= kMaxComposites + 4)
+                continue;
+            m_folderPeekCompositeCache.erase(it);
+            break;
+        }
+    }
+    if (m_folderCoverCache.size() > kMaxCovers) {
+        for (auto it = m_folderCoverCache.begin(); it != m_folderCoverCache.end(); ++it) {
+            int idx = -1;
+            for (int i = 0; i < m_model.count(); ++i) {
+                if (m_model.at(i).folderCoverTitleId == it->first
+                    || (m_model.at(i).isApplication() && m_model.at(i).titleId == it->first)) {
+                    idx = i;
+                    break;
+                }
+            }
+            if (!farFromFocus(idx) && m_folderCoverCache.size() <= kMaxCovers + 4)
+                continue;
+            m_folderCoverCache.erase(it);
+            break;
+        }
+    }
+}
+
 void WiiUMenuApp::applyFolderCoversToIcons(int centerIndex, int radius,
                                            bool allowColdLoad) {
+    if (m_frameTapLightActive)
+        return;
     if (!m_grid)
         return;
     ensureFolderCoverFillDoneSize();
@@ -5545,6 +5909,8 @@ std::shared_ptr<GlossyIcon> WiiUMenuApp::makeIcon(const AppEntry& entry) {
             icon->setAccessibilityHint(i18n.tr(
                 "accessibility.hints.widget", "Plus for widget options. Y to move."));
         }
+        // Match folders: tall frame in single-row when posters are enabled.
+        icon->setPosterFrame(preferSingleRowPosters());
         return icon;
     }
 
@@ -5590,16 +5956,26 @@ std::shared_ptr<GlossyIcon> WiiUMenuApp::makeIcon(const AppEntry& entry) {
     icon->setIsGameCard(entry.isGameCard());
     icon->setGameCardTexture(&m_gameCardTex);
     icon->setNotLaunchable(!entry.isLaunchable());
-    icon->setPosterFrame(
-        preferSingleRowPosters()
-        && SteamGridDbManager::hasPoster(entry.titleId));
+    {
+        const bool tallPosterTile =
+            (entry.widgetColumns == 2 && entry.widgetRows == 3)
+            || (entry.widgetColumns == 1 && entry.widgetRows == 2);
+        icon->setPosterFrame(
+            (preferSingleRowPosters() || tallPosterTile)
+            && SteamGridDbManager::hasPoster(entry.titleId));
+    }
     icon->setGridSpan(entry.widgetColumns, entry.widgetRows);
-    if (entry.widgetColumns > 1 && entry.widgetRows == 1 &&
-        m_appLayoutMode == AppLayoutMode::Grid) {
+    const bool landscapeTile = switchu::widgets::isLandscapeWideGameTile(
+        entry.widgetColumns, entry.widgetRows);
+    if (landscapeTile && m_appLayoutMode == AppLayoutMode::Grid) {
         const auto artwork = m_gameArtwork.find(entry.titleId);
         if (artwork != m_gameArtwork.end())
             icon->setWideGameTextures(artwork->second.hero.get(),
                                       artwork->second.logo.get());
+        else
+            icon->setWideGameTextures(nullptr, nullptr);
+    } else {
+        icon->setWideGameTextures(nullptr, nullptr);
     }
 
 #ifdef SWITCHU_MENU
@@ -5916,7 +6292,11 @@ void WiiUMenuApp::buildGrid() {
             // covered; soft-land arms at handoff. No-splash return arms here.
             if (m_fastReturnRequested && !leaveSplashActive()) {
                 m_returnPreloadPaceSec = 4.0f;
-                m_iconStreamer.startSoftLanding(2.0f, 2, 1.75f, 3);
+                m_frameTapStatus.probe(0.f, 0.f);
+                if (m_frameTapStatus.viewerConnected())
+                    m_iconStreamer.startSoftLanding(2.0f, 2, 0.f, kFrameTapLightBrowseRadius);
+                else
+                    m_iconStreamer.startSoftLanding(2.0f, 2, 1.75f, 3);
                 if (m_steamGridDbBackdrop)
                     m_steamGridDbBackdrop->setPreloadMinInterval(0.45f);
             }
@@ -5928,7 +6308,11 @@ void WiiUMenuApp::buildGrid() {
             m_folderCoverFillDelayFrames = 0;
             m_pendingFolderCoverNext = 0;
             m_pendingFolderCoverSkipRadius = -1;
-            warmFolderCompositesEarly();
+            m_frameTapStatus.probe(0.f, 0.f);
+            if (m_frameTapLightActive || m_frameTapStatus.viewerConnected())
+                clearFolderCoversForFrameTapLight();
+            else
+                warmFolderCompositesEarly();
         }
         DebugLog::log("[init] single-row poster sync in %ldms focus=%d peeksOwned=%u pendingFill=%d armAfterSplash=%d",
                       static_cast<long>(std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -6728,6 +7112,410 @@ void WiiUMenuApp::pollSleepNotifications() {
 #endif
 }
 
+void WiiUMenuApp::releaseLeaveSplashGpu(const char* reason) {
+    if (!m_leaveSplashTex.valid())
+        return;
+    // Move-assign empty Texture → retireGpuResources (waitIdle + free MemBlock).
+    m_leaveSplashTex = nxui::Texture{};
+    DebugLog::log("[leave] splash GPU released (%s)", reason ? reason : "-");
+    if (m_memInventoryEnabled)
+        logMemInventory("after-splash-free");
+}
+
+void WiiUMenuApp::tickMemInventory(float dt) {
+    m_memInventoryRecheckSec += dt;
+    if (m_memInventoryRecheckSec >= kMemInventoryFlagRecheckSec) {
+        m_memInventoryRecheckSec = 0.f;
+        FILE* f = std::fopen(kMemInventoryFlag, "rb");
+        const bool on = f != nullptr;
+        if (f)
+            std::fclose(f);
+        if (on != m_memInventoryEnabled) {
+            m_memInventoryEnabled = on;
+            m_memInventoryAccumSec = 0.f;
+            DebugLog::log("[mem] inventory %s (flag %s)",
+                          on ? "ON" : "OFF", kMemInventoryFlag);
+            if (on)
+                logMemInventory("enable");
+        }
+    }
+    if (!m_memInventoryEnabled)
+        return;
+    m_memInventoryAccumSec += dt;
+    if (m_memInventoryAccumSec < kMemInventoryIntervalSec)
+        return;
+    m_memInventoryAccumSec = 0.f;
+    logMemInventory("tick");
+}
+
+void WiiUMenuApp::logMemInventory(const char* tag) {
+    u64 total = 0, used = 0, freeBytes = 0;
+    if (R_SUCCEEDED(svcGetInfo(&total, InfoType_TotalMemorySize, CUR_PROCESS_HANDLE, 0)) &&
+        R_SUCCEEDED(svcGetInfo(&used, InfoType_UsedMemorySize, CUR_PROCESS_HANDLE, 0)) &&
+        total > used) {
+        freeBytes = total - used;
+    }
+    const auto pool = m_iconStreamer.poolInventory();
+    DebugLog::log(
+        "[mem] %s free=%lluKB used=%lluKB/%lluKB img=%llu/%lluKB headroom=%lluKB "
+        "streamer=bound:%d freeTex:%d empty:%d pending:%d compressedKB=%llu "
+        "peeks=%zu composites=%zu covers=%zu fontN=%zu/%lluKB fontS=%zu/%lluKB "
+        "splash=%d light=%d layout=%d",
+        tag ? tag : "-",
+        static_cast<unsigned long long>(freeBytes / 1024ull),
+        static_cast<unsigned long long>(used / 1024ull),
+        static_cast<unsigned long long>(total / 1024ull),
+        static_cast<unsigned long long>(app().gpu().imageMemoryUsed() / 1024ull),
+        static_cast<unsigned long long>(app().gpu().imageMemoryBudget() / 1024ull),
+        static_cast<unsigned long long>(app().gpu().allocationHeadroom() / 1024ull),
+        pool.bound, pool.freeWithTex, pool.freeEmpty, pool.pendingDecodes,
+        static_cast<unsigned long long>(pool.compressedBytes / 1024ull),
+        m_folderPeekCache.size(),
+        m_folderPeekCompositeCache.size(),
+        m_folderCoverCache.size(),
+        m_fontNormal.cacheEntryCount(),
+        static_cast<unsigned long long>(m_fontNormal.cacheBytes() / 1024ull),
+        m_fontSmall.cacheEntryCount(),
+        static_cast<unsigned long long>(m_fontSmall.cacheBytes() / 1024ull),
+        m_leaveSplashTex.valid() ? 1 : 0,
+        m_frameTapLightActive ? 1 : 0,
+        static_cast<int>(m_appLayoutMode));
+}
+
+void WiiUMenuApp::logFrameTapLightSoak(const char* tag) {
+    u64 total = 0, used = 0;
+    u64 freeBytes = 0;
+    if (R_SUCCEEDED(svcGetInfo(&total, InfoType_TotalMemorySize, CUR_PROCESS_HANDLE, 0)) &&
+        R_SUCCEEDED(svcGetInfo(&used, InfoType_UsedMemorySize, CUR_PROCESS_HANDLE, 0)) &&
+        total > used) {
+        freeBytes = total - used;
+    }
+    DebugLog::log(
+        "[ft-light] %s active=%d viewer=%d ftAvail=%d state=%u reserved3=0x%x "
+        "free=%lluKB img=%llu/%lluKB headroom=%lluKB streamerCap=%d peeks=%zu composites=%zu",
+        tag ? tag : "-",
+        m_frameTapLightActive ? 1 : 0,
+        m_frameTapStatus.viewerConnected() ? 1 : 0,
+        m_frameTapStatus.available() ? 1 : 0,
+        m_frameTapStatus.status().state,
+        m_frameTapStatus.status().reserved3,
+        static_cast<unsigned long long>(freeBytes / 1024ull),
+        static_cast<unsigned long long>(app().gpu().imageMemoryUsed() / 1024ull),
+        static_cast<unsigned long long>(app().gpu().imageMemoryBudget() / 1024ull),
+        static_cast<unsigned long long>(app().gpu().allocationHeadroom() / 1024ull),
+        m_iconStreamer.pageCacheRadiusCap(),
+        m_folderPeekCache.size(),
+        m_folderPeekCompositeCache.size());
+}
+
+void WiiUMenuApp::applyFrameTapLiteBackground(bool lite) {
+    if (!m_background)
+        return;
+    // Shapes off; theme wallpaper / gradient stay (wallpaper ≠ WaraWara).
+    m_background->setLiteSuppressed(lite);
+}
+
+void WiiUMenuApp::enterFrameTapLightPath(const char* reason) {
+    // Re-assert every enter (incl. already-active): theme apply can rebuild
+    // WaraWara shapes while lite is held.
+    applyFrameTapLiteBackground(true);
+    if (m_frameTapLightActive)
+        return;
+    m_frameTapLightActive = true;
+
+    // Icons only (±3); no heroes / WaraWara / single-row posters.
+    // Cap also applies to grid. Cancel prefetch so soft-land cannot refill past it.
+    m_iconStreamer.setPageCacheRadiusCap(kFrameTapLightBrowseRadius);
+    m_iconStreamer.cancelShadowPrefetch();
+    m_iconStreamer.cancelPending();
+    if (m_steamGridDbBackdrop) {
+        m_steamGridDbBackdrop->setPreloadPaused(true);
+        // Heroes ~8 MiB — clear and keep cleared via showFocusedSteamGridDbArtwork.
+        m_steamGridDbBackdrop->releaseGpuArtwork();
+        m_steamGridDbBackdrop->setEnabled(false);
+        m_steamGridDbBackdrop->showTitle(0, true);
+    }
+
+    clearFolderCoversForFrameTapLight();
+    // Drop poster tiles → square icons while lite (soft art-kind flip).
+    syncSingleRowPosterPresentation(false);
+
+    if (m_grid && m_grid->iconsPerPage() > 0) {
+        // Single-row streams by focus index even when posters are off.
+        const bool singleRow = m_appLayoutMode == AppLayoutMode::DynamicLine;
+        const int page = singleRow
+            ? std::max(0, m_grid->focusedGlobalIndex())
+            : m_grid->currentPage();
+        const int pageSize = singleRow
+            ? 1
+            : std::max(1, m_grid->iconsPerPage());
+        m_iconStreamer.onPageChanged(page, pageSize, app().gpu(), app().renderer(),
+                                     m_grid->allIcons());
+        // Eviction only unbinds slots — free GPU MemBlocks so FT can remount.
+        m_iconStreamer.releaseUnusedGpuMemory();
+    }
+
+    applyFrameTapLightHeadroom(true);
+    DebugLog::log("[ft-light] ENTER reason=%s headroom=%lluKB",
+                  reason ? reason : "-",
+                  static_cast<unsigned long long>(app().gpu().allocationHeadroom() / 1024ull));
+    logFrameTapLightSoak("enter");
+}
+
+void WiiUMenuApp::applyFrameTapLightHeadroom(bool preferHigherTarget) {
+#ifdef NXUI_BACKEND_DEKO3D
+    u64 total = 0, used = 0, freeBytes = 0;
+    if (R_SUCCEEDED(svcGetInfo(&total, InfoType_TotalMemorySize, CUR_PROCESS_HANDLE, 0)) &&
+        R_SUCCEEDED(svcGetInfo(&used, InfoType_UsedMemorySize, CUR_PROCESS_HANDLE, 0)) &&
+        total > used) {
+        freeBytes = total - used;
+    }
+    // Never set headroom > free − UI reserve. Soak 2026-10-28: reclaim briefly
+    // saw free≈58 MB and set headroom≈57 MB; free then fell to ~16 MB → every
+    // clock/menu/icon alloc refused (thousands of GpuDevice refusing lines).
+    constexpr u64 kUiReserve = 8ull * 1024ull * 1024ull;
+    u64 headroom = preferHigherTarget
+        ? nxui::GpuDevice::kFrameTapLightAllocationHeadroom
+        : nxui::GpuDevice::kDefaultAllocationHeadroom;
+    if (freeBytes > kUiReserve + nxui::GpuDevice::kDefaultAllocationHeadroom)
+        headroom = std::min(headroom, freeBytes - kUiReserve);
+    else
+        headroom = nxui::GpuDevice::kDefaultAllocationHeadroom;
+    app().gpu().setAllocationHeadroom(headroom);
+#else
+    (void)preferHigherTarget;
+#endif
+}
+
+void WiiUMenuApp::reclaimForFrameTapLaunch(const char* reason) {
+    m_frameTapStatus.probe(0.f, 0.f);
+    const bool needHeadroom = reason && std::strcmp(reason, "need-headroom") == 0;
+    // NeedHeadroom must run even if the viewer bit briefly drops; resume/launch
+    // reclaim still requires an active viewer.
+    if (!needHeadroom && !m_frameTapStatus.viewerConnected())
+        return;
+
+    // NeedHeadroom: drop ALL streamer GPU (incl. focus) and do not reload —
+    // keep-one + onPageChanged raced the 2s donor map (ACK free stuck ~10 MB).
+    // Launch/resume keep focus poster so HOME is not blank mid-transition.
+    m_iconStreamer.setPageCacheRadiusCap(0);
+    m_iconStreamer.cancelShadowPrefetch();
+    m_iconStreamer.cancelPending();
+    clearFolderCoversForFrameTapLight();
+    releaseLeaveSplashGpu("ft-reclaim");
+
+    if (m_steamGridDbBackdrop) {
+        m_steamGridDbBackdrop->setPreloadPaused(true);
+        // Heroes alone are ~2×1280×720; invalidateCaches kept MemBlocks alive.
+        m_steamGridDbBackdrop->releaseGpuArtwork();
+    }
+
+    const int keepApp = (!needHeadroom && m_grid) ? m_grid->focusedGlobalIndex() : -1;
+    if (m_grid) {
+        for (int i = 0; i < (int)m_grid->allIcons().size(); ++i) {
+            if (i == keepApp)
+                continue;
+            if (auto& icon = m_grid->allIcons()[(size_t)i])
+                icon->setTexture(nullptr);
+        }
+        m_iconStreamer.releaseAllGpuExcept(keepApp);
+        if (!needHeadroom && keepApp >= 0 && m_grid->iconsPerPage() > 0) {
+            const bool singleRow = m_appLayoutMode == AppLayoutMode::DynamicLine;
+            const int page = singleRow ? keepApp : m_grid->currentPage();
+            const int pageSize = singleRow ? 1 : std::max(1, m_grid->iconsPerPage());
+            m_iconStreamer.onPageChanged(page, pageSize, app().gpu(), app().renderer(),
+                                         m_grid->allIcons());
+        }
+    }
+
+#ifdef NXUI_BACKEND_DEKO3D
+    // Trim, do not wipe — clearCache left clock/menus without glyphs until
+    // refuse headroom also blocked reloads (soak empty shell).
+    m_fontNormal.trimCache(48, 768ull * 1024ull);
+    m_fontSmall.trimCache(48, 768ull * 1024ull);
+#endif
+
+    m_frameTapLightActive = true;
+    applyFrameTapLightHeadroom(true);
+    DebugLog::log("[ft-light] LAUNCH-RECLAIM reason=%s", reason ? reason : "-");
+    logFrameTapLightSoak("launch");
+}
+
+void WiiUMenuApp::leaveFrameTapLightPath(const char* reason) {
+    if (!m_frameTapLightActive)
+        return;
+    m_frameTapLightActive = false;
+
+#ifdef NXUI_BACKEND_DEKO3D
+    app().gpu().setAllocationHeadroom(
+        nxui::GpuDevice::kDefaultAllocationHeadroom);
+#endif
+    m_iconStreamer.setPageCacheRadiusCap(-1);
+    // Pace refill so exit does not instantly re-eat FT headroom.
+    // If FT is still installed/available, stay tight (±2) — full soft-land
+    // refill after a brief viewer blip was starving the donor (free→8KB).
+    if (m_frameTapStatus.available())
+        m_iconStreamer.startSoftLanding(2.0f, 2, 0.f, kFrameTapLightBrowseRadius);
+    else
+        m_iconStreamer.startSoftLanding(2.0f, 2, 1.75f, 3);
+    applyFrameTapLiteBackground(false);
+    if (m_steamGridDbBackdrop) {
+        m_steamGridDbBackdrop->setPreloadPaused(false);
+        // Enter disabled heroes entirely — restore Settings preference here.
+        m_steamGridDbBackdrop->setEnabled(m_config.steamGridDbEnabled);
+    }
+    // Folder covers were suppressed in light — re-arm fill when viewer leaves.
+    m_pendingFolderCoverFill = true;
+    m_pendingFolderCoverNext = 0;
+    m_pendingFolderCoverSkipRadius = 4;
+    m_folderCoverFillDone.clear();
+    // Restore single-row posters if Settings still wants them.
+    syncSingleRowPosterPresentation(false);
+    showFocusedSteamGridDbArtwork(true);
+
+    DebugLog::log("[ft-light] LEAVE reason=%s", reason ? reason : "-");
+    logFrameTapLightSoak("leave");
+}
+
+void WiiUMenuApp::applyBatterySaver(bool enabled) {
+    if (m_config.batterySaver != enabled) {
+        m_config.batterySaver = enabled;
+        m_config.save();
+        DebugLog::log("[battery-saver] %s", enabled ? "on" : "off");
+    }
+    if (m_quickSettings)
+        m_quickSettings->setBatterySaver(enabled);
+    if (m_themeShop)
+        m_themeShop->setBatterySaverState(enabled);
+
+    if (enabled) {
+        if (!m_frameTapLightActive)
+            enterFrameTapLightPath("battery-saver");
+    } else if (m_frameTapLightActive && !m_frameTapStatus.viewerConnected()) {
+        leaveFrameTapLightPath("battery-saver-off");
+        m_frameTapViewerGoneSec = 0.f;
+        m_ftHeadroomHoldActive = false;
+        m_ftHeadroomHoldSec = 0.f;
+        m_ftRemountBrowseRestored = false;
+    }
+}
+
+void WiiUMenuApp::restoreFrameTapLightBrowse(const char* reason) {
+    if (!m_frameTapLightActive)
+        return;
+    if (m_launchAnim && m_launchAnim->isPlaying())
+        return;
+    applyFrameTapLightHeadroom(true);
+    m_iconStreamer.setPageCacheRadiusCap(kFrameTapLightBrowseRadius);
+    // Soft-land 1→±3 so neighbors drip in instead of a one-frame dump.
+    m_iconStreamer.startSoftLanding(0.75f, 1, 1.25f, kFrameTapLightBrowseRadius);
+    m_iconStreamer.startBurst(1.5f);
+    if (m_grid && m_grid->iconsPerPage() > 0) {
+        const bool singleRow = m_appLayoutMode == AppLayoutMode::DynamicLine;
+        const int page = singleRow
+            ? std::max(0, m_grid->focusedGlobalIndex())
+            : m_grid->currentPage();
+        const int pageSize = singleRow
+            ? 1
+            : std::max(1, m_grid->iconsPerPage());
+        m_iconStreamer.onPageChanged(page, pageSize, app().gpu(), app().renderer(),
+                                     m_grid->allIcons());
+    }
+    m_ftRemountBrowseRestored = true;
+    DebugLog::log("[ft-light] restore browse radius=%d (%s)",
+                  kFrameTapLightBrowseRadius, reason ? reason : "-");
+    logFrameTapLightSoak("restore");
+}
+
+void WiiUMenuApp::tickFrameTapLightPath(float dt) {
+    // Poll faster while FT is asking for headroom (donor remount handshake).
+    const float pollMs = m_frameTapStatus.needsHeadroom() || m_ftHeadroomHoldActive
+        ? 100.f : 500.f;
+    m_frameTapStatus.probe(dt, pollMs);
+    const bool viewer = m_frameTapStatus.viewerConnected();
+    if (viewer) {
+        m_frameTapViewerGoneSec = 0.f;
+    } else if (m_frameTapLightActive) {
+        m_frameTapViewerGoneSec += dt;
+    }
+
+    if (m_ftHeadroomHoldActive) {
+        m_ftHeadroomHoldSec += dt;
+        // Re-clamp every tick so a drop in process free cannot leave refuse
+        // headroom above free (empty clock/menus).
+        applyFrameTapLightHeadroom(true);
+        // Remount grace: once NeedHeadroom clears, soft-land browse back so
+        // posters are not empty for the full 30s ACK-only anti-thrash window.
+        if (!m_ftRemountBrowseRestored
+            && m_ftHeadroomHoldSec >= kFtRemountBrowseGraceSec
+            && !m_frameTapStatus.needsHeadroom()
+            && m_iconStreamer.pageCacheRadiusCap() == 0) {
+            restoreFrameTapLightBrowse("remount-grace");
+        }
+        if (m_ftHeadroomHoldSec >= kFtHeadroomHoldSec) {
+            m_ftHeadroomHoldActive = false;
+            m_ftHeadroomHoldSec = 0.f;
+            applyFrameTapLightHeadroom(true);
+            DebugLog::log("[ft-light] headroom hold expired (%.0fs)", kFtHeadroomHoldSec);
+        }
+    }
+
+    if (m_frameTapStatus.needsHeadroom()) {
+        const std::uint32_t needMb = m_frameTapStatus.headroomNeedMb();
+        // One hard reclaim per hold window. Re-ACK without destroy/reload so
+        // icons do not flash (soak: restore±2 then hard-release 9 every ~0.5s).
+        if (!m_ftHeadroomHoldActive) {
+            reclaimForFrameTapLaunch("need-headroom");
+            m_ftHeadroomHoldActive = true;
+            m_ftHeadroomHoldSec = 0.f;
+            m_ftRemountBrowseRestored = false;
+        }
+        std::uint32_t freeKb = 0;
+#ifdef NXUI_BACKEND_DEKO3D
+        u64 total = 0, used = 0;
+        if (R_SUCCEEDED(svcGetInfo(&total, InfoType_TotalMemorySize, CUR_PROCESS_HANDLE, 0)) &&
+            R_SUCCEEDED(svcGetInfo(&used, InfoType_UsedMemorySize, CUR_PROCESS_HANDLE, 0)) &&
+            total > used) {
+            freeKb = static_cast<std::uint32_t>((total - used) / 1024ull);
+        }
+#endif
+        m_frameTapStatus.ackHeadroom(freeKb);
+        DebugLog::log("[ft-light] ACK-HEADROOM need=%uMB free=%uKB hold=%d headroom=%lluKB",
+                      needMb, freeKb, m_ftHeadroomHoldActive ? 1 : 0,
+                      static_cast<unsigned long long>(app().gpu().allocationHeadroom() / 1024ull));
+    }
+
+    const bool batterySaver = m_config.batterySaver;
+    const bool wantLight = viewer || batterySaver
+        || (m_frameTapLightActive && !batterySaver
+            && m_frameTapViewerGoneSec < kFrameTapViewerGoneLeaveSec);
+
+    // QS / Theme Shop: lock Battery Saver ON and relabel while FT holds lite.
+    if (m_quickSettings)
+        m_quickSettings->setFrameTapLiteEngaged(viewer);
+    if (m_themeShop)
+        m_themeShop->setFrameTapLiteEngaged(viewer);
+
+    if (wantLight && !m_frameTapLightActive) {
+        const char* reason = batterySaver && !viewer ? "battery-saver"
+            : (m_frameTapStatus.available() ? "viewer" : "force-file");
+        enterFrameTapLightPath(reason);
+    } else if (!wantLight && m_frameTapLightActive) {
+        leaveFrameTapLightPath("viewer-gone");
+        m_frameTapViewerGoneSec = 0.f;
+        m_ftHeadroomHoldActive = false;
+        m_ftHeadroomHoldSec = 0.f;
+        m_ftRemountBrowseRestored = false;
+    } else if (viewer && m_frameTapLightActive
+               && m_iconStreamer.pageCacheRadiusCap() == 0
+               && !m_ftRemountBrowseRestored
+               && !(m_launchAnim && m_launchAnim->isPlaying())
+               && !m_ftHeadroomHoldActive) {
+        // Launch/resume reclaim left focus-only outside a NeedHeadroom hold.
+        restoreFrameTapLightBrowse("post-reclaim");
+    }
+}
+
 void WiiUMenuApp::onUpdateAwake(float dt) {
     if (m_wakePostSwapchainFrames > 0) {
         const int step = m_wakePostSwapchainFrames;
@@ -6745,6 +7533,9 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
             updateCursor();
         }
     }
+
+    tickFrameTapLightPath(dt);
+    tickMemInventory(dt);
 
     updateLeaveSplashHandoff(dt);
     pollDeferredLeaveCapture();
@@ -6832,6 +7623,35 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
     }
 #endif
 
+    // Idle drip: unbound streamer slots keep MemBlocks for reuse (~25 MiB in
+    // soaks). After quiet HOME browsing, retire one per frame — skip splash /
+    // morph / soft-land / FT lite (those paths manage GPU explicitly).
+    if (m_grid) {
+        const int page = preferSingleRowPosters()
+            ? std::max(0, m_grid->focusedGlobalIndex())
+            : m_grid->currentPage();
+        const int focus = m_grid->focusedGlobalIndex();
+        if (page != m_streamerIdleLastPage || focus != m_streamerIdleLastFocus) {
+            m_streamerIdleLastPage = page;
+            m_streamerIdleLastFocus = focus;
+            m_streamerIdleSec = 0.f;
+        } else {
+            m_streamerIdleSec += dt;
+        }
+        const bool streamerBusy = m_iconStreamer.softLandingActive()
+            || leaveSplashActive()
+            || m_frameTapLightActive
+            || m_ftHeadroomHoldActive
+            || (m_grid->isLayoutMorphing())
+            || m_layoutTransition.kind != LayoutTransitionKind::Idle;
+        if (!streamerBusy && m_streamerIdleSec >= kStreamerIdleReleaseSec) {
+            if (m_iconStreamer.releaseUnusedGpuMemoryDrip(1) > 0)
+                m_streamerIdleSec = kStreamerIdleReleaseSec; // keep dripping
+            else
+                m_streamerIdleSec = 0.f; // nothing left; wait for next idle
+        }
+    }
+
     syncSteamGridDb();
 
     // Dynamic-line navigation owns a small internal focus manager. Depending
@@ -6850,14 +7670,18 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
         && !(m_gameOptions && m_gameOptions->isActive())
         && !(m_folderOptions && m_folderOptions->isActive())
         && !(m_userSelect && m_userSelect->isActive())) {
-        showFocusedSteamGridDbArtwork();
+        // Lite: keep hero GPU freed for FT remount (~8 MiB). Do not spend it
+        // on peeks; posters stay at ±2. After leave-light, heroes return.
+        if (!m_frameTapLightActive && !m_ftHeadroomHoldActive)
+            showFocusedSteamGridDbArtwork();
         // Dynamic-line focus can move without a global focus callback — warm
         // folder peeks from the grid's source of truth the same way.
         if (m_grid && preferSingleRowPosters()
             && presentationLayoutMode() == AppLayoutMode::DynamicLine
             && !leaveSplashActive()) {
             const int focus = m_grid->focusedGlobalIndex();
-            if (focus != m_lastFolderPeekWarmFocus
+            if (!m_frameTapLightActive
+                && focus != m_lastFolderPeekWarmFocus
                 && focus >= 0 && focus < m_model.count()
                 && m_model.at(focus).isFolder()) {
                 m_lastFolderPeekWarmFocus = focus;
@@ -6867,13 +7691,14 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
     }
 
     pumpFolderPeekComposites();
+    trimFolderArtCachesDrip();
 
     if (m_deferBackdropPreloadSec > 0.f)
         m_deferBackdropPreloadSec = std::max(0.f, m_deferBackdropPreloadSec - dt);
     if (m_returnPreloadPaceSec > 0.f) {
         m_returnPreloadPaceSec = std::max(0.f, m_returnPreloadPaceSec - dt);
         if (m_returnPreloadPaceSec <= 0.f && m_steamGridDbBackdrop)
-            m_steamGridDbBackdrop->setPreloadMinInterval(0.f);
+            m_steamGridDbBackdrop->setPreloadMinInterval(0.35f);
     }
     if (m_steamGridDbBackdrop) {
         // Pause neighbour hero warm while the user is navigating; focused art
@@ -6882,7 +7707,8 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
             || m_deferBackdropPreloadSec > 0.f
             || m_iconStreamer.softLandingActive();
         m_steamGridDbBackdrop->setPreloadPaused(
-            paceWindow && app().input().hasUserActivity());
+            m_frameTapLightActive
+            || (paceWindow && app().input().hasUserActivity()));
         // Hero decode finishes async — re-check contrast when art lands/clears.
         updateHeroAwareChrome();
     }
@@ -7761,13 +8587,24 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
 
     nxui::AnimationManager::instance().update(motionDt);
 
-    // In dynamic-line mode, and while a layout morph is in flight, the focused
-    // widget itself is moving. Sample its interpolated display rectangle every
-    // frame so the focus ring remains attached to the app throughout.
-    if (m_grid && (m_grid->isDynamicLine() || m_grid->isLayoutMorphing())) {
+    // Re-sample the focus ring every frame when the focused tile is moving or
+    // focus-scaling: dynamic-line / morph (carousel motion), and grid 2x3 /
+    // 4x2 / 2x1 (outside-fit ring must track focusScale like the green pulse).
+    if (m_grid) {
         auto* focused = focusManager().current();
-        if (focused && focused->tag() == "glossy_icon")
-            updateCursor();
+        if (focused && focused->tag() == "glossy_icon") {
+            bool resample = m_grid->isDynamicLine() || m_grid->isLayoutMorphing();
+            if (!resample && !m_editMode) {
+                auto* icon = static_cast<GlossyIcon*>(focused);
+                const int cols = icon->gridSpanColumns();
+                const int rows = icon->gridSpanRows();
+                resample =
+                    (cols == 2 && rows == 3) || (cols == 1 && rows == 2)
+                    || switchu::widgets::isLandscapeWideGameTile(cols, rows);
+            }
+            if (resample)
+                updateCursor();
+        }
     }
 
     // Sample the cursor after animation update to avoid one-frame lag.
@@ -9002,13 +9839,6 @@ void WiiUMenuApp::onRender(nxui::Renderer& ren) {
         DebugLog::log("[first-frame] fast HOME return rendered in %lums", elapsedMs);
         m_fastReturnStartupTick = 0;
     }
-    if (leaveSplashActive() && m_leaveSplashTex.valid()) {
-        const float alpha = (m_leaveSplashPhase == LeaveSplashPhase::Hold)
-            ? 1.f
-            : m_leaveSplashFade;
-        ren.drawTexture(&m_leaveSplashTex, {0.f, 0.f, 1280.f, 720.f},
-                        nxui::Color::white().withAlpha(alpha));
-    }
     if (m_returnFadeTimer > 0.f) {
         float alpha = m_returnFadeTimer / kReturnFadeInDur;
         ren.drawRect({0, 0, 1280, 720}, nxui::Color(0, 0, 0, alpha));
@@ -9080,6 +9910,29 @@ void WiiUMenuApp::onRender(nxui::Renderer& ren) {
         renderActionHintPanel(ren);
     else
         renderActionHintBar(ren);
+
+    // Leave splash last (under debug only) so bottom-right action hints /
+    // arrows do not pop on top of the frosted cover before the crossfade.
+    if (leaveSplashActive() && m_leaveSplashTex.valid()) {
+        const float alpha = (m_leaveSplashPhase == LeaveSplashPhase::Hold)
+            ? 1.f
+            : m_leaveSplashFade;
+        // 1.02 → 1.0 scale punch over ~0.2s (hold is short; finishes into fade).
+        float elapsed = 0.f;
+        if (m_leaveSplashPhase == LeaveSplashPhase::Hold)
+            elapsed = kLeaveSplashHoldDur - m_leaveSplashHoldRemaining;
+        else
+            elapsed = kLeaveSplashHoldDur
+                + (1.f - m_leaveSplashFade) * kLeaveSplashFadeDur;
+        constexpr float kPunchDur = 0.20f;
+        const float punchT = std::clamp(elapsed / kPunchDur, 0.f, 1.f);
+        const float scale = 1.f + 0.02f * (1.f - nxui::Easing::outCubic(punchT));
+        const float w = 1280.f * scale;
+        const float h = 720.f * scale;
+        ren.drawTexture(&m_leaveSplashTex,
+                        {(1280.f - w) * 0.5f, (720.f - h) * 0.5f, w, h},
+                        nxui::Color::white().withAlpha(alpha));
+    }
 
 #ifdef SWITCHU_DEBUG_UI
     if (m_debugOverlay) {

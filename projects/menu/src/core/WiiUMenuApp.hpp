@@ -51,6 +51,7 @@
 #include "navigation/MenuNavigator.hpp"
 #include "services/ClockService.hpp"
 #include "services/AutoThemeService.hpp"
+#include "services/FrameTapStatus.hpp"
 #ifdef SWITCHU_DEBUG_UI
 #include "debug/DebugImGuiOverlay.hpp"
 #endif
@@ -198,7 +199,7 @@ private:
     switchu::widgets::WidgetSize gameGridSize(std::uint64_t titleId,
                                                AppLayoutMode mode) const;
     // Footprint a title occupies in the grid layout. Widgets carry their own
-    // size; games may be configured as 2x1 or 2x2 tiles.
+    // size; games may be configured as 2x1, 4x2, 2x2, or 2x3 tiles.
     switchu::widgets::WidgetSize layoutSlotSpan(std::uint64_t titleId) const;
     // Anchor cell of the tile covering `cell`, or -1 when the cell is free.
     int layoutSpanAnchorFor(int cell) const;
@@ -207,6 +208,10 @@ private:
     // (page bounds respected, every covered cell empty).
     bool layoutFitsAt(const std::vector<std::uint64_t>& slots, int anchor,
                       switchu::widgets::WidgetSize size) const;
+    // Best top-left for dropping `size` so the footprint covers `dropCell`
+    // (or is nearest to it). -1 when nothing fits.
+    int layoutDropAnchorFor(const std::vector<std::uint64_t>& slots, int dropCell,
+                            switchu::widgets::WidgetSize size) const;
     bool canPlaceGridItem(int targetSlot, switchu::widgets::WidgetSize size,
                           std::uint64_t ignoringTitleId = 0,
                           std::uint64_t alsoIgnoringTitleId = 0) const;
@@ -349,6 +354,8 @@ private:
     std::uint64_t resolveFolderCoverTitleId(const switchu::folders::Folder& folder,
                                             bool preferPoster) const;
     bool preferSingleRowPosters() const;
+    /// Single-row posters, or 2x3 grid tiles that already have poster art.
+    bool preferPosterIconData(std::uint64_t titleId) const;
     // centerIndex < 0 or radius < 0 → all folders; otherwise only nearby slots
     // (used by slim layout morph so commit stays cheap).
     // allowColdLoad == false keeps SD-card reads and GPU uploads off the frame:
@@ -356,6 +363,8 @@ private:
     // one-folder-per-frame fill instead of stalling the view toggle.
     void applyFolderCoversToIcons(int centerIndex = -1, int radius = -1,
                                   bool allowColdLoad = true);
+    // FT light / Battery Saver: drop peeks/composites/covers on folder tiles.
+    void clearFolderCoversForFrameTapLight();
     bool folderTileNeedsArt(int index) const;
     void markFolderCoverFilled(int index);
     void ensureFolderCoverFillDoneSize();
@@ -363,6 +372,8 @@ private:
     void warmFolderPeeksAroundFocus(int radius = 0);
     /// At splash handoff: disk-attach nearby composites, queue-bake the rest.
     void warmFolderCompositesEarly();
+    /// Cap peeks/composites/covers; drip-destroy far-from-focus entries.
+    void trimFolderArtCachesDrip();
     int nextFolderCoverFillIndex(int focus) const;
     /// Grid: on first/last page, ZL/ZR snaps to start/end of the current row.
     bool snapGridRowEdge(int dir);
@@ -394,6 +405,24 @@ private:
     void leaveSystemSleep();
     void pollSleepNotifications();
     void onUpdateAwake(float dt);
+    void tickFrameTapLightPath(float dt);
+    // Soft-land back to lite browse radius after NeedHeadroom focus-only.
+    void restoreFrameTapLightBrowse(const char* reason);
+    void enterFrameTapLightPath(const char* reason);
+    void leaveFrameTapLightPath(const char* reason);
+    // WaraWara shapes off while lite; theme wallpaper stays.
+    void applyFrameTapLiteBackground(bool lite);
+    // Persist + sync QS/Theme Shop; enter/leave lite when FT viewer is not holding it.
+    void applyBatterySaver(bool enabled);
+    void logFrameTapLightSoak(const char* tag);
+    // Free GPU icon/poster memory before resume/launch so FT can remount.
+    void reclaimForFrameTapLaunch(const char* reason);
+    // Clamp GpuDevice refuse headroom to free − UI reserve (never brick chrome).
+    void applyFrameTapLightHeadroom(bool preferHigherTarget);
+    // Temporary soak inventory — gated by sdmc:/config/SwitchU/mem_inventory.
+    void tickMemInventory(float dt);
+    void logMemInventory(const char* tag);
+    void releaseLeaveSplashGpu(const char* reason);
     void closeQuickSettings();
     void createThemeShop();
     void createGameOptions();
@@ -503,6 +532,39 @@ private:
     HeroChromeAdapt m_heroChromeAdapt = HeroChromeAdapt::Off;
     switchu::services::ClockService m_clockService;
     switchu::services::AutoThemeService m_autoTheme;
+    switchu::services::FrameTapStatus m_frameTapStatus;
+    bool                     m_frameTapLightActive = false;
+    // Heroes suppressed in lite (~8 MiB) — spend a slice on ±3 posters
+    // (was ±2); still well under remount cushion.
+    // Focus ±3 icons (posters suppressed while lite).
+    static constexpr int     kFrameTapLightBrowseRadius = 3;
+    // Delay leave-light on brief viewer drops so soft-land cannot refill
+    // past FT remount needs (soak: LEAVE→img 34MB→free 8KB).
+    float                    m_frameTapViewerGoneSec = 0.f;
+    static constexpr float   kFrameTapViewerGoneLeaveSec = 4.f;
+    // After NeedHeadroom reclaim+ACK, hold focus-only and skip re-reclaim so
+    // restore→reload→hard-release does not flash icons (soak: 659 ACKs).
+    // Matches FT anti-thrash re-ask interval (~30 s).
+    bool                     m_ftHeadroomHoldActive = false;
+    float                    m_ftHeadroomHoldSec = 0.f;
+    static constexpr float   kFtHeadroomHoldSec = 30.f;
+    // Keep focus-only only long enough for FT donor map; full 30s hold stays
+    // ACK-only (no re-reclaim). Soak: 30s at cap=0 → empty until visited then dump.
+    static constexpr float   kFtRemountBrowseGraceSec = 2.5f;
+    bool                     m_ftRemountBrowseRestored = false;
+    // Normal-path idle: drip-destroy unbound streamer MemBlocks.
+    float                    m_streamerIdleSec = 0.f;
+    int                      m_streamerIdleLastPage = -1;
+    int                      m_streamerIdleLastFocus = -1;
+    static constexpr float   kStreamerIdleReleaseSec = 8.f;
+    // Presence of this file enables periodic [mem] inventory lines (delete to stop).
+    static constexpr const char* kMemInventoryFlag =
+        "sdmc:/config/SwitchU/mem_inventory";
+    float                    m_memInventoryAccumSec = 0.f;
+    bool                     m_memInventoryEnabled = false;
+    float                    m_memInventoryRecheckSec = 0.f;
+    static constexpr float   kMemInventoryIntervalSec = 15.f;
+    static constexpr float   kMemInventoryFlagRecheckSec = 5.f;
     float                    m_autoThemeCheckTimer = 0.f;
 
     struct GeoFetchResult {
@@ -795,6 +857,16 @@ private:
     void restoreLayoutFlipFocusIfNeeded();
     // Cursor snap when a layout morph just finished (index remap safety).
     bool m_wasLayoutMorphing = false;
+    /// One-shot: next updateCursor places instantly (folder close / leave restore).
+    bool m_snapHomeFocus = false;
+    /// Hold instant cursor from leave preview until framebuffer capture finishes.
+    bool m_leaveCaptureLockCursor = false;
+    /// Temporarily force Teleport regardless of Theme Shop Cursor movement.
+    bool m_forceCursorTeleport = false;
+    bool m_savedCursorInstantMotion = false;
+
+    void beginForcedCursorTeleport();
+    void endForcedCursorTeleport();
     // Suppress neighbour hero/logo preload until morph + a beat of input settle.
     float m_deferBackdropPreloadSec = 0.f;
     // After HOME return: keep paced hero prefetch for a few seconds past defer.
@@ -868,6 +940,8 @@ private:
     std::uint64_t m_leaveCaptureFocusTitleId = 0;
     LeaveFrameSession m_leaveSession;
     nxui::Texture m_leaveSplashTex;
+    /// Poster uploaded for launch zoom when the grid tile shows icon/wide art.
+    nxui::Texture m_launchPosterTex;
     enum class LeaveSplashPhase { None, Hold, Fade };
     LeaveSplashPhase m_leaveSplashPhase = LeaveSplashPhase::None;
     float m_leaveSplashHoldRemaining = 0.f;

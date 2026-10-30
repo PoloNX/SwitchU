@@ -641,6 +641,44 @@ struct ScopedService {
     }
 };
 
+// CPU FastLoad boost can outlive the title that requested it (menu then draws
+// at a crawl with GPU throttled). Clear boost when apps exit / menu is ready.
+static bool isBoostPerformanceConfiguration(u32 config) {
+    return config >= 0x92220009u && config <= 0x9222000Cu;
+}
+
+static Result readPerformanceConfiguration(Service& apmSys, u32& out) {
+    return serviceDispatchOut(&apmSys, 7, out);
+}
+
+static void restoreNormalPerformance(const char* source) {
+    if (hosversionBefore(7, 0, 0))
+        return;
+
+    ScopedService apmSys;
+    const Result openRc = smGetService(&apmSys.value, "apm:sys");
+    if (R_FAILED(openRc)) {
+        switchu::FileLog::log("[perf-config] %s open apm:sys FAIL: 0x%X", source, openRc);
+        return;
+    }
+
+    u32 before = 0;
+    const Result beforeRc = readPerformanceConfiguration(apmSys.value, before);
+    const u32 mode = static_cast<u32>(ApmCpuBoostMode_Normal);
+    const Result setRc = serviceDispatchIn(&apmSys.value, 6, mode);
+    const u32 perfMode = 0;
+    const Result reqRc = serviceDispatchIn(&apmSys.value, 0, perfMode);
+    const Result loadRc = serviceDispatch(&apmSys.value, 5);
+    u32 after = 0;
+    const Result afterRc = readPerformanceConfiguration(apmSys.value, after);
+
+    switchu::FileLog::log(
+        "[perf-config] %s boost reset before=0x%08X(boost=%d rc=0x%X) set=0x%X req=0x%X load=0x%X "
+        "after=0x%08X(boost=%d rc=0x%X)",
+        source, before, isBoostPerformanceConfiguration(before) ? 1 : 0, beforeRc,
+        setRc, reqRc, loadRc, after, isBoostPerformanceConfiguration(after) ? 1 : 0, afterRc);
+}
+
 static Result openTimeAdminService(ScopedService& out) {
     const Result rc = smGetService(&out.value, "time:a");
     switchu::FileLog::log(
@@ -1636,6 +1674,7 @@ static void handleMenuCommand() {
         g_lastOperationFailure = {};
         g_batteryRefreshPending.store(true);
         shortenCatalogHold(kCatalogHoldAfterMenuReadyNs);
+        restoreNormalPerformance("menu-ready");
         break;
 
     case smi::SystemMessage::MenuClosing:
@@ -2045,6 +2084,7 @@ static void mainLoop() {
 
     if (daemon::app::checkFinished()) {
         switchu::FileLog::log("[main] app exited");
+        restoreNormalPerformance("app-exit");
         if (g_pendingHomeMenuLaunch) {
             switchu::FileLog::log("[main] clearing pending HOME foreground handoff: app exited");
             g_pendingHomeMenuLaunch = false;

@@ -241,7 +241,8 @@
       "clock_12h": "12-Hour Clock",
       "clock_12h_desc": "Show the home clock with AM and PM.",
       "usb30": "USB 3.0",
-      "usb30_desc": "Enable USB 3.0 for faster transfer speeds.",
+      "usb30_desc": "Faster USB for optional SwitchU-MTP (SD mount while HOME is open).",
+      "usb30_restart": "USB 3.0 changes take effect after a restart.",
       "battery_lot": "Battery Lot",
       "ui_language": "UI Language",
       "console_language": "Console Language",
@@ -538,6 +539,10 @@
       "hero_desc": "Choose a hero image.",
       "logo": "Logo",
       "logo_desc": "Choose a logo.",
+      "poster": "Poster",
+      "poster_desc": "Tall cover for single-row and 2x3 grid tiles.",
+      "poster_wide": "Poster wide",
+      "poster_wide_desc": "Landscape grid art for this 2x1 tile.",
       "icon": "Replacement icon",
       "icon_desc": "Choose an icon.",
       "clear_desc": "Remove the SteamGridDB override and restore the default.",
@@ -737,7 +742,18 @@
       "theme_music_add": "Add theme music to my playlist",
       "theme_music_add_desc": "When replace is off, append the theme's tracks to your current playlist instead of ignoring them.",
       "theme_music_play": "Play theme music on apply",
-      "theme_music_play_desc": "When replace is off and theme music was added, start that track after Apply. (Replace mode always starts the theme playlist when music is enabled.)"
+      "theme_music_play_desc": "When replace is off and theme music was added, start that track after Apply. (Replace mode always starts the theme playlist when music is enabled.)",
+      "battery_saver": "Battery Saver",
+      "battery_saver_desc": "Lighten HOME memory and GPU use. Also available in Quick Settings.",
+      "frame_tap_engaged": "Frame Tap Engaged",
+      "frame_tap_engaged_desc": "Lite mode is held while Frame Tap is streaming. Disconnect the viewer to change Battery Saver."
+    },
+    "badge": {
+      "icons": "Icons",
+      "music": "Music",
+      "sounds": "Sounds",
+      "tint": "Tint",
+      "auto": "Auto"
     },
     "accessibility": {
       "fullscreen_preview": "Fullscreen preview",
@@ -908,6 +924,7 @@
     "play_pause": "Play/Pause",
     "repeat": "Repeat",
     "shuffle": "Shuffle",
-    "playlist": "Playlist"
+    "playlist": "Playlist",
+    "battery_saver": "Battery Saver"
   }
 }
