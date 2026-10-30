@@ -442,6 +442,7 @@ void readThemeIconsFromValue(const nlohmann::json& value, ThemeIconConfig& icons
             return;
 
         readJsonAliases(value, {"path", "base", "basePath", "base_path", "directory", "dir"}, icons.basePath);
+        readJsonAliases(value, {"packId", "pack_id", "pack", "iconPack", "icon_pack"}, icons.packId);
     } catch (...) {
     }
 }

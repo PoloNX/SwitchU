@@ -69,6 +69,9 @@ struct ThemeFontConfig {
 
 struct ThemeIconConfig {
     std::string basePath;
+    // When set, Apply uses this Icons-library pack id (e.g. "atmos") instead of
+    // extracting assets/icons under the theme folder name.
+    std::string packId;
 };
 
 struct ThemePreset {

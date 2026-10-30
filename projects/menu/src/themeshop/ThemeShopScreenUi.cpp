@@ -2583,7 +2583,8 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
         subtitle = i18n.tr("themeshop.community.subtitle", "Themes from the catalog.");
     } else if (isIconsTab()) {
         title = i18n.tr("themeshop.icons.title", "Icons");
-        subtitle = i18n.tr("themeshop.icons.subtitle", "Sidebar icon packs.");
+        subtitle = i18n.tr("themeshop.icons.subtitle",
+            "Installed packs and downloads from the shop.");
     } else {
         title = i18n.tr("themeshop.installed.title", "Themes");
         subtitle = i18n.tr("themeshop.installed.subtitle", "Installed on this console.");
@@ -3219,9 +3220,14 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
                 ? i18n.tr("themeshop.icons.fallback", "Missing icons fall back to Default.")
                 : entry->description;
             if (!entry->installed) {
-                detailInfoC = i18n.tr("themeshop.icons.download_hint", "Install to download this pack to the console.");
+                detailInfoC = i18n.tr("themeshop.icons.download_hint",
+                    "Shop pack: Download or Download + Apply to install it on this console.");
             } else if (entry->removable) {
-                detailInfoC = i18n.tr("themeshop.icons.remove_hint", "Downloaded pack: it can be removed from the console.");
+                detailInfoC = i18n.tr("themeshop.icons.remove_hint",
+                    "Installed pack: Apply to use it, or Remove to delete it from the console.");
+            } else if (entry->builtin) {
+                detailInfoC = i18n.tr("themeshop.icons.builtin_hint",
+                    "Built-in pack: Apply to use it. Built-ins cannot be removed.");
             } else if (!entry->coverPath.empty()) {
                 detailInfoC = i18n.tr("themeshop.icons.cover_single", "Press A for a closer look, then Apply to switch icons.");
             } else {
