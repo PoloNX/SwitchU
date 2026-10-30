@@ -35,8 +35,10 @@ std::string join(const std::string& base, const std::string& name) {
 }
 
 bool packLooksValid(const fs::path& dir) {
-    // At least album.png marks a full SD pack; theme packs use iconDirLooksUsable.
-    return fs::is_regular_file(dir / "album.png");
+    // Theme-bundled and shop packs may be partial (e.g. iiSU ships only a few
+    // sidebar glyphs and falls back to Default for the rest). Require any
+    // known glyph — not album.png alone — so they still appear in Icons.
+    return iconDirLooksUsable(dir.generic_string());
 }
 
 std::string stripThemeIdPrefix(std::string id) {
