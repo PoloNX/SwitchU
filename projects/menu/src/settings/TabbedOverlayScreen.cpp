@@ -378,6 +378,13 @@ void TabbedOverlayScreen::closeDropdown(bool animated) {
 }
 
 
+float TabbedOverlayScreen::tabRailContentHeight() const {
+    float height = kTabRailInset * 2.f + kTabRowHeight * (float)m_tabs.size();
+    for (int i = 0; i < (int)m_tabs.size(); ++i)
+        height += tabBranchExtraHeight(i);
+    return height;
+}
+
 void TabbedOverlayScreen::rebuildTabBar() {
     m_tabBar->clearChildren();
     nxui::Rect tr = tabsRect();
@@ -393,7 +400,7 @@ void TabbedOverlayScreen::rebuildTabBar() {
         tabBox->setTag(m_tabs[i].name);
         tabBox->setRect({tabX, tabY, tabW, tabH});
         m_tabBar->addChild(tabBox);
-        tabY += tabH + kTabCardGap;
+        tabY += tabH + kTabCardGap + tabBranchExtraHeight(i);
     }
 }
 
@@ -516,7 +523,7 @@ void TabbedOverlayScreen::syncDebugWireframeRects(const nxui::Rect& panel) {
     float tabH = kTabRowHeight - kTabCardGap;
     for (int i = 0; i < (int)tabChildren.size(); ++i) {
         tabChildren[i]->setRect({tr.x + kTabRailInset, tabY, tabW, tabH});
-        tabY += tabH + kTabCardGap;
+        tabY += tabH + kTabCardGap + tabBranchExtraHeight(i);
     }
 
     m_tabContent->setRect(cr);
@@ -574,30 +581,54 @@ void TabbedOverlayScreen::drawTabs(nxui::Renderer& ren, const nxui::Rect& panel,
     float tabH = kTabRowHeight - kTabCardGap;
     float rowOpacity = opacity * reveal;
     float rowYOffset = (1.f - reveal) * 6.f;
+    struct BranchDraw {
+        int index = -1;
+        nxui::Rect rect;
+    };
+    BranchDraw branchDraw;
 
     for (int i = 0; i < (int)tabChildren.size() && i < (int)m_tabs.size(); ++i) {
         auto* tab = static_cast<SettingsTabWidget*>(tabChildren[i].get());
         tab->setRect({tr.x + kTabRailInset, tabY + rowYOffset, tabW, tabH});
         tab->setOpacity(rowOpacity);
+        const bool branchFocus = (i == m_tabIndex) && tabBranchConsumesFocus();
         tab->sync(m_tabs[i].name,
                   m_font,
                   m_theme,
                   i == m_tabIndex,
-                  m_focusArea == FocusArea::Tabs && i == m_tabIndex,
+                  m_focusArea == FocusArea::Tabs && i == m_tabIndex && !branchFocus,
                   m_uiTime,
                   m_tabAccentW.value());
         tabY += tabH + kTabCardGap;
+        const float extra = tabBranchExtraHeight(i);
+        if (extra > 0.5f) {
+            const float branchH = std::max(0.f, extra - 8.f);
+            branchDraw = {
+                i,
+                {
+                    tr.x + kTabRailInset + 20.f,
+                    tabY + rowYOffset,
+                    std::max(0.f, tabW - 20.f),
+                    branchH
+                }
+            };
+            tabY += extra;
+        }
     }
 
     if (m_focusArea == FocusArea::Tabs && m_tabIndex >= 0 && m_tabIndex < (int)tabChildren.size()) {
-        m_focusCursor.moveTo(tabChildren[m_tabIndex]->rect().expanded(1.f), 16.f, 0.08f);
+        nxui::Rect focusRect = tabChildren[m_tabIndex]->rect().expanded(1.f);
+        (void)tabFocusCursorRect(focusRect);
+        m_focusCursor.moveTo(focusRect, 16.f, 0.08f);
     }
 
     ren.pushClipRect(tr);
     m_tabBar->render(ren);
+    if (branchDraw.index >= 0)
+        drawTabBranch(ren, branchDraw.index, branchDraw.rect, rowOpacity);
     ren.popClipRect();
 
-    const float totalHeight = kTabRailInset * 2.f + kTabRowHeight * m_tabs.size();
+    const float totalHeight = tabRailContentHeight();
     const float maxScroll = std::max(0.f, totalHeight - tr.height);
     if (maxScroll > 0.f) {
         const float trackH = std::max(34.f, tr.height * tr.height / totalHeight);
