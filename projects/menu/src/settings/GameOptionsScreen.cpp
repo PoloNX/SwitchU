@@ -81,10 +81,11 @@ void GameOptionsScreen::buildTabs() {
         // ASCII "x" avoids mojibake if the source encoding is wrong.
         // 1x2 dropped — cell aspect (~1:2) can't match poster (2:3); use 2x3.
         // 3x2 dropped — SGDB "Poster wide" (460x215) crops badly in a 3x2 cell.
-        size.options = {"1x1", "2x1", "2x2", "2x3"};
-        size.intVal = std::clamp(m_game.sizeIndex, 0, 3);
+        // 4x2 kept — same 2:1 aspect as 2x1 (larger twin; Hero / Poster wide).
+        size.options = {"1x1", "2x1", "4x2", "2x2", "2x3"};
+        size.intVal = std::clamp(m_game.sizeIndex, 0, 4);
         size.onChange = [this](SettingItem& self) {
-            m_game.sizeIndex = std::clamp(self.intVal, 0, 3);
+            m_game.sizeIndex = std::clamp(self.intVal, 0, 4);
             if (m_resizeCb) m_resizeCb(m_game.sizeIndex);
         };
         data.items.push_back(std::move(size));
@@ -164,11 +165,11 @@ void GameOptionsScreen::buildTabs() {
                       "game.steamgriddb.poster_desc",
                       "Tall cover for single-row and 2x3 grid tiles.",
                       ArtworkKind::Poster, m_game.hasPosterArt);
-    // 2x1 tiles can use a landscape SGDB grid instead of Hero+Logo.
-    if (m_game.sizeIndex == 1) {
+    // 2x1 / 4x2 tiles can use a landscape SGDB grid instead of Hero+Logo.
+    if (m_game.sizeIndex == 1 || m_game.sizeIndex == 2) {
         addArtworkActions("game.steamgriddb.poster_wide", "Poster wide",
                           "game.steamgriddb.poster_wide_desc",
-                          "Landscape grid art for this 2x1 tile.",
+                          "Landscape grid art for this 2x1 / 4x2 tile.",
                           ArtworkKind::PosterWide, m_game.hasPosterWideArt);
     }
     addArtworkActions("game.steamgriddb.icon", "Replacement icon",

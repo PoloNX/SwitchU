@@ -883,7 +883,7 @@ void WiiUMenuApp::startSteamGridDbScrape() {
                 "settings.steamgriddb.already_running", "A SteamGridDB operation is already running."));
         return;
     }
-    // Stamp grid tile sizes so the scrape can pull landscape grids for 2x1/3x2
+    // Stamp grid tile sizes so the scrape can pull landscape grids for 2x1/4x2
     // titles even when HOME is currently in single-row (where sizes force 1x1).
     std::vector<AppEntry> scrapeApps = m_allApps;
     for (auto& app : scrapeApps) {
@@ -1097,8 +1097,7 @@ void WiiUMenuApp::clearSteamGridDbArtwork(std::uint64_t titleId,
         || managerKind == SteamGridDbManager::ArtworkKind::Logo) {
         m_gameArtwork.erase(titleId);
         const auto size = gameGridSize(titleId, AppLayoutMode::Grid);
-        if ((size.columns == 2 && size.rows == 1)
-            || (size.columns == 3 && size.rows == 2))
+        if (switchu::widgets::isLandscapeWideGameTile(size))
             ensureGameArtwork(titleId);
     }
     showFocusedSteamGridDbArtwork(true);
@@ -1324,8 +1323,7 @@ void WiiUMenuApp::syncSteamGridDb() {
                 || result.kind == SteamGridDbManager::ArtworkKind::Logo) {
                 m_gameArtwork.erase(result.titleId);
                 const auto size = gameGridSize(result.titleId, AppLayoutMode::Grid);
-                if ((size.columns == 2 && size.rows == 1)
-                    || (size.columns == 3 && size.rows == 2))
+                if (switchu::widgets::isLandscapeWideGameTile(size))
                     ensureGameArtwork(result.titleId);
             }
             if (m_grid && m_openFolderId == 0 &&
@@ -1439,7 +1437,7 @@ void WiiUMenuApp::syncSteamGridDb() {
                 const auto tid = icon->titleId();
                 const int cols = icon->gridSpanColumns();
                 const int rows = icon->gridSpanRows();
-                if ((cols == 2 && rows == 1) || (cols == 3 && rows == 2)) {
+                if (switchu::widgets::isLandscapeWideGameTile(cols, rows)) {
                     m_gameArtwork.erase(tid);
                     ensureGameArtwork(tid);
                 } else if (preferPosterIconData(tid) && !preferPosterTiles) {

@@ -58,7 +58,7 @@ ArtworkKindInfo kindInfo(SteamGridDbManager::ArtworkKind kind) {
                 "&mimes=image/png,image/jpeg&dimensions=600x900,342x482",
                 true, false, true, true, 320, 480};
     case Kind::GridWide:
-        // Landscape SGDB grids for 2x1 / 3x2 HOME tiles (separate from Hero+Logo).
+        // Landscape SGDB grids for 2x1 / 4x2 HOME tiles (separate from Hero+Logo).
         return {"/grids", "Poster wide", "gridWide", "selectedGridWideId",
                 "selectedGridWideIndex",
                 "&mimes=image/png,image/jpeg&dimensions=460x215,920x430",
@@ -1051,12 +1051,13 @@ void SteamGridDbManager::scrape(std::string apiKey, std::vector<AppEntry> apps) 
 
         bool matched = false;
         // Incremental: keep trusted hero/logo choices, but still fill a missing
-        // Poster (and landscape grid for 2x1 tiles) from the cached game id.
+        // Poster (and landscape grid for 2x1 / 4x2 tiles) from the cached game id.
         if (hasArtwork(app.titleId)) {
             bool posterFilled = hasPoster(app.titleId);
             bool gridWideFilled = hasGridWide(app.titleId);
             const bool wantsGridWide =
-                app.widgetColumns == 2 && app.widgetRows == 1;
+                (app.widgetColumns == 2 && app.widgetRows == 1)
+                || (app.widgetColumns == 4 && app.widgetRows == 2);
             try {
                 nlohmann::json metadata = readMetadata(app.titleId);
                 const long long gameId = metadata.value("steamGridDbGameId", 0LL);
@@ -1206,7 +1207,8 @@ void SteamGridDbManager::scrape(std::string apiKey, std::vector<AppEntry> apps) 
                                                posterPath(app.titleId), 0.52f, 0.20f);
             if (m_cancelRequested.load()) break;
             bool gridWideOk = false;
-            if (app.widgetColumns == 2 && app.widgetRows == 1) {
+            if ((app.widgetColumns == 2 && app.widgetRows == 1)
+                || (app.widgetColumns == 4 && app.widgetRows == 2)) {
                 gridWideOk = fetchArtwork(ArtworkKind::GridWide, false,
                                           gridWidePath(app.titleId), 0.74f, 0.20f);
                 if (m_cancelRequested.load()) break;

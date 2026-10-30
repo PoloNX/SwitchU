@@ -2,6 +2,7 @@
 #include "FolderPalette.hpp"
 #include "FolderStyleDraw.hpp"
 #include "core/FolderStore.hpp"
+#include "core/WidgetStore.hpp"
 #include "BatteryDrawing.hpp"
 #include "core/DebugLog.hpp"
 #include <nxui/core/Renderer.hpp>
@@ -995,9 +996,9 @@ void GlossyIcon::onContentRender(nxui::Renderer& ren) {
         return;
     }
 
-    // Landscape wide face: 2x1 only (3x2 removed — SGDB grid aspect didn't fit).
+    // Landscape wide face: 2x1 / 4x2 (same 2:1 aspect). 3x2 removed — aspect misfit.
     const bool landscapeWideTile =
-        m_widgetColumns == 2 && m_widgetRows == 1;
+        switchu::widgets::isLandscapeWideGameTile(m_widgetColumns, m_widgetRows);
     // Tall poster face: 2x3 (and legacy 1x2). 2x2 / 1x1 always use the icon path.
     const bool tallPosterTile =
         (m_widgetColumns == 2 && m_widgetRows == 3)

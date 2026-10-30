@@ -1726,7 +1726,8 @@ void WiiUMenuApp::loadMenuLayout() {
                 continue;
             }
             if ((columns == 1 && rows == 1) ||
-                (columns == 2 && (rows == 1 || rows == 2 || rows == 3)))
+                (columns == 2 && (rows == 1 || rows == 2 || rows == 3)) ||
+                (columns == 4 && rows == 2))
                 m_gameSizes[titleId] = {columns, rows};
         }
     }
@@ -1790,7 +1791,8 @@ switchu::widgets::WidgetSize WiiUMenuApp::gameGridSize(
     if (found == m_gameSizes.end()) return {1, 1};
     const auto size = found->second;
     if ((size.columns == 1 && size.rows == 1) ||
-        (size.columns == 2 && (size.rows == 1 || size.rows == 2 || size.rows == 3)))
+        (size.columns == 2 && (size.rows == 1 || size.rows == 2 || size.rows == 3)) ||
+        (size.columns == 4 && size.rows == 2))
         return size;
     // Legacy 3x2 → 2x2 so saved layouts keep a multi-cell tile without wide art.
     if (size.columns == 3 && size.rows == 2)
@@ -2885,7 +2887,7 @@ void WiiUMenuApp::startNextGameArtworkDecode() {
         const auto started = std::chrono::steady_clock::now();
         std::error_code error;
         bool usedGridWide = false;
-        // Prefer landscape SGDB grid for 2x1 tiles when present.
+        // Prefer landscape SGDB grid for 2x1 / 4x2 tiles when present.
         if (std::filesystem::is_regular_file(gridWidePath, error) &&
             !state->cancelled.load()) {
             state->hero = steamgriddb::artwork::decode(gridWidePath, 460, 215, true);
@@ -2923,7 +2925,7 @@ void WiiUMenuApp::syncGameArtworkTextures(std::uint64_t titleId) {
             icon->titleId() == titleId) {
             const int cols = icon->gridSpanColumns();
             const int rows = icon->gridSpanRows();
-            if (cols == 2 && rows == 1)
+            if (switchu::widgets::isLandscapeWideGameTile(cols, rows))
                 icon->setWideGameTextures(artwork->second.hero.get(),
                                           artwork->second.logo.get());
         }
@@ -3076,18 +3078,70 @@ bool WiiUMenuApp::layoutFitsAt(const std::vector<std::uint64_t>& slots,
     const int rows = std::clamp(m_config.gridRows, 1, 5);
     const int perPage = std::max(1, columns * rows);
     const int local = anchor % perPage;
-    if (local % columns + std::max(1, size.columns) > columns ||
-        local / columns + std::max(1, size.rows) > rows)
+    size.columns = std::max(1, size.columns);
+    size.rows = std::max(1, size.rows);
+    if (local % columns + size.columns > columns ||
+        local / columns + size.rows > rows)
         return false;
-    for (int dy = 0; dy < std::max(1, size.rows); ++dy) {
-        for (int dx = 0; dx < std::max(1, size.columns); ++dx) {
+
+    // Ids live only on the anchor cell — resolve the real owner of each cell
+    // (no heap alloc; layoutFitsAt is called in tight edit-mode loops).
+    for (int dy = 0; dy < size.rows; ++dy) {
+        for (int dx = 0; dx < size.columns; ++dx) {
             const int cell = anchor + dy * columns + dx;
-            if (cell >= static_cast<int>(slots.size()) ||
-                slots[static_cast<std::size_t>(cell)] != 0)
+            if (cell >= static_cast<int>(slots.size()))
+                return false;
+            if (layoutSpanAnchorFor(slots, cell) >= 0)
                 return false;
         }
     }
     return true;
+}
+
+int WiiUMenuApp::layoutDropAnchorFor(const std::vector<std::uint64_t>& slots,
+                                     int dropCell,
+                                     switchu::widgets::WidgetSize size) const {
+    if (dropCell < 0 || dropCell >= static_cast<int>(slots.size()))
+        return -1;
+    size.columns = std::max(1, size.columns);
+    size.rows = std::max(1, size.rows);
+    if (layoutFitsAt(slots, dropCell, size))
+        return dropCell;
+
+    const int columns = std::clamp(m_config.gridColumns, 1, 8);
+    const int rows = std::clamp(m_config.gridRows, 1, 5);
+    const int perPage = std::max(1, columns * rows);
+    const int pageStart = (dropCell / perPage) * perPage;
+    const int dropLocal = dropCell % perPage;
+    const int dropCol = dropLocal % columns;
+    const int dropRow = dropLocal / columns;
+
+    int best = -1;
+    int bestScore = std::numeric_limits<int>::max();
+    // Only top-lefts whose footprint covers dropCell. A previous "nearest
+    // empty 4x2 anywhere" fallback snapped a held 4x2 back onto its old
+    // hole when dropping onto a 2x1 — swap looked broken one direction.
+    for (int dy = 0; dy < size.rows; ++dy) {
+        for (int dx = 0; dx < size.columns; ++dx) {
+            const int anchorCol = dropCol - dx;
+            const int anchorRow = dropRow - dy;
+            if (anchorCol < 0 || anchorRow < 0)
+                continue;
+            if (anchorCol + size.columns > columns ||
+                anchorRow + size.rows > rows)
+                continue;
+            const int anchor = pageStart + anchorRow * columns + anchorCol;
+            if (!layoutFitsAt(slots, anchor, size))
+                continue;
+            const int score = std::abs(dx) + std::abs(dy) * 8
+                + std::abs(anchor - dropCell);
+            if (score < bestScore) {
+                bestScore = score;
+                best = anchor;
+            }
+        }
+    }
+    return best;
 }
 
 bool WiiUMenuApp::canPlaceGridItem(int targetSlot,
@@ -3332,8 +3386,8 @@ void WiiUMenuApp::syncWidgetPageAssets() {
             continue;
         const int cols = icon->gridSpanColumns();
         const int rows = icon->gridSpanRows();
-        // 2x1 landscape tiles own hero/grid-wide GPU art.
-        if (!(cols == 2 && rows == 1))
+        // 2x1 / 4x2 landscape tiles own hero/grid-wide GPU art.
+        if (!switchu::widgets::isLandscapeWideGameTile(cols, rows))
             continue;
         if (current[i]) {
             currentGameArtwork.insert(icon->titleId());
@@ -3392,7 +3446,7 @@ void WiiUMenuApp::syncWidgetPageAssets() {
                 continue;
             const int cols = icon->gridSpanColumns();
             const int rows = icon->gridSpanRows();
-            if (!(cols == 2 && rows == 1))
+            if (!switchu::widgets::isLandscapeWideGameTile(cols, rows))
                 continue;
             const auto artwork = m_gameArtwork.find(icon->titleId());
             if (artwork != m_gameArtwork.end())
@@ -4166,7 +4220,7 @@ bool WiiUMenuApp::tryCommitInPlaceLayoutMorph(std::uint64_t focused) {
     for (const auto& icon : icons) {
         if (!icon)
             continue;
-        // In-place morph reuses grid tiles — drop 2x1 spans / grid-wide faces
+        // In-place morph reuses grid tiles — drop wide spans / grid-wide faces
         // so single-row shows poster (or icon), never landscape wide art.
         if (icon->entryKind() == GridEntryKind::Application
             || icon->entryKind() == GridEntryKind::Widget) {
@@ -5053,15 +5107,54 @@ void WiiUMenuApp::activateApplication(GlossyIcon* source, AppEntry* entry,
         return;
     }
 
+    // Launch zoom must match the on-grid tile: 1x1 → icon, 2x3 → tall poster,
+    // 2x1/4x2 → landscape wide art. Never force a single-row poster onto other
+    // sizes (that made 1x1s zoom as 2:3 posters).
     const nxui::Rect frame = source->focusRect();
-    const nxui::Texture* texture = source->texture();
     const float radius = source->cornerRadius();
     const nxui::Color base = m_theme.panelBase;
     const nxui::Color border = m_theme.panelBorder;
-    auto startLaunch = [this, frame, texture, radius, base, border,
+    const auto gridSize = gameGridSize(titleId, AppLayoutMode::Grid);
+    const bool landscapeTile = m_appLayoutMode == AppLayoutMode::Grid
+        && switchu::widgets::isLandscapeWideGameTile(gridSize);
+    const bool posterTile = source->usesPosterFrame();
+    const nxui::Texture* texture = source->texture();
+    if (landscapeTile) {
+        if (auto* wide = source->wideGameHero(); wide && wide->valid()) {
+            texture = wide;
+        } else if (SteamGridDbManager::hasGridWide(titleId)) {
+            auto decoded = steamgriddb::artwork::decode(
+                SteamGridDbManager::gridWidePath(titleId), 460, 215, true);
+            if (!decoded.rgba.empty()
+                && m_launchPosterTex.loadFromPixels(
+                    app().gpu(), app().renderer(), decoded.rgba.data(),
+                    decoded.width, decoded.height))
+                texture = &m_launchPosterTex;
+        } else if (SteamGridDbManager::hasArtwork(titleId)) {
+            auto decoded = steamgriddb::artwork::decode(
+                SteamGridDbManager::heroPath(titleId), 640, 360, true);
+            if (!decoded.rgba.empty()
+                && m_launchPosterTex.loadFromPixels(
+                    app().gpu(), app().renderer(), decoded.rgba.data(),
+                    decoded.width, decoded.height))
+                texture = &m_launchPosterTex;
+        }
+    } else if (posterTile) {
+        if (!(texture && texture->valid())
+            && SteamGridDbManager::hasPoster(titleId)) {
+            auto decoded = steamgriddb::artwork::decodeFit(
+                SteamGridDbManager::posterPath(titleId), 320, 480);
+            if (!decoded.rgba.empty()
+                && m_launchPosterTex.loadFromPixels(
+                    app().gpu(), app().renderer(), decoded.rgba.data(),
+                    decoded.width, decoded.height))
+                texture = &m_launchPosterTex;
+        }
+    }
+    auto startLaunch = [this, frame, texture, radius, base, border, posterTile,
                         titleId, launchTitle](AccountUid uid) {
         scheduleLeaveCapture([this, frame, texture, radius, base, border,
-                              titleId, launchTitle, uid]() {
+                              posterTile, titleId, launchTitle, uid]() {
             reclaimForFrameTapLaunch("launch");
             m_audio.playSfx(Sfx::LaunchGame);
             m_launchAnim->start(frame, texture, radius, base, border, titleId, uid,
@@ -5072,7 +5165,7 @@ void WiiUMenuApp::activateApplication(GlossyIcon* source, AppEntry* entry,
                         static_cast<std::int64_t>(std::time(nullptr)));
                     m_widgetStore.save();
                     m_launcher.launchApplication(id, selectedUid);
-                });
+                }, {}, posterTile);
         }, titleId);
     };
 
@@ -5863,12 +5956,17 @@ std::shared_ptr<GlossyIcon> WiiUMenuApp::makeIcon(const AppEntry& entry) {
     icon->setIsGameCard(entry.isGameCard());
     icon->setGameCardTexture(&m_gameCardTex);
     icon->setNotLaunchable(!entry.isLaunchable());
-    icon->setPosterFrame(
-        preferSingleRowPosters()
-        && SteamGridDbManager::hasPoster(entry.titleId));
+    {
+        const bool tallPosterTile =
+            (entry.widgetColumns == 2 && entry.widgetRows == 3)
+            || (entry.widgetColumns == 1 && entry.widgetRows == 2);
+        icon->setPosterFrame(
+            (preferSingleRowPosters() || tallPosterTile)
+            && SteamGridDbManager::hasPoster(entry.titleId));
+    }
     icon->setGridSpan(entry.widgetColumns, entry.widgetRows);
-    const bool landscapeTile =
-        entry.widgetColumns == 2 && entry.widgetRows == 1;
+    const bool landscapeTile = switchu::widgets::isLandscapeWideGameTile(
+        entry.widgetColumns, entry.widgetRows);
     if (landscapeTile && m_appLayoutMode == AppLayoutMode::Grid) {
         const auto artwork = m_gameArtwork.find(entry.titleId);
         if (artwork != m_gameArtwork.end())
@@ -7600,7 +7698,7 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
     if (m_returnPreloadPaceSec > 0.f) {
         m_returnPreloadPaceSec = std::max(0.f, m_returnPreloadPaceSec - dt);
         if (m_returnPreloadPaceSec <= 0.f && m_steamGridDbBackdrop)
-            m_steamGridDbBackdrop->setPreloadMinInterval(0.f);
+            m_steamGridDbBackdrop->setPreloadMinInterval(0.35f);
     }
     if (m_steamGridDbBackdrop) {
         // Pause neighbour hero warm while the user is navigating; focused art
@@ -8489,13 +8587,24 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
 
     nxui::AnimationManager::instance().update(motionDt);
 
-    // In dynamic-line mode, and while a layout morph is in flight, the focused
-    // widget itself is moving. Sample its interpolated display rectangle every
-    // frame so the focus ring remains attached to the app throughout.
-    if (m_grid && (m_grid->isDynamicLine() || m_grid->isLayoutMorphing())) {
+    // Re-sample the focus ring every frame when the focused tile is moving or
+    // focus-scaling: dynamic-line / morph (carousel motion), and grid 2x3 /
+    // 4x2 / 2x1 (outside-fit ring must track focusScale like the green pulse).
+    if (m_grid) {
         auto* focused = focusManager().current();
-        if (focused && focused->tag() == "glossy_icon")
-            updateCursor();
+        if (focused && focused->tag() == "glossy_icon") {
+            bool resample = m_grid->isDynamicLine() || m_grid->isLayoutMorphing();
+            if (!resample && !m_editMode) {
+                auto* icon = static_cast<GlossyIcon*>(focused);
+                const int cols = icon->gridSpanColumns();
+                const int rows = icon->gridSpanRows();
+                resample =
+                    (cols == 2 && rows == 3) || (cols == 1 && rows == 2)
+                    || switchu::widgets::isLandscapeWideGameTile(cols, rows);
+            }
+            if (resample)
+                updateCursor();
+        }
     }
 
     // Sample the cursor after animation update to avoid one-frame lag.

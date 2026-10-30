@@ -49,23 +49,28 @@ in release indefinitely).
 6. **SGDB fit RAM cache** — In-RAM fit cache capped at **4 MiB / 6 entries**
    (was 10 MiB / 16); disk `.rgba-cache` unchanged.
 
+7. **Single-row hero backdrop half-res** — decode/upload 640×360 (+ 384×192
+   logo) instead of 1280×720; cruise preload gap 0.35 s. Cuts ~3.6 MiB SD
+   reads that hitch poster+hero browse.
+
 ### Near-term (UX-safe)
 
 ### Medium (same feel if tuned carefully)
 
-7. **Poster distance LOD** — Focus ±1 full poster; farther slots half-linear
+8. **Poster distance LOD** — Focus ±1 full poster; farther slots half-linear
    (¼ pixels) or icon stand-ins, upgrade on focus. Biggest single-row saver.
 
-8. **Font pressure already exists** — Prefer relying on pressure trim
+9. **Font pressure already exists** — Prefer relying on pressure trim
    (1 MiB/font when image avail is low) over cutting the steady 4 MiB ceiling
    globally so labels do not vanish.
 
-9. **Audio embedded covers** — Cap or lazy-load ID3 APIC bytes; QS already
+10. **Audio embedded covers** — Cap or lazy-load ID3 APIC bytes; QS already
    caps thumbs at 20.
 
 ### Do not cut first
 
-- Steady single-row hero / SGDB 1280×720 presentation quality  
+- Steady single-row hero presentation (backdrop uses 640×360 stretch; avoid
+  reintroducing 1280×720 RGBA reads that hitch scroll)  
 - Theme Shop hide hard-release pattern (keep; copy elsewhere)  
 - Soft-land timing that makes HOME return feel instant  
 

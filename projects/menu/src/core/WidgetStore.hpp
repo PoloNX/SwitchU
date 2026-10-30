@@ -24,6 +24,15 @@ struct WidgetSize {
     bool operator==(const WidgetSize&) const = default;
 };
 
+/// 2×1 and 4×2 share the same 2:1 aspect — Hero / Poster-wide landscape faces.
+inline constexpr bool isLandscapeWideGameTile(int columns, int rows) {
+    return (columns == 2 && rows == 1) || (columns == 4 && rows == 2);
+}
+
+inline constexpr bool isLandscapeWideGameTile(WidgetSize size) {
+    return isLandscapeWideGameTile(size.columns, size.rows);
+}
+
 struct Widget {
     std::uint32_t id = 0;
     WidgetType type = WidgetType::Clock;

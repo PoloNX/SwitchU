@@ -111,7 +111,9 @@ private:
     std::vector<DecodedArtwork> m_decodedCache;
     int m_uploadStage = 0;
     bool m_waitForGpuBeforeUpload = false;
-    float m_preloadMinInterval = 0.f;
+    // Cruise neighbour warm (~0.9 MiB hero reads). 0 = as soon as free (too
+    // aggressive on SD while browsing single-row with heroes).
+    float m_preloadMinInterval = 0.35f;
     float m_preloadGapSec = 0.f;
     bool m_preloadPaused = false;
     AppLayoutMode m_layoutMode = AppLayoutMode::Grid;

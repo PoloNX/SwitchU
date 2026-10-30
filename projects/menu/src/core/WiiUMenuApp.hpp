@@ -199,7 +199,7 @@ private:
     switchu::widgets::WidgetSize gameGridSize(std::uint64_t titleId,
                                                AppLayoutMode mode) const;
     // Footprint a title occupies in the grid layout. Widgets carry their own
-    // size; games may be configured as 2x1 or 2x2 tiles.
+    // size; games may be configured as 2x1, 4x2, 2x2, or 2x3 tiles.
     switchu::widgets::WidgetSize layoutSlotSpan(std::uint64_t titleId) const;
     // Anchor cell of the tile covering `cell`, or -1 when the cell is free.
     int layoutSpanAnchorFor(int cell) const;
@@ -208,6 +208,10 @@ private:
     // (page bounds respected, every covered cell empty).
     bool layoutFitsAt(const std::vector<std::uint64_t>& slots, int anchor,
                       switchu::widgets::WidgetSize size) const;
+    // Best top-left for dropping `size` so the footprint covers `dropCell`
+    // (or is nearest to it). -1 when nothing fits.
+    int layoutDropAnchorFor(const std::vector<std::uint64_t>& slots, int dropCell,
+                            switchu::widgets::WidgetSize size) const;
     bool canPlaceGridItem(int targetSlot, switchu::widgets::WidgetSize size,
                           std::uint64_t ignoringTitleId = 0,
                           std::uint64_t alsoIgnoringTitleId = 0) const;
@@ -936,6 +940,8 @@ private:
     std::uint64_t m_leaveCaptureFocusTitleId = 0;
     LeaveFrameSession m_leaveSession;
     nxui::Texture m_leaveSplashTex;
+    /// Poster uploaded for launch zoom when the grid tile shows icon/wide art.
+    nxui::Texture m_launchPosterTex;
     enum class LeaveSplashPhase { None, Hold, Fade };
     LeaveSplashPhase m_leaveSplashPhase = LeaveSplashPhase::None;
     float m_leaveSplashHoldRemaining = 0.f;

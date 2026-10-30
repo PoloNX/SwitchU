@@ -325,13 +325,18 @@ void SteamGridDbBackdrop::startPendingDecode(std::uint64_t titleId) {
             // Fixed canvases let both double-buffer slots reuse their existing
             // MemBlocks. Variable source dimensions previously triggered a
             // free + waitIdle on the render thread during focus changes.
+            //
+            // 640×360 (not 1280×720): same canvas SteamGridDbManager preps for
+            // UI cards. Full-screen fillRect stretch looks fine with the soft
+            // scrim; quarter the RGBA (~0.9 MiB vs ~3.6 MiB) cuts the SD hitch
+            // that made single-row + heroes feel sticky vs theme-only.
             state->artwork.hero = decodeImage(
-                SteamGridDbManager::heroPath(titleId), 1280, 720, true);
+                SteamGridDbManager::heroPath(titleId), 640, 360, true);
             if (!state->cancelled.load())
                 state->artwork.heroLuminance = sampleLuminance(state->artwork.hero);
             if (!state->cancelled.load())
                 state->artwork.logo = decodeImage(
-                    SteamGridDbManager::logoPath(titleId), 640, 180, false);
+                    SteamGridDbManager::logoPath(titleId), 384, 192, false);
         }
         state->artwork.decodeMilliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now() - started).count();

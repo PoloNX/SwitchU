@@ -1,13 +1,55 @@
 #include "LaunchAnimation.hpp"
 #include <nxui/core/Renderer.hpp>
+#include <algorithm>
+#include <cmath>
+
+namespace {
+
+nxui::Rect centeredCoverSource(const nxui::Texture& texture,
+                               const nxui::Rect& destination) {
+    const float sourceWidth = static_cast<float>(texture.width());
+    const float sourceHeight = static_cast<float>(texture.height());
+    if (sourceWidth <= 0.f || sourceHeight <= 0.f ||
+        destination.width <= 0.f || destination.height <= 0.f)
+        return {0.f, 0.f, sourceWidth, sourceHeight};
+
+    const float sourceAspect = sourceWidth / sourceHeight;
+    const float targetAspect = destination.width / destination.height;
+    if (sourceAspect > targetAspect) {
+        const float croppedWidth = sourceHeight * targetAspect;
+        return {(sourceWidth - croppedWidth) * 0.5f, 0.f,
+                croppedWidth, sourceHeight};
+    }
+    const float croppedHeight = sourceWidth / targetAspect;
+    return {0.f, (sourceHeight - croppedHeight) * 0.5f,
+            sourceWidth, croppedHeight};
+}
+
+nxui::Rect posterFrameInTile(const nxui::Rect& tile) {
+    // Match single-row poster cells: 2:3, centered inside the source tile.
+    constexpr float kPosterAspect = 2.f / 3.f;
+    if (tile.width <= 1.f || tile.height <= 1.f)
+        return tile;
+    float w = tile.width;
+    float h = w / kPosterAspect;
+    if (h > tile.height) {
+        h = tile.height;
+        w = h * kPosterAspect;
+    }
+    return {tile.x + (tile.width - w) * 0.5f,
+            tile.y + (tile.height - h) * 0.5f, w, h};
+}
+
+} // namespace
 
 
 void LaunchAnimation::start(const nxui::Rect& from, const nxui::Texture* tex, float cornerRadius,
                             const nxui::Color& panelColor, const nxui::Color& borderColor,
                             uint64_t titleId, AccountUid uid,
-                            LaunchCallback onLaunch, nxui::VoidCallback onDone)
+                            LaunchCallback onLaunch, nxui::VoidCallback onDone,
+                            bool preservePosterAspect)
 {
-    m_from         = from;
+    m_from         = preservePosterAspect ? posterFrameInTile(from) : from;
     m_tex          = tex;
     m_cornerRadius = cornerRadius;
     m_panelColor   = panelColor;
@@ -25,12 +67,13 @@ void LaunchAnimation::start(const nxui::Rect& from, const nxui::Texture* tex, fl
 
     // Keep the source aspect (square icons stay square; posters stay 2:3).
     // Posters get a larger zoom so they can cover the clock and title caption.
-    const bool poster = from.height > from.width * 1.15f;
+    const bool poster = preservePosterAspect
+        || m_from.height > m_from.width * 1.15f;
     const float zoomScale = poster ? 2.55f : 1.8f;
     const float maxW = 1280.f * (poster ? 0.42f : 0.55f);
     const float maxH = 720.f * (poster ? 0.92f : 0.72f);
-    float tw = std::max(1.f, from.width) * zoomScale;
-    float th = std::max(1.f, from.height) * zoomScale;
+    float tw = std::max(1.f, m_from.width) * zoomScale;
+    float th = std::max(1.f, m_from.height) * zoomScale;
     const float fit = std::min(1.f, std::min(maxW / tw, maxH / th));
     tw *= fit;
     th *= fit;
@@ -157,7 +200,9 @@ void LaunchAnimation::onRender(nxui::Renderer& ren) {
 
     if (m_tex && m_tex->valid()) {
         nxui::Rect texRect = animRect.shrunk(8.f);
-        ren.drawTextureRounded(m_tex, texRect, cr - 4.f,
-                               nxui::Color::white().withAlpha(fadeAlpha));
+        // Cover-fit like GlossyIcon posters — never stretch into the frame.
+        ren.drawTextureSubRounded(
+            m_tex, centeredCoverSource(*m_tex, texRect), texRect, cr - 4.f,
+            nxui::Color::white().withAlpha(fadeAlpha));
     }
 }
