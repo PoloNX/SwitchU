@@ -413,8 +413,16 @@ void ThemeShopScreen::applySearchFilter() {
     m_iconPackEntries.clear();
     m_iconPackEntries.reserve(m_allIconPackEntries.size());
     for (const auto& entry : m_allIconPackEntries) {
-        if (matchesSearch(entry, needleLower))
-            m_iconPackEntries.push_back(entry);
+        if (!matchesSearch(entry, needleLower))
+            continue;
+        // Icons Installed = on console; Icons Shop = catalog-only downloads.
+        if (m_iconsShelfMode == ShelfMode::Installed) {
+            if (!entry.installed)
+                continue;
+        } else if (entry.installed) {
+            continue;
+        }
+        m_iconPackEntries.push_back(entry);
     }
 
     auto syncSelection = [](const auto& entries, std::string& selectedId) {

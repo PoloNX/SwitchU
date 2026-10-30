@@ -30,6 +30,7 @@ constexpr float kCardCaptionH = 48.f;
 constexpr float kPreviewAspect = 16.f / 9.f;
 constexpr float kSearchButtonWidth = 208.f;
 constexpr float kRefreshButtonWidth = 144.f;
+constexpr float kShelfModeWidth = 212.f;
 constexpr float kHeaderButtonGap = 12.f;
 constexpr int kEntriesPerPage = themeshop::layout::kEntriesPerPage;
 constexpr float kPageButtonWidth = 124.f;
@@ -75,6 +76,7 @@ struct GridLayout {
     nxui::Rect header;
     nxui::Rect searchButton;
     nxui::Rect refreshButton;
+    nxui::Rect shelfModeButton;
     nxui::Rect pagePrevButton;
     nxui::Rect pageCounter;
     nxui::Rect pageNextButton;
@@ -83,7 +85,7 @@ struct GridLayout {
     float cardH = 0.f;
 };
 
-GridLayout makeGridLayout(const nxui::Rect& content) {
+GridLayout makeGridLayout(const nxui::Rect& content, bool showRefresh, bool showShelfMode) {
     GridLayout layout;
     layout.header = {
         content.x + kContentInsetX,
@@ -97,12 +99,29 @@ GridLayout makeGridLayout(const nxui::Rect& content) {
         kSearchButtonWidth,
         46.f
     };
-    layout.refreshButton = {
-        layout.searchButton.x - kHeaderButtonGap - kRefreshButtonWidth,
-        layout.header.y + 10.f,
-        kRefreshButtonWidth,
-        46.f
-    };
+    float cursorX = layout.searchButton.x;
+    if (showRefresh) {
+        cursorX -= kHeaderButtonGap + kRefreshButtonWidth;
+        layout.refreshButton = {
+            cursorX,
+            layout.header.y + 10.f,
+            kRefreshButtonWidth,
+            46.f
+        };
+    } else {
+        layout.refreshButton = {cursorX, layout.header.y + 10.f, 0.f, 46.f};
+    }
+    if (showShelfMode) {
+        cursorX -= kHeaderButtonGap + kShelfModeWidth;
+        layout.shelfModeButton = {
+            cursorX,
+            layout.header.y + 10.f,
+            kShelfModeWidth,
+            46.f
+        };
+    } else {
+        layout.shelfModeButton = {cursorX, layout.header.y + 10.f, 0.f, 46.f};
+    }
     layout.grid = {
         content.x + kContentInsetX,
         layout.header.bottom() + 12.f,
@@ -173,12 +192,64 @@ std::vector<nxui::Rect> detailButtonRects(const nxui::Rect& dialog, int count) {
     return rects;
 }
 
-std::vector<nxui::Rect> headerButtonRects(const GridLayout& layout, bool showRefresh) {
+std::vector<nxui::Rect> headerButtonRects(const GridLayout& layout,
+                                          bool showShelfMode,
+                                          bool showRefresh) {
     std::vector<nxui::Rect> rects;
-    if (showRefresh)
+    if (showShelfMode && layout.shelfModeButton.width > 0.f)
+        rects.push_back(layout.shelfModeButton);
+    if (showRefresh && layout.refreshButton.width > 0.f)
         rects.push_back(layout.refreshButton);
     rects.push_back(layout.searchButton);
     return rects;
+}
+
+void drawShelfModeSegment(nxui::Renderer& ren,
+                          nxui::Font* font,
+                          const nxui::Rect& rect,
+                          bool shopSelected,
+                          const nxui::Theme* theme,
+                          float opacity,
+                          float emphasis) {
+    if (!theme || rect.width <= 1.f)
+        return;
+    const float radius = rect.height * 0.5f;
+    const float half = rect.width * 0.5f;
+    nxui::Rect left = {rect.x, rect.y, half, rect.height};
+    nxui::Rect right = {rect.x + half, rect.y, half, rect.height};
+    const nxui::Color idleFill = theme->panelBase.withAlpha(0.20f * opacity);
+    const nxui::Color activeFill = theme->cursorNormal.withAlpha((0.28f + 0.12f * emphasis) * opacity);
+    const nxui::Color border = theme->panelBorder.withAlpha((0.30f + 0.20f * emphasis) * opacity);
+    ren.drawRoundedRect(rect, idleFill, radius);
+    if (!shopSelected)
+        ren.drawRoundedRect(left, activeFill, radius);
+    else
+        ren.drawRoundedRect(right, activeFill, radius);
+    ren.drawRoundedRectOutline(rect, border, radius, 1.4f);
+    // Divider between segments.
+    ren.drawLine({rect.x + half, rect.y + 8.f},
+                 {rect.x + half, rect.bottom() - 8.f},
+                 border, 1.2f);
+    auto& i18n = nxui::I18n::instance();
+    const std::string installed = i18n.tr("themeshop.shelf.installed", "Installed");
+    const std::string shop = i18n.tr("themeshop.shelf.shop", "Shop");
+    auto drawLabel = [&](const nxui::Rect& chip, const std::string& label, bool active) {
+        if (!font)
+            return;
+        const float scale = 0.62f;
+        nxui::Vec2 size = measureTextCached(font, label);
+        const nxui::Color ink = active
+            ? theme->textPrimary.withAlpha(opacity)
+            : theme->textSecondary.withAlpha(0.82f * opacity);
+        ren.drawText(label,
+                     {chip.x + (chip.width - size.x * scale) * 0.5f,
+                      chip.y + (chip.height - size.y * scale) * 0.5f},
+                     font,
+                     ink,
+                     scale);
+    };
+    drawLabel(left, installed, !shopSelected);
+    drawLabel(right, shop, shopSelected);
 }
 
 std::string ellipsize(nxui::Font* font, const std::string& text, float maxWidth, float scale) {
@@ -1075,16 +1146,53 @@ void drawTransferProgressTrack(nxui::Renderer& ren,
 
 } // namespace
 
-bool ThemeShopScreen::isCommunityTab() const {
-    return m_tabIndex == 1;
+bool ThemeShopScreen::isThemesTab() const {
+    return m_tabIndex == 0;
 }
 
 bool ThemeShopScreen::isIconsTab() const {
-    return m_tabIndex == 2;
+    return m_tabIndex == 1;
 }
 
 bool ThemeShopScreen::isInstalledTab() const {
-    return m_tabIndex == 0;
+    return isThemesTab() && m_themesShelfMode == ShelfMode::Installed;
+}
+
+bool ThemeShopScreen::isCommunityTab() const {
+    return isThemesTab() && m_themesShelfMode == ShelfMode::Shop;
+}
+
+bool ThemeShopScreen::isIconsInstalledMode() const {
+    return isIconsTab() && m_iconsShelfMode == ShelfMode::Installed;
+}
+
+bool ThemeShopScreen::isIconsShopMode() const {
+    return isIconsTab() && m_iconsShelfMode == ShelfMode::Shop;
+}
+
+bool ThemeShopScreen::showsCatalogRefresh() const {
+    return isCommunityTab() || isIconsShopMode();
+}
+
+bool ThemeShopScreen::showsShelfModeToggle() const {
+    return isThemesTab() || isIconsTab();
+}
+
+ThemeShopScreen::ShelfMode ThemeShopScreen::activeShelfMode() const {
+    return isIconsTab() ? m_iconsShelfMode : m_themesShelfMode;
+}
+
+void ThemeShopScreen::setActiveShelfMode(ShelfMode mode) {
+    ShelfMode& slot = isIconsTab() ? m_iconsShelfMode : m_themesShelfMode;
+    if (slot == mode)
+        return;
+    slot = mode;
+    closeDetail();
+    currentScrollRowRef() = 0;
+    applySearchFilter();
+    if (isCommunityTab() || isIconsShopMode())
+        ensureCommunityCatalogWarm();
+    rebuildCurrentTab();
 }
 
 int ThemeShopScreen::currentEntryCount() const {
@@ -1409,7 +1517,8 @@ void ThemeShopScreen::updateCustomContent(float dt) {
         syncFinishedCommunityPreviewLoads();
     }
 
-    int headerButtonCount = showsCatalogRefresh() ? 2 : 1;
+    const int headerButtonCount = (showsShelfModeToggle() ? 1 : 0)
+        + (showsCatalogRefresh() ? 1 : 0) + 1;
     m_headerButtonIndex = std::clamp(m_headerButtonIndex, 0, std::max(0, headerButtonCount - 1));
 
     if (m_lastCustomTabIndex != m_tabIndex) {
@@ -1502,18 +1611,22 @@ bool ThemeShopScreen::handleCustomPressA() {
             return true;
         }
 
-        if ((showsCatalogRefresh() ? 2 : 1) > 0) {
+        {
             m_focusArea = FocusArea::Content;
             m_contentFocusArea = ContentFocusArea::Header;
             m_headerButtonIndex = 0;
             if (m_navSfxCb) m_navSfxCb();
             return true;
         }
-        return false;
     }
 
     if (!m_detailOpen && m_contentFocusArea == ContentFocusArea::Header) {
-        if (showsCatalogRefresh() && m_headerButtonIndex == 0) {
+        const bool hasShelf = showsShelfModeToggle();
+        const bool hasRefresh = showsCatalogRefresh();
+        if (hasShelf && m_headerButtonIndex == 0) {
+            setActiveShelfMode(activeShelfMode() == ShelfMode::Installed
+                ? ShelfMode::Shop : ShelfMode::Installed);
+        } else if (hasRefresh && m_headerButtonIndex == (hasShelf ? 1 : 0)) {
             refreshCommunityCatalog(true);
         } else {
             promptSearchQuery();
@@ -1840,7 +1953,11 @@ bool ThemeShopScreen::handleCustomNavUp() {
         ensureSelectionVisible();
     } else {
         m_contentFocusArea = ContentFocusArea::Header;
-        m_headerButtonIndex = showsCatalogRefresh() ? std::clamp(selected % kGridCols, 0, 1) : 0;
+        {
+            const int headerButtonCount = (showsShelfModeToggle() ? 1 : 0)
+                + (showsCatalogRefresh() ? 1 : 0) + 1;
+            m_headerButtonIndex = std::clamp(selected % kGridCols, 0, headerButtonCount - 1);
+        }
     }
     if (m_navSfxCb) m_navSfxCb();
     return true;
@@ -1990,6 +2107,12 @@ bool ThemeShopScreen::handleCustomNavLeft() {
         return false;
 
     if (m_contentFocusArea == ContentFocusArea::Header) {
+        if (showsShelfModeToggle() && m_headerButtonIndex == 0
+            && activeShelfMode() == ShelfMode::Shop) {
+            setActiveShelfMode(ShelfMode::Installed);
+            if (m_navSfxCb) m_navSfxCb();
+            return true;
+        }
         if (m_headerButtonIndex > 0) {
             --m_headerButtonIndex;
         } else {
@@ -2096,18 +2219,24 @@ bool ThemeShopScreen::handleCustomNavRight() {
             if (m_navSfxCb) m_navSfxCb();
             return true;
         }
-        if ((showsCatalogRefresh() ? 2 : 1) > 0) {
+        {
             m_focusArea = FocusArea::Content;
             m_contentFocusArea = ContentFocusArea::Header;
             m_headerButtonIndex = 0;
             if (m_navSfxCb) m_navSfxCb();
             return true;
         }
-        return false;
     }
 
     if (m_contentFocusArea == ContentFocusArea::Header) {
-        int headerButtonCount = showsCatalogRefresh() ? 2 : 1;
+        if (showsShelfModeToggle() && m_headerButtonIndex == 0
+            && activeShelfMode() == ShelfMode::Installed) {
+            setActiveShelfMode(ShelfMode::Shop);
+            if (m_navSfxCb) m_navSfxCb();
+            return true;
+        }
+        const int headerButtonCount = (showsShelfModeToggle() ? 1 : 0)
+            + (showsCatalogRefresh() ? 1 : 0) + 1;
         if (m_headerButtonIndex + 1 < headerButtonCount) {
             ++m_headerButtonIndex;
         } else if (currentEntryCount() > 0) {
@@ -2137,7 +2266,7 @@ bool ThemeShopScreen::handleCustomNavRight() {
 }
 
 int ThemeShopScreen::hitTestGridCard(const nxui::Rect& content, float x, float y) const {
-    GridLayout layout = makeGridLayout(content);
+    GridLayout layout = makeGridLayout(content, showsCatalogRefresh(), showsShelfModeToggle());
     int count = currentEntryCount();
     if (count <= 0 || !layout.grid.contains(x, y))
         return -1;
@@ -2157,16 +2286,36 @@ int ThemeShopScreen::hitTestGridCard(const nxui::Rect& content, float x, float y
 
 bool ThemeShopScreen::handleCustomTouch(nxui::Input& input, const nxui::Rect&, const nxui::Rect& tabs, const nxui::Rect& content) {
     auto searchHit = [&](float x, float y) {
-        return makeGridLayout(content).searchButton.contains(x, y);
+        return makeGridLayout(content, showsCatalogRefresh(), showsShelfModeToggle())
+            .searchButton.contains(x, y);
     };
     auto refreshHit = [&](float x, float y) {
-        return showsCatalogRefresh() && makeGridLayout(content).refreshButton.contains(x, y);
+        return showsCatalogRefresh()
+            && makeGridLayout(content, showsCatalogRefresh(), showsShelfModeToggle())
+                   .refreshButton.contains(x, y);
+    };
+    auto shelfModeHit = [&](float x, float y) {
+        if (!showsShelfModeToggle())
+            return false;
+        const auto layout = makeGridLayout(content, showsCatalogRefresh(), showsShelfModeToggle());
+        return layout.shelfModeButton.contains(x, y);
+    };
+    auto shelfModeSide = [&](float x, float y) -> int {
+        // 0 = Installed half, 1 = Shop half, -1 = miss
+        if (!shelfModeHit(x, y))
+            return -1;
+        const auto layout = makeGridLayout(content, showsCatalogRefresh(), showsShelfModeToggle());
+        return (x >= layout.shelfModeButton.x + layout.shelfModeButton.width * 0.5f) ? 1 : 0;
     };
     auto pagePrevHit = [&](float x, float y) {
-        return pageCount() > 1 && makeGridLayout(content).pagePrevButton.contains(x, y);
+        return pageCount() > 1
+            && makeGridLayout(content, showsCatalogRefresh(), showsShelfModeToggle())
+                   .pagePrevButton.contains(x, y);
     };
     auto pageNextHit = [&](float x, float y) {
-        return pageCount() > 1 && makeGridLayout(content).pageNextButton.contains(x, y);
+        return pageCount() > 1
+            && makeGridLayout(content, showsCatalogRefresh(), showsShelfModeToggle())
+                   .pageNextButton.contains(x, y);
     };
     auto installedHasCover = [&]() {
         const auto* entry = selectedThemeShopEntry();
@@ -2301,6 +2450,12 @@ bool ThemeShopScreen::handleCustomTouch(nxui::Input& input, const nxui::Rect&, c
             return true;
         }
 
+        if (shelfModeHit(x, y)) {
+            m_themeTouchTarget = ThemeTouchTarget::ShelfMode;
+            m_themeTouchIndex = shelfModeSide(x, y);
+            return true;
+        }
+
         if (searchHit(x, y)) {
             m_themeTouchTarget = ThemeTouchTarget::Search;
             return true;
@@ -2385,6 +2540,14 @@ bool ThemeShopScreen::handleCustomTouch(nxui::Input& input, const nxui::Rect&, c
                     if (m_activateSfxCb) m_activateSfxCb();
                 }
                 return true;
+            case ThemeTouchTarget::ShelfMode: {
+                const int side = shelfModeSide(x, y);
+                if (side >= 0) {
+                    setActiveShelfMode(side == 0 ? ShelfMode::Installed : ShelfMode::Shop);
+                    if (m_activateSfxCb) m_activateSfxCb();
+                }
+                return true;
+            }
             case ThemeTouchTarget::Refresh:
                 if (refreshHit(x, y)) {
                     refreshCommunityCatalog(true);
@@ -2540,7 +2703,7 @@ bool ThemeShopScreen::handleCustomTouch(nxui::Input& input, const nxui::Rect&, c
 
 void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, const nxui::Rect& content, float opacity) {
     auto& i18n = nxui::I18n::instance();
-    GridLayout layout = makeGridLayout(content);
+    GridLayout layout = makeGridLayout(content, showsCatalogRefresh(), showsShelfModeToggle());
     float slideT = std::clamp(m_contentSlideAnim.value(), 0.f, 1.f);
     float slideOffset = (1.f - slideT) * 24.f * (float)m_tabSwitchDir;
     float contentOpacity = opacity * slideT;
@@ -2568,6 +2731,7 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
     }
 
     layout.header.y += slideOffset;
+    layout.shelfModeButton.y += slideOffset;
     layout.refreshButton.y += slideOffset;
     layout.searchButton.y += slideOffset;
     layout.pagePrevButton.y += slideOffset;
@@ -2575,19 +2739,20 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
     layout.pageNextButton.y += slideOffset;
     layout.grid.y += slideOffset;
 
-    // eShop shelf headers: short store names, one quiet line of context.
+    // Themes / Icons share Installed|Shop; title stays the content type.
     std::string title;
     std::string subtitle;
-    if (isCommunityTab()) {
-        title = i18n.tr("themeshop.community.title", "Browse Themes");
-        subtitle = i18n.tr("themeshop.community.subtitle", "Themes from the catalog.");
-    } else if (isIconsTab()) {
+    if (isIconsTab()) {
         title = i18n.tr("themeshop.icons.title", "Icons");
-        subtitle = i18n.tr("themeshop.icons.subtitle",
-            "Installed packs and downloads from the shop.");
+        subtitle = isIconsShopMode()
+            ? i18n.tr("themeshop.icons.subtitle_shop", "Download icon packs from the catalog.")
+            : i18n.tr("themeshop.icons.subtitle_installed", "Icon packs on this console.");
+    } else if (isCommunityTab()) {
+        title = i18n.tr("themeshop.themes.title", "Themes");
+        subtitle = i18n.tr("themeshop.themes.subtitle_shop", "Download themes from the catalog.");
     } else {
-        title = i18n.tr("themeshop.installed.title", "Themes");
-        subtitle = i18n.tr("themeshop.installed.subtitle", "Installed on this console.");
+        title = i18n.tr("themeshop.themes.title", "Themes");
+        subtitle = i18n.tr("themeshop.themes.subtitle_installed", "Themes on this console.");
     }
 
     ren.drawText(title, {layout.header.x, layout.header.y + 0.f}, m_font,
@@ -2595,11 +2760,16 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
     ren.drawText(subtitle, {layout.header.x, layout.header.y + 34.f}, m_smallFont,
                  m_theme->textSecondary.withAlpha(0.78f * contentOpacity), 0.72f);
 
+    const bool hasShelf = showsShelfModeToggle();
+    const bool hasRefresh = showsCatalogRefresh();
+    const int searchHeaderIndex = (hasShelf ? 1 : 0) + (hasRefresh ? 1 : 0);
+    const int refreshHeaderIndex = hasShelf ? 1 : 0;
+
     std::string searchLabel = m_searchQuery.empty()
         ? i18n.tr("themeshop.search.button", "Search")
         : m_searchQuery;
     bool searchSelected = !m_detailOpen && m_focusArea == FocusArea::Content && m_contentFocusArea == ContentFocusArea::Header
-        && (!showsCatalogRefresh() || m_headerButtonIndex == 1);
+        && m_headerButtonIndex == searchHeaderIndex;
     drawActionButtonChip(ren,
                          m_smallFont,
                          layout.searchButton,
@@ -2621,7 +2791,11 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
         counterText = "0 / 0";
     }
     nxui::Vec2 countSize = measureTextCached(m_font, counterText);
-    float countRight = (showsCatalogRefresh() ? layout.refreshButton.x : layout.searchButton.x) - 18.f;
+    float countRight = layout.searchButton.x - 18.f;
+    if (hasRefresh && layout.refreshButton.width > 0.f)
+        countRight = layout.refreshButton.x - 18.f;
+    if (hasShelf && layout.shelfModeButton.width > 0.f)
+        countRight = layout.shelfModeButton.x - 18.f;
     ren.drawText(counterText,
                  {countRight - countSize.x * 0.90f, layout.header.y + 4.f},
                  m_font,
@@ -2678,12 +2852,24 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
         }
     }
 
-    if (showsCatalogRefresh()) {
+    if (hasShelf) {
+        const bool shelfSelected = !m_detailOpen && m_focusArea == FocusArea::Content
+            && m_contentFocusArea == ContentFocusArea::Header && m_headerButtonIndex == 0;
+        drawShelfModeSegment(ren,
+                             m_smallFont,
+                             layout.shelfModeButton,
+                             activeShelfMode() == ShelfMode::Shop,
+                             m_theme,
+                             contentOpacity,
+                             shelfSelected ? 1.f : 0.f);
+    }
+
+    if (hasRefresh) {
         std::string refreshLabel = m_communityTransferState.isRunning()
             ? i18n.tr("themeshop.community.refreshing", "Refreshing")
             : i18n.tr("themeshop.community.refresh", "Refresh");
         bool refreshSelected = !m_detailOpen && m_focusArea == FocusArea::Content && m_contentFocusArea == ContentFocusArea::Header
-            && m_headerButtonIndex == 0;
+            && m_headerButtonIndex == refreshHeaderIndex;
         drawActionButtonChip(ren,
                              m_smallFont,
                              layout.refreshButton,
@@ -2783,16 +2969,20 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
             ? i18n.tr("themeshop.search.no_results", "No themes match this search.")
             : (isCommunityTab()
                 ? i18n.tr("themeshop.community.catalog_empty", "No published themes are listed in the catalog.")
-                : (isIconsTab()
-                    ? i18n.tr("themeshop.icons.empty", "No icon packs found.")
-                    : i18n.tr("themeshop.installed.empty", "No installed themes found.")));
+                : (isIconsShopMode()
+                    ? i18n.tr("themeshop.icons.empty_shop", "No icon packs available to download.")
+                    : (isIconsTab()
+                        ? i18n.tr("themeshop.icons.empty", "No icon packs installed.")
+                        : i18n.tr("themeshop.installed.empty", "No installed themes found."))));
         std::string emptySubtitle = searchActive
             ? i18n.tr("themeshop.search.no_results_hint", "Press X or use Search to change or clear the filter.")
             : (isCommunityTab() && m_communityTransferState.hasFailed()
                 ? i18n.tr("themeshop.community.catalog_failed", "The catalog could not be fetched. Use Refresh to try again.")
-                : (isIconsTab()
-                    ? i18n.tr("themeshop.icons.empty_hint", "Add folders under icons/ to create packs.")
-                    : i18n.tr("themeshop.community.empty_hint", "Add themes to the repository and they will appear here.")));
+                : (isIconsShopMode()
+                    ? i18n.tr("themeshop.icons.empty_shop_hint", "Refresh the catalog, or switch to Installed for packs on this console.")
+                    : (isIconsTab()
+                        ? i18n.tr("themeshop.icons.empty_hint", "Switch to Shop to download packs, or install a theme that includes icons.")
+                        : i18n.tr("themeshop.themes.empty_installed_hint", "Switch to Shop to browse and download themes."))));
 
         nxui::Vec2 titleSize = measureTextCached(m_font, emptyTitle);
         ren.drawText(emptyTitle,
@@ -2807,7 +2997,7 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
                      m_theme->textSecondary.withAlpha(0.90f * contentOpacity),
                      0.76f);
         if (!m_detailOpen && m_focusArea == FocusArea::Content && m_contentFocusArea == ContentFocusArea::Header) {
-            auto headerButtons = headerButtonRects(layout, showsCatalogRefresh());
+            auto headerButtons = headerButtonRects(layout, showsShelfModeToggle(), showsCatalogRefresh());
             if (!headerButtons.empty()) {
                 int headerIndex = std::clamp(m_headerButtonIndex, 0, (int)headerButtons.size() - 1);
                 m_focusCursor.moveTo(headerButtons[(size_t)headerIndex].expanded(2.f), 20.f, 0.08f);
@@ -3108,7 +3298,7 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
 
     if (gridFocusLive
         && m_focusArea == FocusArea::Content && m_contentFocusArea == ContentFocusArea::Header) {
-        auto headerButtons = headerButtonRects(layout, showsCatalogRefresh());
+        auto headerButtons = headerButtonRects(layout, showsShelfModeToggle(), showsCatalogRefresh());
         if (!headerButtons.empty()) {
             int headerIndex = std::clamp(m_headerButtonIndex, 0, (int)headerButtons.size() - 1);
             m_focusCursor.moveTo(headerButtons[(size_t)headerIndex].expanded(2.f), 20.f, 0.08f);

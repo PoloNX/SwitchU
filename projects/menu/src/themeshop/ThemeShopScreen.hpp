@@ -159,9 +159,15 @@ public:
         if (frames > m_renderDebugFrames)
             m_renderDebugFrames = frames;
     }
-    bool showsCatalogRefresh() const {
-        return isCommunityTab() || isIconsTab();
-    }
+    enum class ShelfMode {
+        Installed = 0,
+        Shop = 1,
+    };
+
+    bool showsCatalogRefresh() const;
+    bool showsShelfModeToggle() const;
+    ShelfMode activeShelfMode() const;
+    void setActiveShelfMode(ShelfMode mode);
 
     void setThemeShopState(const std::vector<ThemeShopEntry>& entries,
                            const std::string& activeId);
@@ -182,7 +188,7 @@ public:
 
 protected:
     void buildTabs() override;
-    bool usesCustomContentLayout() const override { return m_tabIndex < 3; }
+    bool usesCustomContentLayout() const override { return m_tabIndex < 2; }
     void drawCustomContent(nxui::Renderer& ren, const nxui::Rect& panel, const nxui::Rect& content, float opacity) override;
     void updateCustomContent(float dt) override;
     bool handleCustomPressA() override;
@@ -239,6 +245,7 @@ private:
         None,
         Search,
         Refresh,
+        ShelfMode,
         PagePrev,
         PageNext,
         GridCard,
@@ -280,9 +287,12 @@ private:
     void ensureCommunityCatalogWarm();
     // First shelf + last Community scroll neighborhood (±1 page).
     void prefetchCommunityShelfNeighborhood();
-    bool isCommunityTab() const;
+    bool isThemesTab() const;
+    bool isCommunityTab() const; // Themes tab + Shop shelf
     bool isIconsTab() const;
-    bool isInstalledTab() const;
+    bool isInstalledTab() const; // Themes tab + Installed shelf
+    bool isIconsShopMode() const;
+    bool isIconsInstalledMode() const;
     int currentEntryCount() const;
     int currentSelectedIndex() const;
     void setCurrentSelectedIndex(int idx);
@@ -486,6 +496,8 @@ private:
     int m_installedScrollRow = 0;
     int m_communityScrollRow = 0;
     int m_iconPackScrollRow = 0;
+    ShelfMode m_themesShelfMode = ShelfMode::Installed;
+    ShelfMode m_iconsShelfMode = ShelfMode::Installed;
     int m_lastCustomTabIndex = -1;
     std::string m_lastPreviewPrimeKey;
     ThemeTouchTarget m_themeTouchTarget = ThemeTouchTarget::None;
