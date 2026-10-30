@@ -585,6 +585,55 @@ void drawChip(nxui::Renderer& ren, nxui::Font* font, const nxui::Rect& rect,
 }
 
 enum class ShelfBadgeKind { Icons, Music, Sounds };
+enum class ShelfBadgeStyle { Icons, Music, Sounds, Tint, Auto };
+
+struct ShelfBadgeColors {
+    nxui::Color fill;
+    nxui::Color border;
+};
+
+// Dark chips + light ink read well on dark themes; light themes need brighter
+// fills so dark textPrimary/glyphs stay crisp instead of washing out.
+ShelfBadgeColors shelfBadgeColors(ShelfBadgeStyle style, bool darkTheme) {
+    if (darkTheme) {
+        switch (style) {
+        case ShelfBadgeStyle::Icons:
+            return {nxui::Color(0.12f, 0.28f, 0.48f, 0.38f),
+                    nxui::Color(0.45f, 0.72f, 1.f, 0.48f)};
+        case ShelfBadgeStyle::Music:
+            return {nxui::Color(0.32f, 0.16f, 0.28f, 0.40f),
+                    nxui::Color(0.95f, 0.55f, 0.78f, 0.50f)};
+        case ShelfBadgeStyle::Sounds:
+            return {nxui::Color(0.18f, 0.30f, 0.16f, 0.40f),
+                    nxui::Color(0.55f, 0.90f, 0.48f, 0.50f)};
+        case ShelfBadgeStyle::Tint:
+            return {nxui::Color(0.28f, 0.18f, 0.42f, 0.42f),
+                    nxui::Color(0.82f, 0.55f, 1.f, 0.55f)};
+        case ShelfBadgeStyle::Auto:
+            return {nxui::Color(0.12f, 0.28f, 0.48f, 0.40f),
+                    nxui::Color(0.45f, 0.78f, 1.f, 0.55f)};
+        }
+    }
+    switch (style) {
+    case ShelfBadgeStyle::Icons:
+        return {nxui::Color(0.52f, 0.78f, 1.f, 0.82f),
+                nxui::Color(0.18f, 0.48f, 0.88f, 0.78f)};
+    case ShelfBadgeStyle::Music:
+        return {nxui::Color(0.98f, 0.68f, 0.84f, 0.84f),
+                nxui::Color(0.78f, 0.28f, 0.55f, 0.78f)};
+    case ShelfBadgeStyle::Sounds:
+        return {nxui::Color(0.62f, 0.92f, 0.58f, 0.84f),
+                nxui::Color(0.22f, 0.58f, 0.28f, 0.78f)};
+    case ShelfBadgeStyle::Tint:
+        return {nxui::Color(0.86f, 0.72f, 1.f, 0.84f),
+                nxui::Color(0.55f, 0.28f, 0.88f, 0.78f)};
+    case ShelfBadgeStyle::Auto:
+        return {nxui::Color(0.52f, 0.78f, 1.f, 0.82f),
+                nxui::Color(0.18f, 0.48f, 0.88f, 0.78f)};
+    }
+    return {nxui::Color(0.75f, 0.78f, 0.82f, 0.80f),
+            nxui::Color(0.40f, 0.45f, 0.52f, 0.70f)};
+}
 
 void drawShelfBadgeGlyph(nxui::Renderer& ren, ShelfBadgeKind kind,
                          nxui::Vec2 center, const nxui::Color& color) {
@@ -3018,30 +3067,26 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
                               m_theme->textPrimary, rowOpacity);
             badgeX = chip.right() + kGlyphBadgeGap;
         };
+        const bool darkBadges = m_theme->mode == nxui::ThemeMode::Dark;
         if (showTintBadge) {
-            drawCaptionBadge(tintBadgeW, tintBadgeLabel,
-                             nxui::Color(0.28f, 0.18f, 0.42f, 0.42f),
-                             nxui::Color(0.82f, 0.55f, 1.f, 0.55f));
+            const auto c = shelfBadgeColors(ShelfBadgeStyle::Tint, darkBadges);
+            drawCaptionBadge(tintBadgeW, tintBadgeLabel, c.fill, c.border);
         }
         if (showAutoBadge) {
-            drawCaptionBadge(autoBadgeW, autoBadgeLabel,
-                             nxui::Color(0.12f, 0.28f, 0.48f, 0.40f),
-                             nxui::Color(0.45f, 0.78f, 1.f, 0.55f));
+            const auto c = shelfBadgeColors(ShelfBadgeStyle::Auto, darkBadges);
+            drawCaptionBadge(autoBadgeW, autoBadgeLabel, c.fill, c.border);
         }
         if (showIconsBadge) {
-            drawGlyphBadge(ShelfBadgeKind::Icons,
-                           nxui::Color(0.12f, 0.28f, 0.48f, 0.38f),
-                           nxui::Color(0.45f, 0.72f, 1.f, 0.48f));
+            const auto c = shelfBadgeColors(ShelfBadgeStyle::Icons, darkBadges);
+            drawGlyphBadge(ShelfBadgeKind::Icons, c.fill, c.border);
         }
         if (showMusicBadge) {
-            drawGlyphBadge(ShelfBadgeKind::Music,
-                           nxui::Color(0.32f, 0.16f, 0.28f, 0.40f),
-                           nxui::Color(0.95f, 0.55f, 0.78f, 0.50f));
+            const auto c = shelfBadgeColors(ShelfBadgeStyle::Music, darkBadges);
+            drawGlyphBadge(ShelfBadgeKind::Music, c.fill, c.border);
         }
         if (showSoundsBadge) {
-            drawGlyphBadge(ShelfBadgeKind::Sounds,
-                           nxui::Color(0.18f, 0.30f, 0.16f, 0.40f),
-                           nxui::Color(0.55f, 0.90f, 0.48f, 0.50f));
+            const auto c = shelfBadgeColors(ShelfBadgeStyle::Sounds, darkBadges);
+            drawGlyphBadge(ShelfBadgeKind::Sounds, c.fill, c.border);
         }
         // Author only — eShop shelves don't dump source/version in the caption.
         std::string subtitleFitted = ellipsize(m_smallFont, subtitleText, card.width - 24.f, 0.70f);
@@ -3535,20 +3580,21 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
                          detailOpacity,
                          kBadgeScale);
             };
+            const bool darkBadges = m_theme->mode == nxui::ThemeMode::Dark;
             if (detailShowIconsBadge) {
+                const auto c = shelfBadgeColors(ShelfBadgeStyle::Icons, darkBadges);
                 drawContentText(i18n.tr("themeshop.badge.icons", "Icons"),
-                                nxui::Color(0.12f, 0.28f, 0.48f, 0.38f),
-                                nxui::Color(0.45f, 0.72f, 1.f, 0.48f));
+                                c.fill, c.border);
             }
             if (detailShowMusicBadge) {
+                const auto c = shelfBadgeColors(ShelfBadgeStyle::Music, darkBadges);
                 drawContentText(i18n.tr("themeshop.badge.music", "Music"),
-                                nxui::Color(0.32f, 0.16f, 0.28f, 0.40f),
-                                nxui::Color(0.95f, 0.55f, 0.78f, 0.50f));
+                                c.fill, c.border);
             }
             if (detailShowSoundsBadge) {
+                const auto c = shelfBadgeColors(ShelfBadgeStyle::Sounds, darkBadges);
                 drawContentText(i18n.tr("themeshop.badge.sounds", "Sounds"),
-                                nxui::Color(0.18f, 0.30f, 0.16f, 0.40f),
-                                nxui::Color(0.55f, 0.90f, 0.48f, 0.50f));
+                                c.fill, c.border);
             }
         }
 
