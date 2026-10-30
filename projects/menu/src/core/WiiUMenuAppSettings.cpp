@@ -2425,6 +2425,8 @@ void WiiUMenuApp::removeIconPack(const std::string& packId) {
     if (m_themeShop)
         m_themeShop->invalidateIconPackPreviews();
     refreshThemeShopState();
+    if (m_themeShop && m_themeShop->detailOpen())
+        m_themeShop->closeDetailView();
     if (m_themeShop)
         m_themeShop->requestToast(
             i18n.tr("themeshop.icons.removed", "Icon pack removed."), 2.4f);
@@ -3739,6 +3741,10 @@ void WiiUMenuApp::deletePreset(const std::string& presetId) {
     }
 
     refreshThemeShopState();
+    // Removing from the product sheet used to leave detail open on the next
+    // theme (selection falls through after the list rebuild). Return to shelf.
+    if (m_themeShop && m_themeShop->detailOpen())
+        m_themeShop->closeDetailView();
     m_audio.playSfx(Sfx::ConfirmPositive);
 }
 

@@ -83,6 +83,8 @@ public:
     using IconPackTintCb = std::function<void(const std::string& packId, const IconPackTintState& tint)>;
     void onIconPackTintChange(IconPackTintCb cb) { m_iconPackTintCb = std::move(cb); }
     bool detailOpen() const { return m_detailOpen; }
+    // Leave the product sheet and return focus to the shelf grid.
+    void closeDetailView() { closeDetail(); }
     void setInputSource(const nxui::Input* input) { m_input = input; }
     void onAutoThemeOpen(VoidCb cb) { m_autoThemeOpenCb = std::move(cb); }
     void onCursorMotionModeChange(IntCb cb) { m_cursorMotionModeCb = std::move(cb); }
