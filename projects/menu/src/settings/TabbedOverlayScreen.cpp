@@ -413,6 +413,10 @@ void TabbedOverlayScreen::rebuildContentItems() {
         return;
 
     if (m_tabIndex < 0 || m_tabIndex >= (int)m_tabs.size()) return;
+    // Screens that build tabs after setTheme() can leave this cache at size 0
+    // while m_tabs is already populated (Theme Shop Sounds/Interface path).
+    if (m_cachedTabContentWidgets.size() != m_tabs.size())
+        m_cachedTabContentWidgets.resize(m_tabs.size());
     ensureTabLoaded(m_tabIndex);
     auto& items = m_tabs[m_tabIndex].items;
     auto& cache = m_cachedTabContentWidgets[(size_t)m_tabIndex];

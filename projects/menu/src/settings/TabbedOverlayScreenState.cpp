@@ -131,7 +131,14 @@ void TabbedOverlayScreen::warmup() {
         m_contentIdx = 0;
         m_scrollTarget = 0.f;
         m_scrollY = 0.f;
+        m_cachedTabContentWidgets.clear();
         return;
+    }
+
+    // setTheme() may have resized the cache while m_tabs was still empty.
+    if (m_cachedTabContentWidgets.size() != m_tabs.size()) {
+        m_cachedTabContentWidgets.clear();
+        m_cachedTabContentWidgets.resize(m_tabs.size());
     }
 
     m_tabIndex = std::clamp(oldTab, 0, (int)m_tabs.size() - 1);
