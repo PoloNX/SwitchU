@@ -177,6 +177,9 @@ void ThemeShopScreen::setRenderContext(nxui::GpuDevice* gpu, nxui::Renderer* ren
 
 void ThemeShopScreen::show() {
     m_catalogNeedsNetworkRefresh = true;
+    m_lastCustomTabIndex = -1;
+    m_shopBranchFocused = false;
+    m_shopBranchReveal.setImmediate(0.f);
     TabbedOverlayScreen::show();
 }
 

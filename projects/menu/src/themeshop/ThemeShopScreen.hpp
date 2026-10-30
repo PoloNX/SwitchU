@@ -165,7 +165,7 @@ public:
     };
 
     bool showsCatalogRefresh() const;
-    bool showsShelfModeToggle() const;
+    bool showsShelfBranch() const;
     ShelfMode activeShelfMode() const;
     void setActiveShelfMode(ShelfMode mode);
 
@@ -199,6 +199,12 @@ protected:
     bool handleCustomNavLeft() override;
     bool handleCustomNavRight() override;
     bool handleCustomTouch(nxui::Input& input, const nxui::Rect& panel, const nxui::Rect& tabs, const nxui::Rect& content) override;
+    float tabBranchExtraHeight(int tabIndex) const override;
+    void drawTabBranch(nxui::Renderer& ren, int tabIndex, const nxui::Rect& branchRect, float opacity) override;
+    bool tabBranchConsumesFocus() const override;
+    bool tabFocusCursorRect(nxui::Rect& outRect) const override;
+    void onTabRailParentActivated(int tabIndex) override;
+    bool onTabRailBranchActivated(int parentTabIndex) override;
     void currentAccessibilityParts(std::string& context,
                                    std::string& position,
                                    std::string& summary,
@@ -245,7 +251,6 @@ private:
         None,
         Search,
         Refresh,
-        ShelfMode,
         PagePrev,
         PageNext,
         GridCard,
@@ -498,6 +503,9 @@ private:
     int m_iconPackScrollRow = 0;
     ShelfMode m_themesShelfMode = ShelfMode::Installed;
     ShelfMode m_iconsShelfMode = ShelfMode::Installed;
+    bool m_shopBranchFocused = false;
+    nxui::Rect m_shopBranchRect{};
+    nxui::AnimatedFloat m_shopBranchReveal{0.f};
     int m_lastCustomTabIndex = -1;
     std::string m_lastPreviewPrimeKey;
     ThemeTouchTarget m_themeTouchTarget = ThemeTouchTarget::None;
