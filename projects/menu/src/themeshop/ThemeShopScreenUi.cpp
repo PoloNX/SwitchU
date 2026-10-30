@@ -31,7 +31,8 @@ constexpr float kPreviewAspect = 16.f / 9.f;
 constexpr float kSearchButtonWidth = 208.f;
 constexpr float kRefreshButtonWidth = 144.f;
 constexpr float kHeaderButtonGap = 12.f;
-constexpr float kShopBranchRow = 46.f;
+// Match parent tab pitch (kTabRowHeight) so the Shop pill is the same size.
+constexpr float kShopBranchRow = 58.f;
 constexpr int kEntriesPerPage = themeshop::layout::kEntriesPerPage;
 constexpr float kPageButtonWidth = 124.f;
 constexpr float kPageCounterWidth = 96.f;
@@ -1171,7 +1172,7 @@ void ThemeShopScreen::drawTabBranch(nxui::Renderer& ren,
                                     int tabIndex,
                                     const nxui::Rect& branchRect,
                                     float opacity) {
-    if (!m_theme || !m_smallFont || (tabIndex != 0 && tabIndex != 1))
+    if (!m_theme || !m_font || (tabIndex != 0 && tabIndex != 1))
         return;
     const float reveal = std::clamp(m_shopBranchReveal.value(), 0.f, 1.f);
     if (reveal < 0.02f || branchRect.width <= 1.f || branchRect.height <= 1.f)
@@ -1191,28 +1192,34 @@ void ThemeShopScreen::drawTabBranch(nxui::Renderer& ren,
     const bool focused = tabBranchConsumesFocus();
     const float alpha = opacity * reveal;
 
-    // Elbow connector from the parent tab into the Shop child.
+    // Elbow: gray at rest, theme accent while the Shop child is focused.
     const float elbowX = r.x - 12.f;
     const float elbowMidY = r.y + r.height * 0.5f;
-    const nxui::Color stem = m_theme->panelBorder.withAlpha((0.34f + 0.20f * reveal) * alpha);
-    ren.drawLine({elbowX, r.y - 6.f}, {elbowX, elbowMidY}, stem, 1.5f);
-    ren.drawLine({elbowX, elbowMidY}, {r.x + 2.f, elbowMidY}, stem, 1.5f);
+    const nxui::Color stem = focused
+        ? m_theme->cursorNormal.withAlpha(0.72f * alpha)
+        : m_theme->panelBorder.withAlpha(0.36f * alpha);
+    ren.drawLine({elbowX, r.y - 6.f}, {elbowX, elbowMidY}, stem, focused ? 2.0f : 1.5f);
+    ren.drawLine({elbowX, elbowMidY}, {r.x + 2.f, elbowMidY}, stem, focused ? 2.0f : 1.5f);
 
-    const nxui::Color fill = shopActive
-        ? m_theme->cursorNormal.withAlpha((focused ? 0.30f : 0.20f) * alpha)
-        : m_theme->panelBase.withAlpha((focused ? 0.34f : 0.18f) * alpha);
-    const nxui::Color border = shopActive || focused
-        ? m_theme->cursorNormal.withAlpha((focused ? 0.70f : 0.42f) * alpha)
-        : m_theme->panelBorder.withAlpha(0.28f * alpha);
-    ren.drawRoundedRect(r, fill, 14.f);
-    ren.drawRoundedRectOutline(r, border, 14.f, focused ? 1.4f : 1.1f);
+    // Match parent tab pills: panel fill only. Focus ring comes from SelectionCursor.
+    const nxui::Color fill = m_theme->panelBase.withAlpha((shopActive ? 0.94f : 0.88f) * alpha);
+    // Keep the pill itself fill+soft border; the blue focus ring is SelectionCursor only.
+    const nxui::Color border = shopActive
+        ? m_theme->cursorNormal.withAlpha(0.46f * alpha)
+        : m_theme->panelBorder.withAlpha(0.22f * alpha);
+    ren.drawRoundedRect(r, fill, 18.f);
+    ren.drawRoundedRectOutline(r, border, 18.f, shopActive ? 1.2f : 1.f);
 
-    const std::string label = i18n.tr("themeshop.shelf.shop", "Shop");
-    const float scale = 0.68f;
-    nxui::Vec2 size = measureTextCached(m_smallFont, label);
+    const std::string label = isIconsTab()
+        ? i18n.tr("themeshop.icons.shop_item", "Icons Shop")
+        : i18n.tr("themeshop.themes.shop_item", "Themes Shop");
+    float scale = shopActive ? 0.91f : 0.87f;
+    nxui::Vec2 size = measureTextCached(m_font, label);
+    if (size.x > 0.f && r.width > 44.f)
+        scale = std::max(0.55f, std::min(scale, (r.width - 44.f) / size.x));
     ren.drawText(label,
-                 {r.x + 16.f, r.y + (r.height - size.y * scale) * 0.5f},
-                 m_smallFont,
+                 {r.x + 22.f, r.y + (r.height - size.y * scale) * 0.5f},
+                 m_font,
                  (shopActive ? m_theme->textPrimary : m_theme->textSecondary).withAlpha(alpha),
                  scale);
 }
@@ -1550,8 +1557,8 @@ void ThemeShopScreen::updateCustomContent(float dt) {
         if (showsShelfBranch()) {
             m_shopBranchReveal.setImmediate(0.f);
             m_shopBranchReveal.set(1.f, 0.22f, nxui::Easing::outCubic);
-            m_shopBranchFocused = m_focusArea == FocusArea::Tabs
-                && activeShelfMode() == ShelfMode::Shop;
+            // Always land on the parent tab; user Downs into Shop explicitly.
+            m_shopBranchFocused = false;
         } else {
             m_shopBranchReveal.set(0.f, 0.16f, nxui::Easing::outQuad);
             m_shopBranchFocused = false;
@@ -1767,7 +1774,10 @@ void ThemeShopScreen::currentAccessibilityParts(std::string& context,
                      + std::to_string((int)m_tabs.size());
         }
         if (tabBranchConsumesFocus()) {
-            summary = tabName + ", " + i18n.tr("themeshop.shelf.shop", "Shop");
+            const std::string shopName = isIconsTab()
+                ? i18n.tr("themeshop.icons.shop_item", "Icons Shop")
+                : i18n.tr("themeshop.themes.shop_item", "Themes Shop");
+            summary = shopName;
             if (m_accessibilitySpeakHints)
                 summary += ". " + i18n.tr("accessibility.themeshop.shop_branch",
                     "A or right to enter shop. Up for installed. Down for next tab. B to close.");
@@ -2761,19 +2771,20 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
     layout.pageNextButton.y += slideOffset;
     layout.grid.y += slideOffset;
 
-    // Themes / Icons share Installed|Shop; title stays the content type.
     std::string title;
     std::string subtitle;
     if (isIconsTab()) {
-        title = i18n.tr("themeshop.icons.title", "Icons");
+        title = isIconsShopMode()
+            ? i18n.tr("themeshop.icons.title_shop", "Icons Shop")
+            : i18n.tr("themeshop.icons.title_installed", "Installed Icons");
         subtitle = isIconsShopMode()
             ? i18n.tr("themeshop.icons.subtitle_shop", "Download icon packs from the catalog.")
             : i18n.tr("themeshop.icons.subtitle_installed", "Icon packs on this console.");
     } else if (isCommunityTab()) {
-        title = i18n.tr("themeshop.themes.title", "Themes");
+        title = i18n.tr("themeshop.themes.title_shop", "Themes Shop");
         subtitle = i18n.tr("themeshop.themes.subtitle_shop", "Download themes from the catalog.");
     } else {
-        title = i18n.tr("themeshop.themes.title", "Themes");
+        title = i18n.tr("themeshop.themes.title_installed", "Installed Themes");
         subtitle = i18n.tr("themeshop.themes.subtitle_installed", "Themes on this console.");
     }
 
