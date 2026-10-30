@@ -8,9 +8,7 @@ ThemeShopScreen::Tab themeshop::tabs::IconsTab::build(ThemeShopScreen& screen) {
 
     Tab t;
     t.name = i18n.tr("themeshop.tabs.icons", "Icons");
-    // The tab lists installed packs plus the online catalog, so it drives the
-    // same catalog fetch as Community and lets the app rebuild the list when
-    // new icon entries arrive.
+    // Installed | Shop shelves share the catalog fetch with Themes Shop.
     t.onUpdate = [&screen](Tab&, TabbedOverlayScreen&) {
         if (screen.m_threadPool
             && screen.m_communityRevision == 0
