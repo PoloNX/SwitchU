@@ -48,6 +48,14 @@ void GpuDevice::waitIdle() {
     // No-op for SDL2 — rendering is synchronous
 }
 
+void GpuDevice::recreateSwapchain() {
+    // No-op — SDL2 has no vi/nwindow swapchain
+}
+
+void GpuDevice::remountDisplayForCaptureMitm() {
+    // No-op — Frame Tap mitm remount is Switch/deko3d only
+}
+
 bool GpuDevice::downloadFramebufferRgba(std::vector<uint8_t>& outRgba,
                                         int& outW, int& outH,
                                         bool halfRes) {

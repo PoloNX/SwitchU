@@ -7,6 +7,7 @@
 #include <nxui/core/Animation.hpp>
 #include <nxui/core/I18n.hpp>
 #include "DebugLog.hpp"
+#include "HeapControl.hpp"
 #include "bluetooth/BluetoothManager.hpp"
 #include "LeaveFrameCache.hpp"
 #include "screen_fit.hpp"
@@ -34,6 +35,10 @@
 #include <random>
 #include <optional>
 #include <limits>
+
+#ifndef SWITCHU_HOMEBREW
+extern "C" u64 __nx_vi_layer_id;
+#endif
 
 namespace {
 
@@ -847,8 +852,26 @@ bool WiiUMenuApp::onCreate() {
     // FT's NeedHeadroom 2s window starts as soon as 100D is up — handshake
     // here before catalog/streamer fill so cold boot / first HOME can ACK.
     m_frameTapStatus.probe(0.f, 0.f);
+    // Arm capture remount here (window already open via __nx_win_init):
+    // cold boot → FT not up yet → need remount when viewer connects.
+    // HOME return → FT already up → first window already through mitm → skip.
+    // (Must NOT decide later in tickFrameTap — by then FT is always up.)
+    m_ftCaptureRemountProbed = true;
+    m_ftCaptureRemountNeeded = !m_frameTapStatus.available();
+    DebugLog::log("[ft-light] capture remount %s (FT up at onCreate=%d)",
+                  m_ftCaptureRemountNeeded ? "armed (boot-before-mitm)" : "not needed",
+                  m_frameTapStatus.available() ? 1 : 0);
+    {
+        if (FILE* f = std::fopen("sdmc:/config/SwitchU/ft_capture_remount.txt", "w")) {
+            std::fputs(m_ftCaptureRemountNeeded ? "armed\n" : "skip\n", f);
+            std::fclose(f);
+        }
+    }
     if (m_frameTapStatus.needsHeadroom()) {
         reclaimForFrameTapLaunch("need-headroom");
+        // Return unused Applet-heap to the pool so FT's donor (~42 MB) can map.
+        // No-op when FT is absent; normal SwitchU never takes this path.
+        switchu::menu::tryShrinkHeapForFrameTapAggressive(m_frameTapStatus.headroomNeedMb());
         u32 freeKb = 0;
 #ifdef NXUI_BACKEND_DEKO3D
         u64 total = 0, used = 0;
@@ -861,9 +884,22 @@ bool WiiUMenuApp::onCreate() {
         m_ftHeadroomHoldActive = true;
         m_ftHeadroomHoldSec = 0.f;
         m_ftRemountBrowseRestored = false;
-        DebugLog::log("[ft-light] early-ACK free=%uKB (pre-fill)", freeKb);
+        DebugLog::log("[ft-light] early-ACK free=%uKB (pre-fill) heapShrunk=%d",
+                      freeKb, switchu::menu::heapShrunkForFrameTap() ? 1 : 0);
     } else if (m_frameTapStatus.viewerConnected()) {
+        // FT often asks NeedHeadroom within 2.5s of 100D — shrink before fill
+        // so the Applet pool already has donor room when the bit arrives.
         enterFrameTapLightPath("viewer-prefill");
+        reclaimForFrameTapLaunch("need-headroom");
+        const std::uint32_t needMb = m_frameTapStatus.headroomNeedMb()
+            ? m_frameTapStatus.headroomNeedMb() : 42u;
+        switchu::menu::tryShrinkHeapForFrameTapAggressive(needMb);
+        m_ftHeadroomHoldActive = true;
+        m_ftHeadroomHoldSec = 0.f;
+        m_ftRemountBrowseRestored = false;
+        DebugLog::log("[ft-light] viewer-prefill heapShrunk=%d heap=%zuKB",
+                      switchu::menu::heapShrunkForFrameTap() ? 1 : 0,
+                      switchu::menu::currentHeapSizeBytes() / 1024u);
     }
     m_iconStreamer.setThreadPool(&m_threadPool);
     // Per-title poster (2x3 grid tiles) even when the global single-row flag
@@ -7346,6 +7382,9 @@ void WiiUMenuApp::leaveFrameTapLightPath(const char* reason) {
         return;
     m_frameTapLightActive = false;
 
+    // Viewer gone — give the boot heap back. Never shrinks without FT.
+    switchu::menu::tryRestoreHeapAfterFrameTap();
+
 #ifdef NXUI_BACKEND_DEKO3D
     app().gpu().setAllocationHeadroom(
         nxui::GpuDevice::kDefaultAllocationHeadroom);
@@ -7428,11 +7467,48 @@ void WiiUMenuApp::restoreFrameTapLightBrowse(const char* reason) {
 }
 
 void WiiUMenuApp::tickFrameTapLightPath(float dt) {
-    // Poll faster while FT is asking for headroom (donor remount handshake).
+    // FT asks via file while waiting for binders (cold-boot seed fallback).
+    bool ftAsksRemount = false;
+    {
+        if (FILE* f = std::fopen("sdmc:/config/switch-frame-tap/need_capture_remount", "rb")) {
+            std::fclose(f);
+            ftAsksRemount = true;
+        }
+    }
+    // Poll faster while FT is asking for headroom, or while a cold-boot
+    // capture remount is armed (must beat the viewer→seed race).
     const float pollMs = m_frameTapStatus.needsHeadroom() || m_ftHeadroomHoldActive
+        || ftAsksRemount || (m_ftCaptureRemountNeeded && !m_ftCaptureRemountDone)
         ? 100.f : 500.f;
     m_frameTapStatus.probe(dt, pollMs);
     const bool viewer = m_frameTapStatus.viewerConnected();
+    // Remount as soon as FT/sftap is up — do NOT wait for the viewer.
+    // Waiting for viewer lets FT seed content-sync first (~14fps); binders
+    // from this remount teach the mitm so boot matches HOME-return fences.
+    // FT file request covers the case where onCreate arming was skipped.
+#ifndef SWITCHU_HOMEBREW
+    // Library-applet only: managed-layer remount + __nx_vi_layer_id. Homebrew
+    // builds do not declare that symbol (CI) and are not the FT capture host.
+    if (!m_ftCaptureRemountDone &&
+        (ftAsksRemount || m_ftCaptureRemountNeeded) &&
+        (ftAsksRemount || m_frameTapStatus.available())) {
+        m_ftCaptureRemountDone = true;
+        DebugLog::log("[ft-light] remounting display for FT capture mitm (%s)",
+                      ftAsksRemount ? "ft-request" : "pre-viewer");
+        {
+            if (FILE* f = std::fopen("sdmc:/config/SwitchU/ft_capture_remount.txt", "w")) {
+                std::fputs(ftAsksRemount ? "fired-ft-request\n" : "fired\n", f);
+                std::fclose(f);
+            }
+        }
+        app().gpu().remountDisplayForCaptureMitm();
+        // New managed layer id — re-bind underscan to it.
+        switchu::menu::initScreenFitLayer(::__nx_vi_layer_id);
+        std::remove("sdmc:/config/switch-frame-tap/need_capture_remount");
+        m_wakePostSwapchainFrames = std::max(m_wakePostSwapchainFrames, 2);
+    }
+#endif
+
     if (viewer) {
         m_frameTapViewerGoneSec = 0.f;
     } else if (m_frameTapLightActive) {
@@ -7446,16 +7522,22 @@ void WiiUMenuApp::tickFrameTapLightPath(float dt) {
         applyFrameTapLightHeadroom(true);
         // Remount grace: once NeedHeadroom clears, soft-land browse back so
         // posters are not empty for the full 30s ACK-only anti-thrash window.
+        // Heap-shrink path waits longer so icon refill can't race the donor map.
         if (!m_ftRemountBrowseRestored
-            && m_ftHeadroomHoldSec >= kFtRemountBrowseGraceSec
             && !m_frameTapStatus.needsHeadroom()
             && m_iconStreamer.pageCacheRadiusCap() == 0) {
-            restoreFrameTapLightBrowse("remount-grace");
+            const float grace = switchu::menu::heapShrunkForFrameTap()
+                ? kFtDonorMapBrowseGraceSec
+                : kFtRemountBrowseGraceSec;
+            if (m_ftHeadroomHoldSec >= grace)
+                restoreFrameTapLightBrowse("remount-grace");
         }
         if (m_ftHeadroomHoldSec >= kFtHeadroomHoldSec) {
             m_ftHeadroomHoldActive = false;
             m_ftHeadroomHoldSec = 0.f;
             applyFrameTapLightHeadroom(true);
+            if (!m_ftRemountBrowseRestored && m_iconStreamer.pageCacheRadiusCap() == 0)
+                restoreFrameTapLightBrowse("hold-expired");
             DebugLog::log("[ft-light] headroom hold expired (%.0fs)", kFtHeadroomHoldSec);
         }
     }
@@ -7470,6 +7552,9 @@ void WiiUMenuApp::tickFrameTapLightPath(float dt) {
             m_ftHeadroomHoldSec = 0.f;
             m_ftRemountBrowseRestored = false;
         }
+        // Shrink Applet heap once free space exists (viewer/NeedHeadroom only).
+        if (!switchu::menu::heapShrunkForFrameTap())
+            switchu::menu::tryShrinkHeapForFrameTapAggressive(needMb);
         std::uint32_t freeKb = 0;
 #ifdef NXUI_BACKEND_DEKO3D
         u64 total = 0, used = 0;
@@ -7480,9 +7565,11 @@ void WiiUMenuApp::tickFrameTapLightPath(float dt) {
         }
 #endif
         m_frameTapStatus.ackHeadroom(freeKb);
-        DebugLog::log("[ft-light] ACK-HEADROOM need=%uMB free=%uKB hold=%d headroom=%lluKB",
+        DebugLog::log("[ft-light] ACK-HEADROOM need=%uMB free=%uKB hold=%d headroom=%lluKB heap=%zuKB shrunk=%d",
                       needMb, freeKb, m_ftHeadroomHoldActive ? 1 : 0,
-                      static_cast<unsigned long long>(app().gpu().allocationHeadroom() / 1024ull));
+                      static_cast<unsigned long long>(app().gpu().allocationHeadroom() / 1024ull),
+                      switchu::menu::currentHeapSizeBytes() / 1024u,
+                      switchu::menu::heapShrunkForFrameTap() ? 1 : 0);
     }
 
     const bool batterySaver = m_config.batterySaver;
@@ -7535,6 +7622,53 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
     }
 
     tickFrameTapLightPath(dt);
+    // Plus / Minus arm here (before the grace tick) so solo taps share the same
+    // first-frame timing as L/R/Y/ZL/ZR actions armed during dispatchInput.
+    if (handleAccessibilityToggleCombo()) {
+        m_plusExitPending = false;
+        m_plusExitPendingTimer = 0.f;
+    }
+    if (!app().input().isHeld(nxui::Button::Plus) || !app().input().isHeld(nxui::Button::Minus))
+        m_accessibilityToggleComboHeld = false;
+#ifdef SWITCHU_MENU
+    if (app().input().isDown(nxui::Button::Plus) &&
+        !app().input().isDown(nxui::Button::Minus) &&
+        m_navigator.route() == switchu::navigation::Route::Home &&
+        !m_editMode &&
+        !(m_contextMenu && m_contextMenu->isActive()) &&
+        !(m_dialog && m_dialog->isActive()) &&
+        !(m_quickSettings && m_quickSettings->isActive()) &&
+        !(m_textEntry && m_textEntry->isActive()) &&
+        !(m_settings && m_settings->isActive()) &&
+        !(m_themeShop && m_themeShop->isActive()) &&
+        !(m_gameOptions && m_gameOptions->isActive()) &&
+        !(m_folderOptions && m_folderOptions->isActive()) &&
+        !(m_controllerTest && m_controllerTest->isActive()) &&
+        !(m_profileCarousel && m_profileCarousel->isActive()) &&
+        !(m_userSelect && m_userSelect->isActive())) {
+        auto* current = focusManager().current();
+        if (current && current->tag() == "glossy_icon")
+            armHomeChordShortcut(HomeChordShortcut::Properties);
+    }
+#endif
+    if (app().input().isDown(nxui::Button::Minus) &&
+        !app().input().isDown(nxui::Button::Plus) &&
+        !deletePageAvailable() &&
+        m_navigator.route() == switchu::navigation::Route::Home &&
+        !m_editMode &&
+        !(m_contextMenu && m_contextMenu->isActive()) &&
+        !(m_dialog && m_dialog->isActive()) &&
+        !(m_quickSettings && m_quickSettings->isActive()) &&
+        !(m_settings && m_settings->isActive()) &&
+        !(m_themeShop && m_themeShop->isActive()) &&
+        !(m_gameOptions && m_gameOptions->isActive()) &&
+        !(m_folderOptions && m_folderOptions->isActive()) &&
+        !(m_controllerTest && m_controllerTest->isActive()) &&
+        !(m_profileCarousel && m_profileCarousel->isActive()) &&
+        !(m_userSelect && m_userSelect->isActive())) {
+        armHomeChordShortcut(HomeChordShortcut::ChangeView);
+    }
+    tickHomeChordShortcutGuards(dt);
     tickMemInventory(dt);
 
     updateLeaveSplashHandoff(dt);
@@ -8386,87 +8520,6 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
 #ifdef SWITCHU_DEBUG_UI
     debugTouchBlocked = m_showDebugOverlay;
 #endif
-
-    if (handleAccessibilityToggleCombo()) {
-        m_plusExitPending = false;
-        m_plusExitPendingTimer = 0.f;
-    }
-
-    if (!app().input().isHeld(nxui::Button::Plus) || !app().input().isHeld(nxui::Button::Minus))
-        m_accessibilityToggleComboHeld = false;
-
-#ifdef SWITCHU_MENU
-    // Handle Plus directly from the frame input. The root action depended on
-    // the focused icon still being attached through every transient grid
-    // rebuild, which could make Plus silently disappear after a page/model
-    // update even though the icon remained visibly selected.
-    if (app().input().isDown(nxui::Button::Plus) &&
-        !app().input().isDown(nxui::Button::Minus) &&
-        m_navigator.route() == switchu::navigation::Route::Home &&
-        !m_editMode &&
-        !(m_contextMenu && m_contextMenu->isActive()) &&
-        !(m_dialog && m_dialog->isActive()) &&
-        !(m_quickSettings && m_quickSettings->isActive()) &&
-        !(m_textEntry && m_textEntry->isActive()) &&
-        !(m_settings && m_settings->isActive()) &&
-        !(m_themeShop && m_themeShop->isActive()) &&
-        !(m_gameOptions && m_gameOptions->isActive()) &&
-        !(m_folderOptions && m_folderOptions->isActive()) &&
-        !(m_controllerTest && m_controllerTest->isActive()) &&
-        !(m_profileCarousel && m_profileCarousel->isActive()) &&
-        !(m_userSelect && m_userSelect->isActive())) {
-        auto* current = focusManager().current();
-        if (current && current->tag() == "glossy_icon" && m_grid) {
-            auto* icon = static_cast<GlossyIcon*>(current);
-            const auto& icons = m_grid->allIcons();
-            const auto found = std::find_if(
-                icons.begin(), icons.end(),
-                [icon](const auto& candidate) { return candidate.get() == icon; });
-            const int index = found == icons.end()
-                ? -1 : static_cast<int>(std::distance(icons.begin(), found));
-            if (index >= 0 && index < m_model.count()) {
-                DebugLog::log("[plus] direct index=%d kind=%u title=0x%016lX",
-                              index, static_cast<unsigned>(m_model.at(index).kind),
-                              static_cast<unsigned long>(m_model.at(index).titleId));
-                // titleId=0 is the canonical empty-slot marker. Keep this
-                // defensive check even if a stale loader entry carries the
-                // wrong kind so Plus can never route an empty slot as a game.
-                if (m_model.at(index).titleId == 0 ||
-                    m_model.at(index).kind == GridEntryKind::Empty) {
-                    if (m_openFolderId == 0) // folders do not nest
-                        showAddContextMenu(index, icon->focusRect());
-                } else if (m_model.at(index).isFolder())
-                    showFolderContextMenu(m_model.at(index).folderId);
-                else if (m_model.at(index).isWidget())
-                    showWidgetOptionsMenu(m_model.at(index).widgetId,
-                                          index, icon->focusRect());
-                else if (m_model.at(index).isApplication())
-                    showGameContextMenu(icon);
-            }
-        }
-    }
-#endif
-
-    // When an empty-page delete control is up, Minus is armed for hold-to-delete
-    // (handled above). Skip the instant view toggle so a hold is not also a
-    // layout switch; short tap still toggles on release.
-    if (app().input().isDown(nxui::Button::Minus) &&
-        !app().input().isDown(nxui::Button::Plus) &&
-        !deletePageAvailable() &&
-        m_navigator.route() == switchu::navigation::Route::Home &&
-        !m_editMode &&
-        !(m_contextMenu && m_contextMenu->isActive()) &&
-        !(m_dialog && m_dialog->isActive()) &&
-        !(m_quickSettings && m_quickSettings->isActive()) &&
-        !(m_settings && m_settings->isActive()) &&
-        !(m_themeShop && m_themeShop->isActive()) &&
-        !(m_gameOptions && m_gameOptions->isActive()) &&
-        !(m_folderOptions && m_folderOptions->isActive()) &&
-        !(m_controllerTest && m_controllerTest->isActive()) &&
-        !(m_profileCarousel && m_profileCarousel->isActive()) &&
-        !(m_userSelect && m_userSelect->isActive())) {
-        toggleAppLayoutMode();
-    }
 
     if (m_plusExitPending) {
         m_plusExitPendingTimer -= dt;

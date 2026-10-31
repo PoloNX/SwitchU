@@ -214,6 +214,11 @@ void Application::dispatchInput() {
                 if (leftStickDown && cur->fireAction(static_cast<uint64_t>(leftStick))) return;
                 if (rightStickDown && cur->fireAction(static_cast<uint64_t>(rightStick))) return;
             }
+            // Activity may swallow spatial D-pad steps during HOME overlay chords
+            // (Ultrahand L+R+Y+D-pad) without delaying solo stick browsing.
+            if (dpadDown && m_activity && !m_activity->allowDpadFocusNavigation(dpad))
+                dpadDown = false;
+            if (!dpadDown && !leftStickDown && !rightStickDown) return;
             fm.navigate(dir, root);
         };
 

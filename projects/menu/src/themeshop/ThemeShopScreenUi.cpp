@@ -2816,7 +2816,10 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
     if (count > 0) {
         int selected = std::max(0, currentSelectedIndex()) + 1;
         counterText = std::to_string(selected) + " / " + std::to_string(count);
-    } else if (isCommunityTab() && m_communityTransferState.isRunning()) {
+    } else if ((isCommunityTab() || isIconsShopMode())
+               && m_searchQuery.empty()
+               && !m_communityTransferState.hasFailed()
+               && (m_communityTransferState.isRunning() || m_communityRevision == 0)) {
         counterText = i18n.tr("themeshop.community.counter_loading", "Loading");
     } else {
         counterText = "0 / 0";
@@ -2949,7 +2952,9 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
         m_focusCursor.moveTo(target.expanded(2.f), 20.f, 0.08f);
     }
 
-    if (isCommunityTab() && !m_communityTransferState.label().empty() && m_packageTransferState.label().empty()) {
+    if ((isCommunityTab() || isIconsShopMode())
+        && !m_communityTransferState.label().empty()
+        && m_packageTransferState.label().empty()) {
         ren.drawText(m_communityTransferState.label(),
                      {layout.header.x, layout.header.bottom() - 6.f},
                      m_smallFont,
@@ -2957,12 +2962,20 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
                      0.72f);
     }
 
-    if (isCommunityTab() && m_communityTransferState.isRunning() && count == 0) {
+    // Same catalog cube for Theme Shop Community and Icon Shop — including the
+    // brief window before the first fetch has started (revision still 0).
+    if ((isCommunityTab() || isIconsShopMode())
+        && count == 0
+        && m_searchQuery.empty()
+        && !m_communityTransferState.hasFailed()
+        && (m_communityTransferState.isRunning() || m_communityRevision == 0)) {
         // High + roomy gap — breathe peaks ~1.2× and must clear the label.
         nxui::Vec2 center = {layout.grid.x + layout.grid.width * 0.5f,
                              layout.grid.y + layout.grid.height * 0.30f};
         drawCatalogLoadingCube(ren, center, 112.f, m_uiTime, m_theme->cursorNormal, contentOpacity);
-        std::string loadingLabel = i18n.tr("themeshop.community.loading", "Loading theme catalog...");
+        std::string loadingLabel = isIconsShopMode()
+            ? i18n.tr("themeshop.icons.loading", "Loading icon catalog...")
+            : i18n.tr("themeshop.community.loading", "Loading theme catalog...");
         nxui::Vec2 size = measureTextCached(m_font, loadingLabel);
         ren.drawText(loadingLabel,
                      {center.x - size.x * 0.40f, center.y + 108.f},
@@ -2993,7 +3006,7 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
                         : i18n.tr("themeshop.installed.empty", "No installed themes found."))));
         std::string emptySubtitle = searchActive
             ? i18n.tr("themeshop.search.no_results_hint", "Press X or use Search to change or clear the filter.")
-            : (isCommunityTab() && m_communityTransferState.hasFailed()
+            : (((isCommunityTab() || isIconsShopMode()) && m_communityTransferState.hasFailed())
                 ? i18n.tr("themeshop.community.catalog_failed", "The catalog could not be fetched. Use Refresh to try again.")
                 : (isIconsShopMode()
                     ? i18n.tr("themeshop.icons.empty_shop_hint", "Refresh the catalog, or switch to Installed for packs on this console.")
@@ -3082,18 +3095,29 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
             showIconsBadge = !isIconsTab() && entry.hasIcons;
             showMusicBadge = !isIconsTab() && entry.hasMusic;
             showSoundsBadge = !isIconsTab() && entry.hasSounds;
-            if (previewRequested && !entry.coverUrl.empty()) {
-                // Catalog pack that is not on the console yet: fetch the cover.
-                primeCommunityPreview(entry.coverUrl);
-                previewTexture = communityPreviewTexture(entry.coverUrl);
-                previewPhase = communityPreviewPhase(entry.coverUrl);
-            } else if (previewRequested) {
+            if (isIconsShopMode()) {
+                // Icon Shop always shows vanilla catalog art (no Tint/Match bake).
+                if (!entry.coverUrl.empty()) {
+                    primeCommunityPreview(entry.coverUrl);
+                    previewTexture = communityPreviewTexture(entry.coverUrl);
+                    previewPhase = communityPreviewPhase(entry.coverUrl);
+                } else if (!entry.coverPath.empty()) {
+                    primeInstalledPreview(entry.coverPath, /*adaptiveLoad=*/false, {},
+                                          nullptr, 384);
+                    previewTexture = installedPreviewTexture(entry.coverPath, false, {});
+                    previewPhase = installedPreviewPhase(entry.coverPath, false, {});
+                }
+            } else if (previewRequested && !entry.coverPath.empty()) {
                 const std::string packId = isIconsTab() ? entry.id : std::string{};
-                primeInstalledPreview(entry.coverPath, isIconsTab(), packId, nullptr, 384); // grid
+                primeInstalledPreview(entry.coverPath, isIconsTab(), packId, nullptr, 384);
                 previewTexture = installedPreviewTexture(entry.coverPath, isIconsTab(), packId);
                 previewPhase = installedPreviewPhase(entry.coverPath, isIconsTab(), packId);
                 previewAdaptive = isIconsTab()
                     && installedPreviewAdaptive(entry.coverPath, true, packId);
+            } else if (previewRequested && !entry.coverUrl.empty()) {
+                primeCommunityPreview(entry.coverUrl);
+                previewTexture = communityPreviewTexture(entry.coverUrl);
+                previewPhase = communityPreviewPhase(entry.coverUrl);
             }
         }
 
@@ -3210,14 +3234,33 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
                      m_theme->textPrimary,
                      rowOpacity,
                      0.66f);
+        } else if (isIconsShopMode() && !isCommunityTab()) {
+            // Icon Shop lists installed catalog packs too — mark them clearly.
+            const auto& shopEntry = m_iconPackEntries[(size_t)globalIndex];
+            if (shopEntry.installed && shopEntry.catalog) {
+                const std::string installedLabel =
+                    i18n.tr("themeshop.installed.status_installed", "Installed");
+                float chipWidth = std::max(82.f, std::min(114.f,
+                    32.f + measureTextCached(m_smallFont, installedLabel).x * 0.66f));
+                nxui::Rect installedChip = {preview.x + 10.f, preview.y + 10.f, chipWidth, 26.f};
+                drawChip(ren,
+                         m_smallFont,
+                         installedChip,
+                         installedLabel,
+                         nxui::Color(0.10f, 0.22f, 0.40f, 0.36f),
+                         nxui::Color(0.40f, 0.70f, 1.f, 0.48f),
+                         m_theme->textPrimary,
+                         rowOpacity,
+                         0.66f);
+            }
         }
 
-        const auto shelfTint = (isIconsTab() && !isCommunityTab())
+        // Tint/Auto chips only on Installed Icons (Icon Shop stays vanilla).
+        const auto shelfTint = isIconsInstalledMode()
             ? iconPackTintFor(m_iconPackEntries[(size_t)globalIndex].id)
             : IconPackTintState{};
-        // Tint/Auto chips (same language as the detail header) — no spectrum strip.
-        const bool showTintBadge = isIconsTab() && !isCommunityTab() && shelfTint.enabled;
-        const bool showAutoBadge = isIconsTab() && !isCommunityTab() && shelfTint.matchTheme;
+        const bool showTintBadge = isIconsInstalledMode() && shelfTint.enabled;
+        const bool showAutoBadge = isIconsInstalledMode() && shelfTint.matchTheme;
         constexpr float kBadgeGap = 8.f;
         const std::string tintBadgeLabel = i18n.tr("themeshop.badge.tint", "Tint");
         const float tintBadgeW = showTintBadge
@@ -3450,27 +3493,35 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
                 detailInfoC = i18n.tr("themeshop.installed.cover_single", "Press A to open this screenshot in fullscreen.");
         }
         detailPreviewRequested = !entry->coverPath.empty() || !entry->coverUrl.empty();
-        if (detailPreviewRequested && !entry->coverUrl.empty()) {
-            primeCommunityPreview(entry->coverUrl);
-            detailPreviewTexture = communityPreviewTexture(entry->coverUrl);
-            detailPreviewPhase = communityPreviewPhase(entry->coverUrl);
-        } else if (detailPreviewRequested) {
+        if (isIconsShopMode()) {
+            if (!entry->coverUrl.empty()) {
+                primeCommunityPreview(entry->coverUrl);
+                detailPreviewTexture = communityPreviewTexture(entry->coverUrl);
+                detailPreviewPhase = communityPreviewPhase(entry->coverUrl);
+            } else if (!entry->coverPath.empty()) {
+                primeInstalledPreview(entry->coverPath, /*adaptiveLoad=*/false, {},
+                                      nullptr, 384);
+                detailPreviewTexture = installedPreviewTexture(entry->coverPath, false, {});
+                detailPreviewPhase = installedPreviewPhase(entry->coverPath, false, {});
+            }
+        } else if (detailPreviewRequested && !entry->coverPath.empty()) {
             const std::string packId = isIconsTab() ? entry->id : std::string{};
-            // Detail always uses the draft HSL slot while tint controls are up —
-            // including when Custom/Flatten/Gray are all off, so the preview can
-            // return to the pack's original look instead of the last Apply.
-            // Icons grid keeps the committed preview (hslOverride=null).
+            // Detail uses the draft HSL slot while Installed tint controls are up.
             switchu::icons::HslAdjust draftHsl;
             const switchu::icons::HslAdjust* hslOverride = nullptr;
             if (isIconsTab() && showSelectedIconTintControls()) {
                 draftHsl = hslAdjustFromTint(selectedIconPackTint());
                 hslOverride = &draftHsl;
             }
-            primeInstalledPreview(entry->coverPath, isIconsTab(), packId, hslOverride, 384); // match grid - avoid waitIdle reupload
+            primeInstalledPreview(entry->coverPath, isIconsTab(), packId, hslOverride, 384);
             detailPreviewTexture =
                 installedPreviewTexture(entry->coverPath, isIconsTab(), packId, hslOverride);
             detailPreviewPhase =
                 installedPreviewPhase(entry->coverPath, isIconsTab(), packId, hslOverride);
+        } else if (detailPreviewRequested && !entry->coverUrl.empty()) {
+            primeCommunityPreview(entry->coverUrl);
+            detailPreviewTexture = communityPreviewTexture(entry->coverUrl);
+            detailPreviewPhase = communityPreviewPhase(entry->coverUrl);
         }
     }
 

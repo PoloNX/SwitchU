@@ -72,9 +72,19 @@ bool FrameTapStatus::refresh() {
     // WaitViewer with the net bit as connected (viewer present, not yet live).
     m_viewerConnected = m_forceLight || netViewer || streaming;
     m_needsHeadroom = (st.reserved3 & kReserved3NeedHeadroom) != 0;
-    m_headroomNeedMb = m_needsHeadroom ? st.shot_fails : 0;
-    if (!m_needsHeadroom)
+    m_headroomNeedMb = 0;
+    if (m_needsHeadroom) {
+        // Requested MB via GetDonorCap (cmd 13) — not shot_fails (overlay/app).
+        std::uint32_t mb = 0;
+        if (R_SUCCEEDED(serviceDispatchOut(&m_service, 13, mb)) && mb > 0)
+            m_headroomNeedMb = mb;
+        else
+            pollNeedHeadroomFile();
+        if (m_headroomNeedMb == 0)
+            m_headroomNeedMb = 30;
+    } else {
         pollNeedHeadroomFile();
+    }
     return true;
 }
 
@@ -86,8 +96,11 @@ bool FrameTapStatus::probe(float dtSeconds, float pollIntervalMs) {
         pollNeedHeadroomFile();
     if (!m_serviceOpen) {
         // Back off when FT is absent so we do not spam smGetService every frame.
+        // Cap at pollIntervalMs so cold-boot remount (100ms poll) can catch FT
+        // the moment sftap appears — before the viewer→seed race.
         m_retryAccumMs += dtSeconds * 1000.f;
-        if (m_retryAccumMs < 2000.f && m_pollAccumMs < pollIntervalMs)
+        const float retryMs = pollIntervalMs > 0.f ? pollIntervalMs : 500.f;
+        if (m_retryAccumMs < retryMs && m_pollAccumMs < pollIntervalMs)
             return false;
         m_retryAccumMs = 0.f;
         m_pollAccumMs = 0.f;
