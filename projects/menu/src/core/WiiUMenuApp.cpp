@@ -7486,6 +7486,9 @@ void WiiUMenuApp::tickFrameTapLightPath(float dt) {
     // Waiting for viewer lets FT seed content-sync first (~14fps); binders
     // from this remount teach the mitm so boot matches HOME-return fences.
     // FT file request covers the case where onCreate arming was skipped.
+#ifndef SWITCHU_HOMEBREW
+    // Library-applet only: managed-layer remount + __nx_vi_layer_id. Homebrew
+    // builds do not declare that symbol (CI) and are not the FT capture host.
     if (!m_ftCaptureRemountDone &&
         (ftAsksRemount || m_ftCaptureRemountNeeded) &&
         (ftAsksRemount || m_frameTapStatus.available())) {
@@ -7504,6 +7507,7 @@ void WiiUMenuApp::tickFrameTapLightPath(float dt) {
         std::remove("sdmc:/config/switch-frame-tap/need_capture_remount");
         m_wakePostSwapchainFrames = std::max(m_wakePostSwapchainFrames, 2);
     }
+#endif
 
     if (viewer) {
         m_frameTapViewerGoneSec = 0.f;
