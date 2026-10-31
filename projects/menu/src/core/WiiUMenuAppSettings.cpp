@@ -2891,18 +2891,41 @@ std::vector<ThemeShopScreen::ThemeShopEntry> WiiUMenuApp::buildIconPackEntries()
     for (const auto& pack : switchu::icons::discoverThemePacks())
         addPack(pack);
 
-    // Online catalog: packs that are not on the console yet.
+    // Online catalog: list every catalog pack (installed ones stay installed —
+    // Icon Shop shows them with an Installed badge, like Theme Shop Community).
     if (m_themeShop) {
         const std::string& catalogUrl = m_themeShop->communityCatalogUrl();
         const std::size_t slash = catalogUrl.find_last_of('/');
         const std::string catalogBase =
             slash == std::string::npos ? std::string() : catalogUrl.substr(0, slash + 1);
+        auto resolveCoverUrl = [&](const std::string& cover) -> std::string {
+            if (cover.empty())
+                return {};
+            const bool absolute = cover.rfind("https://", 0) == 0
+                || cover.rfind("http://", 0) == 0;
+            return absolute ? cover : catalogBase + cover;
+        };
         for (const auto& icon : m_themeShop->catalogIconEntries()) {
-            const bool alreadyListed = std::any_of(
+            auto existing = std::find_if(
                 entries.begin(), entries.end(),
                 [&](const ThemeShopScreen::ThemeShopEntry& e) { return e.id == icon.id; });
-            if (alreadyListed)
+            if (existing != entries.end()) {
+                // Enrich the on-console row so Icon Shop can list it.
+                existing->catalog = true;
+                if (!icon.name.empty())
+                    existing->name = icon.name;
+                if (!icon.author.empty())
+                    existing->author = icon.author;
+                if (!icon.version.empty())
+                    existing->version = icon.version;
+                if (!icon.description.empty())
+                    existing->description = icon.description;
+                existing->colourPack = icon.colour;
+                // Keep both: Installed shelf uses coverPath (live mosaic + tint);
+                // Icon Shop uses coverUrl (vanilla catalog art).
+                existing->coverUrl = resolveCoverUrl(icon.cover);
                 continue;
+            }
             // Catalog row whose theme companion is already installed as another id.
             if (!icon.theme.empty()) {
                 std::string linkedPack;
@@ -2932,11 +2955,7 @@ std::vector<ThemeShopScreen::ThemeShopEntry> WiiUMenuApp::buildIconPackEntries()
             entry.active = false;
             entry.colourPack = icon.colour;
             entry.source = "Shop";
-            if (!icon.cover.empty()) {
-                const bool absolute = icon.cover.rfind("https://", 0) == 0
-                    || icon.cover.rfind("http://", 0) == 0;
-                entry.coverUrl = absolute ? icon.cover : catalogBase + icon.cover;
-            }
+            entry.coverUrl = resolveCoverUrl(icon.cover);
             entries.push_back(std::move(entry));
         }
     }
@@ -4067,11 +4086,17 @@ void WiiUMenuApp::rematchIconPackTintsToTheme(bool syncSidebar) {
         const auto pivots = switchu::icons::computeMatchThemePivots(
             meanH, meanS, meanL, accentH, accentS, accentL);
         tint.enabled = true;
-        tint.grayscale = false;
         tint.matchTheme = true;
-        tint.hue = pivots.hue;
-        tint.sat = pivots.sat;
-        tint.light = pivots.light;
+        if (tint.grayscale) {
+            // Absolute accent H/S for grayscale colorize; keep Light pivot.
+            tint.hue = accentH - std::floor(accentH);
+            tint.sat = accentS < 0.08f ? 0.45f : accentS;
+            tint.light = pivots.light;
+        } else {
+            tint.hue = pivots.hue;
+            tint.sat = pivots.sat;
+            tint.light = pivots.light;
+        }
         any = true;
     }
     if (!any)

@@ -418,11 +418,12 @@ void ThemeShopScreen::applySearchFilter() {
     for (const auto& entry : m_allIconPackEntries) {
         if (!matchesSearch(entry, needleLower))
             continue;
-        // Icons Installed = on console; Icons Shop = catalog-only downloads.
+        // Icons Installed = on console; Icons Shop = catalog (incl. already
+        // installed packs — same as Theme Shop Community listing everything).
         if (m_iconsShelfMode == ShelfMode::Installed) {
             if (!entry.installed)
                 continue;
-        } else if (entry.installed) {
+        } else if (!entry.catalog) {
             continue;
         }
         m_iconPackEntries.push_back(entry);
@@ -646,7 +647,8 @@ bool ThemeShopScreen::selectedIconPackIsColour() const {
 }
 
 bool ThemeShopScreen::showSelectedIconTintControls() const {
-    if (!isIconsTab())
+    // Tint/Match only on Installed Icons — Icon Shop stays vanilla catalog.
+    if (!isIconsInstalledMode())
         return false;
     const auto* entry = selectedThemeShopEntry();
     return entry && entry->installed;
@@ -655,8 +657,10 @@ bool ThemeShopScreen::showSelectedIconTintControls() const {
 bool ThemeShopScreen::selectedIconShowsHueSat() const {
     if (!selectedIconCustomTint())
         return false;
-    // Grayscale (alone or with Flatten) hides H/S; L stays.
-    return !selectedIconPackTint().grayscale;
+    // Grayscale + Custom tint colorizes with H/S (uniform hue). Flatten alone
+    // still shows H/S unless grayscale+flatten uses the flat gray fill path —
+    // keep H/S visible whenever Custom tint is on so Match/tint stay editable.
+    return true;
 }
 
 ThemeShopScreen::IconPackTintState ThemeShopScreen::iconPackTintFor(const std::string& packId) const {
@@ -699,10 +703,18 @@ void ThemeShopScreen::beginIconPackTintDraft() {
 }
 
 void ThemeShopScreen::discardIconPackTintDraft() {
-    // Remember draft (toggle + sliders) in Theme Shop when closing with B.
-    // Do not emit to HOME chrome - that still waits for Apply.
-    if (m_draftTintActive && !m_draftTintPackId.empty())
-        m_iconPackTints[m_draftTintPackId] = m_draftTint;
+    // B / close detail: keep the draft as the pack's committed tint and persist
+    // it (settings.json) so reopening Theme Shop shows how the user left it.
+    // HOME chrome still only rematches when this pack is active (emit callback).
+    if (m_draftTintActive && !m_draftTintPackId.empty()) {
+        const std::string id = m_draftTintPackId;
+        m_iconPackTints[id] = m_draftTint;
+        emitIconPackTint(id, m_draftTint);
+        std::string coverFilter;
+        if (const auto* entry = selectedThemeShopEntry())
+            coverFilter = entry->coverPath;
+        invalidateIconPackPreviews(coverFilter);
+    }
     m_draftTintActive = false;
     m_draftTintPackId.clear();
     m_draftTint = {};
@@ -712,13 +724,7 @@ void ThemeShopScreen::discardIconPackTintDraft() {
 void ThemeShopScreen::commitDraftIconPackTint() {
     if (!m_draftTintActive)
         return;
-    const std::string id = m_draftTintPackId.empty() ? "default" : m_draftTintPackId;
-    m_iconPackTints[id] = m_draftTint;
-    emitIconPackTint(id, m_draftTint);
-    std::string coverFilter;
-    if (const auto* entry = selectedThemeShopEntry())
-        coverFilter = entry->coverPath;
-    invalidateIconPackPreviews(coverFilter);
+    // Apply path: same persist as B-close (discard emits + invalidates).
     discardIconPackTintDraft();
 }
 
@@ -742,14 +748,21 @@ bool ThemeShopScreen::applyMatchThemePivotsToTint(IconPackTintState& tint,
         accentS = std::max(accentS, 0.45f);
         accentL = std::max(accentL, 0.45f);
     }
-    const auto pivots = switchu::icons::computeMatchThemePivots(
-        meanH, meanS, meanL, accentH, accentS, accentL);
     tint.enabled = true;
-    tint.grayscale = false;
     tint.matchTheme = true;
-    tint.hue = pivots.hue;
-    tint.sat = pivots.sat;
-    tint.light = pivots.light;
+    if (tint.grayscale) {
+        // Grayscale colorize uses absolute H/S (one accent hue over gray luma).
+        tint.hue = accentH - std::floor(accentH);
+        tint.sat = accentS;
+        tint.light = switchu::icons::computeMatchThemePivots(
+            meanH, meanS, meanL, accentH, accentS, accentL).light;
+    } else {
+        const auto pivots = switchu::icons::computeMatchThemePivots(
+            meanH, meanS, meanL, accentH, accentS, accentL);
+        tint.hue = pivots.hue;
+        tint.sat = pivots.sat;
+        tint.light = pivots.light;
+    }
     return true;
 }
 
@@ -772,7 +785,6 @@ void ThemeShopScreen::setIconMatchThemeEnabled(bool enabled) {
             // Still enable Custom tint so the user can edit; Match stays off.
             tint.enabled = true;
             tint.matchTheme = false;
-            tint.grayscale = false;
         }
     } else {
         if (!tint.matchTheme)
@@ -813,8 +825,13 @@ void ThemeShopScreen::setIconGrayscaleEnabled(bool enabled) {
     if (tint.grayscale == enabled)
         return;
     tint.grayscale = enabled;
-    if (enabled)
-        tint.matchTheme = false;
+    // Keep Match theme: rematch so H/S become absolute accent colorize pivots.
+    if (tint.matchTheme) {
+        std::string samplePath;
+        if (const auto* entry = selectedThemeShopEntry())
+            samplePath = entry->coverPath;
+        applyMatchThemePivotsToTint(tint, samplePath);
+    }
 }
 
 void ThemeShopScreen::maybeSeedFlattenLightDefault() {
@@ -1592,14 +1609,26 @@ void ThemeShopScreen::primeVisibleInstalledPreviews() {
         if (index < 0 || index >= static_cast<int>(entries.size()))
             return;
         const auto& entry = entries[static_cast<std::size_t>(index)];
-        if (!entry.coverUrl.empty()) {
-            primeCommunityPreview(entry.coverUrl);
+        // Icon Shop: catalog covers only (no per-pack HSL). Installed Icons:
+        // on-device mosaic with that pack's tint.
+        if (icons && isIconsShopMode()) {
+            if (!entry.coverUrl.empty()) {
+                primeCommunityPreview(entry.coverUrl);
+                return;
+            }
+            if (!entry.coverPath.empty())
+                primeInstalledPreview(entry.coverPath, /*adaptiveLoad=*/false, {},
+                                      nullptr, kCommunityPreviewGridMaxSide);
             return;
         }
-        if (entry.coverPath.empty())
+        if (!entry.coverPath.empty()) {
+            const std::string packId = icons ? entry.id : std::string{};
+            primeInstalledPreview(entry.coverPath, icons, packId, nullptr,
+                                  kCommunityPreviewGridMaxSide);
             return;
-        const std::string packId = icons ? entry.id : std::string{};
-        primeInstalledPreview(entry.coverPath, icons, packId, nullptr, kCommunityPreviewGridMaxSide);
+        }
+        if (!entry.coverUrl.empty())
+            primeCommunityPreview(entry.coverUrl);
     };
 
     for (int i = pageStart; i < pageEnd; ++i)
