@@ -54,6 +54,8 @@ up to 2 s, then (today) may launch the donor.
 | FT | While `AppletBusy` and 100D is up (`home_menu`), ask NeedHeadroom (~30 s cadence); **clear bit** if Applet pool still tight (anti-thrash) |
 | FT | Again `HeadroomAskAndWait(cap_mb, 2000)` inside `DonorObtain` before `pmshellLaunchProgram` |
 | SwitchU | Poll GetStatus @100 ms; on bit 6 → hard reclaim once, then `AckHeadroom` |
+| SwitchU | Boot heap always starts ~304 MB (sm/fs not up in `__libnx_initheap`, so FT cannot be probed yet). After `sdmc` mount: **grow** to the full ladder if FT `config.ini` is absent; **keep lean** if FT is installed. Runtime shrink does not free Applet-pool pages (soak: process total unchanged) |
+| FT | `detach_on_home=1` ends capture on HOME (“game is not on screen”); set `0` to keep a paused-game stream. `home_menu=1` is separate (beta HOME capture) |
 | SwitchU | `AckHeadroom(free_kb)` + write `sdmc:/config/SwitchU/ft_headroom_ready` |
 | SwitchU | **30 s hold:** no browse restore / no re-reclaim (ACK-only); stops icon flash |
 | FT | On ACK / ready file → proceed when pool has room; **`HeadroomClear` after map** |
@@ -76,5 +78,27 @@ See Frame Tap `tier4/applet-mitm/HANDOFF-SWITCHU-BOOT-CAPTURE.md`:
 2. Wait / re-ask up to ~15 s until Applet-pool room, else defer (engines retry)  
 3. Anti-thrash: clear NeedHeadroom while spinning in `vb:applet_busy`
 
-No further SwitchU menu work required for this handshake unless optional poster
-LOD is requested later. Normal-path mem: `MEMORY_OPTIMIZATION_PLAN.md`.
+### Boot “Connected — no game” with SwitchU (soak 2026-10-31)
+
+Lean SwitchU heap fixes donor/NeedHeadroom at boot (Applet free enough; ACK
+`free≈190 MB`). Remaining gap is **FT capture path**, not SwitchU memory:
+
+1. FT arms `home_menu`, wraps Album `dispdrv`, sets up engines, donor maps OK  
+2. `live-ui: vi's shared buffer not found - the HOME menu is not streamed`  
+   (stock qlaunch buffer; SwitchU replaced HOME, so this never appears)  
+3. Viewer falls to `live:no_game` until a title runs  
+4. After game → HOME, 100D reopens `vi:m` **after** FT’s mitm is up →  
+   `Album / hbmenu is in front` attach works (first HOME capture of SwitchU)
+
+**FT-side fix:** when `home_menu` and live-ui shared buffer is missing, attach to
+the already-running 100D / Album the same way the post-HOME path does — do not
+wait for a game (seed + content-sync). Mitm registers ~32 s after boot, after
+SwitchU’s first window was already open — reconnecting `vi` *early* does not help.
+
+**SwitchU follow-up (capture mitm remount):** if FT is **absent** when the menu
+first probes (cold boot — window opened before mitm), one-shot
+`GpuDevice::remountDisplayForCaptureMitm()` when a viewer connects. **Not** on
+HOME return: a restarted 100D already opens through the mitm; remounting again
+is a black flash. Seed path covers any seconds before the boot remount.
+
+Normal-path mem: `MEMORY_OPTIMIZATION_PLAN.md`.

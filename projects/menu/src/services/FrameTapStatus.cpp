@@ -96,8 +96,11 @@ bool FrameTapStatus::probe(float dtSeconds, float pollIntervalMs) {
         pollNeedHeadroomFile();
     if (!m_serviceOpen) {
         // Back off when FT is absent so we do not spam smGetService every frame.
+        // Cap at pollIntervalMs so cold-boot remount (100ms poll) can catch FT
+        // the moment sftap appears — before the viewer→seed race.
         m_retryAccumMs += dtSeconds * 1000.f;
-        if (m_retryAccumMs < 2000.f && m_pollAccumMs < pollIntervalMs)
+        const float retryMs = pollIntervalMs > 0.f ? pollIntervalMs : 500.f;
+        if (m_retryAccumMs < retryMs && m_pollAccumMs < pollIntervalMs)
             return false;
         m_retryAccumMs = 0.f;
         m_pollAccumMs = 0.f;

@@ -60,6 +60,7 @@
 #include <nxui/widgets/GlassPanel.hpp>
 #include <nxui/widgets/Label.hpp>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <vector>
@@ -101,6 +102,7 @@ public:
     void onAfterPresent(nxui::Renderer& ren) override;
 
     nxui::Widget* focusRoot() override;
+    bool allowDpadFocusNavigation(nxui::Button button) override;
 
 private:
     struct GridLayoutMetrics {
@@ -389,6 +391,28 @@ private:
                                    nxui::Texture* composite);
     void wireFocusCallback();
     void wireGlobalActions();
+    // HOME button shortcuts arm briefly so Ultrahand-style chords
+    // (L+R+Y+D-pad, etc.) can cancel before Quick Settings / sort / move /
+    // launch / page / Plus properties / Minus view / D-pad focus steps fire.
+    enum class HomeChordShortcut : std::uint8_t {
+        QuickSettings = 0, // L
+        Sort,              // R
+        EditMove,          // Y
+        Activate,          // A
+        PagePrev,          // ZL
+        PageNext,          // ZR
+        Properties,        // Plus
+        ChangeView,        // Minus
+        NavLeft,           // D-pad Left
+        NavRight,          // D-pad Right
+        NavUp,             // D-pad Up
+        NavDown,           // D-pad Down
+        Count
+    };
+    void armHomeChordShortcut(HomeChordShortcut which);
+    void cancelHomeChordShortcuts();
+    void tickHomeChordShortcutGuards(float dt);
+    void openFocusedSelectionProperties();
     void toggleAccessibilitySpeech();
     bool handleAccessibilityToggleCombo();
     bool isCurrentFocusableWidget(nxui::Widget* w) const;
@@ -551,7 +575,16 @@ private:
     // Keep focus-only only long enough for FT donor map; full 30s hold stays
     // ACK-only (no re-reclaim). Soak: 30s at cap=0 → empty until visited then dump.
     static constexpr float   kFtRemountBrowseGraceSec = 2.5f;
+    // After Applet-heap shrink, wait longer before ±3 refill so the donor map
+    // isn't racing icon uploads (stuck-spinner soak).
+    static constexpr float   kFtDonorMapBrowseGraceSec = 6.f;
     bool                     m_ftRemountBrowseRestored = false;
+    // Boot only: window often opens before FT's vi mitm. Arm when FT is absent
+    // at first probe; skip on HOME return (process restart with mitm already up).
+    // See GpuDevice::remountDisplayForCaptureMitm.
+    bool                     m_ftCaptureRemountProbed = false;
+    bool                     m_ftCaptureRemountNeeded = false;
+    bool                     m_ftCaptureRemountDone = false;
     // Normal-path idle: drip-destroy unbound streamer MemBlocks.
     float                    m_streamerIdleSec = 0.f;
     int                      m_streamerIdleLastPage = -1;
@@ -978,6 +1011,12 @@ private:
     bool m_accessibilityToggleComboHeld = false;
     bool m_plusExitPending = false;
     float m_plusExitPendingTimer = 0.f;
+    // >=0 while waiting out the HOME chord grace; <0 idle.
+    float m_pendingHomeChordSec[static_cast<std::size_t>(HomeChordShortcut::Count)] = {
+        -1.f, -1.f, -1.f, -1.f, -1.f, -1.f, -1.f, -1.f,
+        -1.f, -1.f, -1.f, -1.f
+    };
+    static constexpr float kHomeChordGraceSec = 0.08f;
     nxui::AnimatedFloat m_hintPanelW{0.f};
     nxui::AnimatedFloat m_hintPanelH{0.f};
     nxui::AnimatedFloat m_hintContentReveal{1.f};
