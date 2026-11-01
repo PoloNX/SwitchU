@@ -75,6 +75,11 @@ public:
     void onPowerButtonActionChange(IntCb cb) { m_powerButtonActionCb = std::move(cb); }
     void onLockScreenClockFontChange(StringCb cb) { m_lockScreenClockFontCb = std::move(cb); }
     void onIconContrastAdaptChange(BoolCb cb) { m_iconContrastAdaptCb = std::move(cb); }
+    void onLockScreenTransitionChange(IntCb cb) {
+        m_lockScreenTransitionCb = std::move(cb);
+    }
+    void onLockScreenZoomDirChange(IntCb cb) { m_lockScreenZoomDirCb = std::move(cb); }
+    void onLockScreenWipeDirChange(IntCb cb) { m_lockScreenWipeDirCb = std::move(cb); }
     void onThemeLockClockFontOverrideChange(BoolCb cb) {
         m_themeLockClockFontOverrideCb = std::move(cb);
     }
@@ -143,6 +148,15 @@ public:
     nxui::Font* ensureLockClockPreviewFont(const std::string& id);
     void setFrameTapLiteEngaged(bool engaged) { m_frameTapLiteEngaged = engaged; }
     void setIconContrastAdaptState(bool enabled) { m_iconContrastAdapt = enabled; }
+    void setLockScreenTransitionState(int mode) {
+        m_lockScreenTransition = std::clamp(mode, 0, 3);
+    }
+    void setLockScreenZoomDirState(int dir) {
+        m_lockScreenZoomDir = std::clamp(dir, 0, 1);
+    }
+    void setLockScreenWipeDirState(int dir) {
+        m_lockScreenWipeDir = std::clamp(dir, 0, 3);
+    }
     void setThemeLockClockFontOverrideState(bool enabled) {
         m_themeLockClockFontOverride = enabled;
     }
@@ -441,6 +455,9 @@ private:
     IntCb m_powerButtonActionCb;
     StringCb m_lockScreenClockFontCb;
     BoolCb m_iconContrastAdaptCb;
+    IntCb m_lockScreenTransitionCb;
+    IntCb m_lockScreenZoomDirCb;
+    IntCb m_lockScreenWipeDirCb;
     BoolCb m_themeLockClockFontOverrideCb;
     BoolCb m_themeIconPackOverrideCb;
     BoolCb m_themeMusicOverrideCb;
@@ -480,6 +497,9 @@ private:
     std::unordered_map<std::string, std::unique_ptr<nxui::Font>> m_lockClockPreviewFonts;
     bool m_frameTapLiteEngaged = false;
     bool m_iconContrastAdapt = true;
+    int m_lockScreenTransition = 0;
+    int m_lockScreenZoomDir = 0;
+    int m_lockScreenWipeDir = 1;
     bool m_themeLockClockFontOverride = true;
     bool m_themeIconPackOverride = true;
     bool m_themeMusicOverride = true;

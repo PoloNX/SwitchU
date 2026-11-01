@@ -6294,12 +6294,16 @@ void WiiUMenuApp::buildGrid() {
     m_lockScreen->setTheme(&m_theme);
     m_lockScreen->setClockService(&m_clockService);
     m_lockScreen->setUse12HourClock(m_config.clockUse12Hour);
-    m_lockScreen->setBackdropDrawer([this](nxui::Renderer& ren, float dy, float opacity) {
+    m_lockScreen->setTransition(static_cast<LockScreen::Transition>(
+        std::clamp(m_config.lockScreenTransition, 0, 3)));
+    m_lockScreen->setZoomDir(m_config.lockScreenZoomDir);
+    m_lockScreen->setWipeDir(m_config.lockScreenWipeDir);
+    m_lockScreen->setBackdropDrawer([this](nxui::Renderer& ren, float dy, float opacity, float scale) {
         if (m_background)
-            m_background->renderShifted(ren, dy, opacity);
+            m_background->renderShifted(ren, dy, opacity, scale);
     });
     m_lockScreen->setOnUnlocking([this]() {
-        // Curtain lift: HOME chrome returns under the sliding Lock plane.
+        // HOME chrome returns under the Lock plane (Dissolve/Zoom fade; Curtain/Wipe cover).
         if (m_bgLayer) m_bgLayer->setVisible(true);
         if (m_contentLayer) m_contentLayer->setVisible(true);
         setAppLayoutMode(m_config.appLayoutMode);
@@ -6312,6 +6316,13 @@ void WiiUMenuApp::buildGrid() {
             m_cursor->setVisible(false);
         restoreFocusAfterLock();
         snapCursorToFocus();
+    });
+    m_lockScreen->setOnEnterSettled([this]() {
+        // Enter finished — tuck HOME chrome away; live wallpaper stays on bgLayer.
+        if (m_contentLayer)
+            m_contentLayer->setVisible(false);
+        if (m_cursor)
+            m_cursor->setVisible(false);
     });
     m_lockScreen->setOnUnlocked([this]() { finishExitLockView(false); });
     m_lockScreen->setOnResume([this]() { finishExitLockView(true); });
@@ -7128,6 +7139,11 @@ void WiiUMenuApp::onUpdate(float dt) {
         // onUpdateAwake() kept the console warm for the whole sleep otherwise.
         if (m_sleepHoldSec > 0.f) {
             m_sleepHoldSec -= dt;
+            // Still presenting during the hold — keep Lock enter tweens moving
+            // so power→sleep can show the chosen transition before frames stop.
+            if (m_lockScreen && m_lockScreen->isActive())
+                m_lockScreen->update(dt);
+            nxui::AnimationManager::instance().update(dt);
             if (m_sleepHoldSec <= 0.f) {
                 m_sleepHoldSec = 0.f;
                 DebugLog::log("[lock] sleep: hold done, stopping presents");
@@ -7166,12 +7182,13 @@ void WiiUMenuApp::enterSystemSleep() {
     }
 
     // Lock view becomes the last surface so wake retains it (native wake time
-    // still varies). Daemon waits ~1.5s when lock is enabled.
+    // still varies). Daemon waits ~1.5s when lock is enabled — hold long enough
+    // for the enter transition (Dissolve ~1.2s) to finish before presents stop.
     if (m_config.lockScreenEnabled) {
-        enterLockView(true);
+        enterLockView(false);
         if (m_lockViewActive) {
-            m_sleepHoldSec = 1.20f;
-            DebugLog::log("[lock] sleep: holding Lock view (1.2s)");
+            m_sleepHoldSec = 1.40f;
+            DebugLog::log("[lock] sleep: holding Lock view for enter transition (1.4s)");
             return;
         }
     }
@@ -7259,6 +7276,10 @@ void WiiUMenuApp::enterLockView(bool instant) {
     if (m_consoleBatteryPercent > 0)
         m_lockScreen->setBatteryStatus(m_consoleBatteryPercent, m_consoleBatteryCharging);
     m_lockScreen->setUse12HourClock(m_config.clockUse12Hour);
+    m_lockScreen->setTransition(static_cast<LockScreen::Transition>(
+        std::clamp(m_config.lockScreenTransition, 0, 3)));
+    m_lockScreen->setZoomDir(m_config.lockScreenZoomDir);
+    m_lockScreen->setWipeDir(m_config.lockScreenWipeDir);
 
     m_lockReturnFocus = focusManager().current();
     m_lockReturnTitleId = 0;
@@ -7271,10 +7292,12 @@ void WiiUMenuApp::enterLockView(bool instant) {
             m_lockReturnTitleId = icons[idx]->titleId();
     }
     m_lockViewActive = true;
-    if (m_contentLayer)
-        m_contentLayer->setVisible(false);
     if (m_bgLayer)
         m_bgLayer->setVisible(true);
+    // Keep HOME under Lock during animated enter so Curtain/Wipe/Dissolve/Zoom
+    // can mirror their exit (slide/clip/fade over the real view).
+    if (m_contentLayer)
+        m_contentLayer->setVisible(!instant && m_lockScreen->keepsHomeDuringEnter());
 
     m_lockScreen->show(instant);
     focusManager().setFocus(m_lockScreen.get());

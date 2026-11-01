@@ -74,6 +74,12 @@ struct AppConfig {
     int powerButtonAction = 0;
     // Lock clock face id (see LockClockFonts.hpp). Empty / "theme" = theme regular.
     std::string lockScreenClockFont;
+    // Lock enter/exit motion: 0 = Curtain, 1 = Dissolve, 2 = Zoom, 3 = Wipe.
+    int lockScreenTransition = 0;
+    // Zoom: 0 = Out (grow away), 1 = In (shrink in).
+    int lockScreenZoomDir = 0;
+    // Wipe exit direction: 0 = Up, 1 = Right, 2 = Down, 3 = Left.
+    int lockScreenWipeDir = 1;
     // Theme Shop → Lock Screen: applying a theme with fonts may set clock face.
     bool themeLockClockFontOverride = true;
     // Theme Shop → Interface: applying a theme with icons may switch icon pack.

@@ -234,6 +234,7 @@ TabbedOverlayScreen::~TabbedOverlayScreen() {
 }
 
 float TabbedOverlayScreen::itemHeight(const SettingItem& item, float contentWidth) const {
+    if (item.hidden) return 0.f;
     if (item.type == ItemType::Section) return kSectionHeight;
 
     float height = kRowHeight;
@@ -684,6 +685,11 @@ void TabbedOverlayScreen::drawContent(nxui::Renderer& ren, const nxui::Rect& pan
     int n = std::min((int)itemChildren.size(), (int)items.size());
     for (int i = 0; i < n; ++i) {
         float h = itemHeight(items[i], cr.width);
+        if (items[i].hidden || h <= 0.f) {
+            items[i].contentFocused = false;
+            itemChildren[i]->setVisible(false);
+            continue;
+        }
         float insetY = (items[i].type == ItemType::Section) ? 1.f : kContentCardInsetY;
         float cardH = std::max(0.f, h - (items[i].type == ItemType::Section ? 2.f : 6.f));
         nxui::Rect itemRect = {

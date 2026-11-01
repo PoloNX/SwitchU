@@ -107,6 +107,12 @@ bool AppConfig::load() {
     readJsonOpt(j, "powerButtonAction", powerButtonAction);
     powerButtonAction = std::clamp(powerButtonAction, 0, 2);
     readJsonOpt(j, "lockScreenClockFont", lockScreenClockFont);
+    readJsonOpt(j, "lockScreenTransition", lockScreenTransition);
+    lockScreenTransition = std::clamp(lockScreenTransition, 0, 3);
+    readJsonOpt(j, "lockScreenZoomDir", lockScreenZoomDir);
+    lockScreenZoomDir = std::clamp(lockScreenZoomDir, 0, 1);
+    readJsonOpt(j, "lockScreenWipeDir", lockScreenWipeDir);
+    lockScreenWipeDir = std::clamp(lockScreenWipeDir, 0, 3);
     readJsonOpt(j, "themeLockClockFontOverride", themeLockClockFontOverride);
     readJsonOpt(j, "themeIconPackOverride", themeIconPackOverride);
     readJsonOpt(j, "themeMusicOverride", themeMusicOverride);
@@ -296,6 +302,9 @@ bool AppConfig::save() const {
     j["lockScreenEnabled"] = lockScreenEnabled;
     j["powerButtonAction"] = std::clamp(powerButtonAction, 0, 2);
     j["lockScreenClockFont"] = lockScreenClockFont;
+    j["lockScreenTransition"] = std::clamp(lockScreenTransition, 0, 3);
+    j["lockScreenZoomDir"] = std::clamp(lockScreenZoomDir, 0, 1);
+    j["lockScreenWipeDir"] = std::clamp(lockScreenWipeDir, 0, 3);
     j["themeLockClockFontOverride"] = themeLockClockFontOverride;
     j["themeIconPackOverride"] = themeIconPackOverride;
     j["themeMusicOverride"] = themeMusicOverride;

@@ -37,6 +37,8 @@ private:
     static const std::vector<switchu::lockfonts::Entry>& fontEntries(ThemeShopScreen& screen);
     static void syncClockFontSelector(ThemeShopScreen& screen,
                                       ThemeShopScreen::SettingItem& item);
+    static void syncTransitionCompanion(ThemeShopScreen& screen,
+                                        ThemeShopScreen::SettingItem& item);
 };
 
 } // namespace themeshop::tabs

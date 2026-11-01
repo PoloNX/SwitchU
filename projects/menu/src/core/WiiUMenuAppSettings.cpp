@@ -1980,6 +1980,9 @@ void WiiUMenuApp::createThemeShop() {
     refreshLockClockFontEntries();
     m_themeShop->setFrameTapLiteEngaged(m_frameTapStatus.viewerConnected());
     m_themeShop->setIconContrastAdaptState(m_config.iconContrastAdapt);
+    m_themeShop->setLockScreenTransitionState(m_config.lockScreenTransition);
+    m_themeShop->setLockScreenZoomDirState(m_config.lockScreenZoomDir);
+    m_themeShop->setLockScreenWipeDirState(m_config.lockScreenWipeDir);
     m_themeShop->setThemeLockClockFontOverrideState(m_config.themeLockClockFontOverride);
     m_themeShop->setThemeIconPackOverrideState(m_config.themeIconPackOverride);
     m_themeShop->setThemeMusicOverrideState(m_config.themeMusicOverride);
@@ -2144,6 +2147,33 @@ void WiiUMenuApp::createThemeShop() {
         m_config.iconContrastAdapt = enabled;
         m_config.save();
         syncColourIconContrast();
+    });
+    m_themeShop->onLockScreenTransitionChange([this](int mode) {
+        mode = std::clamp(mode, 0, 3);
+        if (m_config.lockScreenTransition == mode)
+            return;
+        m_config.lockScreenTransition = mode;
+        m_config.save();
+        if (m_lockScreen)
+            m_lockScreen->setTransition(static_cast<LockScreen::Transition>(mode));
+    });
+    m_themeShop->onLockScreenZoomDirChange([this](int dir) {
+        dir = std::clamp(dir, 0, 1);
+        if (m_config.lockScreenZoomDir == dir)
+            return;
+        m_config.lockScreenZoomDir = dir;
+        m_config.save();
+        if (m_lockScreen)
+            m_lockScreen->setZoomDir(dir);
+    });
+    m_themeShop->onLockScreenWipeDirChange([this](int dir) {
+        dir = std::clamp(dir, 0, 3);
+        if (m_config.lockScreenWipeDir == dir)
+            return;
+        m_config.lockScreenWipeDir = dir;
+        m_config.save();
+        if (m_lockScreen)
+            m_lockScreen->setWipeDir(dir);
     });
     m_themeShop->onThemeLockClockFontOverrideChange([this](bool enabled) {
         if (m_config.themeLockClockFontOverride == enabled)
@@ -3109,6 +3139,9 @@ void WiiUMenuApp::refreshThemeShopState(bool rebuildTab) {
     refreshLockClockFontEntries();
     m_themeShop->setFrameTapLiteEngaged(m_frameTapStatus.viewerConnected());
     m_themeShop->setIconContrastAdaptState(m_config.iconContrastAdapt);
+    m_themeShop->setLockScreenTransitionState(m_config.lockScreenTransition);
+    m_themeShop->setLockScreenZoomDirState(m_config.lockScreenZoomDir);
+    m_themeShop->setLockScreenWipeDirState(m_config.lockScreenWipeDir);
     m_themeShop->setThemeLockClockFontOverrideState(m_config.themeLockClockFontOverride);
     m_themeShop->setThemeIconPackOverrideState(m_config.themeIconPackOverride);
     m_themeShop->setThemeMusicOverrideState(m_config.themeMusicOverride);

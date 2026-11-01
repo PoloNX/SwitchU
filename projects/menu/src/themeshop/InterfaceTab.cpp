@@ -137,8 +137,7 @@ ThemeShopScreen::Tab themeshop::tabs::InterfaceTab::build(ThemeShopScreen& scree
                            "Allow themes to replace my icons");
         it.description = i18n.tr(
             "themeshop.options.theme_icon_override_desc",
-            "On: applying a theme with icons switches the active Icons pack. "
-            "Off: keep your current pack; you can still change it on the Icons tab.");
+            "Themes with icons can switch your Icons pack.");
         it.type = ItemType::Toggle;
         it.boolVal = screen.m_themeIconPackOverride;
         it.anim01 = it.boolVal ? 1.f : 0.f;

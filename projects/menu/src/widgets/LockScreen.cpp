@@ -14,7 +14,26 @@ constexpr float kScreenH = 720.f;
 constexpr float kMargin = 56.f;
 constexpr float kCurtainTravel = 740.f;
 constexpr float kInputGuard = 0.35f;
-constexpr int kTimeFontPt = 108;
+constexpr int kTimeFontPt = 88;
+constexpr float kDateScale = 1.21f;
+constexpr float kDateSettleDelay = 1.05f;
+// Unlock durations — AnimatedFloat is driven by AnimationManager only
+// (do not also call .update here or motions run ~2×).
+constexpr float kCurtainEnterSec = 0.70f;
+constexpr float kCurtainUnlockSec = 0.78f;
+constexpr float kDissolveEnterSec = 1.15f;
+constexpr float kDissolveExitSec = 1.15f;
+constexpr float kZoomEnterSec = 0.78f;
+constexpr float kZoomExitSec = 0.78f;
+constexpr float kWipeEnterSec = 0.72f;
+constexpr float kWipeExitSec = 0.72f;
+constexpr float kEnterAnimDelay = 0.05f;  // hitch after hiding HOME / focusing Lock
+constexpr float kUnlockAnimDelay = 0.05f; // hitch after restoring HOME under Lock
+// Zoom scale endpoints (Out grows away / In shrinks in).
+constexpr float kZoomOutEnter = 1.48f;
+constexpr float kZoomInEnter = 0.52f;
+constexpr float kZoomOutExit = 1.58f;
+constexpr float kZoomInExit = 0.48f;
 constexpr float kResumeBtnW = 280.f;
 constexpr float kResumeBtnH = 52.f;
 constexpr float kResumeBtnY = 520.f;
@@ -34,13 +53,24 @@ std::string replaceAll(std::string text, const std::string& token, const std::st
     return text;
 }
 
+nxui::Vec2 mapLockPt(float x, float y, float dx, float dy, float zoom) {
+    const float cx = kScreenW * 0.5f;
+    const float cy = kScreenH * 0.5f;
+    return {cx + (x - cx) * zoom + dx, cy + (y - cy) * zoom + dy};
+}
+
 void drawCentered(nxui::Renderer& ren, const std::string& text, float y,
-                  nxui::Font* font, const nxui::Color& color, float scale, float dy) {
+                  nxui::Font* font, const nxui::Color& color, float scale,
+                  float dx, float dy, float zoom = 1.f) {
     if (!font || text.empty())
         return;
     const nxui::Vec2 sz = font->measure(text);
-    const float x = (kScreenW - sz.x * scale) * 0.5f;
-    ren.drawText(text, {x, y + dy}, font, color, scale);
+    const float w = sz.x * scale;
+    const float h = sz.y * scale;
+    const float x = (kScreenW - w) * 0.5f;
+    const nxui::Vec2 c = mapLockPt(x + w * 0.5f, y + h * 0.5f, dx, dy, zoom);
+    const float zs = scale * zoom;
+    ren.drawText(text, {c.x - sz.x * zs * 0.5f, c.y - sz.y * zs * 0.5f}, font, color, zs);
 }
 
 nxui::Rect resumeButtonRect(float dy) {
@@ -85,7 +115,9 @@ void LockScreen::wireActions() {
 }
 
 void LockScreen::warmTimeFont() {
-    if (m_timeFont || !m_gpu || !m_ren || m_timeFontPath.empty())
+    if (!m_gpu || !m_ren || m_timeFontPath.empty())
+        return;
+    if (m_timeFont && m_timeFont->ptSize() == kTimeFontPt)
         return;
     auto font = std::make_unique<nxui::Font>();
     if (font->load(*m_gpu, *m_ren, m_timeFontPath, kTimeFontPt))
@@ -157,17 +189,49 @@ void LockScreen::show(bool instant) {
 
     m_active = true;
     m_unlocking = false;
+    m_awaitEnterSettle = !instant;
     m_age = 0.f;
     m_clockTimer = 0.f;
+    m_atmosPhase = 0.f;
     m_suspendPulse = 0.f;
+    m_dateRevealStarted = instant;
     m_lastMinute = -1;
     resetSwipe();
     m_curtain.setImmediate(0.f);
-    if (instant)
+    m_zoom.setImmediate(1.f);
+    if (instant) {
         m_fade.setImmediate(1.f);
-    else {
-        m_fade.setImmediate(0.f);
-        m_fade.set(1.f, 0.28f, nxui::Easing::outCubic);
+        m_dateReveal.setImmediate(1.f);
+    } else {
+        float enterDur = kCurtainEnterSec;
+        if (m_transition == Transition::Dissolve) enterDur = kDissolveEnterSec;
+        else if (m_transition == Transition::Zoom) enterDur = kZoomEnterSec;
+        else if (m_transition == Transition::Wipe) enterDur = kWipeEnterSec;
+
+        // Curtain / Wipe enter mirrors exit: opaque plane from frame one, only
+        // the curtain/clip moves. Dissolve / Zoom fade the whole plane together.
+        if (m_transition == Transition::Curtain || m_transition == Transition::Wipe) {
+            m_fade.setImmediate(1.f);
+            m_dateReveal.setImmediate(1.f);
+            m_dateRevealStarted = true;
+            m_curtain.setImmediate(1.f);
+            m_curtain.set(0.f, enterDur, nxui::Easing::inOutCubic, kEnterAnimDelay);
+        } else if (m_transition == Transition::Zoom) {
+            m_fade.setImmediate(0.f);
+            m_dateReveal.setImmediate(0.f);
+            m_dateRevealStarted = true;
+            const float z0 = (m_zoomDir == 1) ? kZoomInEnter : kZoomOutEnter;
+            m_zoom.setImmediate(z0);
+            m_fade.set(1.f, enterDur, nxui::Easing::inOutCubic, kEnterAnimDelay);
+            m_dateReveal.set(1.f, enterDur, nxui::Easing::inOutCubic, kEnterAnimDelay);
+            m_zoom.set(1.f, enterDur, nxui::Easing::inOutCubic, kEnterAnimDelay);
+        } else { // Dissolve
+            m_fade.setImmediate(0.f);
+            m_dateReveal.setImmediate(0.f);
+            m_dateRevealStarted = true;
+            m_fade.set(1.f, enterDur, nxui::Easing::inOutCubic, kEnterAnimDelay);
+            m_dateReveal.set(1.f, enterDur, nxui::Easing::inOutCubic, kEnterAnimDelay);
+        }
     }
     refreshClock();
     setVisible(true);
@@ -176,6 +240,7 @@ void LockScreen::show(bool instant) {
 void LockScreen::hide() {
     m_active = false;
     m_unlocking = false;
+    m_awaitEnterSettle = false;
     setVisible(false);
     m_releaseTimer = 0.f;
     resetSwipe();
@@ -212,13 +277,44 @@ void LockScreen::beginCurtainUnlock() {
     m_unlocking = true;
     m_swipeActive = false;
     m_swipeDragging = false;
-    if (!m_curtainHomeShown && m_onUnlocking) {
+
+    // Dissolve/Zoom: defer HOME chrome until the Lock plane has mostly faded so
+    // the suspended tile under Lock doesn't pop early / stick around.
+    // Curtain/Wipe need HOME under the moving plane immediately.
+    const bool deferHome = (m_transition == Transition::Dissolve
+                            || m_transition == Transition::Zoom);
+    if (!deferHome && !m_curtainHomeShown && m_onUnlocking) {
         m_onUnlocking();
         m_curtainHomeShown = true;
     }
+
+    // Brief delay so the HOME restore hitch doesn't eat the first frames.
+    if (m_transition == Transition::Dissolve) {
+        m_curtain.setImmediate(0.f);
+        m_fade.set(0.f, kDissolveExitSec, nxui::Easing::inOutCubic, kUnlockAnimDelay);
+        m_dateReveal.set(0.f, kDissolveExitSec, nxui::Easing::inOutCubic, kUnlockAnimDelay);
+        return;
+    }
+
+    if (m_transition == Transition::Zoom) {
+        const float z1 = (m_zoomDir == 1) ? kZoomInExit : kZoomOutExit;
+        m_fade.set(0.f, kZoomExitSec, nxui::Easing::inOutCubic, kUnlockAnimDelay);
+        m_dateReveal.set(0.f, kZoomExitSec, nxui::Easing::inOutCubic, kUnlockAnimDelay);
+        m_zoom.set(z1, kZoomExitSec, nxui::Easing::inOutCubic, kUnlockAnimDelay);
+        m_curtain.set(1.f, kZoomExitSec, nxui::Easing::linear, kUnlockAnimDelay);
+        return;
+    }
+
+    if (m_transition == Transition::Wipe) {
+        m_fade.setImmediate(1.f);
+        const float remaining = std::clamp(1.f - m_curtain.value(), 0.05f, 1.f);
+        m_curtain.set(1.f, kWipeExitSec * remaining, nxui::Easing::inOutCubic, kUnlockAnimDelay);
+        return;
+    }
+
     m_fade.setImmediate(1.f);
     const float remaining = std::clamp(1.f - m_curtain.value(), 0.05f, 1.f);
-    m_curtain.set(1.f, 0.20f + 0.35f * remaining, nxui::Easing::inOutCubic);
+    m_curtain.set(1.f, kCurtainUnlockSec * remaining, nxui::Easing::inOutCubic, kUnlockAnimDelay);
 }
 
 void LockScreen::unlock() {
@@ -265,7 +361,16 @@ void LockScreen::handleTouch(nxui::Input& input) {
         }
         const float progress = std::clamp(dy / kCurtainTravel, 0.f, 1.f);
         m_curtain.setImmediate(progress);
-        m_fade.setImmediate(1.f);
+        if (m_transition == Transition::Dissolve)
+            m_fade.setImmediate(1.f - progress);
+        else if (m_transition == Transition::Zoom) {
+            m_fade.setImmediate(1.f - progress * 0.9f);
+            const float z1 = (m_zoomDir == 1) ? kZoomInExit : kZoomOutExit;
+            m_zoom.setImmediate(1.f + (z1 - 1.f) * progress);
+        } else {
+            m_fade.setImmediate(1.f);
+            m_zoom.setImmediate(1.f);
+        }
         return;
     }
 
@@ -283,6 +388,8 @@ void LockScreen::handleTouch(nxui::Input& input) {
             beginCurtainUnlock();
         } else {
             m_curtain.set(0.f, 0.28f, nxui::Easing::outCubic);
+            m_fade.set(1.f, 0.28f, nxui::Easing::outCubic);
+            m_zoom.set(1.f, 0.28f, nxui::Easing::outCubic);
         }
         return;
     }
@@ -348,16 +455,57 @@ void LockScreen::update(float dt) {
     if (!m_active)
         return;
     m_age += dt;
+    m_atmosPhase += dt;
     if (m_canResume)
         m_suspendPulse += dt * 2.8f;
-    m_curtain.update(dt);
-    m_fade.update(dt);
+    // Curtain / fade / zoom / dateReveal are driven by AnimationManager —
+    // do not double-tick them here (that made unlocks feel truncated).
     m_clockTimer += dt;
     if (m_clockTimer >= 1.f) {
         m_clockTimer = 0.f;
         refreshClock();
     }
-    if (m_unlocking && m_curtain.value() >= 0.999f) {
+    if (!m_dateRevealStarted && !m_unlocking && m_age >= kDateSettleDelay) {
+        m_dateRevealStarted = true;
+        m_dateReveal.set(1.f, 0.52f, nxui::Easing::outCubic);
+    }
+
+    if (m_awaitEnterSettle && !m_unlocking) {
+        bool settled = false;
+        if (m_transition == Transition::Curtain || m_transition == Transition::Wipe)
+            settled = m_curtain.value() <= 0.005f;
+        else if (m_transition == Transition::Zoom)
+            settled = m_fade.value() >= 0.995f && std::fabs(m_zoom.value() - 1.f) < 0.01f;
+        else
+            settled = m_fade.value() >= 0.995f;
+        if (settled) {
+            m_awaitEnterSettle = false;
+            if (m_onEnterSettled)
+                m_onEnterSettled();
+        }
+    }
+
+    // Bring HOME under Dissolve/Zoom once the Lock plane is mostly gone.
+    if (m_unlocking && !m_curtainHomeShown && keepsHomeUnderlay()
+        && m_fade.value() <= 0.42f && m_onUnlocking) {
+        m_onUnlocking();
+        m_curtainHomeShown = true;
+    }
+
+    bool done = false;
+    if (m_unlocking) {
+        if (m_transition == Transition::Dissolve)
+            done = m_fade.value() <= 0.01f;
+        else if (m_transition == Transition::Zoom) {
+            const float z1 = (m_zoomDir == 1) ? kZoomInExit : kZoomOutExit;
+            const bool zoomDone = (m_zoomDir == 1)
+                ? (m_zoom.value() <= z1 + 0.02f)
+                : (m_zoom.value() >= z1 - 0.02f);
+            done = m_fade.value() <= 0.02f && zoomDone;
+        } else
+            done = m_curtain.value() >= 0.999f;
+    }
+    if (done) {
         m_active = false;
         m_unlocking = false;
         setVisible(false);
@@ -366,31 +514,174 @@ void LockScreen::update(float dt) {
     }
 }
 
+void LockScreen::drawAtmosphere(nxui::Renderer& ren, float dx, float dy, float zoom,
+                                float fade) const {
+    if (fade <= 0.01f)
+        return;
+    auto at = [&](nxui::Rect r) {
+        const nxui::Vec2 tl = mapLockPt(r.x, r.y, dx, dy, zoom);
+        const nxui::Vec2 br = mapLockPt(r.x + r.width, r.y + r.height, dx, dy, zoom);
+        return nxui::Rect{tl.x, tl.y, br.x - tl.x, br.y - tl.y};
+    };
+    const float breath = 0.5f + 0.5f * std::sin(m_atmosPhase * 0.7f);
+    const float vig = (m_hasHero ? 0.34f : 0.28f) + 0.10f * breath;
+
+    // Top / bottom vignette only (no side bars).
+    ren.drawGradientRect(at({0.f, 0.f, kScreenW, 210.f}),
+                         nxui::Color(0.f, 0.f, 0.f, vig * fade),
+                         nxui::Color(0.f, 0.f, 0.f, 0.f));
+    ren.drawGradientRect(at({0.f, kScreenH - 240.f, kScreenW, 240.f}),
+                         nxui::Color(0.f, 0.f, 0.f, 0.f),
+                         nxui::Color(0.f, 0.f, 0.f, (vig + 0.12f) * fade));
+
+    if (m_hasHero) {
+        // Cinematic bottom wash so Resume sits in the poster.
+        ren.drawGradientRect(at({0.f, 300.f, kScreenW, 420.f}),
+                             nxui::Color(0.f, 0.f, 0.f, 0.f),
+                             nxui::Color(0.f, 0.f, 0.f, 0.58f * fade));
+    }
+}
+
+void LockScreen::drawClock(nxui::Renderer& ren, float dx, float dy, float zoom, float fade,
+                           const nxui::Color& ink, const nxui::Color& inkSoft) const {
+    nxui::Font* dateFont = m_font ? m_font : m_smallFont;
+    const float dateT = std::clamp(m_dateReveal.value(), 0.f, 1.f);
+    const float dateDrop = (1.f - dateT) * 16.f;
+    drawCentered(ren, m_dateStr, 72.f + dateDrop, dateFont,
+                 inkSoft.withAlpha(inkSoft.a * dateT), kDateScale, dx, dy, zoom);
+
+    const float colonPulse = 0.45f + 0.55f * (0.5f + 0.5f * std::sin(m_atmosPhase * 2.4f));
+    auto drawTimePass = [&](const nxui::Color& color) {
+        if (m_timeFont) {
+            const auto colon = m_timeStr.find(':');
+            if (colon != std::string::npos) {
+                const std::string left = m_timeStr.substr(0, colon);
+                const std::string right = m_timeStr.substr(colon + 1);
+                const nxui::Vec2 leftSz = m_timeFont->measure(left);
+                const nxui::Vec2 colonSz = m_timeFont->measure(":");
+                const nxui::Vec2 rightSz = m_timeFont->measure(right);
+                const float total = leftSz.x + colonSz.x + rightSz.x;
+                const float baseX = (kScreenW - total) * 0.5f;
+                const float baseY = 122.f;
+                auto drawGlyph = [&](const std::string& g, float gx, float gw,
+                                     const nxui::Color& c) {
+                    const nxui::Vec2 cpt = mapLockPt(gx + gw * 0.5f, baseY + leftSz.y * 0.5f,
+                                                    dx, dy, zoom);
+                    ren.drawText(g, {cpt.x - gw * zoom * 0.5f, cpt.y - leftSz.y * zoom * 0.5f},
+                                 m_timeFont.get(), c, zoom);
+                };
+                drawGlyph(left, baseX, leftSz.x, color);
+                drawGlyph(":", baseX + leftSz.x, colonSz.x,
+                          color.withAlpha(color.a * colonPulse));
+                drawGlyph(right, baseX + leftSz.x + colonSz.x, rightSz.x, color);
+                return total;
+            }
+            const nxui::Vec2 tsz = m_timeFont->measure(m_timeStr);
+            const nxui::Vec2 cpt = mapLockPt((kScreenW) * 0.5f, 122.f + tsz.y * 0.5f, dx, dy, zoom);
+            ren.drawText(m_timeStr, {cpt.x - tsz.x * zoom * 0.5f, cpt.y - tsz.y * zoom * 0.5f},
+                         m_timeFont.get(), color, zoom);
+            return tsz.x;
+        }
+        drawCentered(ren, m_timeStr, 128.f, m_font, color, 2.35f, dx, dy, zoom);
+        return m_font ? m_font->measure(m_timeStr).x * 2.35f : 0.f;
+    };
+
+    const float totalW = drawTimePass(ink);
+    // Soft highlight wave drifting through the digits.
+    if (totalW > 1.f && fade > 0.05f) {
+        const float band = std::max(72.f, totalW * 0.32f) * zoom;
+        const float span = totalW * zoom + band * 2.f;
+        const float waveX = std::fmod(m_atmosPhase * 95.f, span) - band;
+        const nxui::Vec2 origin = mapLockPt((kScreenW - totalW) * 0.5f, 122.f, dx, dy, zoom);
+        const float clockH = (m_timeFont ? static_cast<float>(m_timeFont->ptSize()) * 1.35f
+                                         : 90.f) * zoom;
+        ren.pushClipRect({origin.x + waveX, origin.y - 8.f * zoom, band, clockH});
+        const nxui::Color hi = nxui::Color::lerp(ink, nxui::Color::white(), 0.55f)
+                                   .withAlpha(ink.a * 0.55f);
+        drawTimePass(hi);
+        ren.popClipRect();
+    }
+}
+
 void LockScreen::render(nxui::Renderer& ren) {
     if (!m_active || !m_theme || !m_font)
         return;
 
-    const float dy = -m_curtain.value() * kCurtainTravel;
+    const float curtainT = m_curtain.value();
+    const float zoom = std::max(0.01f, m_zoom.value());
+    // Wallpaper/hero never shrink below fullscreen — only grow on Zoom Out.
+    const float bgZoom = std::max(zoom, 1.f);
+    // Wipe stays put — clip only. Curtain is the only plane that translates.
+    const float dx = 0.f;
+    const float dy = (m_transition == Transition::Curtain) ? (-curtainT * kCurtainTravel) : 0.f;
     if (dy <= -kScreenH)
         return;
-    auto at = [dy](nxui::Rect r) { r.y += dy; return r; };
+
+    // Zoom: scale Lock chrome around screen center (BG uses bgZoom separately).
+    auto atZoom = [&](nxui::Rect r, float z) {
+        if (std::fabs(z - 1.f) < 0.001f) {
+            r.x += dx;
+            r.y += dy;
+            return r;
+        }
+        const nxui::Vec2 tl = mapLockPt(r.x, r.y, dx, dy, z);
+        const nxui::Vec2 br = mapLockPt(r.x + r.width, r.y + r.height, dx, dy, z);
+        return nxui::Rect{tl.x, tl.y, br.x - tl.x, br.y - tl.y};
+    };
+    auto at = [&](nxui::Rect r) { return atZoom(r, zoom); };
+
     const nxui::Theme& th = *m_theme;
     const float fade = std::clamp(m_fade.value(), 0.f, 1.f);
-    const bool curtainMoving = m_unlocking || m_swipeDragging || m_curtain.value() > 0.001f;
+    const bool curtainMoving = m_transition == Transition::Curtain
+        && (m_unlocking || m_swipeDragging || curtainT > 0.001f || m_awaitEnterSettle);
+    const bool wipeMoving = m_transition == Transition::Wipe
+        && (m_unlocking || m_swipeDragging || curtainT > 0.001f || m_awaitEnterSettle);
+    // Dissolve/Zoom: paint the Lock plane (wallpaper + chrome) as one unit so
+    // they fade/zoom together over HOME — gradient now respects opacity.
+    const bool dissolveZoomPlane = keepsHomeUnderlay()
+        && (m_unlocking || m_awaitEnterSettle || fade < 0.995f
+            || std::fabs(zoom - 1.f) > 0.002f);
 
-    // Idle without hero: live bg layer shows through. Once the curtain moves
-    // (or a hero is up), paint theme wallpaper on the lock plane so it slides.
-    if (m_hasHero || curtainMoving) {
-        if (m_onDrawBackdrop)
-            m_onDrawBackdrop(ren, dy, fade);
-        else
-            ren.drawRect(at({0.f, 0.f, kScreenW, kScreenH}), th.background.withAlpha(1.f));
+    bool clipped = false;
+    if (m_transition == Transition::Wipe
+        && (curtainT > 0.001f || m_unlocking || m_awaitEnterSettle || m_swipeDragging)) {
+        const float remain = std::clamp(1.f - curtainT, 0.f, 1.f);
+        nxui::Rect clip = {0.f, 0.f, kScreenW, kScreenH};
+        switch (m_wipeDir) {
+            case 0: // Up — wipe reveals from bottom
+                clip = {0.f, kScreenH * (1.f - remain), kScreenW, kScreenH * remain};
+                break;
+            case 2: // Down — wipe reveals from top
+                clip = {0.f, 0.f, kScreenW, kScreenH * remain};
+                break;
+            case 3: // Left — wipe reveals from right
+                clip = {kScreenW * (1.f - remain), 0.f, kScreenW * remain, kScreenH};
+                break;
+            default: // Right — wipe reveals from left
+                clip = {0.f, 0.f, kScreenW * remain, kScreenH};
+                break;
+        }
+        ren.pushClipRect(clip);
+        clipped = true;
+    }
+
+    const bool paintPlane = m_hasHero || curtainMoving || wipeMoving || dissolveZoomPlane;
+    if (paintPlane && fade > 0.01f) {
         if (m_hasHero) {
-            ren.drawTexture(&m_heroTex, at({0.f, 0.f, kScreenW, kScreenH}));
-            ren.drawRect(at({0.f, 0.f, kScreenW, kScreenH}),
+            ren.drawTexture(&m_heroTex, atZoom({0.f, 0.f, kScreenW, kScreenH}, bgZoom),
+                            nxui::Color::white().withAlpha(fade));
+            ren.drawRect(atZoom({0.f, 0.f, kScreenW, kScreenH}, bgZoom),
                          nxui::Color(0.f, 0.f, 0.f, (m_unlocking ? 0.55f : 0.42f) * fade));
+        } else if (m_onDrawBackdrop) {
+            m_onDrawBackdrop(ren, dy, fade, bgZoom);
+        } else {
+            ren.drawRect(atZoom({0.f, 0.f, kScreenW, kScreenH}, bgZoom),
+                         th.background.withAlpha(fade));
         }
     }
+
+    // Vignette is part of the BG wash — keep it fullscreen on Zoom In.
+    drawAtmosphere(ren, dx, dy, bgZoom, fade);
 
     const bool lightInk = m_hasHero;
     const nxui::Color ink = (lightInk ? nxui::Color(1.f, 1.f, 1.f, 1.f) : th.textPrimary)
@@ -403,46 +694,46 @@ void LockScreen::render(nxui::Renderer& ren) {
         const std::string pct = std::to_string(m_battery) + "%";
         const nxui::Vec2 psz = small->measure(pct);
         const float right = kScreenW - kMargin;
-        ren.drawText(pct, {right - psz.x, 44.f + dy}, small, inkSoft, 1.f);
+        const nxui::Vec2 pctC = mapLockPt(right - psz.x * 0.5f, 44.f + psz.y * 0.5f, dx, dy, zoom);
+        ren.drawText(pct, {pctC.x - psz.x * zoom * 0.5f, pctC.y - psz.y * zoom * 0.5f},
+                     small, inkSoft, zoom);
         const nxui::Rect body = at({right - psz.x - 52.f, 48.f, 40.f, 20.f});
-        ren.drawRoundedRectOutline(body, inkSoft, 4.f, 1.6f);
-        ren.drawRect({body.right() + 2.f, body.y + 5.f, 3.f, 10.f}, inkSoft);
+        ren.drawRoundedRectOutline(body, inkSoft, 4.f * zoom, 1.6f * zoom);
+        ren.drawRect({body.right() + 2.f * zoom, body.y + 5.f * zoom, 3.f * zoom, 10.f * zoom}, inkSoft);
         const float fill = std::clamp(m_battery / 100.f, 0.f, 1.f);
-        ren.drawRoundedRect({body.x + 2.5f, body.y + 2.5f, (body.width - 5.f) * fill, body.height - 5.f},
-                            ink.withAlpha(fade * 0.92f), 2.5f);
+        ren.drawRoundedRect({body.x + 2.5f * zoom, body.y + 2.5f * zoom,
+                             (body.width - 5.f * zoom) * fill, body.height - 5.f * zoom},
+                            ink.withAlpha(fade * 0.92f), 2.5f * zoom);
         if (m_charging)
             switchu::battery_drawing::drawLightningBolt(
-                ren, {body.x + 10.f, body.y - 2.f, 18.f, 22.f}, ink, th.background.withAlpha(fade), 1.f);
+                ren, {body.x + 10.f * zoom, body.y - 2.f * zoom, 18.f * zoom, 22.f * zoom},
+                ink, th.background.withAlpha(fade), 1.f);
     }
 
-    drawCentered(ren, m_dateStr, 78.f, small, inkSoft, 0.98f, dy);
-    if (m_timeFont) {
-        const nxui::Vec2 tsz = m_timeFont->measure(m_timeStr);
-        ren.drawText(m_timeStr, {(kScreenW - tsz.x) * 0.5f, 118.f + dy}, m_timeFont.get(), ink, 1.f);
-    } else {
-        drawCentered(ren, m_timeStr, 128.f, m_font, ink, 2.6f, dy);
-    }
+    drawClock(ren, dx, dy, zoom, fade, ink, inkSoft);
 
     if (m_canResume) {
         if (m_hasIcon) {
-            const nxui::Rect ir = iconRect(dy);
-            ren.drawTextureRounded(&m_iconTex, ir, kIconRadius);
+            const nxui::Rect ir = at(iconRect(0.f));
+            // Tint with fade so the resume tile dissolves with the Lock plane.
+            ren.drawTextureRounded(&m_iconTex, ir, kIconRadius * zoom,
+                                   nxui::Color::white().withAlpha(fade));
 
             // Match GlossyIcon suspended chrome: breathing green ring + play badge.
             const float pulse = 0.5f + 0.5f * std::sin(m_suspendPulse);
             const float outerAlpha = (0.28f + 0.42f * pulse) * fade;
             const float innerAlpha = (0.55f + 0.35f * pulse) * fade;
             const nxui::Color glow(0.20f, 0.92f, 0.50f, 1.f);
-            ren.drawRoundedRectOutline(ir.expanded(5.f),
+            ren.drawRoundedRectOutline(ir.expanded(5.f * zoom),
                                        glow.withAlpha(outerAlpha * 0.55f),
-                                       kIconRadius + 5.f, 4.5f);
-            ren.drawRoundedRectOutline(ir.expanded(2.f),
+                                       kIconRadius * zoom + 5.f * zoom, 4.5f);
+            ren.drawRoundedRectOutline(ir.expanded(2.f * zoom),
                                        glow.withAlpha(innerAlpha),
-                                       kIconRadius + 2.f, 3.2f);
+                                       kIconRadius * zoom + 2.f * zoom, 3.2f);
 
-            const float badgeSize = 28.f;
-            const float badgeX = ir.x + ir.width - badgeSize - 4.f;
-            const float badgeY = ir.y + ir.height - badgeSize - 4.f;
+            const float badgeSize = 28.f * zoom;
+            const float badgeX = ir.x + ir.width - badgeSize - 4.f * zoom;
+            const float badgeY = ir.y + ir.height - badgeSize - 4.f * zoom;
             const nxui::Vec2 badgeCenter = {badgeX + badgeSize * 0.5f,
                                             badgeY + badgeSize * 0.5f};
             ren.drawCircle(badgeCenter, badgeSize * 0.58f,
@@ -456,18 +747,22 @@ void LockScreen::render(nxui::Renderer& ren) {
             const nxui::Vec2 p3 = {badgeCenter.x + triW * 0.65f, badgeCenter.y};
             ren.drawTriangle(p1, p2, p3, glow.withAlpha(0.98f * fade));
         } else if (!m_suspendedTitle.empty()) {
-            drawCentered(ren, m_suspendedTitle, 300.f, m_font, inkSoft, 1.0f, dy);
+            drawCentered(ren, m_suspendedTitle, 300.f, m_font, inkSoft, 1.0f, dx, dy, zoom);
         }
 
-        const nxui::Rect btn = resumeButtonRect(dy);
-        ren.drawRoundedRect(btn, ink.withAlpha(fade * 0.22f), 12.f);
-        ren.drawRoundedRectOutline(btn, inkSoft, 12.f, 1.5f);
+        const nxui::Rect btn = at(resumeButtonRect(0.f));
+        ren.drawRoundedRect(btn, ink.withAlpha(fade * 0.22f), 12.f * zoom);
+        ren.drawRoundedRectOutline(btn, inkSoft, 12.f * zoom, 1.5f);
         const nxui::Vec2 rsz = m_font->measure(m_resumeText);
         ren.drawText(m_resumeText,
-                     {btn.x + (btn.width - rsz.x) * 0.5f, btn.y + (btn.height - rsz.y) * 0.5f},
-                     m_font, ink, 1.f);
-        drawCentered(ren, m_unlockText, 600.f, small, inkSoft, 1.0f, dy);
+                     {btn.x + (btn.width - rsz.x * zoom) * 0.5f,
+                      btn.y + (btn.height - rsz.y * zoom) * 0.5f},
+                     m_font, ink, zoom);
+        drawCentered(ren, m_unlockText, 600.f, small, inkSoft, 1.0f, dx, dy, zoom);
     } else {
-        drawCentered(ren, m_unlockText, 348.f, m_font, inkSoft, 1.05f, dy);
+        drawCentered(ren, m_unlockText, 348.f, m_font, inkSoft, 1.05f, dx, dy, zoom);
     }
+
+    if (clipped)
+        ren.popClipRect();
 }

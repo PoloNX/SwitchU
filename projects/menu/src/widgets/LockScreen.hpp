@@ -6,6 +6,7 @@
 #include <nxui/core/Input.hpp>
 #include <nxui/Theme.hpp>
 #include <nxui/core/Texture.hpp>
+#include <algorithm>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -19,7 +20,14 @@ namespace switchu::services { class ClockService; }
 /// Optional suspended 1×1 tile + Resume / Unlock.
 class LockScreen : public nxui::GlassWidget {
 public:
-    using BackdropDraw = std::function<void(nxui::Renderer& ren, float dy, float opacity)>;
+    using BackdropDraw = std::function<void(nxui::Renderer& ren, float dy, float opacity, float scale)>;
+
+    enum class Transition : int {
+        Curtain = 0,
+        Dissolve = 1,
+        Zoom = 2,
+        Wipe = 3,
+    };
 
     LockScreen();
 
@@ -37,6 +45,10 @@ public:
     void setUse12HourClock(bool enabled) { m_use12Hour = enabled; m_lastMinute = -1; }
     void setBatteryStatus(int percent, bool charging) { m_battery = percent; m_charging = charging; }
     void setBackdropDrawer(BackdropDraw cb) { m_onDrawBackdrop = std::move(cb); }
+    void setTransition(Transition mode) { m_transition = mode; }
+    void setZoomDir(int dir) { m_zoomDir = std::clamp(dir, 0, 1); } // 0 Out, 1 In
+    void setWipeDir(int dir) { m_wipeDir = std::clamp(dir, 0, 3); } // U R D L
+    Transition transition() const { return m_transition; }
 
     /// Fired when the unlock curtain starts (HOME chrome should show under it).
     void setOnUnlocking(std::function<void()> cb) { m_onUnlocking = std::move(cb); }
@@ -44,6 +56,17 @@ public:
     void setOnUnlocked(std::function<void()> cb) { m_onUnlocked = std::move(cb); }
     /// Leave Lock by resuming the suspended title (lock stays up until exit).
     void setOnResume(std::function<void()> cb) { m_onResume = std::move(cb); }
+    /// Fired once enter motion settles (hide HOME under Curtain/Wipe).
+    void setOnEnterSettled(std::function<void()> cb) { m_onEnterSettled = std::move(cb); }
+    /// Dissolve/Zoom fade/zoom the Lock plane as one unit over the live wallpaper.
+    bool keepsHomeUnderlay() const {
+        return m_transition == Transition::Dissolve || m_transition == Transition::Zoom;
+    }
+    /// Curtain/Wipe enter keep HOME chrome under the sliding/clipped plane.
+    /// Dissolve/Zoom enter only need the live wallpaper (icons would peek early).
+    bool keepsHomeDuringEnter() const {
+        return m_transition == Transition::Curtain || m_transition == Transition::Wipe;
+    }
 
     void warmTimeFont();
     void show(bool instant = false);
@@ -85,6 +108,9 @@ private:
     void loadPendingHero();
     void loadPendingIcon();
     void resetSwipe();
+    void drawAtmosphere(nxui::Renderer& ren, float dx, float dy, float zoom, float fade) const;
+    void drawClock(nxui::Renderer& ren, float dx, float dy, float zoom, float fade,
+                   const nxui::Color& ink, const nxui::Color& inkSoft) const;
 
     nxui::Font* m_font = nullptr;
     nxui::Font* m_smallFont = nullptr;
@@ -96,6 +122,9 @@ private:
     const nxui::Theme* m_theme = nullptr;
     switchu::services::ClockService* m_clock = nullptr;
     bool m_use12Hour = false;
+    Transition m_transition = Transition::Curtain;
+    int m_zoomDir = 0; // 0 Out, 1 In
+    int m_wipeDir = 1; // 0 Up, 1 Right, 2 Down, 3 Left
 
     std::string m_unlockText;
     std::string m_resumeText;
@@ -120,10 +149,15 @@ private:
 
     bool m_active = false;
     bool m_unlocking = false;
+    bool m_awaitEnterSettle = false;
     float m_age = 0.f;
     float m_clockTimer = 0.f;
+    float m_atmosPhase = 0.f;
+    bool m_dateRevealStarted = false;
     nxui::AnimatedFloat m_curtain{0.f};
     nxui::AnimatedFloat m_fade{0.f};
+    nxui::AnimatedFloat m_dateReveal{0.f};
+    nxui::AnimatedFloat m_zoom{1.f};
     bool m_swipeActive = false;
     bool m_swipeDragging = false;
     bool m_curtainHomeShown = false;
@@ -133,4 +167,5 @@ private:
     std::function<void()> m_onUnlocking;
     std::function<void()> m_onUnlocked;
     std::function<void()> m_onResume;
+    std::function<void()> m_onEnterSettled;
 };
