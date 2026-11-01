@@ -6,6 +6,9 @@
 #include "widgets/AdaptiveIconLoad.hpp"
 #include "widgets/GlossyIcon.hpp"
 #include "DebugLog.hpp"
+#ifdef SWITCHU_MENU
+#include "smi_commands.hpp"
+#endif
 
 #include <nxui/core/I18n.hpp>
 #include <switchu/control_cache.hpp>
@@ -821,6 +824,15 @@ void WiiUMenuApp::createQuickSettings() {
              }, true}}, 1, {});
         focusManager().setFocus(m_dialog.get());
     };
+    callbacks.onLockRequested = [this]() {
+        if (!m_config.lockScreenEnabled)
+            return;
+        if (m_quickSettings)
+            m_quickSettings->hideCursorInstant();
+        closeQuickSettings();
+        m_audio.playSfx(Sfx::ConfirmPositive);
+        enterLockView(false);
+    };
     callbacks.onRebootRequested = [this]() {
         if (!m_dialog) return;
         auto& i18n = nxui::I18n::instance();
@@ -862,6 +874,7 @@ void WiiUMenuApp::createQuickSettings() {
     };
     m_quickSettings->setCallbacks(callbacks);
     m_quickSettings->setBatterySaver(m_config.batterySaver);
+    m_quickSettings->setLockScreenEnabled(m_config.lockScreenEnabled);
     m_quickSettings->setIconGlyphResolver([this](const char* fileName) {
         return resolveActiveIconGlyphPath(fileName);
     });
@@ -1956,8 +1969,19 @@ void WiiUMenuApp::createThemeShop() {
     m_themeShop->setActionHintStyleState(m_config.actionHintStyle);
     m_themeShop->setSortLargeTilesState(m_config.sortLargeTiles);
     m_themeShop->setBatterySaverState(m_config.batterySaver);
+    m_themeShop->setLockScreenState(m_config.lockScreenEnabled);
+    m_themeShop->setPowerButtonAction(m_config.powerButtonAction);
+    m_themeShop->setLockScreenClockFontState(m_config.lockScreenClockFont);
+    m_themeShop->setLockClockFontContext(
+        SD_ASSETS,
+        m_loadedRegularFontPath.empty()
+            ? std::string(SD_ASSETS) + "/fonts/DejaVuSans.ttf"
+            : m_loadedRegularFontPath);
+    refreshLockClockFontEntries();
     m_themeShop->setFrameTapLiteEngaged(m_frameTapStatus.viewerConnected());
     m_themeShop->setIconContrastAdaptState(m_config.iconContrastAdapt);
+    m_themeShop->setThemeLockClockFontOverrideState(m_config.themeLockClockFontOverride);
+    m_themeShop->setThemeIconPackOverrideState(m_config.themeIconPackOverride);
     m_themeShop->setThemeMusicOverrideState(m_config.themeMusicOverride);
     m_themeShop->setThemeMusicAddToPlaylistState(m_config.themeMusicAddToPlaylist);
     m_themeShop->setThemeMusicPlayOnApplyState(m_config.themeMusicPlayOnApply);
@@ -2038,6 +2062,34 @@ void WiiUMenuApp::createThemeShop() {
     m_themeShop->onBatterySaverChange([this](bool enabled) {
         applyBatterySaver(enabled);
     });
+    m_themeShop->onLockScreenChange([this](bool enabled) {
+        if (m_config.lockScreenEnabled == enabled)
+            return;
+        m_config.lockScreenEnabled = enabled;
+        m_config.save();
+        if (m_quickSettings)
+            m_quickSettings->setLockScreenEnabled(enabled);
+#ifdef SWITCHU_MENU
+        switchu::menu::smi_cmd::setLockScreen(enabled, m_config.powerButtonAction);
+#endif
+    });
+    m_themeShop->onPowerButtonActionChange([this](int action) {
+        action = std::clamp(action, 0, 2);
+        if (m_config.powerButtonAction == action)
+            return;
+        m_config.powerButtonAction = action;
+        m_config.save();
+#ifdef SWITCHU_MENU
+        switchu::menu::smi_cmd::setLockScreen(m_config.lockScreenEnabled, action);
+#endif
+    });
+    m_themeShop->onLockScreenClockFontChange([this](const std::string& id) {
+        if (m_config.lockScreenClockFont == id)
+            return;
+        m_config.lockScreenClockFont = id;
+        m_config.save();
+        applyLockScreenClockFont();
+    });
     m_themeShop->onAutoThemeOpen([this]() { openAutoThemeSettings(); });
     m_themeShop->onCursorMotionModeChange([this](int mode) {
         m_config.cursorMotionMode = std::clamp(mode, 0, 1);
@@ -2092,6 +2144,18 @@ void WiiUMenuApp::createThemeShop() {
         m_config.iconContrastAdapt = enabled;
         m_config.save();
         syncColourIconContrast();
+    });
+    m_themeShop->onThemeLockClockFontOverrideChange([this](bool enabled) {
+        if (m_config.themeLockClockFontOverride == enabled)
+            return;
+        m_config.themeLockClockFontOverride = enabled;
+        m_config.save();
+    });
+    m_themeShop->onThemeIconPackOverrideChange([this](bool enabled) {
+        if (m_config.themeIconPackOverride == enabled)
+            return;
+        m_config.themeIconPackOverride = enabled;
+        m_config.save();
     });
     m_themeShop->onThemeMusicOverrideChange([this](bool enabled) {
         if (m_config.themeMusicOverride == enabled)
@@ -2266,6 +2330,7 @@ void WiiUMenuApp::reloadThemePresets() {
     auto installedPackages = ThemePreset::loadInstalledPackages();
     m_allPresets.insert(m_allPresets.end(), userPresets.begin(), userPresets.end());
     m_allPresets.insert(m_allPresets.end(), installedPackages.begin(), installedPackages.end());
+    refreshLockClockFontEntries();
 }
 
 void WiiUMenuApp::startThemePackageTransfer(const ThemeCatalogClient::Entry& entry, bool installMode) {
@@ -3033,8 +3098,19 @@ void WiiUMenuApp::refreshThemeShopState(bool rebuildTab) {
     m_themeShop->setActionHintStyleState(m_config.actionHintStyle);
     m_themeShop->setSortLargeTilesState(m_config.sortLargeTiles);
     m_themeShop->setBatterySaverState(m_config.batterySaver);
+    m_themeShop->setLockScreenState(m_config.lockScreenEnabled);
+    m_themeShop->setPowerButtonAction(m_config.powerButtonAction);
+    m_themeShop->setLockScreenClockFontState(m_config.lockScreenClockFont);
+    m_themeShop->setLockClockFontContext(
+        SD_ASSETS,
+        m_loadedRegularFontPath.empty()
+            ? std::string(SD_ASSETS) + "/fonts/DejaVuSans.ttf"
+            : m_loadedRegularFontPath);
+    refreshLockClockFontEntries();
     m_themeShop->setFrameTapLiteEngaged(m_frameTapStatus.viewerConnected());
     m_themeShop->setIconContrastAdaptState(m_config.iconContrastAdapt);
+    m_themeShop->setThemeLockClockFontOverrideState(m_config.themeLockClockFontOverride);
+    m_themeShop->setThemeIconPackOverrideState(m_config.themeIconPackOverride);
     m_themeShop->setThemeMusicOverrideState(m_config.themeMusicOverride);
     m_themeShop->setThemeMusicAddToPlaylistState(m_config.themeMusicAddToPlaylist);
     m_themeShop->setThemeMusicPlayOnApplyState(m_config.themeMusicPlayOnApply);
@@ -3095,8 +3171,8 @@ void WiiUMenuApp::activateThemePreset(ThemePreset* preset, bool applyBundledSoun
     m_activeMode = preset->mode;
     m_config.themePreset = m_activePresetName;
 
-    // Themes that ship icons become the active Icons-library pack (overrideable).
-    {
+    // Themes that ship icons become the active Icons-library pack (unless opted out).
+    if (m_config.themeIconPackOverride) {
         std::string folder = themeFolderFromPreset(*preset);
         if (folder.empty())
             folder = presetRef;
@@ -3123,7 +3199,30 @@ void WiiUMenuApp::activateThemePreset(ThemePreset* preset, bool applyBundledSoun
             DebugLog::log("[icon-pack] theme apply selected pack=%s dir=%s",
                           selectedId.c_str(), selectedDir.c_str());
         }
+    } else {
+        DebugLog::log("[icon-pack] theme apply skipped (icon override off): preset=%s",
+                      presetRef.c_str());
     }
+
+    // Lock clock: optionally follow a theme that ships fonts.
+    if (m_config.themeLockClockFontOverride) {
+        std::string nextFontId;
+        if (!preset->fonts.regularPath.empty() || !preset->fonts.smallPath.empty()) {
+            nextFontId = "theme";
+        } else {
+            const auto packageFonts = switchu::lockfonts::themePackageEntries({*preset});
+            if (!packageFonts.empty())
+                nextFontId = packageFonts.front().id;
+        }
+        if (!nextFontId.empty() && m_config.lockScreenClockFont != nextFontId) {
+            m_config.lockScreenClockFont = nextFontId;
+            DebugLog::log("[lock] theme apply clock font=%s", nextFontId.c_str());
+            if (m_themeShop)
+                m_themeShop->setLockScreenClockFontState(nextFontId);
+            applyLockScreenClockFont();
+        }
+    }
+
     m_config.save();
 
     // Rematch Match-theme packs to the new accent before baking sidebar glyphs
@@ -3475,6 +3574,14 @@ void WiiUMenuApp::applyThemeResources(const ThemePreset& preset) {
         if (regularFontLoaded) {
             m_loadedRegularFontPath = desiredRegularFontPath;
             settingsLayoutNeedsRebuild = true;
+            applyLockScreenClockFont();
+            if (m_themeShop) {
+                m_themeShop->setLockClockFontContext(
+                    SD_ASSETS,
+                    m_loadedRegularFontPath.empty()
+                        ? std::string(SD_ASSETS) + "/fonts/DejaVuSans.ttf"
+                        : m_loadedRegularFontPath);
+            }
         }
     } else {
         DebugLog::log("[theme-apply] regular font: path=%s exists=%d reloaded=%d loaded=%d",

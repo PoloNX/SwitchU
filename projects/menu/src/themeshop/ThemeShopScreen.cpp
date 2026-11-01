@@ -4,6 +4,7 @@
 #include "ThemeShopPreviewPipeline.hpp"
 #include "ThemeHttp.hpp"
 #include "widgets/AdaptiveIconLoad.hpp"
+#include "widgets/LockClockFonts.hpp"
 
 #include "core/DebugLog.hpp"
 
@@ -173,6 +174,34 @@ void ThemeShopScreen::setThreadPool(nxui::ThreadPool* pool) {
 void ThemeShopScreen::setRenderContext(nxui::GpuDevice* gpu, nxui::Renderer* renderer) {
     m_gpu = gpu;
     m_renderer = renderer;
+}
+
+nxui::Font* ThemeShopScreen::ensureLockClockPreviewFont(const std::string& id) {
+    if (!m_gpu || !m_renderer)
+        return nullptr;
+
+    const std::string key = id.empty() ? std::string("theme") : id;
+    if (auto it = m_lockClockPreviewFonts.find(key); it != m_lockClockPreviewFonts.end())
+        return it->second.get();
+
+    const auto& entries = m_lockClockFontEntries.empty()
+        ? switchu::lockfonts::builtinEntries()
+        : m_lockClockFontEntries;
+    const std::string path = switchu::lockfonts::resolvePath(
+        key,
+        entries,
+        m_lockClockAssetsRoot.empty() ? std::string("sdmc:/switch/SwitchU")
+                                      : m_lockClockAssetsRoot,
+        m_lockClockThemeFontPath);
+
+    auto font = std::make_unique<nxui::Font>();
+    // Row-height sample beside the selector (Lock itself still uses 108pt).
+    if (!font->load(*m_gpu, *m_renderer, path, 28))
+        return nullptr;
+
+    nxui::Font* raw = font.get();
+    m_lockClockPreviewFonts.emplace(key, std::move(font));
+    return raw;
 }
 
 void ThemeShopScreen::show() {

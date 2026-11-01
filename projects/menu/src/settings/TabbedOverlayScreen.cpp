@@ -235,26 +235,29 @@ TabbedOverlayScreen::~TabbedOverlayScreen() {
 
 float TabbedOverlayScreen::itemHeight(const SettingItem& item, float contentWidth) const {
     if (item.type == ItemType::Section) return kSectionHeight;
-    if (!item.wrapLabel) return kRowHeight;
 
-    // Content card inset (36), card content inset (28), row inset (40).
-    const float labelWidth = std::max(1.f, contentWidth - 104.f);
+    float height = kRowHeight;
+    if (item.wrapLabel) {
+        // Content card inset (36), card content inset (28), row inset (40).
+        const float labelWidth = std::max(1.f, contentWidth - 104.f);
 
-    std::string key = wrapHeightCacheKey(m_font, item.label, labelWidth);
-    auto cached = g_wrapHeightCache.find(key);
-    if (cached != g_wrapHeightCache.end())
-        return cached->second;
+        std::string key = wrapHeightCacheKey(m_font, item.label, labelWidth);
+        auto cached = g_wrapHeightCache.find(key);
+        if (cached != g_wrapHeightCache.end()) {
+            height = cached->second;
+        } else {
+            nxui::Label probe(item.label);
+            if (m_font) probe.setFont(m_font);
+            probe.setScale(0.94f);
+            probe.setMultiline(true);
+            height = std::max(kRowHeight, probe.measureWrappedText(labelWidth).y + 34.f);
 
-    nxui::Label probe(item.label);
-    if (m_font) probe.setFont(m_font);
-    probe.setScale(0.94f);
-    probe.setMultiline(true);
-    const float height = std::max(kRowHeight, probe.measureWrappedText(labelWidth).y + 34.f);
-
-    if (g_wrapHeightCache.size() >= kWrapHeightCacheLimit)
-        g_wrapHeightCache.clear();
-    g_wrapHeightCache.emplace(std::move(key), height);
-    return height;
+            if (g_wrapHeightCache.size() >= kWrapHeightCacheLimit)
+                g_wrapHeightCache.clear();
+            g_wrapHeightCache.emplace(std::move(key), height);
+        }
+    }
+    return height + std::max(0.f, item.extraHeight);
 }
 
 void TabbedOverlayScreen::setTheme(const nxui::Theme* t) {

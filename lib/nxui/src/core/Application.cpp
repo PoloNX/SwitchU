@@ -273,9 +273,14 @@ void Application::run() {
             // daemon is read; anything else it does is skipped on its side.
             if (m_activity)
                 m_activity->onUpdate(dt);
-            svcSleepThread(50'000'000ULL);
+            // If onUpdate cleared sleeping (wake), fall through and present
+            // immediately — don't burn another 50ms before the first frame.
+            if (m_sleeping) {
+                svcSleepThread(50'000'000ULL);
+                prevTick = armGetSystemTick();
+                continue;
+            }
             prevTick = armGetSystemTick();
-            continue;
         }
 
         m_input.update();

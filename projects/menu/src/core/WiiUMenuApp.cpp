@@ -3,6 +3,7 @@
 #include <switchu/sd_commit.hpp>
 #include "widgets/GlossyIcon.hpp"
 #include "widgets/FolderPalette.hpp"
+#include "widgets/LockClockFonts.hpp"
 #include "themeshop/ThemeHttp.hpp"
 #include <nxui/core/Animation.hpp>
 #include <nxui/core/I18n.hpp>
@@ -436,10 +437,12 @@ void WiiUMenuApp::setTutorialStartupFade(bool enabled) {
 }
 
 #ifdef SWITCHU_MENU
-void WiiUMenuApp::setStartupStatus(const switchu::smi::SystemStatus& status, bool fastReturn) {
+void WiiUMenuApp::setStartupStatus(const switchu::smi::SystemStatus& status, bool fastReturn,
+                                   bool startLocked) {
     m_launcher.setStartupStatus(status.suspended_app_id, status.app_running);
     m_startupFailure = status.last_failure;
     m_fastReturnRequested = fastReturn || status.suspended_app_id != 0;
+    m_startLocked = startLocked && status.suspended_app_id != 0;
 }
 #endif
 
@@ -542,6 +545,7 @@ bool WiiUMenuApp::hasActiveLeaveCaptureOverlay() const {
         || (m_quickSettings && m_quickSettings->isActive())
         || (m_textEntry && m_textEntry->isActive())
         || (m_progressDialog && m_progressDialog->isActive())
+        || m_lockViewActive
         || (m_settings && m_settings->isActive())
         || (m_themeShop && m_themeShop->isActive())
         || (m_gameOptions && m_gameOptions->isActive())
@@ -1025,6 +1029,21 @@ bool WiiUMenuApp::onCreate() {
 
     DebugLog::log("[init] DONE total=%lums fastReturn=%d",
                   initElapsedMs(), fastReturn ? 1 : 0);
+
+#ifdef SWITCHU_MENU
+    switchu::menu::smi_cmd::setLockScreen(m_config.lockScreenEnabled,
+                                          m_config.powerButtonAction);
+    if (m_startLocked) {
+        enterLockView(true);
+        if (!m_lockViewActive) {
+            m_startLocked = false;
+            m_launcher.resumeApplication();
+        }
+    } else if (m_config.lockScreenEnabled && !m_fastReturnRequested) {
+        // Cold boot / StartupBoot with Lock enabled: greet at the Lock view.
+        enterLockView(true);
+    }
+#endif
     return true;
 }
 
@@ -3943,7 +3962,8 @@ void WiiUMenuApp::toggleAppLayoutMode() {
         return;
     // Empty-page Minus hold opens the delete dialog; a further Minus press
     // must not flip layout under that modal (selector ends up orphaned).
-    if ((m_dialog && m_dialog->isActive())
+    if (m_lockViewActive
+        || (m_dialog && m_dialog->isActive())
         || (m_contextMenu && m_contextMenu->isActive())
         || (m_quickSettings && m_quickSettings->isActive())
         || (m_textEntry && m_textEntry->isActive())
@@ -6268,6 +6288,34 @@ void WiiUMenuApp::buildGrid() {
     m_progressDialog->setSmallFont(&m_fontSmall);
     m_progressDialog->setTheme(&m_theme);
 
+    m_lockScreen = std::make_shared<LockScreen>();
+    m_lockScreen->setFonts(&m_fontNormal, &m_fontSmall);
+    applyLockScreenClockFont();
+    m_lockScreen->setTheme(&m_theme);
+    m_lockScreen->setClockService(&m_clockService);
+    m_lockScreen->setUse12HourClock(m_config.clockUse12Hour);
+    m_lockScreen->setBackdropDrawer([this](nxui::Renderer& ren, float dy, float opacity) {
+        if (m_background)
+            m_background->renderShifted(ren, dy, opacity);
+    });
+    m_lockScreen->setOnUnlocking([this]() {
+        // Curtain lift: HOME chrome returns under the sliding Lock plane.
+        if (m_bgLayer) m_bgLayer->setVisible(true);
+        if (m_contentLayer) m_contentLayer->setVisible(true);
+        setAppLayoutMode(m_config.appLayoutMode);
+        syncLayoutFlipState();
+        // Park the blue ring on the destination tile immediately (teleport).
+        // Otherwise Translate mode morphs from the full-screen Lock focusRect.
+        beginForcedCursorTeleport();
+        m_leaveCaptureLockCursor = true;
+        if (m_cursor)
+            m_cursor->setVisible(false);
+        restoreFocusAfterLock();
+        snapCursorToFocus();
+    });
+    m_lockScreen->setOnUnlocked([this]() { finishExitLockView(false); });
+    m_lockScreen->setOnResume([this]() { finishExitLockView(true); });
+
     app().renderer().setBoxWireframeEnabled(m_showWireframe);
 
     wireFocusCallback();
@@ -6438,39 +6486,44 @@ void WiiUMenuApp::buildGrid() {
         auto& i18n = nxui::I18n::instance();
         m_audio.playSfx(Sfx::ModalShow);
         m_dialogReturnFocus = focusManager().current();
+        std::vector<OverlayDialog::ButtonDef> buttons;
+        if (m_config.lockScreenEnabled) {
+            buttons.push_back({i18n.tr("power.lock", "Lock"), [this]() {
+                m_audio.playSfx(Sfx::ConfirmPositive);
+                enterLockView(false);
+            }, true});
+        }
+        buttons.push_back({i18n.tr("power.sleep", "Sleep"), [this]() {
+#ifdef SWITCHU_MENU
+            m_audio.playSfx(Sfx::ConfirmPositive);
+            m_launcher.enterSleep();
+#else
+            m_audio.playSfx(Sfx::ConfirmPositive);
+            app().requestExit();
+#endif
+        }, true});
+        buttons.push_back({i18n.tr("power.reboot", "Reboot"), [this]() {
+#ifdef SWITCHU_MENU
+            m_audio.playSfx(Sfx::ConfirmPositive);
+            m_launcher.reboot();
+#else
+            m_audio.playSfx(Sfx::ConfirmPositive);
+            app().requestExit();
+#endif
+        }, true});
+        buttons.push_back({i18n.tr("power.off", "Off"), [this]() {
+#ifdef SWITCHU_MENU
+            m_audio.playSfx(Sfx::ConfirmPositive);
+            m_launcher.shutdown();
+#else
+            m_audio.playSfx(Sfx::ConfirmPositive);
+            app().requestExit();
+#endif
+        }, true});
         m_dialog->show(
             i18n.tr("power.title", "Power"),
             i18n.tr("power.choose_action", "Choose a power action."),
-            {
-                // {i18n.tr("button.cancel", "Cancel"), [this]() {  }, true},
-                {i18n.tr("power.sleep", "Sleep"), [this]() {
-#ifdef SWITCHU_MENU
-                    m_audio.playSfx(Sfx::ConfirmPositive);
-                    m_launcher.enterSleep();
-#else
-                    m_audio.playSfx(Sfx::ConfirmPositive);
-                    app().requestExit();
-#endif
-                }, true},
-                {i18n.tr("power.shutdown", "Shutdown"), [this]() {
-#ifdef SWITCHU_MENU
-                    m_audio.playSfx(Sfx::ConfirmPositive);
-                    m_launcher.shutdown();
-#else
-                    m_audio.playSfx(Sfx::ConfirmPositive);
-                    app().requestExit();
-#endif
-                }, true},
-                {i18n.tr("power.reboot", "Reboot"), [this]() {
-#ifdef SWITCHU_MENU
-                    m_audio.playSfx(Sfx::ConfirmPositive);
-                    m_launcher.reboot();
-#else
-                    m_audio.playSfx(Sfx::ConfirmPositive);
-                    app().requestExit();
-#endif
-                }, true}
-            },
+            std::move(buttons),
             0,
             {}
         );
@@ -6652,6 +6705,7 @@ void WiiUMenuApp::buildGrid() {
     m_overlayLayer->addChild(m_contextMenu);
     m_overlayLayer->addChild(m_dialog);
     m_overlayLayer->addChild(m_progressDialog);
+    m_overlayLayer->addChild(m_lockScreen);
     m_overlayLayer->addChild(m_launchAnim);
 
     root.addChild(m_bgLayer);
@@ -7072,9 +7126,21 @@ void WiiUMenuApp::onUpdate(float dt) {
         // Console is asleep. Application stopped presenting frames, so the only
         // work left is reading the wake notification: the frame work in
         // onUpdateAwake() kept the console warm for the whole sleep otherwise.
+        if (m_sleepHoldSec > 0.f) {
+            m_sleepHoldSec -= dt;
+            if (m_sleepHoldSec <= 0.f) {
+                m_sleepHoldSec = 0.f;
+                DebugLog::log("[lock] sleep: hold done, stopping presents");
+                app().setSleeping(true);
+            }
+            return;
+        }
         pollSleepNotifications();
         return;
     }
+
+    if (m_lockScreen)
+        m_lockScreen->tickRelease(dt);
 
     onUpdateAwake(dt);
 }
@@ -7099,6 +7165,17 @@ void WiiUMenuApp::enterSystemSleep() {
         m_audio.pause();
     }
 
+    // Lock view becomes the last surface so wake retains it (native wake time
+    // still varies). Daemon waits ~1.5s when lock is enabled.
+    if (m_config.lockScreenEnabled) {
+        enterLockView(true);
+        if (m_lockViewActive) {
+            m_sleepHoldSec = 1.20f;
+            DebugLog::log("[lock] sleep: holding Lock view (1.2s)");
+            return;
+        }
+    }
+
     // Stop presenting. A loop that keeps submitting frames never lets the
     // console settle into its low-power sleep state.
     app().setSleeping(true);
@@ -7108,7 +7185,12 @@ void WiiUMenuApp::leaveSystemSleep() {
     if (!m_systemAsleep)
         return;
     m_systemAsleep = false;
+    m_sleepHoldSec = 0.f;
     app().setSleeping(false);
+
+    if (m_config.lockScreenEnabled)
+        enterLockView(true);
+    DebugLog::log("[power] wake: lockView=%d", m_lockViewActive ? 1 : 0);
 
     // The vi layer/swapchain goes stale across sleep: PresentQueue::acquireImage
     // would block forever and freeze the menu on the last presented frame.
@@ -7126,6 +7208,161 @@ void WiiUMenuApp::leaveSystemSleep() {
     m_refreshQueued = true;
     m_deferredRefreshFrames = std::max(m_deferredRefreshFrames, 3);
     DebugLog::log("[power] console awake: presentation resumed");
+}
+
+void WiiUMenuApp::enterLockView(bool instant) {
+    if (!m_lockScreen)
+        return;
+
+    if (m_lockViewActive && m_lockScreen->isActive()) {
+        m_lockScreen->rearmInput();
+        m_lockScreen->refreshNow();
+        if (m_contentLayer)
+            m_contentLayer->setVisible(false);
+        if (m_bgLayer)
+            m_bgLayer->setVisible(true);
+        focusManager().setFocus(m_lockScreen.get());
+        if (m_cursor)
+            m_cursor->setVisible(false);
+        return;
+    }
+
+    std::string suspendedGame;
+    std::vector<std::uint8_t> gameHero;
+    std::vector<std::uint8_t> gameIcon;
+    int iconW = 0, iconH = 0;
+    const auto suspendedId = m_launcher.suspendedTitleId();
+    const bool canResume = suspendedId != 0;
+    if (canResume) {
+        if (const AppEntry* entry = m_model.findByTitleId(suspendedId))
+            suspendedGame = entry->title;
+        if (m_config.steamGridDbEnabled) {
+            auto hero = steamgriddb::artwork::decode(
+                SteamGridDbManager::heroPath(suspendedId), 1280, 720, true);
+            if (hero.width == 1280 && hero.height == 720 && !hero.rgba.empty())
+                gameHero = std::move(hero.rgba);
+        }
+        auto compressed = AppListLoader::loadIconData(suspendedId, false);
+        if (!compressed.empty()) {
+            auto decoded = IconStreamer::decodeIconData(compressed);
+            if (!decoded.rgba.empty() && decoded.w > 0 && decoded.h > 0) {
+                gameIcon = std::move(decoded.rgba);
+                iconW = decoded.w;
+                iconH = decoded.h;
+            }
+        }
+    }
+    m_lockScreen->setGameArt(std::move(gameHero));
+    m_lockScreen->setGameIcon(std::move(gameIcon), iconW, iconH);
+    m_lockScreen->setSuspendedTitle(suspendedGame, canResume);
+
+    if (m_consoleBatteryPercent > 0)
+        m_lockScreen->setBatteryStatus(m_consoleBatteryPercent, m_consoleBatteryCharging);
+    m_lockScreen->setUse12HourClock(m_config.clockUse12Hour);
+
+    m_lockReturnFocus = focusManager().current();
+    m_lockReturnTitleId = 0;
+    if (m_lockReturnFocus && m_lockReturnFocus->tag() == "glossy_icon")
+        m_lockReturnTitleId = static_cast<GlossyIcon*>(m_lockReturnFocus)->titleId();
+    if (m_lockReturnTitleId == 0 && m_grid) {
+        const int idx = m_grid->focusedGlobalIndex();
+        const auto& icons = m_grid->allIcons();
+        if (idx >= 0 && idx < static_cast<int>(icons.size()) && icons[idx])
+            m_lockReturnTitleId = icons[idx]->titleId();
+    }
+    m_lockViewActive = true;
+    if (m_contentLayer)
+        m_contentLayer->setVisible(false);
+    if (m_bgLayer)
+        m_bgLayer->setVisible(true);
+
+    m_lockScreen->show(instant);
+    focusManager().setFocus(m_lockScreen.get());
+    if (m_cursor)
+        m_cursor->setVisible(false);
+    DebugLog::log("[lock] Lock view shown hero=%d icon=%d resume=%d",
+                  m_lockScreen->hasHero() ? 1 : 0, iconW > 0 ? 1 : 0, canResume ? 1 : 0);
+}
+
+void WiiUMenuApp::refreshLockClockFontEntries() {
+    m_lockClockFontEntries = switchu::lockfonts::buildEntries(m_allPresets);
+    if (m_themeShop)
+        m_themeShop->setLockClockFontEntries(m_lockClockFontEntries);
+}
+
+void WiiUMenuApp::applyLockScreenClockFont() {
+    if (!m_lockScreen)
+        return;
+    if (m_lockClockFontEntries.empty())
+        m_lockClockFontEntries = switchu::lockfonts::buildEntries(m_allPresets);
+    const std::string path = switchu::lockfonts::resolvePath(
+        m_config.lockScreenClockFont,
+        m_lockClockFontEntries,
+        SD_ASSETS,
+        m_loadedRegularFontPath.empty()
+            ? std::string(SD_ASSETS) + "/fonts/DejaVuSans.ttf"
+            : m_loadedRegularFontPath);
+    m_lockScreen->setTimeFontSource(&app().gpu(), &app().renderer(), path);
+    m_lockScreen->warmTimeFont();
+}
+
+void WiiUMenuApp::restoreFocusAfterLock() {
+    if (m_lockReturnTitleId != 0 && focusTitle(m_lockReturnTitleId, true)) {
+        if (auto* cur = focusManager().current();
+            cur && cur->isFocusable() && isCurrentFocusableWidget(cur))
+            return;
+    }
+    if (isCurrentFocusableWidget(m_lockReturnFocus)) {
+        focusManager().setFocus(m_lockReturnFocus);
+        if (auto* cur = focusManager().current();
+            cur && cur->tag() == "glossy_icon")
+            return;
+    }
+    ensureHomeTitleFocus(m_lockReturnTitleId);
+}
+
+void WiiUMenuApp::finishExitLockView(bool resumeSuspended) {
+#ifdef SWITCHU_MENU
+    if (resumeSuspended) {
+        // Stay on Lock until the title claims the foreground — revealing HOME
+        // under a hide() caused a one-frame flash before resume.
+        m_startLocked = false;
+        m_leaveCaptureLockCursor = false;
+        endForcedCursorTeleport();
+        m_audio.playSfx(Sfx::Activate);
+        DebugLog::log("[lock] Lock view -> resuming suspended title (hold Lock)");
+        m_launcher.resumeApplication();
+        return;
+    }
+#endif
+
+    m_lockViewActive = false;
+    if (m_lockScreen && m_lockScreen->isActive())
+        m_lockScreen->hide();
+
+    if (m_bgLayer)
+        m_bgLayer->setVisible(true);
+    if (m_contentLayer)
+        m_contentLayer->setVisible(true);
+
+    m_audio.playSfx(Sfx::Activate);
+    beginForcedCursorTeleport();
+    m_leaveCaptureLockCursor = true;
+    m_lockExitCursorHoldFrames = 3;
+    restoreFocusAfterLock();
+    snapCursorToFocus();
+    if (m_cursor) {
+        if (auto* cur = focusManager().current())
+            m_cursor->moveTo(cur->focusRect().expanded(4.f), 0.f);
+        m_cursor->setVisible(true);
+    }
+    // Keep forced teleport for a few frames so a follow-up updateCursor cannot
+    // Translate from a stale fullscreen/grid rect.
+    m_lockReturnFocus = nullptr;
+    m_lockReturnTitleId = 0;
+
+    m_startLocked = false;
+    DebugLog::log("[lock] Lock view -> HOME layout=%d", static_cast<int>(m_appLayoutMode));
 }
 
 void WiiUMenuApp::pollSleepNotifications() {
@@ -7482,22 +7719,20 @@ void WiiUMenuApp::tickFrameTapLightPath(float dt) {
         ? 100.f : 500.f;
     m_frameTapStatus.probe(dt, pollMs);
     const bool viewer = m_frameTapStatus.viewerConnected();
-    // Remount as soon as FT/sftap is up — do NOT wait for the viewer.
-    // Waiting for viewer lets FT seed content-sync first (~14fps); binders
-    // from this remount teach the mitm so boot matches HOME-return fences.
-    // FT file request covers the case where onCreate arming was skipped.
+    // Remount only when FT asks (need_capture_remount) or a viewer connects
+    // after a cold-boot arm. Firing on "sftap appeared" alone flashes HOME
+    // whenever Frame Tap is installed but the PC viewer is not running.
 #ifndef SWITCHU_HOMEBREW
     // Library-applet only: managed-layer remount + __nx_vi_layer_id. Homebrew
     // builds do not declare that symbol (CI) and are not the FT capture host.
     if (!m_ftCaptureRemountDone &&
-        (ftAsksRemount || m_ftCaptureRemountNeeded) &&
-        (ftAsksRemount || m_frameTapStatus.available())) {
+        (ftAsksRemount || (m_ftCaptureRemountNeeded && viewer))) {
         m_ftCaptureRemountDone = true;
         DebugLog::log("[ft-light] remounting display for FT capture mitm (%s)",
-                      ftAsksRemount ? "ft-request" : "pre-viewer");
+                      ftAsksRemount ? "ft-request" : "viewer-connect");
         {
             if (FILE* f = std::fopen("sdmc:/config/SwitchU/ft_capture_remount.txt", "w")) {
-                std::fputs(ftAsksRemount ? "fired-ft-request\n" : "fired\n", f);
+                std::fputs(ftAsksRemount ? "fired-ft-request\n" : "fired-viewer\n", f);
                 std::fclose(f);
             }
         }
@@ -7604,6 +7839,14 @@ void WiiUMenuApp::tickFrameTapLightPath(float dt) {
 }
 
 void WiiUMenuApp::onUpdateAwake(float dt) {
+    if (m_lockExitCursorHoldFrames > 0) {
+        --m_lockExitCursorHoldFrames;
+        if (m_lockExitCursorHoldFrames == 0) {
+            m_leaveCaptureLockCursor = false;
+            endForcedCursorTeleport();
+        }
+    }
+
     if (m_wakePostSwapchainFrames > 0) {
         const int step = m_wakePostSwapchainFrames;
         --m_wakePostSwapchainFrames;
@@ -8451,6 +8694,8 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
                     if (m_quickSettings)
                         m_quickSettings->setBatteryStatus(
                             static_cast<int>(percent), charging);
+                    if (m_lockScreen && m_lockViewActive)
+                        m_lockScreen->setBatteryStatus(static_cast<int>(percent), charging);
                     if (m_grid) {
                         for (const auto& icon : m_grid->allIcons()) {
                             if (icon && icon->entryKind() == GridEntryKind::Widget)
@@ -8462,6 +8707,10 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
                                   (unsigned)percent,
                                   charging ? 1 : 0);
                 }
+                break;
+            case switchu::smi::MenuMessage::ShowLock:
+                if (m_config.lockScreenEnabled)
+                    enterLockView(false);
                 break;
             case switchu::smi::MenuMessage::SleepSequence:
                 // The daemon announces the sleep while the applet can still
@@ -8536,6 +8785,7 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
     if (!debugTouchBlocked
         && !m_launchAnim->isPlaying()
         && !m_folderClosing
+        && !m_lockViewActive
         && !(m_contextMenu && m_contextMenu->isActive())
         && !(m_dialog && m_dialog->isActive())
         && !(m_quickSettings && m_quickSettings->isActive())
@@ -8595,6 +8845,9 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
 
     if (!debugTouchBlocked && m_progressDialog && m_progressDialog->isActive())
         m_progressDialog->handleTouch(app().input());
+
+    if (!debugTouchBlocked && m_lockViewActive && m_lockScreen)
+        m_lockScreen->handleTouch(app().input());
 
     if (m_dialogWasActive && !dialogActiveNow) {
         if (isCurrentFocusableWidget(m_dialogReturnFocus)) {
@@ -9957,12 +10210,14 @@ void WiiUMenuApp::onRender(nxui::Renderer& ren) {
         m_editGhostIcon->render(ren);
     }
 
-    renderPageArrows(ren);
-    renderDeletePageButton(ren);
-    if (m_config.actionHintStyle == "panel")
-        renderActionHintPanel(ren);
-    else
-        renderActionHintBar(ren);
+    if (!m_lockViewActive) {
+        renderPageArrows(ren);
+        renderDeletePageButton(ren);
+        if (m_config.actionHintStyle == "panel")
+            renderActionHintPanel(ren);
+        else
+            renderActionHintBar(ren);
+    }
 
     // Leave splash last (under debug only) so bottom-right action hints /
     // arrows do not pop on top of the frosted cover before the crossfade.

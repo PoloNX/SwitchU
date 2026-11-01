@@ -160,6 +160,10 @@ public:
         std::string              infoText;
         float                    anim01 = 0.f;
         bool                     wrapLabel = false;
+        // Optional large sample under the row (Theme Shop lock clock fonts).
+        float                    extraHeight = 0.f;
+        nxui::Font*              previewFont = nullptr;
+        std::string              previewText;
 
         std::function<void(SettingItem&)> onChange;
         std::function<void(SettingItem&)> onSecondary;

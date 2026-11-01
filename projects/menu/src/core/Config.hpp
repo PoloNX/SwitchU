@@ -65,7 +65,20 @@ struct AppConfig {
     // Battery Saver = user-forced lite HOME path (same reclaim as Frame Tap
     // coexistence). Quick Settings + Theme Shop → Interface, synced.
     bool batterySaver = false;
-    // Theme Shop → Options: applying a theme with bundled music.
+    // Lock view (Theme Shop → Lock Screen). Gates Power→Lock entries too.
+    bool lockScreenEnabled = false;
+    // Hardware power short-press when Lock Screen is enabled:
+    // 0 = Sleep (stock; still presents Lock before sleep when enabled)
+    // 1 = Lock only (stay awake)
+    // 2 = Lock then Sleep (handoff then sleep)
+    int powerButtonAction = 0;
+    // Lock clock face id (see LockClockFonts.hpp). Empty / "theme" = theme regular.
+    std::string lockScreenClockFont;
+    // Theme Shop → Lock Screen: applying a theme with fonts may set clock face.
+    bool themeLockClockFontOverride = true;
+    // Theme Shop → Interface: applying a theme with icons may switch icon pack.
+    bool themeIconPackOverride = true;
+    // Theme Shop → Sounds: applying a theme with bundled music.
     // Override on = replace the current playlist (legacy). Off = keep the
     // user's library; optionally append theme tracks and/or start them.
     bool themeMusicOverride = true;

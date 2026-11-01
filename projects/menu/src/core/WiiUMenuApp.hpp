@@ -20,6 +20,7 @@
 #include "widgets/QuickSettingsOverlay.hpp"
 #include "widgets/ContextMenu.hpp"
 #include "widgets/ProgressDialog.hpp"
+#include "widgets/LockScreen.hpp"
 #include "widgets/AppletButton.hpp"
 #include "widgets/PageIndicator.hpp"
 #include "widgets/ProfileCarouselScreen.hpp"
@@ -42,6 +43,7 @@
 #include "core/FolderPeekComposite.hpp"
 #include "core/WidgetStore.hpp"
 #include "core/ThemePreset.hpp"
+#include "widgets/LockClockFonts.hpp"
 #include "core/LeaveFrameCache.hpp"
 #include "sidebar/SidebarManager.hpp"
 #include "launcher/AppletLauncher.hpp"
@@ -91,7 +93,8 @@ public:
     void setTutorialStartupFade(bool enabled);
 
 #ifdef SWITCHU_MENU
-    void setStartupStatus(const switchu::smi::SystemStatus& status, bool fastReturn = false);
+    void setStartupStatus(const switchu::smi::SystemStatus& status, bool fastReturn = false,
+                          bool startLocked = false);
 #endif
 
     bool onCreate() override;
@@ -427,6 +430,13 @@ private:
     // music and doing its frame work for the whole sleep.
     void enterSystemSleep();
     void leaveSystemSleep();
+    /// Sleep-only Lock view (not AppLayoutMode). Curtain unlock restores HOME.
+    void enterLockView(bool instant = false);
+    void finishExitLockView(bool resumeSuspended);
+    bool lockViewActive() const { return m_lockViewActive; }
+    void applyLockScreenClockFont();
+    void refreshLockClockFontEntries();
+    void restoreFocusAfterLock();
     void pollSleepNotifications();
     void onUpdateAwake(float dt);
     void tickFrameTapLightPath(float dt);
@@ -638,6 +648,13 @@ private:
     std::shared_ptr<AutoThemeScreen>   m_autoThemeScreen;
     std::shared_ptr<ControllerTestScreen> m_controllerTest;
     std::shared_ptr<ProfileCarouselScreen> m_profileCarousel;
+    std::shared_ptr<LockScreen> m_lockScreen;
+    std::vector<switchu::lockfonts::Entry> m_lockClockFontEntries;
+    nxui::Widget* m_lockReturnFocus = nullptr;
+    std::uint64_t m_lockReturnTitleId = 0;
+    int m_lockExitCursorHoldFrames = 0;
+    bool m_lockViewActive = false;
+    float m_sleepHoldSec = 0.f;
     std::shared_ptr<TextEntryScreen>      m_textEntry;
 
     nxui::Texture m_gameCardTex;
@@ -988,6 +1005,7 @@ private:
     bool  m_audioInitPending = false;
     bool  m_audioHeldLogged  = false;
     bool m_fastReturnRequested = false;
+    bool m_startLocked = false; // MenuStartMode::LockScreen with suspended game
     std::future<void> m_themePackageTransferFuture;
     std::future<void> m_softwareDeleteFuture;
     Result m_softwareDeleteResult = 0;

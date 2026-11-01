@@ -459,7 +459,8 @@ int main(int argc, char* argv[]) {
         auto makeMenuActivity = [sysStatus, startMode](bool fromTutorial = false) -> std::unique_ptr<nxui::Activity> {
             auto activity = std::make_unique<WiiUMenuApp>();
             activity->setStartupStatus(sysStatus,
-                startMode == switchu::smi::MenuStartMode::AppletReturn);
+                startMode == switchu::smi::MenuStartMode::AppletReturn,
+                startMode == switchu::smi::MenuStartMode::LockScreen);
             activity->setTutorialStartupFade(fromTutorial);
             return activity;
         };

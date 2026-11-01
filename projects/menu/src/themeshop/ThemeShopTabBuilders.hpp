@@ -29,4 +29,14 @@ public:
     static ThemeShopScreen::Tab build(ThemeShopScreen& screen);
 };
 
+class LockScreenTab {
+public:
+    static ThemeShopScreen::Tab build(ThemeShopScreen& screen);
+
+private:
+    static const std::vector<switchu::lockfonts::Entry>& fontEntries(ThemeShopScreen& screen);
+    static void syncClockFontSelector(ThemeShopScreen& screen,
+                                      ThemeShopScreen::SettingItem& item);
+};
+
 } // namespace themeshop::tabs

@@ -664,8 +664,10 @@
   "power": {
     "title": "Power",
     "choose_action": "Choose a power action.",
+    "lock": "Lock",
     "sleep": "Sleep",
     "shutdown": "Shutdown",
+    "off": "Off",
     "reboot": "Reboot"
   },
   "languages": {
@@ -728,7 +730,8 @@
       "community": "Community",
       "options": "Options",
       "sounds": "Sounds",
-      "interface": "Interface"
+      "interface": "Interface",
+      "lock_screen": "Lock Screen"
     },
     "options": {
       "action_hints": "Action Hints",
@@ -745,6 +748,14 @@
       "theme_music_play_desc": "When replace is off and theme music was added, start that track after Apply. (Replace mode always starts the theme playlist when music is enabled.)",
       "battery_saver": "Battery Saver",
       "battery_saver_desc": "Lighten HOME memory and GPU use. Also available in Quick Settings.",
+      "lock_screen": "Lock Screen",
+      "lock_screen_desc": "Show Lock on boot, before sleep, and after wake. Unlock returns to your last HOME layout. Also unlocks Power → Lock in Quick Settings and the HOME power menu. The console Power button still sleeps (Horizon); Lock covers the handoff.",
+      "lock_clock_font": "Clock Font",
+      "lock_clock_font_desc": "Typeface for the Lock Screen clock. Theme follows the active theme's regular font. Fonts bundled with installed themes appear as Name (Theme).",
+      "theme_lock_font_override": "Allow themes to override clock font",
+      "theme_lock_font_override_desc": "On: applying a theme that includes fonts updates the Lock clock face. Off: keep your Clock Font choice.",
+      "theme_icon_override": "Allow themes to replace my icons",
+      "theme_icon_override_desc": "On: applying a theme with icons switches the active Icons pack. Off: keep your current pack; you can still change it on the Icons tab.",
       "frame_tap_engaged": "Frame Tap Engaged",
       "frame_tap_engaged_desc": "Lite mode is held while Frame Tap is streaming. Disconnect the viewer to change Battery Saver."
     },
@@ -919,8 +930,10 @@
     "off": "OFF",
     "power_options": "POWER OPTIONS",
     "sleep": "Sleep",
+    "lock": "Lock",
     "reboot": "Reboot",
     "power_off": "Power Off",
+    "off": "Off",
     "hint_adjust": "Adjust",
     "hint_shortcut": "Quick Settings",
     "music_empty": "No music loaded",
@@ -932,5 +945,34 @@
     "shuffle": "Shuffle",
     "playlist": "Playlist",
     "battery_saver": "Battery Saver"
+  },
+  "lock": {
+    "enter": "Press A to enter",
+    "unlock_home": "Press B to unlock",
+    "resume": "Press A to resume",
+    "date_format": "{weekday}, {month} {day}",
+    "weekday": {
+      "0": "Sunday",
+      "1": "Monday",
+      "2": "Tuesday",
+      "3": "Wednesday",
+      "4": "Thursday",
+      "5": "Friday",
+      "6": "Saturday"
+    },
+    "month": {
+      "1": "January",
+      "2": "February",
+      "3": "March",
+      "4": "April",
+      "5": "May",
+      "6": "June",
+      "7": "July",
+      "8": "August",
+      "9": "September",
+      "10": "October",
+      "11": "November",
+      "12": "December"
+    }
   }
 }

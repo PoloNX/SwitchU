@@ -72,6 +72,10 @@ public:
     /// for compositing over blurred letterbox regions.
     void renderLetterboxOverlay(nxui::Renderer& ren, float opacityMul = 1.f);
 
+    /// Full wallpaper stack (gradient + image + shapes) shifted by dy —
+    /// used as the Lock curtain plane so Theme Shop art slides with unlock.
+    void renderShifted(nxui::Renderer& ren, float dy, float opacityMul = 1.f);
+
     void regenerate(int count = 50) override;
 
 protected:

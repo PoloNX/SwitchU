@@ -103,6 +103,12 @@ bool AppConfig::load() {
     readJsonOpt(j, "sortLargeTiles", sortLargeTiles);
     readJsonOpt(j, "iconContrastAdapt", iconContrastAdapt);
     readJsonOpt(j, "batterySaver", batterySaver);
+    readJsonOpt(j, "lockScreenEnabled", lockScreenEnabled);
+    readJsonOpt(j, "powerButtonAction", powerButtonAction);
+    powerButtonAction = std::clamp(powerButtonAction, 0, 2);
+    readJsonOpt(j, "lockScreenClockFont", lockScreenClockFont);
+    readJsonOpt(j, "themeLockClockFontOverride", themeLockClockFontOverride);
+    readJsonOpt(j, "themeIconPackOverride", themeIconPackOverride);
     readJsonOpt(j, "themeMusicOverride", themeMusicOverride);
     readJsonOpt(j, "themeMusicAddToPlaylist", themeMusicAddToPlaylist);
     readJsonOpt(j, "themeMusicPlayOnApply", themeMusicPlayOnApply);
@@ -287,6 +293,11 @@ bool AppConfig::save() const {
     j["sortLargeTiles"] = sortLargeTiles;
     j["iconContrastAdapt"] = iconContrastAdapt;
     j["batterySaver"] = batterySaver;
+    j["lockScreenEnabled"] = lockScreenEnabled;
+    j["powerButtonAction"] = std::clamp(powerButtonAction, 0, 2);
+    j["lockScreenClockFont"] = lockScreenClockFont;
+    j["themeLockClockFontOverride"] = themeLockClockFontOverride;
+    j["themeIconPackOverride"] = themeIconPackOverride;
     j["themeMusicOverride"] = themeMusicOverride;
     j["themeMusicAddToPlaylist"] = themeMusicAddToPlaylist;
     j["themeMusicPlayOnApply"] = themeMusicPlayOnApply;

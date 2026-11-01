@@ -78,9 +78,8 @@ void BatteryWidget::onContentRender(nxui::Renderer& ren) {
     float by = cr.y + (cr.height - contentH) * 0.5f;
     float op = m_opacity;
 
-    float level = m_level;
-    if (level < 0.f) level = 0.f;
-    if (level > 1.f) level = 1.f;
+    const bool known = m_level >= 0.f;
+    float level = known ? std::clamp(m_level, 0.f, 1.f) : 0.f;
 
     nxui::Rect body = {bx, by, bw, bh};
     float radius = bh * 0.44f;
@@ -97,21 +96,23 @@ void BatteryWidget::onContentRender(nxui::Renderer& ren) {
                         terminal, 2.4f);
 
     float chargePulse = m_charging ? (0.74f + 0.26f * (0.5f + 0.5f * std::sin(m_chargeAnim * 5.2f))) : 1.f;
-    nxui::Color fill = level > 0.20f
-        ? nxui::Color(0.32f, 0.93f, 0.52f, op * chargePulse)
-        : nxui::Color(0.95f, 0.24f, 0.20f, op);
-    if (m_charging && level > 0.20f)
-        fill = nxui::Color(0.46f, 0.96f, 0.66f, op * chargePulse);
+    if (known) {
+        nxui::Color fill = level > 0.20f
+            ? nxui::Color(0.32f, 0.93f, 0.52f, op * chargePulse)
+            : nxui::Color(0.95f, 0.24f, 0.20f, op);
+        if (m_charging && level > 0.20f)
+            fill = nxui::Color(0.46f, 0.96f, 0.66f, op * chargePulse);
 
-    nxui::Rect inner = body.shrunk(3.4f);
-    float innerW = std::max(0.f, inner.width * level);
-    if (innerW > 0.5f) {
-        nxui::Rect fillRect = {inner.x, inner.y, innerW, inner.height};
-        ren.drawRoundedRect(fillRect, fill, std::min(radius * 0.68f, fillRect.width * 0.5f));
-        ren.drawRoundedRect({fillRect.x + 1.4f, fillRect.y + 1.2f,
-                             std::max(0.f, fillRect.width - 2.8f), fillRect.height * 0.34f},
-                            nxui::Color::white().withAlpha(0.16f * op * chargePulse),
-                            std::min(radius * 0.45f, fillRect.width * 0.45f));
+        nxui::Rect inner = body.shrunk(3.4f);
+        float innerW = std::max(0.f, inner.width * level);
+        if (innerW > 0.5f) {
+            nxui::Rect fillRect = {inner.x, inner.y, innerW, inner.height};
+            ren.drawRoundedRect(fillRect, fill, std::min(radius * 0.68f, fillRect.width * 0.5f));
+            ren.drawRoundedRect({fillRect.x + 1.4f, fillRect.y + 1.2f,
+                                 std::max(0.f, fillRect.width - 2.8f), fillRect.height * 0.34f},
+                                nxui::Color::white().withAlpha(0.16f * op * chargePulse),
+                                std::min(radius * 0.45f, fillRect.width * 0.45f));
+        }
     }
 
     float groupRight = body.right() + 2.f + 4.8f;
@@ -138,7 +139,10 @@ void BatteryWidget::onContentRender(nxui::Renderer& ren) {
 
     if (m_font) {
         char buf[16];
-        std::snprintf(buf, sizeof(buf), "%d%%", (int)(level * 100));
+        if (known)
+            std::snprintf(buf, sizeof(buf), "%d%%", (int)(level * 100 + 0.5f));
+        else
+            std::snprintf(buf, sizeof(buf), "--%%");
         nxui::Vec2 sz = m_font->measure(buf);
         float tx = cr.x + (cr.width - sz.x * 0.75f) * 0.5f;
         float ty = by + bh + 6.f;

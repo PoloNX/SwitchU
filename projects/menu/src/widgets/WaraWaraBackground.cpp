@@ -326,6 +326,32 @@ void WaraWaraBackground::renderLetterboxOverlay(nxui::Renderer& ren, float opaci
     m_opacity = prev;
 }
 
+void WaraWaraBackground::renderShifted(nxui::Renderer& ren, float dy, float opacityMul) {
+    const nxui::Rect savedRect = m_rect;
+    const float prev = m_opacity;
+    m_rect.y += dy;
+    m_opacity = prev * std::clamp(opacityMul, 0.f, 1.f);
+    for (auto& s : m_shapes)
+        s.pos.y += dy;
+
+    ren.drawGradientRect(m_rect, m_secondary, m_accent);
+    if (m_backgroundImage.valid() && m_config.imageOpacity > 0.f) {
+        ren.drawTexture(&m_backgroundImage,
+                        backgroundImageRect(),
+                        nxui::Color::white().withAlpha(m_config.imageOpacity * m_opacity));
+    }
+    if (!m_liteSuppressed) {
+        for (const auto& s : m_shapes)
+            drawShapeWithSymmetry(ren, s);
+    }
+    ren.flush();
+
+    for (auto& s : m_shapes)
+        s.pos.y -= dy;
+    m_opacity = prev;
+    m_rect = savedRect;
+}
+
 void WaraWaraBackground::drawShapeWithSymmetry(nxui::Renderer& ren, const Shape& s) const {
     drawGlassShape(ren, s);
 

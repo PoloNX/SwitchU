@@ -196,6 +196,9 @@ static bool g_generalChannelEventReady = false;
 static std::atomic<bool> g_eventRefreshPending{false};
 static std::atomic<bool> g_eventGcMountFailure{false};
 static std::atomic<bool> g_batteryRefreshPending{true};
+// Extra forced pushes after MenuReady so a notify that races the menu's first
+// AppletStorage drain still lands (undock/redock was the only recovery before).
+static int g_batteryReadyPushesLeft = 0;
 static std::atomic<Result> g_eventGcMountRc{0};
 static bool g_initialEventSkipped = false;
 static int  g_eventPollCountdown  = 0;
@@ -849,17 +852,17 @@ static bool queryBatteryStatus(uint8_t& percent, PsmChargerType& chargerType) {
     return true;
 }
 
-static void pushBatteryStatusNotification(bool force) {
+static bool pushBatteryStatusNotification(bool force) {
     if (!daemon::menu_la::isActive())
-        return;
+        return false;
 
     uint8_t percent = 0;
     PsmChargerType chargerType = PsmChargerType_Unconnected;
     if (!queryBatteryStatus(percent, chargerType))
-        return;
+        return false;
 
     if (!force && percent == g_lastBatteryPercent && chargerType == g_lastChargerType)
-        return;
+        return true;
 
     g_lastBatteryPercent = percent;
     g_lastChargerType = chargerType;
@@ -869,6 +872,7 @@ static void pushBatteryStatusNotification(bool force) {
                           (unsigned)percent,
                           (unsigned)chargerType);
     pushNotification(smi::MenuMessage::BatteryStatusChanged, 0, payload);
+    return true;
 }
 
 static void logHomeState(const char* source, const char* stage) {
@@ -1006,16 +1010,20 @@ static void requestPowerStateChange(const char* source, bool reboot) {
 // does need a handoff before the console stops responding. Left on its own it
 // keeps submitting frames, playing music and running its per-frame work for the
 // whole sleep, which is what flattened the battery in sleep mode.
+static std::atomic<bool> g_lockScreenEnabled{false};
+// 0=Sleep, 1=Lock only, 2=Lock then Sleep (when Lock Screen is enabled)
+static std::atomic<uint8_t> g_powerButtonAction{0};
+
 static void startSleepSequence(const char* source) {
     switchu::FileLog::logCommit("[power] sleep requested source=%s menuActive=%d",
                                 source, daemon::menu_la::isActive() ? 1 : 0);
     pushNotification(smi::MenuMessage::SleepSequence);
     // Preserve the final state even if the sleep ends in a forced power loss.
     switchu::commitSdCard("sleep");
-    // The handoff is cooperative: give the menu a couple of frames to stop
-    // presenting and pause its audio instead of relying on the sleep landing
-    // a frame later.
-    svcSleepThread(50'000'000ULL);
+    // With Lock view on, the menu holds ~1.2s so the panel retains Lock for
+    // wake. Without it, a short beat is enough to pause audio / stop presents.
+    const u64 handoffNs = g_lockScreenEnabled.load() ? 1'500'000'000ULL : 50'000'000ULL;
+    svcSleepThread(handoffNs);
     appletStartSleepSequence(true);
 }
 
@@ -1231,8 +1239,8 @@ static void handleAppletMessages() {
         // but must reacquire the foreground after wake. Keep our session state
         // in sync so the Wakeup path is allowed to call app::resume().
         daemon::app::onHomeSuspend();
-        // The console is going under on its own (idle plan or power button):
-        // the menu needs the same handoff as a menu-initiated sleep.
+        // Horizon has already committed to sleep on these messages — we cannot
+        // remap Power to Lock-only. Handoff Lock when enabled, then sleep.
         startSleepSequence("applet-sleep");
         break;
 
@@ -1662,6 +1670,18 @@ static void handleMenuCommand() {
         return;
     }
 
+    case smi::SystemMessage::SetLockScreen: {
+        auto args = reader.pop<smi::LockScreenArgs>();
+        g_lockScreenEnabled.store(args.enabled != 0);
+        const uint8_t pb = args.power_button > 2 ? 0 : args.power_button;
+        g_powerButtonAction.store(pb);
+        switchu::FileLog::log("[smi] lock screen %s power_button=%u",
+                              args.enabled ? "enabled" : "disabled",
+                              (unsigned)pb);
+        pushCommandResult(requestId, 0, "SetLockScreen");
+        return;
+    }
+
     case smi::SystemMessage::MenuReady:
         switchu::FileLog::log("[smi] menu ready");
         g_menuReadyThisSession = true;
@@ -1673,6 +1693,7 @@ static void handleMenuCommand() {
         clearLastGfxFailMarker();
         g_lastOperationFailure = {};
         g_batteryRefreshPending.store(true);
+        g_batteryReadyPushesLeft = 3;
         shortenCatalogHold(kCatalogHoldAfterMenuReadyNs);
         restoreNormalPerformance("menu-ready");
         break;
@@ -1908,11 +1929,16 @@ static void mainLoop() {
                              (uint32_t)g_eventGcMountRc.load());
         }
     }
-    // Keep the request until a menu is actually there to receive it: consuming
-    // it earlier left a freshly started menu showing 0 % with no charge icon.
-    if (g_batteryRefreshPending.load() && daemon::menu_la::isActive()) {
-        g_batteryRefreshPending.store(false);
-        pushBatteryStatusNotification(true);
+    // Keep the request until a menu is actually there AND PSM answers. Clearing
+    // the flag on a failed query left HOME stuck at the widget's unknown→0%
+    // render until the next dock/undock PSM event.
+    if ((g_batteryRefreshPending.load() || g_batteryReadyPushesLeft > 0)
+        && daemon::menu_la::isActive()) {
+        if (pushBatteryStatusNotification(true)) {
+            g_batteryRefreshPending.store(false);
+            if (g_batteryReadyPushesLeft > 0)
+                --g_batteryReadyPushesLeft;
+        }
     }
 
     if (g_catalogChangedWhileMenuAway.load() && daemon::menu_la::isActive()) {

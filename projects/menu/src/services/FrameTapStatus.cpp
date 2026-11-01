@@ -5,6 +5,24 @@
 
 namespace switchu::services {
 
+namespace {
+
+// sm defers GetService for a name nobody has registered: the call blocks until
+// the service appears. Without Frame Tap installed that is forever, and the
+// first probe runs at the top of WiiUMenuApp::onCreate, so HOME hangs on a
+// black screen before its first frame. Ask Atmosphere's sm whether "sftap"
+// exists first (tipc 65100, the same call libstratosphere's
+// smAtmosphereHasService makes; libnx no longer ships it) and treat any
+// failure as "not installed".
+bool sftapRegistered() {
+    u8 has = 0;
+    const SmServiceName name = smEncodeName("sftap");
+    const Result rc = tipcDispatchInOut(smGetServiceSessionTipc(), 65100, name, has);
+    return R_SUCCEEDED(rc) && (has & 1) != 0;
+}
+
+} // namespace
+
 void FrameTapStatus::pollNeedHeadroomFile() {
     FILE* f = std::fopen(kNeedHeadroomFile, "rb");
     if (!f)
@@ -35,7 +53,8 @@ bool FrameTapStatus::refresh() {
     if (!m_serviceOpen) {
         m_retryAccumMs = 0.f;
         Service svc{};
-        const Result rc = smGetService(&svc, "sftap");
+        const Result rc = sftapRegistered() ? smGetService(&svc, "sftap")
+                                            : MAKERESULT(Module_Libnx, LibnxError_NotFound);
         if (R_FAILED(rc)) {
             m_available = false;
             m_viewerConnected = m_forceLight;
@@ -125,7 +144,7 @@ bool FrameTapStatus::ackHeadroom(std::uint32_t freeKb) {
 
     if (!m_serviceOpen) {
         Service svc{};
-        if (R_FAILED(smGetService(&svc, "sftap")))
+        if (!sftapRegistered() || R_FAILED(smGetService(&svc, "sftap")))
             return false;
         m_service = svc;
         m_serviceOpen = true;
