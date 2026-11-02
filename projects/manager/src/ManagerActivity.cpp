@@ -446,8 +446,10 @@ float ManagerActivity::combinedUpdateProgress() const {
     const float download = std::clamp(m_updateDownloadProgress.load(), 0.f, 1.f);
     const float install = std::clamp(m_updateInstallProgress.load(), 0.f, 1.f);
     const auto stage = static_cast<UpdateWorkerStage>(m_updateWorkerStage.load());
-    constexpr float kDownloadShare = 0.55f;
-    constexpr float kInstallShare = 0.45f;
+    // Leave more of the bar for extract/install — download finishing at ~55%
+    // made the long ZIP extract look frozen.
+    constexpr float kDownloadShare = 0.42f;
+    constexpr float kInstallShare = 0.58f;
     switch (stage) {
         case UpdateWorkerStage::Downloading:
         case UpdateWorkerStage::Verifying:

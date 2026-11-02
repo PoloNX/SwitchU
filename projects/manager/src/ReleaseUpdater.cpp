@@ -371,8 +371,27 @@ std::vector<std::string> extractArchive(std::atomic<float>& progress,
             std::ofstream output(destination, std::ios::binary | std::ios::trunc);
             std::array<char, 64 * 1024> buffer{};
             int read = 0;
-            while (output && (read = unzReadCurrentFile(archive, buffer.data(), buffer.size())) > 0)
+            std::uint64_t written = 0;
+            const float entryBase = hasEntryCount
+                ? static_cast<float>(processedEntries)
+                    / static_cast<float>(globalInfo.number_entry)
+                : 0.f;
+            const float entrySpan = hasEntryCount
+                ? 1.f / static_cast<float>(globalInfo.number_entry)
+                : 0.f;
+            while (output && (read = unzReadCurrentFile(archive, buffer.data(), buffer.size())) > 0) {
                 output.write(buffer.data(), read);
+                written += static_cast<std::uint64_t>(read);
+                // Tick overall % inside large entries so extract does not look stuck.
+                if (hasEntryCount && info.uncompressed_size > 0) {
+                    const float fileFrac = std::clamp(
+                        static_cast<float>(written)
+                            / static_cast<float>(info.uncompressed_size),
+                        0.f, 1.f);
+                    progress.store(progressBase
+                                   + progressSpan * (entryBase + entrySpan * fileFrac));
+                }
+            }
             const int closeRc = unzCloseCurrentFile(archive);
             if (!output || read < 0 || closeRc != UNZ_OK) {
                 unzClose(archive);
@@ -663,8 +682,11 @@ UpdateInstallResult ReleaseUpdater::install(const ReleaseInfo& release,
         downloadProgress.store(1.f);
         stage.store(static_cast<int>(UpdateWorkerStage::Extracting));
         installProgress.store(0.f);
-        constexpr float kExtractionShare = 0.30f;
-        const auto files = extractArchive(installProgress, 0.f, kExtractionShare);
+        // Extract is often the longest SD-bound phase; give it half of the
+        // post-download bar so overall % keeps moving after download ends.
+        constexpr float kExtractionShare = 0.50f;
+        installProgress.store(0.01f);
+        const auto files = extractArchive(installProgress, 0.01f, kExtractionShare - 0.01f);
         switchu::FileLog::log("[updater] archive validated files=%lu",
                               static_cast<unsigned long>(files.size()));
         stage.store(static_cast<int>(UpdateWorkerStage::Installing));
