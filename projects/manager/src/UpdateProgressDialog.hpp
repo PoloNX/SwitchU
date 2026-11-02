@@ -2,6 +2,7 @@
 
 #include <nxui/Theme.hpp>
 #include <nxui/core/Font.hpp>
+#include <nxui/core/Input.hpp>
 #include <nxui/widgets/Widget.hpp>
 
 #include <string>
@@ -22,11 +23,16 @@ public:
                      bool cancellable = false);
     void hide();
     bool isActive() const { return m_active; }
+    bool isCancellable() const { return m_active && m_cancellable; }
+    bool consumeCancelRequest();
+    void handleInput(nxui::Input& input);
 
 protected:
     void onRender(nxui::Renderer& renderer) override;
 
 private:
+    nxui::Rect cancelRect() const;
+
     nxui::Font* m_titleFont = nullptr;
     nxui::Font* m_bodyFont = nullptr;
     const nxui::Theme* m_theme = nullptr;
@@ -34,6 +40,9 @@ private:
     std::string m_status;
     float m_overallProgress = 0.f;
     bool m_cancellable = false;
+    bool m_cancelFocused = false;
+    bool m_cancelRequested = false;
+    bool m_touchOnCancel = false;
     bool m_active = false;
 };
 

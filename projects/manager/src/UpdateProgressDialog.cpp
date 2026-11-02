@@ -17,9 +17,12 @@ UpdateProgressDialog::UpdateProgressDialog() {
 
 void UpdateProgressDialog::show(const std::string& title) {
     m_title = title;
-    m_status = "Preparing...";
+    m_status = "Preparing";
     m_overallProgress = 0.f;
     m_cancellable = false;
+    m_cancelFocused = false;
+    m_cancelRequested = false;
+    m_touchOnCancel = false;
     m_active = true;
     setVisible(true);
 }
@@ -30,13 +33,58 @@ void UpdateProgressDialog::setProgress(float overallProgress, const std::string&
     // Never clear status mid-update — blank frames confuse users.
     if (!status.empty())
         m_status = status;
+    if (cancellable && !m_cancellable)
+        m_cancelFocused = true; // only interactive control while downloading
     m_cancellable = cancellable;
+    if (!m_cancellable) {
+        m_cancelFocused = false;
+        m_touchOnCancel = false;
+    }
 }
 
 void UpdateProgressDialog::hide() {
     m_active = false;
     m_cancellable = false;
+    m_cancelFocused = false;
+    m_cancelRequested = false;
+    m_touchOnCancel = false;
     setVisible(false);
+}
+
+bool UpdateProgressDialog::consumeCancelRequest() {
+    if (!m_cancelRequested)
+        return false;
+    m_cancelRequested = false;
+    return true;
+}
+
+nxui::Rect UpdateProgressDialog::cancelRect() const {
+    constexpr float kW = 220.f;
+    constexpr float kH = 48.f;
+    const nxui::Rect panel{300.f, 176.f, 680.f, 368.f};
+    return {640.f - kW * 0.5f, panel.bottom() - 70.f, kW, kH};
+}
+
+void UpdateProgressDialog::handleInput(nxui::Input& input) {
+    if (!m_active || !m_cancellable)
+        return;
+
+    const nxui::Rect hit = cancelRect().expanded(8.f);
+    if (input.touchDown()) {
+        m_touchOnCancel = hit.contains(input.touchX(), input.touchY());
+        if (m_touchOnCancel)
+            m_cancelFocused = true;
+    }
+    if (input.touchUp()) {
+        if (m_touchOnCancel && hit.contains(input.touchX(), input.touchY()))
+            m_cancelRequested = true;
+        m_touchOnCancel = false;
+    }
+
+    // Single interactive control — keep it focused and accept A.
+    m_cancelFocused = true;
+    if (input.isDown(nxui::Button::A) || input.isDown(nxui::Button::B))
+        m_cancelRequested = true;
 }
 
 void UpdateProgressDialog::onRender(nxui::Renderer& renderer) {
@@ -63,7 +111,6 @@ void UpdateProgressDialog::onRender(nxui::Renderer& renderer) {
     const std::string percentText = std::to_string(percentValue) + "%";
     const nxui::Color accent = m_theme->cursorNormal;
 
-    // Large blue overall % under the title (previous 3-bar layout cue).
     if (m_titleFont) {
         const float percentScale = 1.15f;
         const float percentWidth = m_titleFont->measure(percentText).x * percentScale;
@@ -73,7 +120,7 @@ void UpdateProgressDialog::onRender(nxui::Renderer& renderer) {
     }
 
     if (m_bodyFont && !m_status.empty()) {
-        const float statusScale = 0.84f;
+        const float statusScale = 0.88f;
         const float statusWidth = m_bodyFont->measure(m_status).x * statusScale;
         renderer.drawText(m_status, {640.f - statusWidth * 0.5f, panel.y + 148.f},
                           m_bodyFont, m_theme->textPrimary, statusScale);
@@ -88,18 +135,22 @@ void UpdateProgressDialog::onRender(nxui::Renderer& renderer) {
     }
 
     if (m_cancellable && m_bodyFont) {
-        const std::string hint = "B  Cancel";
-        const float hintScale = 0.82f;
+        const nxui::Rect pill = cancelRect();
+        const float emphasis = m_cancelFocused || m_touchOnCancel ? 1.f : 0.55f;
+        renderer.drawRoundedRect(
+            pill, m_theme->panelBorder.withAlpha(0.28f + 0.22f * emphasis), 18.f);
+        renderer.drawRoundedRectOutline(
+            pill, accent.withAlpha(0.35f + 0.45f * emphasis), 18.f,
+            1.4f + 0.8f * emphasis);
+        const std::string hint = "Cancel";
+        const float hintScale = 0.90f;
         const float hintWidth = m_bodyFont->measure(hint).x * hintScale;
-        const nxui::Rect pill{
-            640.f - (hintWidth + 48.f) * 0.5f,
-            panel.bottom() - 58.f,
-            hintWidth + 48.f,
-            36.f};
-        renderer.drawRoundedRect(pill, m_theme->panelBorder.withAlpha(0.35f), 18.f);
-        renderer.drawRoundedRectOutline(pill, accent.withAlpha(0.55f), 18.f, 1.4f);
-        renderer.drawText(hint, {pill.x + 24.f, pill.y + 8.f},
+        renderer.drawText(hint,
+                          {pill.x + (pill.width - hintWidth) * 0.5f, pill.y + 12.f},
                           m_bodyFont, m_theme->textPrimary, hintScale);
+        if (m_cancelFocused) {
+            renderer.drawRoundedRectOutline(pill.expanded(4.f), accent, 20.f, 2.4f);
+        }
     }
 }
 

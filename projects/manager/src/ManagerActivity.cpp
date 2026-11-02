@@ -52,6 +52,17 @@ std::string formatByteCount(std::uint64_t bytes) {
     return buf;
 }
 
+// Whole-MB strings only — fine-grained "5.1 MB" labels burn the font texture
+// cache (unique string per update) and the status line goes blank mid-download.
+std::string formatWholeMb(std::uint64_t bytes) {
+    const unsigned long long mb =
+        static_cast<unsigned long long>((bytes + 1024ull * 1024ull - 1ull)
+                                        / (1024ull * 1024ull));
+    char buf[24]{};
+    std::snprintf(buf, sizeof(buf), "%llu MB", mb);
+    return buf;
+}
+
 bool looksCancelled(const std::string& message) {
     return message.find("cancelled") != std::string::npos
         || message.find("canceled") != std::string::npos;
@@ -427,7 +438,7 @@ void ManagerActivity::requestUpdaterCancel() {
         m_noticeLabel->setText("");
     } else if (m_updateProgressDialog && m_updateProgressDialog->isActive()) {
         m_updateProgressDialog->setProgress(
-            combinedUpdateProgress(), "Cancelling...", false);
+            combinedUpdateProgress(), "Cancelling", false);
     }
 }
 
@@ -500,7 +511,7 @@ void ManagerActivity::startUpdateInstall() {
     m_updateState = UpdateUiState::Installing;
     beginUpdateInputBlock();
     m_updateProgressDialog->show("Updating SwitchU");
-    m_updateProgressDialog->setProgress(0.f, "Preparing...", true);
+    m_updateProgressDialog->setProgress(0.f, "Preparing", true);
     m_updateInstallFuture = std::async(std::launch::async,
         [this, release, preserveDisabled]() {
             return ReleaseUpdater::install(release, preserveDisabled,
@@ -564,34 +575,35 @@ void ManagerActivity::syncUpdater() {
             std::string status;
             switch (static_cast<UpdateWorkerStage>(workerStage)) {
                 case UpdateWorkerStage::Downloading: {
-                    status = "Downloading...";
-                    if (bytesReceived > 0) {
-                        status += " ";
-                        status += formatByteCount(bytesReceived);
-                        if (m_latestRelease.downloadSize > 0) {
-                            status += " / ";
-                            status += formatByteCount(m_latestRelease.downloadSize);
-                        }
+                    status = "Downloading";
+                    if (m_latestRelease.downloadSize > 0) {
+                        status += "  ";
+                        status += formatWholeMb(bytesReceived);
+                        status += " / ";
+                        status += formatWholeMb(m_latestRelease.downloadSize);
+                    } else if (bytesReceived > 0) {
+                        status += "  ";
+                        status += formatWholeMb(bytesReceived);
                     }
                     break;
                 }
                 case UpdateWorkerStage::Verifying:
-                    status = "Verifying...";
+                    status = "Verifying download";
                     break;
                 case UpdateWorkerStage::Extracting:
-                    status = "Extracting...";
+                    status = "Extracting files";
                     break;
                 case UpdateWorkerStage::Installing:
-                    status = "Installing...";
+                    status = "Installing files";
                     break;
                 default:
-                    status = "Preparing...";
+                    status = "Preparing";
                     break;
             }
             if (ReleaseUpdater::cancelRequested()
                 && static_cast<UpdateWorkerStage>(workerStage)
                     == UpdateWorkerStage::Downloading) {
-                status = "Cancelling...";
+                status = "Cancelling";
             }
             m_updateProgressDialog->setProgress(
                 overall, status, canCancelUpdater());
@@ -800,9 +812,12 @@ void ManagerActivity::onUpdate(float dt) {
     if (m_dialog && m_dialog->isActive())
         m_dialog->handleTouch(app().input());
 
-    // focusRoot is null while the updater runs, so poll B here for cancel.
-    if (canCancelUpdater() && app().input().isDown(nxui::Button::B))
-        requestUpdaterCancel();
+    // Progress dialog owns Cancel (touch / A / B) while download is active.
+    if (m_updateProgressDialog && m_updateProgressDialog->isActive()) {
+        m_updateProgressDialog->handleInput(app().input());
+        if (m_updateProgressDialog->consumeCancelRequest())
+            requestUpdaterCancel();
+    }
 
     if (m_operationDelayFrames > 0) {
         --m_operationDelayFrames;
