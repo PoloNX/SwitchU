@@ -7,6 +7,20 @@
 #include <string>
 
 namespace switchu::manager {
+namespace {
+
+bool navigatedTowardCancel(const nxui::Input& input) {
+    return input.isDown(nxui::Button::DDown)
+        || input.isDown(nxui::Button::DLeft)
+        || input.isDown(nxui::Button::DRight)
+        || input.isDown(nxui::Button::DUp)
+        || input.isDown(nxui::Button::LStickD)
+        || input.isDown(nxui::Button::LStickL)
+        || input.isDown(nxui::Button::LStickR)
+        || input.isDown(nxui::Button::LStickU);
+}
+
+} // namespace
 
 UpdateProgressDialog::UpdateProgressDialog() {
     setRect({0.f, 0.f, 1280.f, 720.f});
@@ -23,6 +37,7 @@ void UpdateProgressDialog::show(const std::string& title) {
     m_cancelFocused = false;
     m_cancelRequested = false;
     m_touchOnCancel = false;
+    m_awaitButtonRelease = true;
     m_active = true;
     setVisible(true);
 }
@@ -33,12 +48,17 @@ void UpdateProgressDialog::setProgress(float overallProgress, const std::string&
     // Never clear status mid-update — blank frames confuse users.
     if (!status.empty())
         m_status = status;
-    if (cancellable && !m_cancellable)
-        m_cancelFocused = true; // only interactive control while downloading
+    if (cancellable && !m_cancellable) {
+        // Start unfocused so the Install-confirm A press cannot cancel, and so
+        // accidental A does not abort the download.
+        m_cancelFocused = false;
+        m_awaitButtonRelease = true;
+    }
     m_cancellable = cancellable;
     if (!m_cancellable) {
         m_cancelFocused = false;
         m_touchOnCancel = false;
+        m_awaitButtonRelease = false;
     }
 }
 
@@ -48,6 +68,7 @@ void UpdateProgressDialog::hide() {
     m_cancelFocused = false;
     m_cancelRequested = false;
     m_touchOnCancel = false;
+    m_awaitButtonRelease = false;
     setVisible(false);
 }
 
@@ -81,9 +102,22 @@ void UpdateProgressDialog::handleInput(nxui::Input& input) {
         m_touchOnCancel = false;
     }
 
-    // Single interactive control — keep it focused and accept A.
-    m_cancelFocused = true;
-    if (input.isDown(nxui::Button::A) || input.isDown(nxui::Button::B))
+    if (navigatedTowardCancel(input))
+        m_cancelFocused = true;
+
+    // Wait out the Install-confirm A hold so isDown(A) cannot fire cancel.
+    const bool aHeld = input.isHeld(nxui::Button::A);
+    const bool bHeld = input.isHeld(nxui::Button::B);
+    if (m_awaitButtonRelease) {
+        if (!aHeld && !bHeld)
+            m_awaitButtonRelease = false;
+        return;
+    }
+
+    // B always cancels. A only cancels when Cancel is focused.
+    if (input.isDown(nxui::Button::B))
+        m_cancelRequested = true;
+    else if (m_cancelFocused && input.isDown(nxui::Button::A))
         m_cancelRequested = true;
 }
 
@@ -136,12 +170,12 @@ void UpdateProgressDialog::onRender(nxui::Renderer& renderer) {
 
     if (m_cancellable && m_bodyFont) {
         const nxui::Rect pill = cancelRect();
-        const float emphasis = m_cancelFocused || m_touchOnCancel ? 1.f : 0.55f;
+        const float emphasis = m_cancelFocused || m_touchOnCancel ? 1.f : 0.45f;
         renderer.drawRoundedRect(
-            pill, m_theme->panelBorder.withAlpha(0.28f + 0.22f * emphasis), 18.f);
+            pill, m_theme->panelBorder.withAlpha(0.22f + 0.28f * emphasis), 18.f);
         renderer.drawRoundedRectOutline(
-            pill, accent.withAlpha(0.35f + 0.45f * emphasis), 18.f,
-            1.4f + 0.8f * emphasis);
+            pill, accent.withAlpha(0.28f + 0.50f * emphasis), 18.f,
+            1.3f + 0.9f * emphasis);
         const std::string hint = "Cancel";
         const float hintScale = 0.90f;
         const float hintWidth = m_bodyFont->measure(hint).x * hintScale;

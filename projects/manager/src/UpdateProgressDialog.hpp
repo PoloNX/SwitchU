@@ -43,6 +43,8 @@ private:
     bool m_cancelFocused = false;
     bool m_cancelRequested = false;
     bool m_touchOnCancel = false;
+    // Ignore A/B until released — Install confirm uses the same A press.
+    bool m_awaitButtonRelease = false;
     bool m_active = false;
 };
 
