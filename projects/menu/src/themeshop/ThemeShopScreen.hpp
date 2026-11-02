@@ -3,6 +3,7 @@
 #include "ThemeCatalogClient.hpp"
 #include "settings/TabbedOverlayScreen.hpp"
 #include "widgets/AdaptiveIconLoad.hpp"
+#include "widgets/LockClockFonts.hpp"
 
 #include <nxui/core/Input.hpp>
 #include <nxui/core/Texture.hpp>
@@ -13,7 +14,9 @@
 #include <future>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace themeshop::tabs {
 class InstalledTab;
@@ -21,6 +24,7 @@ class CommunityTab;
 class IconsTab;
 class SoundsTab;
 class InterfaceTab;
+class LockScreenTab;
 }
 
 namespace nxui {
@@ -67,7 +71,21 @@ public:
     void onActionHintStyleChange(IntCb cb) { m_actionHintStyleCb = std::move(cb); }
     void onSortLargeTilesChange(BoolCb cb) { m_sortLargeTilesCb = std::move(cb); }
     void onBatterySaverChange(BoolCb cb) { m_batterySaverCb = std::move(cb); }
+    void onLockScreenChange(BoolCb cb) { m_lockScreenCb = std::move(cb); }
+    void onPowerButtonActionChange(IntCb cb) { m_powerButtonActionCb = std::move(cb); }
+    void onLockScreenClockFontChange(StringCb cb) { m_lockScreenClockFontCb = std::move(cb); }
     void onIconContrastAdaptChange(BoolCb cb) { m_iconContrastAdaptCb = std::move(cb); }
+    void onLockScreenTransitionChange(IntCb cb) {
+        m_lockScreenTransitionCb = std::move(cb);
+    }
+    void onLockScreenZoomDirChange(IntCb cb) { m_lockScreenZoomDirCb = std::move(cb); }
+    void onLockScreenWipeDirChange(IntCb cb) { m_lockScreenWipeDirCb = std::move(cb); }
+    void onThemeLockClockFontOverrideChange(BoolCb cb) {
+        m_themeLockClockFontOverrideCb = std::move(cb);
+    }
+    void onThemeIconPackOverrideChange(BoolCb cb) {
+        m_themeIconPackOverrideCb = std::move(cb);
+    }
     void onThemeMusicOverrideChange(BoolCb cb) { m_themeMusicOverrideCb = std::move(cb); }
     void onThemeMusicAddToPlaylistChange(BoolCb cb) { m_themeMusicAddToPlaylistCb = std::move(cb); }
     void onThemeMusicPlayOnApplyChange(BoolCb cb) { m_themeMusicPlayOnApplyCb = std::move(cb); }
@@ -115,8 +133,36 @@ public:
     }
     void setSortLargeTilesState(bool enabled) { m_sortLargeTiles = enabled; }
     void setBatterySaverState(bool enabled) { m_batterySaver = enabled; }
+    void setLockScreenState(bool enabled) { m_lockScreenEnabled = enabled; }
+    void setPowerButtonAction(int action) { m_powerButtonAction = action; }
+    void setLockScreenClockFontState(std::string id) { m_lockScreenClockFont = std::move(id); }
+    void setLockClockFontContext(std::string assetsRoot, std::string themeFontPath) {
+        if (themeFontPath != m_lockClockThemeFontPath)
+            m_lockClockPreviewFonts.erase("theme");
+        m_lockClockAssetsRoot = std::move(assetsRoot);
+        m_lockClockThemeFontPath = std::move(themeFontPath);
+    }
+    void setLockClockFontEntries(std::vector<switchu::lockfonts::Entry> entries) {
+        m_lockClockFontEntries = std::move(entries);
+    }
+    nxui::Font* ensureLockClockPreviewFont(const std::string& id);
     void setFrameTapLiteEngaged(bool engaged) { m_frameTapLiteEngaged = engaged; }
     void setIconContrastAdaptState(bool enabled) { m_iconContrastAdapt = enabled; }
+    void setLockScreenTransitionState(int mode) {
+        m_lockScreenTransition = std::clamp(mode, 0, 3);
+    }
+    void setLockScreenZoomDirState(int dir) {
+        m_lockScreenZoomDir = std::clamp(dir, 0, 1);
+    }
+    void setLockScreenWipeDirState(int dir) {
+        m_lockScreenWipeDir = std::clamp(dir, 0, 3);
+    }
+    void setThemeLockClockFontOverrideState(bool enabled) {
+        m_themeLockClockFontOverride = enabled;
+    }
+    void setThemeIconPackOverrideState(bool enabled) {
+        m_themeIconPackOverride = enabled;
+    }
     void setThemeMusicOverrideState(bool enabled) { m_themeMusicOverride = enabled; }
     void setThemeMusicAddToPlaylistState(bool enabled) { m_themeMusicAddToPlaylist = enabled; }
     void setThemeMusicPlayOnApplyState(bool enabled) { m_themeMusicPlayOnApply = enabled; }
@@ -217,6 +263,7 @@ private:
     friend class themeshop::tabs::IconsTab;
     friend class themeshop::tabs::SoundsTab;
     friend class themeshop::tabs::InterfaceTab;
+    friend class themeshop::tabs::LockScreenTab;
 
     enum class PreviewPhase {
         Idle,
@@ -404,7 +451,15 @@ private:
     IntCb m_actionHintStyleCb;
     BoolCb m_sortLargeTilesCb;
     BoolCb m_batterySaverCb;
+    BoolCb m_lockScreenCb;
+    IntCb m_powerButtonActionCb;
+    StringCb m_lockScreenClockFontCb;
     BoolCb m_iconContrastAdaptCb;
+    IntCb m_lockScreenTransitionCb;
+    IntCb m_lockScreenZoomDirCb;
+    IntCb m_lockScreenWipeDirCb;
+    BoolCb m_themeLockClockFontOverrideCb;
+    BoolCb m_themeIconPackOverrideCb;
     BoolCb m_themeMusicOverrideCb;
     BoolCb m_themeMusicAddToPlaylistCb;
     BoolCb m_themeMusicPlayOnApplyCb;
@@ -433,8 +488,20 @@ private:
     int m_actionHintStyle = 1;
     bool m_sortLargeTiles = true;
     bool m_batterySaver = false;
+    bool m_lockScreenEnabled = false;
+    int m_powerButtonAction = 0;
+    std::string m_lockScreenClockFont;
+    std::string m_lockClockAssetsRoot;
+    std::string m_lockClockThemeFontPath;
+    std::vector<switchu::lockfonts::Entry> m_lockClockFontEntries;
+    std::unordered_map<std::string, std::unique_ptr<nxui::Font>> m_lockClockPreviewFonts;
     bool m_frameTapLiteEngaged = false;
     bool m_iconContrastAdapt = true;
+    int m_lockScreenTransition = 0;
+    int m_lockScreenZoomDir = 0;
+    int m_lockScreenWipeDir = 1;
+    bool m_themeLockClockFontOverride = true;
+    bool m_themeIconPackOverride = true;
     bool m_themeMusicOverride = true;
     bool m_themeMusicAddToPlaylist = true;
     bool m_themeMusicPlayOnApply = true;

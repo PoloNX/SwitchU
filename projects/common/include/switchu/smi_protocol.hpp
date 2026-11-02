@@ -21,6 +21,7 @@ enum class MenuMessage : uint32_t {
     AppViewFlagsUpdate    =  9,
     BatteryStatusChanged  = 10,
     OperationFailed       = 11,
+    ShowLock              = 12, // power-button Lock mode: show Lock, stay awake
 };
 
 enum class SystemMessage : uint32_t {
@@ -48,6 +49,7 @@ enum class SystemMessage : uint32_t {
     IsApplicationValid    = 32,
     SetManualDateTime     = 33,
     SetInternetTimeSync   = 34,
+    SetLockScreen         = 35,
 
     MenuReady             = 40,
     MenuClosing           = 41,
@@ -57,7 +59,16 @@ enum class MenuStartMode : uint32_t {
     MainMenu       = 0,
     StartupBoot    = 1,
     AppletReturn   = 2,
+    LockScreen     = 3,   // wake with suspended game: show Lock view first
 };
+
+// power_button: 0=Sleep (stock), 1=Lock only, 2=Lock then Sleep
+struct LockScreenArgs {
+    uint8_t enabled;
+    uint8_t power_button;
+    uint8_t _pad[6];
+};
+static_assert(sizeof(LockScreenArgs) == 8);
 
 struct CommandHeader {
     uint32_t magic;

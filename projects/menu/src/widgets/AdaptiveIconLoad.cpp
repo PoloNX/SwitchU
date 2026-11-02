@@ -248,26 +248,6 @@ void fillSilhouetteWithHsl(std::uint8_t* rgba, int w, int h,
     }
 }
 
-// Grayscale + Light: pivot every pixel's luma (0.5 = leave, 0 = black, 1 = white).
-void applyLightnessPivot(std::uint8_t* rgba, int w, int h, float light01) {
-    if (!rgba || w <= 0 || h <= 0)
-        return;
-    if (std::fabs(light01 - 0.5f) < 0.0005f)
-        return;
-    const std::size_t n = static_cast<std::size_t>(w) * static_cast<std::size_t>(h);
-    for (std::size_t i = 0; i < n; ++i) {
-        const std::size_t p = i * 4u;
-        if (rgba[p + 3] < 8)
-            continue;
-        const float luma = rgba[p] / 255.f; // already gray — R=G=B
-        const float out = std::clamp(adjustChannelPivot(luma, light01), 0.f, 1.f);
-        const auto v = static_cast<std::uint8_t>(out * 255.f + 0.5f);
-        rgba[p] = v;
-        rgba[p + 1] = v;
-        rgba[p + 2] = v;
-    }
-}
-
 void applyGrayscaleRgb(std::uint8_t* rgba, int w, int h) {
     if (!rgba || w <= 0 || h <= 0)
         return;
@@ -289,13 +269,12 @@ void applyGrayscaleRgb(std::uint8_t* rgba, int w, int h) {
 
 // Rotate every pixel's hue and pivot sat/light - keeps multi-colour artwork
 // multi-colour (Photoshop Hue/Saturation style), unlike a flat colorize.
-// lightOnly: grayscale+Custom tint path (H/S ignored).
-void applyHslAdjust(std::uint8_t* rgba, int w, int h, const HslAdjust& adj, bool lightOnly = false) {
+void applyHslAdjust(std::uint8_t* rgba, int w, int h, const HslAdjust& adj) {
     if (!rgba || w <= 0 || h <= 0 || !adj.enabled)
         return;
-    const float hueOff = lightOnly ? 0.f : (std::clamp(adj.hue, 0.f, 1.f) - 0.5f);
-    const bool hueId = lightOnly || std::fabs(hueOff) < 0.0005f;
-    const bool satId = lightOnly || std::fabs(adj.sat - 0.5f) < 0.0005f;
+    const float hueOff = std::clamp(adj.hue, 0.f, 1.f) - 0.5f;
+    const bool hueId = std::fabs(hueOff) < 0.0005f;
+    const bool satId = std::fabs(adj.sat - 0.5f) < 0.0005f;
     const bool lightId = std::fabs(adj.light - 0.5f) < 0.0005f;
     if (hueId && satId && lightId)
         return;
@@ -319,6 +298,32 @@ void applyHslAdjust(std::uint8_t* rgba, int w, int h, const HslAdjust& adj, bool
         if (!lightId)
             l = std::clamp(adjustChannelPivot(l, adj.light), 0.f, 1.f);
         hslToRgb(h, s, l, r, g, b);
+        rgba[p] = static_cast<std::uint8_t>(std::clamp(r, 0.f, 1.f) * 255.f + 0.5f);
+        rgba[p + 1] = static_cast<std::uint8_t>(std::clamp(g, 0.f, 1.f) * 255.f + 0.5f);
+        rgba[p + 2] = static_cast<std::uint8_t>(std::clamp(b, 0.f, 1.f) * 255.f + 0.5f);
+    }
+}
+
+// Grayscale plate → single-hue colorize (absolute H/S; Light pivots luma).
+void applyGrayscaleColorize(std::uint8_t* rgba, int w, int h, const HslAdjust& adj) {
+    if (!rgba || w <= 0 || h <= 0 || !adj.enabled)
+        return;
+    const float hue = std::clamp(adj.hue, 0.f, 1.f);
+    const float sat = std::clamp(adj.sat, 0.f, 1.f);
+    const float light = std::clamp(adj.light, 0.f, 1.f);
+    const std::size_t n = static_cast<std::size_t>(w) * static_cast<std::size_t>(h);
+    for (std::size_t i = 0; i < n; ++i) {
+        const std::size_t p = i * 4u;
+        if (rgba[p + 3] < 8)
+            continue;
+        // Expect gray R=G=B; recompute luma if a colour pixel slipped through.
+        const float r0 = rgba[p] / 255.f;
+        const float g0 = rgba[p + 1] / 255.f;
+        const float b0 = rgba[p + 2] / 255.f;
+        const float luma = 0.2126f * r0 + 0.7152f * g0 + 0.0722f * b0;
+        const float l = std::clamp(adjustChannelPivot(luma, light), 0.f, 1.f);
+        float r = 0.f, g = 0.f, b = 0.f;
+        hslToRgb(hue, sat, l, r, g, b);
         rgba[p] = static_cast<std::uint8_t>(std::clamp(r, 0.f, 1.f) * 255.f + 0.5f);
         rgba[p + 1] = static_cast<std::uint8_t>(std::clamp(g, 0.f, 1.f) * 255.f + 0.5f);
         rgba[p + 2] = static_cast<std::uint8_t>(std::clamp(b, 0.f, 1.f) * 255.f + 0.5f);
@@ -420,8 +425,8 @@ bool decodeMaybeAdaptiveIcon(const std::string& path,
         && !hslAdjust->flatten;
 
     // Flatten: solid silhouette filled with the icon's mean colour (keeps hue).
-    // Custom tint pivots that mean H/S/L; +Grayscale zeros sat (Light still works).
-    // Never chrome B/W — that was forcing black on Light themes.
+    // Custom tint pivots that mean H/S/L; +Grayscale with tint uses absolute H/S
+    // (uniform accent fill). Never chrome B/W — that was forcing black on Light.
     if (hslAdjust && hslAdjust->flatten) {
         float meanH = 0.f, meanS = 0.45f, meanL = 0.55f;
         sampleMeanHsl(owned, w, h, meanH, meanS, meanL);
@@ -431,9 +436,13 @@ bool decodeMaybeAdaptiveIcon(const std::string& path,
         float fillS = meanS;
         float fillL = meanL;
         if (hslAdjust->grayscale) {
-            fillS = 0.f;
-            if (hslAdjust->enabled)
+            if (hslAdjust->enabled) {
+                fillH = std::clamp(hslAdjust->hue, 0.f, 1.f);
+                fillS = std::clamp(hslAdjust->sat, 0.f, 1.f);
                 fillL = std::clamp(adjustChannelPivot(meanL, hslAdjust->light), 0.f, 1.f);
+            } else {
+                fillS = 0.f;
+            }
         } else if (hslAdjust->enabled) {
             const float hueOff = std::clamp(hslAdjust->hue, 0.f, 1.f) - 0.5f;
             fillH += hueOff;
@@ -465,7 +474,7 @@ bool decodeMaybeAdaptiveIcon(const std::string& path,
 
     if (grayColour) {
         applyGrayscaleRgb(owned, w, h);
-        applyLightnessPivot(owned, w, h, hslAdjust->light);
+        applyGrayscaleColorize(owned, w, h, *hslAdjust);
         if (wantContrastMask) {
             out.contrastMask.assign(owned, owned + static_cast<std::size_t>(w) * h * 4u);
             buildColourCoverageMask(out.contrastMask.data(), w, h);

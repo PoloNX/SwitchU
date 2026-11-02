@@ -80,6 +80,12 @@ public:
     /// so the first frame after wake can be presented again.
     void recreateSwapchain();
 
+    /// Close and re-open the default NWindow (same managed layer id), then
+    /// rebuild the swapchain. Used once when a Frame Tap viewer connects so
+    /// setPreallocatedBuffer / queueBuffer go through FT's vi mitm (registered
+    /// ~30s after boot, after SwitchU's first window was already open).
+    void remountDisplayForCaptureMitm();
+
     /// Copy the most recently presented framebuffer into tightly-packed RGBA8.
     /// When halfRes is true, downsamples to FB_WIDTH/2 x FB_HEIGHT/2 via the
     /// existing offscreen target. Must be called outside beginFrame/endFrame

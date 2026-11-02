@@ -19,18 +19,19 @@ struct HslAdjust {
     float sat = 0.5f;   // 0.5 = original; 0 = gray; 1 = full sat
     float light = 0.5f; // 0.5 = original; 0 = black; 1 = white
     bool flatten = false;   // silhouette mask (white×alpha)
-    bool grayscale = false; // force gray look / mono when untinted
+    bool grayscale = false; // gray plate; +Custom tint colorizes with H/S/L
 };
 
 // Flatten / grayscale / sat≈0 rules that force a chrome-follow mono mask.
 // Flatten never forces chrome B/W — it keeps a flat fill (sampled hue, or
 // Custom tint / Light). Flatten+Grayscale is a flat gray silhouette.
+// Grayscale + Custom tint is a single-hue colorize (not chrome mono).
 inline bool hslTreatsAsMono(const HslAdjust& a) {
     if (a.flatten)
         return false;
     if (a.grayscale && !a.enabled)
         return true;
-    // Saturation fully down → mono, unless grayscale+tint (L-only colour path).
+    // Saturation fully down → mono, unless grayscale+tint (colorize path).
     if (a.enabled && !a.grayscale && a.sat < 0.02f)
         return true;
     return false;

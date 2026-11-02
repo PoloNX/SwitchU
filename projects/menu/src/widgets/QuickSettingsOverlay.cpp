@@ -1529,7 +1529,7 @@ void QuickSettingsOverlay::setupNavigationActions() {
                 || m_selectedItem == ItemIndex::Wifi
                 || m_selectedItem == ItemIndex::BatterySaver;
             const bool hopFromSleep = m_selectedItem == ItemIndex::PowerActions
-                && m_selectedPower == PowerAction::Sleep;
+                && powerButtonSlotIndex(m_selectedPower) == 0;
             if (hopFromPrev || hopFromToggle || hopFromSleep) {
                 m_playlistFocusParked = false;
                 m_playlistEyeFocused = false;
@@ -1572,9 +1572,11 @@ void QuickSettingsOverlay::setupNavigationActions() {
                 // A / tap toggles; Left stays (or hops to playlist above).
                 break;
             case ItemIndex::PowerActions: {
-                int p = static_cast<int>(m_selectedPower) - 1;
-                if (p < 0) p = static_cast<int>(PowerAction::Count) - 1;
-                m_selectedPower = static_cast<PowerAction>(p);
+                int slot = powerButtonSlotIndex(m_selectedPower);
+                const int count = powerButtonSlotCount();
+                if (slot < 0) slot = 0;
+                slot = (slot - 1 + count) % count;
+                m_selectedPower = powerButtonAtSlot(slot);
                 updateCursorTarget();
                 if (m_callbacks.onNavigateSfx) m_callbacks.onNavigateSfx();
                 break;
@@ -1650,9 +1652,11 @@ void QuickSettingsOverlay::setupNavigationActions() {
                 // A / tap toggles; Right stays on Wi-Fi / Battery Saver.
                 break;
             case ItemIndex::PowerActions: {
-                int p = static_cast<int>(m_selectedPower) + 1;
-                if (p >= static_cast<int>(PowerAction::Count)) p = 0;
-                m_selectedPower = static_cast<PowerAction>(p);
+                int slot = powerButtonSlotIndex(m_selectedPower);
+                const int count = powerButtonSlotCount();
+                if (slot < 0) slot = 0;
+                slot = (slot + 1) % count;
+                m_selectedPower = powerButtonAtSlot(slot);
                 updateCursorTarget();
                 if (m_callbacks.onNavigateSfx) m_callbacks.onNavigateSfx();
                 break;
@@ -1925,6 +1929,7 @@ void QuickSettingsOverlay::show() {
 
 void QuickSettingsOverlay::hide() {
     if (!m_active) return;
+    m_cursor.setVisible(false);
     m_active = false;
     m_animating = true;
     m_playlistOpen = false;
@@ -2120,6 +2125,9 @@ void QuickSettingsOverlay::triggerPowerAction(PowerAction action) {
         case PowerAction::Sleep:
             if (m_callbacks.onSleepRequested) m_callbacks.onSleepRequested();
             break;
+        case PowerAction::Lock:
+            if (m_callbacks.onLockRequested) m_callbacks.onLockRequested();
+            break;
         case PowerAction::Reboot:
             if (m_callbacks.onRebootRequested) m_callbacks.onRebootRequested();
             break;
@@ -2193,15 +2201,56 @@ nxui::Rect QuickSettingsOverlay::computeNowPlayingRect() const {
     };
 }
 
+int QuickSettingsOverlay::powerButtonSlotCount() const {
+    return m_lockScreenEnabled ? 4 : 3;
+}
+
+int QuickSettingsOverlay::powerButtonSlotIndex(PowerAction action) const {
+    if (!m_lockScreenEnabled) {
+        switch (action) {
+            case PowerAction::Sleep: return 0;
+            case PowerAction::Reboot: return 1;
+            case PowerAction::Shutdown: return 2;
+            default: return -1;
+        }
+    }
+    return static_cast<int>(action);
+}
+
+QuickSettingsOverlay::PowerAction QuickSettingsOverlay::powerButtonAtSlot(int slot) const {
+    if (!m_lockScreenEnabled) {
+        switch (slot) {
+            case 0: return PowerAction::Sleep;
+            case 1: return PowerAction::Reboot;
+            default: return PowerAction::Shutdown;
+        }
+    }
+    return static_cast<PowerAction>(std::clamp(slot, 0, static_cast<int>(PowerAction::Count) - 1));
+}
+
 nxui::Rect QuickSettingsOverlay::computePowerButtonRect(PowerAction action) const {
     // Match the outer width of every other QS card (cx - 4, cw + 8).
+    const int idx = powerButtonSlotIndex(action);
+    if (idx < 0)
+        return {};
     nxui::Rect panel = computePanelRect();
     float left = panel.x + 18.f;
     float rowW = panel.width - 36.f;
-    float btnW = (rowW - 2.f * kPowerBtnGap) / 3.f;
-    int idx = static_cast<int>(action);
+    const int count = powerButtonSlotCount();
+    float btnW = (rowW - (count - 1) * kPowerBtnGap) / static_cast<float>(count);
     float bx = left + idx * (btnW + kPowerBtnGap);
     return {bx, panel.y + kPowerBtnY, btnW, kPowerBtnH};
+}
+
+void QuickSettingsOverlay::setLockScreenEnabled(bool enabled) {
+    m_lockScreenEnabled = enabled;
+    if (!enabled && m_selectedPower == PowerAction::Lock)
+        m_selectedPower = PowerAction::Sleep;
+}
+
+void QuickSettingsOverlay::hideCursorInstant() {
+    m_cursor.setVisible(false);
+    m_cursor.setInstantMotion(true);
 }
 
 nxui::Rect QuickSettingsOverlay::computeSliderTrackRect(ItemIndex item) const {
@@ -2692,7 +2741,8 @@ void QuickSettingsOverlay::handleTouch(nxui::Input& input) {
             return;
         }
 
-        for (auto pa : {PowerAction::Sleep, PowerAction::Reboot, PowerAction::Shutdown}) {
+        for (int slot = 0; slot < powerButtonSlotCount(); ++slot) {
+            const PowerAction pa = powerButtonAtSlot(slot);
             nxui::Rect btnRect = computePowerButtonRect(pa);
             if (btnRect.contains(tx, ty)) {
                 m_selectedItem = ItemIndex::PowerActions;
@@ -3446,6 +3496,18 @@ void QuickSettingsOverlay::render(nxui::Renderer& ren) {
                 float ty = btn.y + (btn.height - lsz.y * textScale) * 0.5f;
                 ren.drawText(label, {curXBtn + iconSlot + iconGap, ty}, m_smallFont,
                              textColor, textScale);
+            } else if (pa == PowerAction::Lock) {
+                // Compact padlock so the 4-wide power row stays readable.
+                const float iconSlot = 16.f;
+                float totalW = iconSlot + iconGap + lsz.x * textScale;
+                float curXBtn = btn.x + (btn.width - totalW) * 0.5f;
+                const float cx = curXBtn + iconSlot * 0.5f;
+                const float cy = btn.y + btn.height * 0.5f;
+                ren.drawRoundedRect({cx - 5.5f, cy - 1.5f, 11.f, 9.f}, textColor, 2.2f);
+                ren.drawRoundedRectOutline({cx - 4.f, cy - 8.f, 8.f, 8.f}, textColor, 3.5f, 1.6f);
+                float ty = btn.y + (btn.height - lsz.y * textScale) * 0.5f;
+                ren.drawText(label, {curXBtn + iconSlot + iconGap, ty}, m_smallFont,
+                             textColor, textScale);
             } else {
                 std::string iconGlyph = (pa == PowerAction::Reboot)
                     ? utf8Codepoint(0xE08F) : utf8Codepoint(0xE0B8);
@@ -3466,9 +3528,11 @@ void QuickSettingsOverlay::render(nxui::Renderer& ren) {
         }
     };
 
+    if (m_lockScreenEnabled)
+        drawPowerBtn(PowerAction::Lock, i18n.tr("quicksettings.lock", "Lock"));
     drawPowerBtn(PowerAction::Sleep, i18n.tr("quicksettings.sleep", "Sleep"));
     drawPowerBtn(PowerAction::Reboot, i18n.tr("quicksettings.reboot", "Reboot"));
-    drawPowerBtn(PowerAction::Shutdown, i18n.tr("quicksettings.power_off", "Power Off"));
+    drawPowerBtn(PowerAction::Shutdown, i18n.tr("quicksettings.off", "Off"));
 
     // Clip playlist-row cursor to the list viewport so it cannot paint over
     // cover art or below the playlist panel during touch scroll/reorder.

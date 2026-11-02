@@ -18,6 +18,8 @@ void ThemeShopScreen::buildTabs() {
     m_tabs.push_back(themeshop::tabs::SoundsTab::build(*this));
     DebugLog::log("[themeshop]   InterfaceTab...");
     m_tabs.push_back(themeshop::tabs::InterfaceTab::build(*this));
+    DebugLog::log("[themeshop]   LockScreenTab...");
+    m_tabs.push_back(themeshop::tabs::LockScreenTab::build(*this));
     m_cachedTabContentWidgets.clear();
     m_cachedTabContentWidgets.resize(m_tabs.size());
     DebugLog::log("[themeshop] buildTabs() done (%d tabs)", (int)m_tabs.size());

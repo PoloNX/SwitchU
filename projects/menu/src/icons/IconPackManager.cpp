@@ -384,11 +384,6 @@ std::string ensurePackPreview(const std::string& packDir, const std::string& pac
 
     std::error_code ec;
 
-    // Prefer authored preview.png (transparent glyphs; glass well shows through).
-    const fs::path authored = fs::path(packDir) / "preview.png";
-    if (fs::is_regular_file(authored, ec))
-        return authored.generic_string();
-
     std::string leaf = packId.empty() ? fs::path(packDir).filename().string() : packId;
     for (char& c : leaf) {
         if (c == ':' || c == '/' || c == '\\' || c == ' ')
@@ -418,7 +413,9 @@ std::string ensurePackPreview(const std::string& packDir, const std::string& pac
     if (fs::is_regular_file(cachePath, ec) && !cacheIsStale(packDir))
         return cachePath.generic_string();
 
-    // Bake once onto a transparent plate (no opaque black fill).
+    // Bake from live glyphs onto a transparent plate so Installed Icons /
+    // tint HSL always match what the sidebar shows (not a stale authored
+    // preview.png that may have an opaque plate).
     constexpr int kCols = 3;
     constexpr int kRows = 2;
     constexpr int kCell = 128;
@@ -510,13 +507,17 @@ std::string ensurePackPreview(const std::string& packDir, const std::string& pac
         ++placed;
     }
 
-    if (placed <= 0)
-        return {};
+    if (placed > 0) {
+        fs::create_directories(cachePath.parent_path(), ec);
+        if (stbi_write_png(cachePath.string().c_str(), kOutW, kOutH, 4, canvas.data(), kOutW * 4) != 0)
+            return cachePath.generic_string();
+    }
 
-    fs::create_directories(cachePath.parent_path(), ec);
-    if (stbi_write_png(cachePath.string().c_str(), kOutW, kOutH, 4, canvas.data(), kOutW * 4) == 0)
-        return {};
-    return cachePath.generic_string();
+    // Bake failed — last resort is an authored catalog preview.
+    const fs::path authored = fs::path(packDir) / "preview.png";
+    if (fs::is_regular_file(authored, ec))
+        return authored.generic_string();
+    return {};
 }
 
 bool isThemePackId(const std::string& packId) {

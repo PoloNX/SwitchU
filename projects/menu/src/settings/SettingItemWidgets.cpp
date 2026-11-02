@@ -149,6 +149,13 @@ public:
         m_desc->setVAlign(nxui::Label::VAlign::Top);
         m_left->addChild(m_desc);
 
+        m_preview = std::make_shared<nxui::Label>("");
+        m_preview->setScale(1.f);
+        m_preview->setHAlign(nxui::Label::HAlign::Right);
+        m_preview->setVAlign(nxui::Label::VAlign::Center);
+        m_preview->setVisible(false);
+        addChild(m_preview);
+
         m_right = std::make_shared<nxui::Box>(nxui::Axis::ROW);
         addChild(m_right);
     }
@@ -191,12 +198,46 @@ protected:
         const float indent = std::max(0, m_item.indentLevel) * kIndentStep;
         float innerX = row.x + kHorizontalInset + indent;
         float innerW = std::max(0.f, row.width - kHorizontalInset * 2.f - indent);
-        float rightW = m_right->isVisible() ? std::clamp(preferredRightWidth(row.width), 0.f, innerW) : 0.f;
-        float centerGap = rightW > 0.f ? kColumnGap : 0.f;
-        float leftW = std::max(0.f, innerW - rightW - centerGap);
+        // Keep the selector pill at a normal width even when a preview sits beside it.
+        float rightW = m_right->isVisible()
+            ? std::clamp(preferredRightWidth(row.width), 0.f, innerW)
+            : 0.f;
+        if (m_item.previewFont && !m_item.previewText.empty() && rightW > 0.f)
+            rightW = std::min(rightW, 178.f);
+
+        // Inline sample before the control: [label] [12:34] [dropdown]
+        const bool showPreview = m_item.previewFont && !m_item.previewText.empty();
+        float previewW = 0.f;
+        if (showPreview) {
+            if (m_item.previewFont != m_cachedPreviewFont) {
+                m_cachedPreviewFont = m_item.previewFont;
+                m_preview->setFont(m_item.previewFont);
+            }
+            if (m_cachedPreviewText != m_item.previewText) {
+                m_cachedPreviewText = m_item.previewText;
+                m_preview->setText(m_cachedPreviewText);
+            }
+            const nxui::Vec2 psz = m_item.previewFont->measure(m_item.previewText);
+            previewW = std::clamp(psz.x + 8.f, 88.f, 140.f);
+        }
+
+        float usedTrailing = 0.f;
+        if (previewW > 0.f) usedTrailing += previewW;
+        if (rightW > 0.f) usedTrailing += rightW;
+        if (previewW > 0.f && rightW > 0.f) usedTrailing += kColumnGap;
+        if (usedTrailing > 0.f) usedTrailing += kColumnGap;
+
+        float leftW = std::max(0.f, innerW - usedTrailing);
 
         nxui::Rect leftRect = {innerX, row.y, leftW, row.height};
-        nxui::Rect rightRect = {innerX + leftW + centerGap, row.y, rightW, row.height};
+        float cursorX = innerX + leftW;
+        if (usedTrailing > 0.f)
+            cursorX += kColumnGap;
+
+        nxui::Rect previewRect = {cursorX, row.y, previewW, row.height};
+        if (previewW > 0.f)
+            cursorX += previewW + kColumnGap;
+        nxui::Rect rightRect = {cursorX, row.y, rightW, row.height};
 
         m_left->setRect(leftRect);
         m_right->setRect(rightRect);
@@ -225,6 +266,17 @@ protected:
                              leftRect.width, m_descMeasure.y});
         } else {
             m_desc->setRect({leftRect.x, textTop, leftRect.width, 0.f});
+        }
+
+        if (showPreview) {
+            m_preview->setVisible(true);
+            m_preview->setOpacity(contentOpacity());
+            if (const nxui::Theme* rowTheme = theme())
+                m_preview->setTextColor(rowTheme->textPrimary);
+            m_preview->setRect(previewRect);
+        } else {
+            m_preview->setVisible(false);
+            m_preview->setRect({innerX, row.y, 0.f, 0.f});
         }
 
         syncRight(rightRect);
@@ -300,6 +352,7 @@ protected:
     std::shared_ptr<nxui::Box> m_right;
     std::shared_ptr<nxui::Label> m_label;
     std::shared_ptr<nxui::Label> m_desc;
+    std::shared_ptr<nxui::Label> m_preview;
 
 private:
     static constexpr float kHorizontalInset = 10.f;
@@ -309,9 +362,11 @@ private:
 
     nxui::Font* m_cachedFont = nullptr;
     nxui::Font* m_cachedSmallFont = nullptr;
+    nxui::Font* m_cachedPreviewFont = nullptr;
     const nxui::Theme* m_cachedTheme = nullptr;
     std::string m_cachedLabelText;
     std::string m_cachedDescText;
+    std::string m_cachedPreviewText;
     std::string m_displayedDescription;
     float m_cachedLabelScale = -1.f;
     bool m_cachedShowDesc = false;

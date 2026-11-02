@@ -152,6 +152,8 @@ public:
         bool                     boolVal   = false;
         bool                     suppressToggleSfx = false;
         bool                     enabled   = true;
+        // When true, the row takes no height and is skipped for focus.
+        bool                     hidden    = false;
         int                      indentLevel = 0;
         float                    floatVal  = 0.f;
         int                      intVal    = 0;
@@ -160,6 +162,10 @@ public:
         std::string              infoText;
         float                    anim01 = 0.f;
         bool                     wrapLabel = false;
+        // Optional large sample under the row (Theme Shop lock clock fonts).
+        float                    extraHeight = 0.f;
+        nxui::Font*              previewFont = nullptr;
+        std::string              previewText;
 
         std::function<void(SettingItem&)> onChange;
         std::function<void(SettingItem&)> onSecondary;
@@ -178,7 +184,7 @@ public:
         }
 
         bool focusable() const {
-            if (!enabled)
+            if (hidden || !enabled)
                 return false;
             return type == ItemType::Toggle || type == ItemType::Slider
                 || type == ItemType::Selector || type == ItemType::Action;

@@ -83,7 +83,70 @@ void IconGrid::rebindLayoutMorphAnchor() {
 
 bool IconGrid::isDynamicLineScrolling() const {
     return m_layoutMode == AppLayoutMode::DynamicLine
-        && std::abs(m_lineScrollOffset.value() - m_lineScrollOffset.target()) > 0.01f;
+        && (m_lineDragActive
+            || std::abs(m_lineScrollOffset.value() - m_lineScrollOffset.target()) > 0.01f);
+}
+
+float IconGrid::lineItemSpacing() const {
+    return kLineIconBase + std::max(8.f, m_padX * 0.4f);
+}
+
+void IconGrid::beginLineDrag() {
+    if (m_layoutMode != AppLayoutMode::DynamicLine || m_layoutMorphing)
+        return;
+    m_lineDragActive = true;
+    m_lineDragStartOffset = m_lineScrollOffset.value();
+    m_lineScrollOffset.setImmediate(m_lineDragStartOffset);
+}
+
+void IconGrid::dragLineToTouchDelta(float touchDeltaX) {
+    if (!m_lineDragActive || m_layoutMode != AppLayoutMode::DynamicLine)
+        return;
+    const float spacing = std::max(1.f, lineItemSpacing());
+    // Finger right → earlier titles (offset decreases); left → later titles.
+    const float maxIdx = std::max(0.f, static_cast<float>(m_allIcons.size()) - 1.f);
+    const float offset = std::clamp(m_lineDragStartOffset - touchDeltaX / spacing,
+                                    0.f, maxIdx);
+    m_lineScrollOffset.setImmediate(offset);
+    m_lineLayoutCacheCount = -1;
+}
+
+int IconGrid::nearestFocusableToLineOffset() const {
+    if (m_allIcons.empty())
+        return -1;
+    const float offset = m_lineScrollOffset.value();
+    const int prefer = std::clamp(static_cast<int>(std::lround(offset)),
+                                  0, static_cast<int>(m_allIcons.size()) - 1);
+    if (m_allIcons[static_cast<std::size_t>(prefer)]
+        && m_allIcons[static_cast<std::size_t>(prefer)]->isFocusable())
+        return prefer;
+    for (int dist = 1; dist < static_cast<int>(m_allIcons.size()); ++dist) {
+        const int right = prefer + dist;
+        if (right < static_cast<int>(m_allIcons.size())
+            && m_allIcons[static_cast<std::size_t>(right)]
+            && m_allIcons[static_cast<std::size_t>(right)]->isFocusable())
+            return right;
+        const int left = prefer - dist;
+        if (left >= 0
+            && m_allIcons[static_cast<std::size_t>(left)]
+            && m_allIcons[static_cast<std::size_t>(left)]->isFocusable())
+            return left;
+    }
+    return -1;
+}
+
+int IconGrid::endLineDrag() {
+    if (!m_lineDragActive)
+        return focusedGlobalIndex();
+    m_lineDragActive = false;
+    const int nearest = nearestFocusableToLineOffset();
+    if (nearest < 0)
+        return -1;
+    // Short settle so release doesn't feel like a hard stop.
+    constexpr float kDragSettleDuration = 0.22f;
+    if (!focusGlobalIndex(nearest, false, kDragSettleDuration))
+        return -1;
+    return nearest;
 }
 
 void IconGrid::setDynamicLineUpTarget(nxui::Widget* target) {
@@ -405,7 +468,6 @@ nxui::Rect IconGrid::dynamicIconRect(int index, float* outScale,
     const float offset = m_lineScrollOffset.value();
     // Carousel sizing is independent of grid density. Square icons stay square;
     // apps with a Poster and folders (when posters are enabled) use tall 2:3.
-    constexpr float kIconBase = 150.f;
     // Halfway between the large (300@1.18) and clock-safe (268@1.06) sizes.
     constexpr float kPosterBaseW = 284.f;
     bool poster = false;
@@ -413,10 +475,10 @@ nxui::Rect IconGrid::dynamicIconRect(int index, float* outScale,
         const auto& icon = m_allIcons[(std::size_t)index];
         poster = icon && icon->usesPosterFrame();
     }
-    const float baseCellW = poster ? kPosterBaseW : kIconBase;
-    const float baseCellH = poster ? (kPosterBaseW * 1.5f) : kIconBase;
+    const float baseCellW = poster ? kPosterBaseW : kLineIconBase;
+    const float baseCellH = poster ? (kPosterBaseW * 1.5f) : kLineIconBase;
     // Scroll pitch stays icon-sized so posters can hero-overlap neighbours.
-    const float lineSpacing = kIconBase + std::max(8.f, m_padX * 0.4f);
+    const float lineSpacing = lineItemSpacing();
 
     float d = static_cast<float>(index) - offset;
     const float absD = std::abs(d);
@@ -756,7 +818,10 @@ void IconGrid::onUpdate(float dt) {
     if (m_layoutMode == AppLayoutMode::DynamicLine) {
         m_lineScrollOffset.update(dt);
         int cur = focusedGlobalIndex();
-        if (cur >= 0 && std::abs(m_lineScrollOffset.target() - static_cast<float>(cur)) > 0.001f) {
+        // While the finger owns the offset, do not re-anchor to focus.
+        if (!m_lineDragActive
+            && cur >= 0
+            && std::abs(m_lineScrollOffset.target() - static_cast<float>(cur)) > 0.001f) {
             m_lineScrollOffset.set(static_cast<float>(cur), kLineScrollDuration,
                                    nxui::Easing::outCubic);
         }

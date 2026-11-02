@@ -4,6 +4,15 @@
 #include <array>
 #include <cstdarg>
 
+#ifdef NXUI_BACKEND_DEKO3D
+extern "C" {
+    void __nx_win_exit(void);
+    void __nx_win_init(void);
+    // Weak in libnx (0): __nx_win_init opens this managed layer id.
+    extern u64 __nx_vi_layer_id;
+}
+#endif
+
 namespace nxui {
 
 void GpuDevice::logGpu(const char* fmt, ...) {
@@ -297,6 +306,44 @@ void GpuDevice::recreateSwapchain() {
     // Force the next beginFrame() to re-acquire a slot from the fresh swapchain.
     m_slot = -1;
     logGpu("[GpuDevice] swapchain re-created after sleep (valid=%d)", (bool)m_swapchain);
+#endif
+}
+
+void GpuDevice::remountDisplayForCaptureMitm() {
+#ifdef NXUI_BACKEND_DEKO3D
+    if (!m_dev || !m_queue)
+        return;
+
+    m_queue.waitIdle();
+    m_swapchain = {};
+
+    // Drop the boot-time NWindow (opened before FT's vi mitm existed).
+    // Re-opening the *same* managed layer does not produce setPreallocatedBuffer
+    // traffic the mitm can see — create a fresh managed layer so binder
+    // handshake matches a HOME-return process restart (~60fps fences).
+    ::__nx_win_exit();
+    u64 newLayer = 0;
+    const Result layerRc = appletCreateManagedDisplayLayer(&newLayer);
+    if (R_SUCCEEDED(layerRc) && newLayer != 0)
+        ::__nx_vi_layer_id = newLayer;
+    ::__nx_win_init();
+
+    std::array<DkImage const*, NUM_FB> fbArray;
+    for (int i = 0; i < NUM_FB; ++i)
+        fbArray[i] = &m_fbImages[i];
+    m_swapchain = dk::SwapchainMaker{m_dev, nwindowGetDefault(), fbArray}.create();
+
+    if (m_swapchain) {
+        const int slot = m_queue.acquireImage(m_swapchain);
+        if (slot >= 0)
+            m_queue.presentImage(m_swapchain, slot);
+    }
+
+    m_slot = -1;
+    logGpu("[GpuDevice] display remounted for FT capture mitm (valid=%d newLayer=0x%llx layerRc=0x%x)",
+           (bool)m_swapchain, (unsigned long long)newLayer, layerRc);
+#else
+    recreateSwapchain();
 #endif
 }
 

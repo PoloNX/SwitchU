@@ -177,6 +177,10 @@ rule("switch")
                     end
                 end
 
+                -- Official user music drop folder (empty until the user adds
+                -- tracks). Kept outside romfs/sounds so updates do not clobber it.
+                os.mkdir(path.join(assetsdir, "music"))
+
                 cprint("${bright green}installed${clear} assets → %s", assetsdir)
             end
         end

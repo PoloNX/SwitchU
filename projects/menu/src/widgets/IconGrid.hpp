@@ -36,6 +36,13 @@ public:
     AppLayoutMode layoutMode() const { return m_layoutMode; }
     bool isDynamicLine() const { return m_layoutMode == AppLayoutMode::DynamicLine; }
     bool isDynamicLineScrolling() const;
+    bool isLineDragActive() const { return m_lineDragActive; }
+    // Touch-drag the carousel: finger-follow while held, then snap to a title.
+    void beginLineDrag();
+    void dragLineToTouchDelta(float touchDeltaX);
+    // Returns the focused global index after settle, or -1.
+    int endLineDrag();
+    int nearestFocusableToLineOffset() const;
     bool isLayoutMorphing() const { return m_layoutMorphing; }
     // After a model rebuild remaps global indices (compact line ↔ padded grid),
     // re-anchor morph page + line scroll to the focused title so the cursor and
@@ -122,6 +129,7 @@ private:
                                float* outOpacity = nullptr,
                                float* outDistance = nullptr) const;
     float pageStride() const;
+    float lineItemSpacing() const;
 
     // Carousel render scratch. Reused across frames so drawing the line does
     // not allocate every frame, and each survivor keeps the rect that was
@@ -147,11 +155,14 @@ private:
 
     AppLayoutMode m_layoutMode = AppLayoutMode::Grid;
     nxui::AnimatedFloat m_lineScrollOffset{0.f};
+    bool m_lineDragActive = false;
+    float m_lineDragStartOffset = 0.f;
     // 0 = grid geometry (usual), 1 = carousel geometry (single row)
     nxui::AnimatedFloat m_layoutMorph{0.f};
     bool m_layoutMorphing = false;
     int  m_layoutMorphPage = 0;
     static constexpr float kLayoutMorphDuration = 0.40f;
+    static constexpr float kLineIconBase = 150.f;
     nxui::Widget* m_lineUpTarget = nullptr;
     nxui::Widget* m_lineDownTarget = nullptr;
     bool m_linePosterAspect = false;

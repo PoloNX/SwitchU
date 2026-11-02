@@ -107,8 +107,13 @@ bool applyScreenUnderscan() {
 } // namespace switchu::menu
 
 #ifndef SWITCHU_HOMEBREW
+extern "C" size_t g_switchuHeapSize;
+extern "C" char* fake_heap_start;
+extern "C" char* fake_heap_end;
+
 namespace {
-constexpr size_t kHeapLadder[] = {
+// Full ladder — used only after SD is up when Frame Tap is NOT installed.
+constexpr size_t kHeapLadderFull[] = {
     416u * 1024u * 1024u,
     400u * 1024u * 1024u,
     384u * 1024u * 1024u,
@@ -119,17 +124,63 @@ constexpr size_t kHeapLadder[] = {
     256u * 1024u * 1024u,
     kMenuAppletHeapSize,
 };
+// Boot lean: __libnx_initheap cannot see SD (sm/fs not up yet). Starting lean
+// leaves ~42 MB Applet-pool free for FT's donor. Non-FT consoles grow via
+// expandHeapIfNoFrameTap() once sdmc is mounted. Soak showed runtime shrink
+// does not return pool pages (process total unchanged).
+constexpr size_t kHeapLadderBootLean[] = {
+    304u * 1024u * 1024u,
+    288u * 1024u * 1024u,
+    272u * 1024u * 1024u,
+    256u * 1024u * 1024u,
+    240u * 1024u * 1024u,
+    kMenuAppletHeapSize,
+};
+
+bool frameTapConfigPresent() {
+    FILE* f = std::fopen("sdmc:/config/switch-frame-tap/config.ini", "rb");
+    if (!f)
+        return false;
+    std::fclose(f);
+    return true;
 }
 
-extern "C" size_t g_switchuHeapSize = 0;
-
-extern "C" void __libnx_initheap(void) {
-    extern char* fake_heap_start;
-    extern char* fake_heap_end;
+void expandHeapIfNoFrameTap() {
+    if (frameTapConfigPresent()) {
+        DebugLog::log("[ft-heap] boot lean kept (%zuKB) — FT config present",
+                      g_switchuHeapSize / 1024u);
+        return;
+    }
 
     void* address = nullptr;
     size_t granted = 0;
-    for (size_t requested : kHeapLadder) {
+    for (size_t requested : kHeapLadderFull) {
+        if (requested <= g_switchuHeapSize)
+            continue;
+        if (R_SUCCEEDED(svcSetHeapSize(&address, requested)) && address) {
+            granted = requested;
+            break;
+        }
+    }
+    if (granted == 0) {
+        DebugLog::log("[ft-heap] no-FT grow skipped (already %zuKB or grant failed)",
+                      g_switchuHeapSize / 1024u);
+        return;
+    }
+    const size_t before = g_switchuHeapSize;
+    g_switchuHeapSize = granted;
+    fake_heap_start = static_cast<char*>(address);
+    fake_heap_end = static_cast<char*>(address) + granted;
+    DebugLog::log("[ft-heap] no-FT grow %zuKB -> %zuKB", before / 1024u, granted / 1024u);
+}
+}
+
+size_t g_switchuHeapSize = 0;
+
+extern "C" void __libnx_initheap(void) {
+    void* address = nullptr;
+    size_t granted = 0;
+    for (size_t requested : kHeapLadderBootLean) {
         if (R_SUCCEEDED(svcSetHeapSize(&address, requested))) {
             granted = requested;
             break;
@@ -212,6 +263,8 @@ extern "C" void __appInit(void) {
     switchu::FileLog::open("menu");
     DebugLog::openFileLog();
     DebugLog::log("[menu] __appInit complete (sd mount: 0x%X)", rc);
+    // Grow off the boot-lean heap when Frame Tap is not installed.
+    expandHeapIfNoFrameTap();
 
     rc = nsInitialize();
     if (R_FAILED(rc))
@@ -406,7 +459,8 @@ int main(int argc, char* argv[]) {
         auto makeMenuActivity = [sysStatus, startMode](bool fromTutorial = false) -> std::unique_ptr<nxui::Activity> {
             auto activity = std::make_unique<WiiUMenuApp>();
             activity->setStartupStatus(sysStatus,
-                startMode == switchu::smi::MenuStartMode::AppletReturn);
+                startMode == switchu::smi::MenuStartMode::AppletReturn,
+                startMode == switchu::smi::MenuStartMode::LockScreen);
             activity->setTutorialStartupFade(fromTutorial);
             return activity;
         };

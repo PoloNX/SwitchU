@@ -86,9 +86,10 @@ std::string resolvePackIconsDirectory(const std::string& assetsBase, const std::
 
 std::string displayNameForPack(const std::string& packId);
 
-// Prefer pack preview.png; else cached transparent mosaic; else bake once
-// under sdmc:/config/SwitchU/icon_pack_previews/ (fills missing glyphs from
-// default). The mosaic is rebaked when the pack's glyphs are newer than it.
+// Prefer an on-device transparent mosaic from the pack's live glyphs (cached
+// under sdmc:/config/SwitchU/icon_pack_previews/, missing slots filled from
+// default). Falls back to authored preview.png only if baking fails. The
+// mosaic is rebaked when the pack's glyphs are newer than the cache.
 std::string ensurePackPreview(const std::string& packDir, const std::string& packId = {});
 
 bool isThemePackId(const std::string& packId);

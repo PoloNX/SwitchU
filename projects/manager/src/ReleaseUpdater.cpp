@@ -35,6 +35,13 @@ std::mutex g_networkMutex;
 bool g_nifmInitialized = false;
 bool g_socketInitialized = false;
 bool g_curlInitialized = false;
+std::atomic<bool> g_cancelRequested{false};
+
+bool throwIfCancelled(const char* what) {
+    if (!g_cancelRequested.load())
+        return false;
+    throw std::runtime_error(what);
+}
 
 std::string lower(std::string value) {
     std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
@@ -120,8 +127,15 @@ void configureCurl(CURL* curl, const std::string& url) {
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 12L);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 180L);
+    // Fail dead/stalled transfers instead of sitting through the full 180s.
+    curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, 1024L); // 1 KiB/s
+    curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, 30L);
     curl_easy_setopt(curl, CURLOPT_IPRESOLVE, CURL_IPRESOLVE_V4);
     curl_easy_setopt(curl, CURLOPT_USERAGENT, "SwitchU-Manager/" SWITCHU_VERSION);
+}
+
+int abortOnCancelXfer(void*, curl_off_t, curl_off_t, curl_off_t, curl_off_t) {
+    return g_cancelRequested.load() ? 1 : 0;
 }
 
 size_t appendResponse(char* data, size_t size, size_t count, void* user) {
@@ -132,12 +146,15 @@ size_t appendResponse(char* data, size_t size, size_t count, void* user) {
 
 std::string getTextLocked(const std::string& url) {
     ensureNetworkLocked();
+    throwIfCancelled("Update check cancelled");
     CURL* curl = curl_easy_init();
     if (!curl) throw std::runtime_error("curl_easy_init failed");
     std::string response;
     configureCurl(curl, url);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, appendResponse);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
+    curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
+    curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, abortOnCancelXfer);
     curl_slist* headers = nullptr;
     headers = curl_slist_append(headers, "Accept: application/vnd.github+json");
     headers = curl_slist_append(headers, "X-GitHub-Api-Version: 2022-11-28");
@@ -147,6 +164,8 @@ std::string getTextLocked(const std::string& url) {
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
     curl_slist_free_all(headers);
     curl_easy_cleanup(curl);
+    if (rc == CURLE_ABORTED_BY_CALLBACK || g_cancelRequested.load())
+        throw std::runtime_error("Update check cancelled");
     if (rc != CURLE_OK)
         throw std::runtime_error(std::string("GitHub request failed: ") + curl_easy_strerror(rc));
     if (status < 200 || status >= 300)
@@ -158,10 +177,36 @@ struct DownloadContext {
     std::FILE* file = nullptr;
     Sha256Context sha{};
     std::atomic<float>* progress = nullptr;
+    std::atomic<std::uint64_t>* bytesReceived = nullptr;
+    std::uint64_t expectedSize = 0;
     std::uint64_t received = 0;
 };
 
+void storeDownloadProgress(DownloadContext& context, curl_off_t total, curl_off_t current) {
+    if (context.bytesReceived)
+        context.bytesReceived->store(static_cast<std::uint64_t>(std::max<curl_off_t>(0, current)));
+    if (!context.progress)
+        return;
+    curl_off_t denom = total;
+    if (denom <= 0 && context.expectedSize > 0)
+        denom = static_cast<curl_off_t>(context.expectedSize);
+    if (denom > 0) {
+        context.progress->store(std::clamp(
+            static_cast<float>(current) / static_cast<float>(denom), 0.f, 1.f));
+        return;
+    }
+    // No Content-Length and no GitHub asset size — keep the bar moving with a
+    // soft asymptotic so download does not look frozen at 0%.
+    if (current > 0) {
+        constexpr float kSoftBytes = 8.f * 1024.f * 1024.f;
+        const float soft = 1.f - (1.f / (1.f + static_cast<float>(current) / kSoftBytes));
+        context.progress->store(std::min(0.95f, soft));
+    }
+}
+
 size_t writeDownload(char* data, size_t size, size_t count, void* user) {
+    if (g_cancelRequested.load())
+        return 0;
     const size_t bytes = size * count;
     auto* context = static_cast<DownloadContext*>(user);
     if (context->received + bytes > kMaxArchiveBytes)
@@ -170,15 +215,16 @@ size_t writeDownload(char* data, size_t size, size_t count, void* user) {
         return 0;
     sha256ContextUpdate(&context->sha, data, bytes);
     context->received += bytes;
+    storeDownloadProgress(*context, 0, static_cast<curl_off_t>(context->received));
     return bytes;
 }
 
 int updateDownloadProgress(void* user, curl_off_t total, curl_off_t current,
                            curl_off_t, curl_off_t) {
-    auto* progress = static_cast<std::atomic<float>*>(user);
-    if (total > 0)
-        progress->store(std::clamp(static_cast<float>(current) / static_cast<float>(total),
-                                   0.f, 1.f));
+    if (g_cancelRequested.load())
+        return 1;
+    auto* context = static_cast<DownloadContext*>(user);
+    storeDownloadProgress(*context, total, current);
     return 0;
 }
 
@@ -193,7 +239,10 @@ std::string hexDigest(const std::array<std::uint8_t, SHA256_HASH_SIZE>& digest) 
     return out;
 }
 
-std::string downloadLocked(const ReleaseInfo& release, std::atomic<float>& progress) {
+std::string downloadLocked(const ReleaseInfo& release,
+                           std::atomic<float>& progress,
+                           std::atomic<std::uint64_t>* bytesReceived) {
+    throwIfCancelled("Update cancelled");
     std::filesystem::create_directories(kWorkRoot);
     std::error_code ec;
     std::filesystem::remove(kArchivePartPath, ec);
@@ -209,18 +258,26 @@ std::string downloadLocked(const ReleaseInfo& release, std::atomic<float>& progr
         throw std::runtime_error("curl_easy_init failed");
     }
     context.progress = &progress;
+    context.bytesReceived = bytesReceived;
+    context.expectedSize = release.downloadSize;
+    if (bytesReceived)
+        bytesReceived->store(0);
     configureCurl(curl, release.downloadUrl);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeDownload);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &context);
     curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
     curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, updateDownloadProgress);
-    curl_easy_setopt(curl, CURLOPT_XFERINFODATA, &progress);
+    curl_easy_setopt(curl, CURLOPT_XFERINFODATA, &context);
     const CURLcode rc = curl_easy_perform(curl);
     long status = 0;
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
     curl_easy_cleanup(curl);
     std::fclose(context.file);
     context.file = nullptr;
+    if (rc == CURLE_ABORTED_BY_CALLBACK || g_cancelRequested.load()) {
+        std::filesystem::remove(kArchivePartPath, ec);
+        throw std::runtime_error("Update cancelled");
+    }
     if (rc != CURLE_OK || status < 200 || status >= 300) {
         std::filesystem::remove(kArchivePartPath, ec);
         if (rc != CURLE_OK)
@@ -314,8 +371,27 @@ std::vector<std::string> extractArchive(std::atomic<float>& progress,
             std::ofstream output(destination, std::ios::binary | std::ios::trunc);
             std::array<char, 64 * 1024> buffer{};
             int read = 0;
-            while (output && (read = unzReadCurrentFile(archive, buffer.data(), buffer.size())) > 0)
+            std::uint64_t written = 0;
+            const float entryBase = hasEntryCount
+                ? static_cast<float>(processedEntries)
+                    / static_cast<float>(globalInfo.number_entry)
+                : 0.f;
+            const float entrySpan = hasEntryCount
+                ? 1.f / static_cast<float>(globalInfo.number_entry)
+                : 0.f;
+            while (output && (read = unzReadCurrentFile(archive, buffer.data(), buffer.size())) > 0) {
                 output.write(buffer.data(), read);
+                written += static_cast<std::uint64_t>(read);
+                // Tick overall % inside large entries so extract does not look stuck.
+                if (hasEntryCount && info.uncompressed_size > 0) {
+                    const float fileFrac = std::clamp(
+                        static_cast<float>(written)
+                            / static_cast<float>(info.uncompressed_size),
+                        0.f, 1.f);
+                    progress.store(progressBase
+                                   + progressSpan * (entryBase + entrySpan * fileFrac));
+                }
+            }
             const int closeRc = unzCloseCurrentFile(archive);
             if (!output || read < 0 || closeRc != UNZ_OK) {
                 unzClose(archive);
@@ -451,25 +527,55 @@ void installFiles(const std::vector<std::string>& files,
         ec.clear();
         std::filesystem::remove(item.backup, ec);
         ec.clear();
-        item.hadOriginal = std::filesystem::is_regular_file(item.destination, ec) && !ec;
-        if (item.hadOriginal) {
-            std::filesystem::rename(item.destination, item.backup, ec);
+
+        // Manager cannot replace its own running NRO (rename and overwrite both
+        // fail with I/O error). Stage beside it; daemon promotes after reboot.
+        if (item.destination.filename() == "SwitchU-Manager.nro") {
+            const std::filesystem::path pending =
+                item.destination.string() + ".new";
+            std::filesystem::remove(pending, ec);
+            ec.clear();
+            std::filesystem::rename(item.temporary, pending, ec);
             if (ec) {
-                rollback(replacements);
-                throw std::runtime_error("Unable to back up " + item.destination.string());
+                try {
+                    copyFileContents(item.temporary, pending);
+                    std::filesystem::remove(item.temporary, ec);
+                } catch (const std::exception& ex) {
+                    rollback(replacements);
+                    throw std::runtime_error(
+                        "Unable to stage Manager update: " + std::string(ex.what()));
+                }
             }
-        }
-        ec.clear();
-        std::filesystem::rename(item.temporary, item.destination, ec);
-        if (ec) {
+            item.hadOriginal = false;
+            item.applied = true;
+            switchu::FileLog::log(
+                "[updater] staged Manager NRO for post-reboot promote: %s",
+                pending.string().c_str());
+        } else {
+            item.hadOriginal = std::filesystem::is_regular_file(item.destination, ec) && !ec;
             if (item.hadOriginal) {
-                std::error_code restoreEc;
-                std::filesystem::rename(item.backup, item.destination, restoreEc);
+                ec.clear();
+                std::filesystem::rename(item.destination, item.backup, ec);
+                if (ec) {
+                    rollback(replacements);
+                    throw std::runtime_error(
+                        "Unable to back up " + item.destination.string());
+                }
             }
-            rollback(replacements);
-            throw std::runtime_error("Unable to install " + item.destination.string());
+            ec.clear();
+            std::filesystem::rename(item.temporary, item.destination, ec);
+            if (ec) {
+                if (item.hadOriginal) {
+                    std::error_code restoreEc;
+                    std::filesystem::rename(item.backup, item.destination, restoreEc);
+                }
+                rollback(replacements);
+                throw std::runtime_error(
+                    "Unable to install " + item.destination.string());
+            }
+            item.applied = true;
         }
-        item.applied = true;
+
         const float fraction = static_cast<float>(i + 1)
             / std::max<std::size_t>(1, replacements.size());
         progress.store(progressBase + progressSpan * (0.46f + 0.49f * fraction));
@@ -484,14 +590,31 @@ void installFiles(const std::vector<std::string>& files,
         ec.clear();
         std::filesystem::remove(item.backup, ec);
     }
+    // Seed the user music library folder on every successful update so it
+    // appears under switch/SwitchU/ even when the zip has no music/ entries.
+    ec.clear();
+    std::filesystem::create_directories("sdmc:/switch/SwitchU/music", ec);
     fsdevCommitDevice("sdmc");
     progress.store(progressBase + progressSpan);
 }
 
 } // namespace
 
+void ReleaseUpdater::requestCancel() {
+    g_cancelRequested.store(true);
+}
+
+void ReleaseUpdater::clearCancel() {
+    g_cancelRequested.store(false);
+}
+
+bool ReleaseUpdater::cancelRequested() {
+    return g_cancelRequested.load();
+}
+
 ReleaseInfo ReleaseUpdater::checkLatest() {
     std::lock_guard<std::mutex> lock(g_networkMutex);
+    clearCancel();
     const std::string response = getTextLocked(kLatestReleaseUrl);
     const auto json = nlohmann::json::parse(response);
     if (!json.is_object() || json.value("draft", true) || json.value("prerelease", true))
@@ -535,9 +658,11 @@ UpdateInstallResult ReleaseUpdater::install(const ReleaseInfo& release,
                                             bool preserveDisabledOverride,
                                             std::atomic<float>& downloadProgress,
                                             std::atomic<float>& installProgress,
-                                            std::atomic<int>& stage) {
+                                            std::atomic<int>& stage,
+                                            std::atomic<std::uint64_t>* bytesReceived) {
     UpdateInstallResult result;
     result.version = release.version;
+    clearCancel();
     try {
         {
             std::lock_guard<std::mutex> lock(g_networkMutex);
@@ -545,15 +670,23 @@ UpdateInstallResult ReleaseUpdater::install(const ReleaseInfo& release,
             stage.store(static_cast<int>(UpdateWorkerStage::Downloading));
             downloadProgress.store(0.f);
             installProgress.store(0.f);
-            const std::string digest = downloadLocked(release, downloadProgress);
+            if (bytesReceived)
+                bytesReceived->store(0);
+            const std::string digest = downloadLocked(release, downloadProgress,
+                                                      bytesReceived);
             switchu::FileLog::log("[updater] download complete sha256=%s", digest.c_str());
         }
+        // Past download: ignore further cancel requests through extract/install.
+        clearCancel();
         stage.store(static_cast<int>(UpdateWorkerStage::Verifying));
         downloadProgress.store(1.f);
         stage.store(static_cast<int>(UpdateWorkerStage::Extracting));
         installProgress.store(0.f);
-        constexpr float kExtractionShare = 0.30f;
-        const auto files = extractArchive(installProgress, 0.f, kExtractionShare);
+        // Extract is often the longest SD-bound phase; give it half of the
+        // post-download bar so overall % keeps moving after download ends.
+        constexpr float kExtractionShare = 0.50f;
+        installProgress.store(0.01f);
+        const auto files = extractArchive(installProgress, 0.01f, kExtractionShare - 0.01f);
         switchu::FileLog::log("[updater] archive validated files=%lu",
                               static_cast<unsigned long>(files.size()));
         stage.store(static_cast<int>(UpdateWorkerStage::Installing));
@@ -568,12 +701,15 @@ UpdateInstallResult ReleaseUpdater::install(const ReleaseInfo& release,
                               release.version.c_str(), preserveDisabledOverride ? 1 : 0);
     } catch (const std::exception& ex) {
         result.error = ex.what();
+        result.cancelled = (result.error.find("cancelled") != std::string::npos)
+            || (result.error.find("canceled") != std::string::npos);
         switchu::FileLog::log("[updater] install failed: %s", ex.what());
     } catch (...) {
         result.error = "Unknown update error";
         switchu::FileLog::log("[updater] install failed: unknown error");
     }
     stage.store(static_cast<int>(UpdateWorkerStage::Idle));
+    clearCancel();
     return result;
 }
 
