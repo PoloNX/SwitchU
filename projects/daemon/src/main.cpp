@@ -149,6 +149,40 @@ extern "C" void __appInit(void) {
 
     switchu::FileLog::open("daemon");
     switchu::FileLog::log("[daemon] __appInit complete (sd mount: 0x%X)", rc);
+
+    // Manager cannot overwrite its own running NRO during an in-app update.
+    // Promote the staged binary now that nothing holds the file lock.
+    {
+        namespace fs = std::filesystem;
+        const fs::path live =
+            "sdmc:/switch/SwitchU-Manager/SwitchU-Manager.nro";
+        const fs::path pending =
+            "sdmc:/switch/SwitchU-Manager/SwitchU-Manager.nro.new";
+        std::error_code promoteEc;
+        if (fs::is_regular_file(pending, promoteEc)) {
+            const fs::path backup = live.string() + ".old";
+            fs::remove(backup, promoteEc);
+            promoteEc.clear();
+            fs::rename(live, backup, promoteEc);
+            promoteEc.clear();
+            fs::rename(pending, live, promoteEc);
+            if (promoteEc) {
+                switchu::FileLog::log(
+                    "[daemon] Manager NRO promote rename FAIL ec=%d — trying copy",
+                    promoteEc.value());
+                promoteEc.clear();
+                fs::copy_file(pending, live,
+                              fs::copy_options::overwrite_existing, promoteEc);
+                if (!promoteEc)
+                    fs::remove(pending, promoteEc);
+            } else {
+                fs::remove(backup, promoteEc);
+            }
+            fsdevCommitDevice("sdmc");
+            switchu::FileLog::log("[daemon] Manager NRO promote done live=%s",
+                                  live.string().c_str());
+        }
+    }
     switchu::FileLog::log("[daemon] services time=%d setsys=%d set=%d ns=%d ldr=%d account=%d nssu=%d avm=%d psm=%d lbl=%d hid=%d",
                           g_timeReady ? 1 : 0,
                           g_setsysReady ? 1 : 0,

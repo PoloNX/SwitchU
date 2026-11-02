@@ -451,25 +451,51 @@ void installFiles(const std::vector<std::string>& files,
         ec.clear();
         std::filesystem::remove(item.backup, ec);
         ec.clear();
-        item.hadOriginal = std::filesystem::is_regular_file(item.destination, ec) && !ec;
-        if (item.hadOriginal) {
-            std::filesystem::rename(item.destination, item.backup, ec);
+
+        // Manager cannot replace its own running NRO (rename and overwrite both
+        // fail with I/O error). Stage beside it; daemon promotes after reboot.
+        if (item.destination.filename() == "SwitchU-Manager.nro") {
+            const std::filesystem::path pending =
+                item.destination.string() + ".new";
+            std::filesystem::remove(pending, ec);
+            ec.clear();
+            std::filesystem::rename(item.temporary, pending, ec);
             if (ec) {
-                rollback(replacements);
-                throw std::runtime_error("Unable to back up " + item.destination.string());
+                try {
+                    copyFileContents(item.temporary, pending);
+                    std::filesystem::remove(item.temporary, ec);
+                } catch (const std::exception& ex) {
+                    rollback(replacements);
+                    throw std::runtime_error(
+                        "Unable to stage Manager update: " + std::string(ex.what()));
+                }
             }
-        }
-        ec.clear();
-        std::filesystem::rename(item.temporary, item.destination, ec);
-        if (ec) {
+            item.hadOriginal = false;
+            item.applied = true;
+            switchu::FileLog::log(
+                "[updater] staged Manager NRO for post-reboot promote: %s",
+                pending.string().c_str());
+        } else {
+            item.hadOriginal = std::filesystem::is_regular_file(item.destination, ec) && !ec;
             if (item.hadOriginal) {
-                std::error_code restoreEc;
-                std::filesystem::rename(item.backup, item.destination, restoreEc);
+                std::filesystem::rename(item.destination, item.backup, ec);
+                if (ec) {
+                    rollback(replacements);
+                    throw std::runtime_error("Unable to back up " + item.destination.string());
+                }
             }
-            rollback(replacements);
-            throw std::runtime_error("Unable to install " + item.destination.string());
+            ec.clear();
+            std::filesystem::rename(item.temporary, item.destination, ec);
+            if (ec) {
+                if (item.hadOriginal) {
+                    std::error_code restoreEc;
+                    std::filesystem::rename(item.backup, item.destination, restoreEc);
+                }
+                rollback(replacements);
+                throw std::runtime_error("Unable to install " + item.destination.string());
+            }
+            item.applied = true;
         }
-        item.applied = true;
         const float fraction = static_cast<float>(i + 1)
             / std::max<std::size_t>(1, replacements.size());
         progress.store(progressBase + progressSpan * (0.46f + 0.49f * fraction));
