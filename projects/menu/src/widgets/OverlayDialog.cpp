@@ -172,7 +172,11 @@ void OverlayDialog::buildWidgetTree() {
         btn->setWireframeEnabled(false);
         btn->setGrow(1.f);
 
-        auto lbl = std::make_shared<nxui::Label>(m_buttons[i].label);
+        // Empty / unrenderable i18n labels produce a blank chrome button.
+        const std::string& buttonLabel = m_buttons[i].label.empty()
+            ? (btnCount == 1 ? std::string("OK") : std::string("..."))
+            : m_buttons[i].label;
+        auto lbl = std::make_shared<nxui::Label>(buttonLabel);
         lbl->setFont(bodyFont ? bodyFont : titleFont);
         lbl->setTextColor(textPrimary);
         float labelScale = kLabelScale;

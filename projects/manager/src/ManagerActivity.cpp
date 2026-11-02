@@ -427,9 +427,7 @@ void ManagerActivity::requestUpdaterCancel() {
         m_noticeLabel->setText("");
     } else if (m_updateProgressDialog && m_updateProgressDialog->isActive()) {
         m_updateProgressDialog->setProgress(
-            combinedUpdateProgress(),
-            tr("manager.update_cancelling", "Cancelling..."),
-            false);
+            combinedUpdateProgress(), "Cancelling...", false);
     }
 }
 
@@ -479,9 +477,9 @@ void ManagerActivity::requestUpdate() {
         tr("manager.update_confirm_title", "Install SwitchU update?"),
         message,
         {
-            {tr("manager.cancel", "Cancel"), {}, true},
-            {tr("manager.update_install", "Install update"),
-             [this]() { startUpdateInstall(); }, true},
+            // Hardcoded labels — accented i18n glyphs can render blank on Manager fonts.
+            {"Cancel", {}, true},
+            {"Install update", [this]() { startUpdateInstall(); }, true},
         }, 0);
     focusManager().setFocus(m_dialog.get());
 }
@@ -501,10 +499,8 @@ void ManagerActivity::startUpdateInstall() {
     m_lastBytesReceived = 0;
     m_updateState = UpdateUiState::Installing;
     beginUpdateInputBlock();
-    m_updateProgressDialog->show(
-        tr("manager.update_progress_title", "Updating SwitchU"));
-    m_updateProgressDialog->setProgress(
-        0.f, tr("manager.update_preparing", "Preparing..."), true);
+    m_updateProgressDialog->show("Updating SwitchU");
+    m_updateProgressDialog->setProgress(0.f, "Preparing...", true);
     m_updateInstallFuture = std::async(std::launch::async,
         [this, release, preserveDisabled]() {
             return ReleaseUpdater::install(release, preserveDisabled,
@@ -551,19 +547,24 @@ void ManagerActivity::syncUpdater() {
             static_cast<int>(m_updateInstallProgress.load() * 100.f), 0, 100);
         const int workerStage = m_updateWorkerStage.load();
         const std::uint64_t bytesReceived = m_updateBytesReceived.load();
-        if (downloadPercent != m_lastDownloadPercent
+        const bool progressChanged = downloadPercent != m_lastDownloadPercent
             || installPercent != m_lastInstallPercent
             || workerStage != m_lastUpdateStage
-            || bytesReceived != m_lastBytesReceived) {
+            || bytesReceived != m_lastBytesReceived;
+        if (progressChanged) {
             m_lastDownloadPercent = downloadPercent;
             m_lastInstallPercent = installPercent;
             m_lastUpdateStage = workerStage;
             m_lastBytesReceived = bytesReceived;
+        }
+        // Always refresh status/progress while the dialog is up so the label
+        // never goes blank between stage transitions.
+        {
             const float overall = combinedUpdateProgress();
             std::string status;
             switch (static_cast<UpdateWorkerStage>(workerStage)) {
                 case UpdateWorkerStage::Downloading: {
-                    status = tr("manager.update_stage_downloading", "Downloading…");
+                    status = "Downloading...";
                     if (bytesReceived > 0) {
                         status += " ";
                         status += formatByteCount(bytesReceived);
@@ -575,28 +576,27 @@ void ManagerActivity::syncUpdater() {
                     break;
                 }
                 case UpdateWorkerStage::Verifying:
-                    status = tr("manager.update_stage_verifying", "Verifying…");
+                    status = "Verifying...";
                     break;
                 case UpdateWorkerStage::Extracting:
-                    status = tr("manager.update_stage_extracting", "Extracting…");
+                    status = "Extracting...";
                     break;
                 case UpdateWorkerStage::Installing:
-                    status = tr("manager.update_stage_installing", "Installing…");
+                    status = "Installing...";
                     break;
                 default:
-                    status = tr("manager.update_preparing", "Preparing…");
+                    status = "Preparing...";
                     break;
             }
             if (ReleaseUpdater::cancelRequested()
                 && static_cast<UpdateWorkerStage>(workerStage)
                     == UpdateWorkerStage::Downloading) {
-                status = tr("manager.update_cancelling", "Cancelling…");
+                status = "Cancelling...";
             }
-            (void)downloadPercent;
-            (void)installPercent;
             m_updateProgressDialog->setProgress(
                 overall, status, canCancelUpdater());
-            refreshPresentation();
+            if (progressChanged)
+                refreshPresentation();
         }
         if (m_updateInstallFuture.wait_for(0s) == std::future_status::ready) {
             const UpdateInstallResult result = m_updateInstallFuture.get();
@@ -624,7 +624,6 @@ void ManagerActivity::syncUpdater() {
                 m_dialog->show(
                     tr("manager.update_error_title", "Update failed"),
                     errorText,
-                    // Hardcoded label — i18n lookup has shown blank button chrome.
                     {{"OK", {}, true}});
                 focusManager().setFocus(m_dialog.get());
             }
@@ -671,9 +670,8 @@ void ManagerActivity::requestToggle() {
         "The change will take effect after a restart.");
     m_dialog->show(title, message,
         {
-            {tr("manager.cancel", "Cancel"), {}, true},
-            {enable ? tr("manager.enable", "Enable SwitchU")
-                    : tr("manager.disable", "Disable SwitchU"),
+            {"Cancel", {}, true},
+            {enable ? "Enable SwitchU" : "Disable SwitchU",
              [this, enable]() {
                  m_pendingTargetEnabled = enable;
                  m_loading = true;
@@ -741,7 +739,7 @@ void ManagerActivity::showError(ToggleError error, int detail) {
                           static_cast<unsigned>(error),
                           static_cast<unsigned>(detail));
     m_dialog->show(tr("manager.error_title", "Operation failed"), m_errorMessage,
-                   {{tr("manager.ok", "OK"), {}, true}});
+                   {{"OK", {}, true}});
     focusManager().setFocus(m_dialog.get());
 }
 
@@ -753,8 +751,9 @@ void ManagerActivity::requestReboot() {
         tr("manager.reboot_confirm_message",
            "Close any other software and save your work before restarting."),
         {
-            {tr("manager.cancel", "Cancel"), {}, true},
-            {tr("manager.reboot", "Restart"), [this]() {
+            // Hardcoded labels — accented i18n glyphs can render blank on Manager fonts.
+            {"Cancel", {}, true},
+            {"Restart", [this]() {
                  // Let the confirmation dialog close before invoking power
                  // services. This also keeps any fallback error dialog visible.
                  m_rebooting = true;
