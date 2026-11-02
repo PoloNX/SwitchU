@@ -318,6 +318,7 @@ private:
     PageArrowAnim m_arrowAnimLeft, m_arrowAnimRight;
     bool m_touchArrowLeft = false, m_touchArrowRight = false;
     bool m_touchBattery = false;
+    bool m_touchLayoutFlip = false;
 
     nxui::Rect pageArrowRect(bool left);
     nxui::Rect deletePageButtonRect() const;
@@ -748,6 +749,9 @@ private:
     // so a hang in any of them still leaves "console awake" + step logs.
     int  m_wakePostSwapchainFrames = 0;
     bool m_editMode          = false;
+    // Same-frame A after edit place: icon action exits edit, then bubbled root
+    // A would arm Activate and open/launch the tile — suppress that press.
+    bool m_editPlacementConsumedA = false;
     int  m_editSourceIndex   = -1;
     int  m_editTargetIndex   = -1;
     int  m_editOriginRootSlot = -1;

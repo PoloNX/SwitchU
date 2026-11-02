@@ -1279,7 +1279,8 @@ void WiiUMenuApp::placeLayoutFlipButton() {
     const float x = clock.x + clock.width + kGap;
     const float y = clock.y + (clock.height - kSize) * 0.5f;
     m_layoutFlip->setRect({x, y, kSize, kSize});
-    m_layoutFlip->setVisible(m_topHud && m_topHud->isVisible() && m_openFolderId == 0);
+    // Visible on HOME and inside folders (touch + controller Change View).
+    m_layoutFlip->setVisible(m_topHud && m_topHud->isVisible());
 }
 
 bool WiiUMenuApp::keepLayoutFlipFocus() const {
@@ -4015,10 +4016,7 @@ void WiiUMenuApp::configureDynamicLineNavigation() {
     placeLayoutFlipButton();
 
     if (m_grid) {
-        // Folder chrome (top HUD / sidebars) is hidden — never wire titles into
-        // those widgets. Their own isVisible() flags stay true, so a custom UP
-        // to profile/battery would move the blue cursor along invisible chrome
-        // (notably after a grid → single-row flip inside a folder).
+        // Sidebars stay hidden in folders — never wire titles into them.
         std::vector<nxui::Widget*> leftTargets;
         std::vector<nxui::Widget*> rightTargets;
         if (!inFolder) {
@@ -4030,20 +4028,63 @@ void WiiUMenuApp::configureDynamicLineNavigation() {
                 rightTargets.push_back(button.get());
         }
         m_grid->setGridSideTargets(std::move(leftTargets), std::move(rightTargets));
-        // Titles UP → Change View (fallback: user) on HOME only.
+        // Titles UP → Change View (folders keep clock + flip; no sidebars).
         nxui::Widget* chromeUp = nullptr;
-        if (!inFolder) {
-            chromeUp = (m_layoutFlip && m_layoutFlip->isVisible())
-                ? static_cast<nxui::Widget*>(m_layoutFlip.get())
-                : static_cast<nxui::Widget*>(m_profileLock.get());
-        }
+        if (m_layoutFlip && m_layoutFlip->isVisible())
+            chromeUp = m_layoutFlip.get();
+        else if (!inFolder && m_profileLock)
+            chromeUp = m_profileLock.get();
         m_grid->setDynamicLineUpTarget(chromeUp);
         m_grid->setDynamicLineDownTarget(nullptr);
     }
 
     if (inFolder) {
-        // No HOME chrome strip while a folder is open.
+        // Compact top chrome: clock + Change View (+ profile/battery). No
+        // applet sidebars — DOWN from chrome always returns to folder titles.
         m_sidebar.setDynamicLineDownAction({});
+        auto* flip = (m_layoutFlip && m_layoutFlip->isVisible())
+            ? m_layoutFlip.get() : nullptr;
+        auto* lock = (m_profileLock && m_profileLock->isVisible())
+            ? m_profileLock.get() : nullptr;
+        auto* battery = (m_battery && m_battery->isVisible())
+            ? m_battery.get() : nullptr;
+        if (flip) {
+            wireLayoutFlipNavigation();
+            flip->setCustomNavigation(nxui::FocusDirection::LEFT,
+                                      lock ? static_cast<nxui::Widget*>(lock)
+                                           : static_cast<nxui::Widget*>(flip));
+            flip->setCustomNavigation(nxui::FocusDirection::RIGHT,
+                                      battery ? static_cast<nxui::Widget*>(battery)
+                                              : static_cast<nxui::Widget*>(flip));
+        }
+        if (lock) {
+            lock->setCustomNavigation(nxui::FocusDirection::LEFT, lock);
+            lock->setCustomNavigation(nxui::FocusDirection::UP, lock);
+            lock->setCustomNavigation(nxui::FocusDirection::RIGHT,
+                                      flip ? static_cast<nxui::Widget*>(flip)
+                                           : (battery ? static_cast<nxui::Widget*>(battery)
+                                                      : static_cast<nxui::Widget*>(lock)));
+            lock->removeAction(static_cast<uint64_t>(nxui::Button::DDown));
+            lock->removeAction(static_cast<uint64_t>(nxui::Button::LStickD));
+            lock->removeAction(static_cast<uint64_t>(nxui::Button::RStickD));
+            lock->addDirectionAction(nxui::FocusDirection::DOWN, [this]() {
+                focusHomeGridFallback();
+            });
+        }
+        if (battery) {
+            battery->setCustomNavigation(nxui::FocusDirection::UP, battery);
+            battery->setCustomNavigation(nxui::FocusDirection::RIGHT, battery);
+            battery->setCustomNavigation(nxui::FocusDirection::LEFT,
+                                         flip ? static_cast<nxui::Widget*>(flip)
+                                              : (lock ? static_cast<nxui::Widget*>(lock)
+                                                      : static_cast<nxui::Widget*>(battery)));
+            battery->removeAction(static_cast<uint64_t>(nxui::Button::DDown));
+            battery->removeAction(static_cast<uint64_t>(nxui::Button::LStickD));
+            battery->removeAction(static_cast<uint64_t>(nxui::Button::RStickD));
+            battery->addDirectionAction(nxui::FocusDirection::DOWN, [this]() {
+                focusHomeGridFallback();
+            });
+        }
         return;
     }
 
@@ -4754,7 +4795,9 @@ void WiiUMenuApp::openCapturedFolder() {
     m_requestedFolderId = 0;
     m_folderCaptureReady = false;
     const bool refocus = (m_folderOpenFocusTitleId != 0);
-    if (m_topHud) m_topHud->setVisible(false);
+    // Keep clock + Change View (and the rest of the top HUD) so view can be
+    // flipped by touch/controller inside folders. Applet sidebars stay hidden.
+    if (m_topHud) m_topHud->setVisible(true);
     placeLayoutFlipButton();
     if (m_leftSidebar) m_leftSidebar->setVisible(false);
     if (m_rightSidebar) m_rightSidebar->setVisible(false);
@@ -4797,7 +4840,7 @@ void WiiUMenuApp::openCapturedFolder() {
     applyDisplayModel(buildOpenFolderModel(m_openFolderId), openFocus,
                       zoom, appear, true);
     m_folderOpenFocusTitleId = 0;
-    // Drop HOME chrome UP / side targets now that HUD + sidebars are hidden.
+    // Wire titles UP to Change View; sidebars stay unwired while open.
     configureDynamicLineNavigation();
     // Single-row mode scrolls by index instead of paging, so a freshly opened
     // folder must be pinned to its first item explicitly — otherwise the
@@ -4919,9 +4962,12 @@ nxui::Rect WiiUMenuApp::folderPanelRect() const {
 void WiiUMenuApp::placeFolderHeader(const nxui::Rect& panel) {
     // Anchored to the panel rather than the screen, so the largest folder
     // grid pushes the title up instead of sliding the panel under it.
-    m_folderHeaderRest.y = std::max(kFolderHeaderMinY,
+    // Keep below the top HUD clock band when chrome is visible.
+    const float minY = (m_topHud && m_topHud->isVisible()) ? 88.f : kFolderHeaderMinY;
+    m_folderHeaderRest.y = std::max(minY,
         panel.y - kFolderHeaderGap - m_folderHeaderRest.height);
-    // Single-row: park the title on the left so it does not cover a Poster.
+    // Single-row: left so it does not cover clock / Change View / a Poster.
+    // Grid: centered title under the clock band.
     if (m_appLayoutMode == AppLayoutMode::DynamicLine) {
         m_folderHeaderRest.x = panel.x + 12.f;
         m_folderHeaderRest.width = 300.f;
@@ -4991,6 +5037,9 @@ void WiiUMenuApp::syncFolderHeader() {
 
 void WiiUMenuApp::closeFolder(bool preserveEditMode, bool animated) {
     if (m_openFolderId == 0) return;
+    // Outside-tap / B dismiss must not leave a pending Activate from the same
+    // gesture (root A was historically armed via FocusManager on empty taps).
+    cancelHomeChordShortcuts();
     const std::uint32_t oldId = m_openFolderId;
     const auto* old = m_folderStore.find(oldId);
     const nxui::Color tint = switchu::folders::colorForIndex(old ? old->colorIndex : 0);
@@ -6160,7 +6209,7 @@ void WiiUMenuApp::buildGrid() {
     m_layoutFlip->ensureIcon(app().gpu(), app().renderer(),
                              resolveActiveIconGlyphPath(switchu::icons::kChangeViewFile));
     m_layoutFlip->setOnActivate([this]() {
-        // Button is HOME-chrome only (hidden in folders); Minus flips in-folder.
+        // HOME and open folders — Minus also flips (session-only in folders).
         if (m_editMode || leaveSplashActive())
             return;
         if (m_layoutTransition.kind != LayoutTransitionKind::Idle)

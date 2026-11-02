@@ -456,20 +456,22 @@ void WiiUMenuApp::updateEditGhost(float dt) {
             }
         }
 
-        // Resting a dragged game on a folder tile for a moment opens that
-        // folder, so the release can pick the exact slot inside instead of
-        // dropping blind on the tile. Slot tracking pauses while the folder
-        // swaps in, because the hits still belong to the root model.
+        // Resting a dragged *game* on a folder tile opens it for slot pick.
+        // Dragging a folder onto a folder must not open — nesting finishes on
+        // drop without entering the destination.
         if (m_editDragFolderOpenWait > 0.f) {
             m_editDragFolderOpenWait -= dt;
             if (m_openFolderId != 0)
                 m_editDragFolderOpenWait = 0.f;
         }
         const bool folderOpening = m_editDragFolderOpenWait > 0.f;
+        const bool heldIsNestableTitle =
+            m_editHeldTitleId != 0
+            && !isFolderTitleId(m_editHeldTitleId)
+            && !switchu::widgets::isWidgetTitleId(m_editHeldTitleId);
         const bool canHoverOpen =
             m_openFolderId == 0 && !folderOpening && !m_folderCaptureRequested &&
-            m_editHeldTitleId != 0 && m_editHeldTitleId < kFolderTitleIdPrefix &&
-            !switchu::widgets::isWidgetTitleId(m_editHeldTitleId) &&
+            heldIsNestableTitle &&
             m_editTargetIndex >= 0 && m_editTargetIndex < m_model.count();
         if (canHoverOpen) {
             const AppEntry hovered = m_model.at(m_editTargetIndex);
@@ -556,7 +558,12 @@ void WiiUMenuApp::bindEditActions(GlossyIcon* icon) {
     m_editBoundIcon = icon;
 
     icon->addAction(static_cast<uint64_t>(nxui::Button::A), [this]() {
+        // Placement exits edit mode before bubbled root A runs in the same
+        // dispatch. Mark this press consumed so root does not arm Activate
+        // (which would open the folder / launch the game we just placed).
         activateEditModeTarget();
+        m_editPlacementConsumedA = true;
+        cancelHomeChordShortcuts();
     });
     icon->addAction(static_cast<uint64_t>(nxui::Button::B), [this]() {
         if (m_openFolderId != 0) {
@@ -1139,8 +1146,12 @@ bool WiiUMenuApp::activateEditModeTarget() {
     }
 
     const AppEntry targetEntry = m_model.at(target);
-    if (m_openFolderId == 0 && targetEntry.isFolder() &&
-        m_editHeldTitleId < kFolderTitleIdPrefix) {
+    // Games dropped on a folder open it for slot pick. Folders dropped on a
+    // folder fall through to commitEditModePlacement and swap like any tile.
+    if (m_openFolderId == 0 && targetEntry.isFolder()
+        && m_editHeldTitleId != 0
+        && !isFolderTitleId(m_editHeldTitleId)
+        && !switchu::widgets::isWidgetTitleId(m_editHeldTitleId)) {
         // Drop the root-grid index before the folder model loads. Leaving it
         // intact made page-2+ folders keep an out-of-range target, which pinned
         // the edit ghost at (0,0) and blocked further movement (#95).
@@ -1153,7 +1164,9 @@ bool WiiUMenuApp::activateEditModeTarget() {
         return true;
     }
 
-    if (m_openFolderId != 0 && m_editHeldTitleId < kFolderTitleIdPrefix) {
+    if (m_openFolderId != 0 && !isFolderTitleId(m_editHeldTitleId)
+        && !switchu::widgets::isWidgetTitleId(m_editHeldTitleId)
+        && m_editHeldTitleId != 0) {
         // Folder order lives in folders.json, not the HOME layoutSlots swap.
         // Same-folder drops swap; inbound drops place without insert-shifting.
         const std::uint32_t targetFolderId = m_openFolderId;
@@ -1839,6 +1852,10 @@ void WiiUMenuApp::tickHomeChordShortcutGuards(float dt) {
         m_audio.playSfx(Sfx::Activate);
     });
     settle(HomeChordShortcut::Activate, nxui::Button::A, [this]() {
+        if (m_editPlacementConsumedA) {
+            m_editPlacementConsumedA = false;
+            return;
+        }
         if (m_editMode || m_navigator.route() != switchu::navigation::Route::Home ||
             focusRoot() != &rootBox())
             return;
@@ -1979,6 +1996,10 @@ void WiiUMenuApp::wireGlobalActions() {
     // Consume A on HOME so Ultrahand chords can cancel launch; chrome widgets
     // still activate immediately. Edit-mode icons keep their own A action.
     root.addAction(static_cast<uint64_t>(nxui::Button::A), [this]() {
+        if (m_editPlacementConsumedA) {
+            m_editPlacementConsumedA = false;
+            return;
+        }
         if (m_editMode || m_navigator.route() != switchu::navigation::Route::Home ||
             focusRoot() != &rootBox())
             return;
@@ -2343,11 +2364,30 @@ void WiiUMenuApp::handleTouch() {
     constexpr float kSwipeThreshold = 80.f;
     constexpr float kLongPressThreshold = 0.55f;
     constexpr float kLongPressMoveThreshold = 18.f;
+    constexpr float kLineDragSlop = 18.f;
 
     auto& input = app().input();
 
     auto hitProfileLock = [this](float x, float y) {
         return m_profileLock && m_profileLock->isVisible() && m_profileLock->hitTest(x, y);
+    };
+
+    auto syncLineDragFocus = [this]() {
+        if (!m_grid || !m_grid->isDynamicLine())
+            return;
+        const int nearest = m_grid->nearestFocusableToLineOffset();
+        if (nearest < 0)
+            return;
+        const auto& icons = m_grid->allIcons();
+        if (nearest >= static_cast<int>(icons.size()) || !icons[static_cast<std::size_t>(nearest)])
+            return;
+        auto* icon = icons[static_cast<std::size_t>(nearest)].get();
+        if (focusManager().current() == icon)
+            return;
+        // wireFocusCallback syncs grid focus + icon streamer; mute Navigate
+        // so a long swipe does not chirp on every title.
+        m_suppressNextNavigateSfx = true;
+        focusManager().setFocus(icon);
     };
 
     auto focusTouchedIcon = [this](int localHit) -> GlossyIcon* {
@@ -2393,6 +2433,7 @@ void WiiUMenuApp::handleTouch() {
         m_touchArrowLeft = m_touchArrowRight = false;
         m_touchDeletePage = false;
         m_touchBattery = false;
+        m_touchLayoutFlip = false;
         if (m_arrowAnimLeft.show > 0.5f && pageArrowRect(true).expanded(12.f).contains(tx, ty)) {
             m_touchArrowLeft = true;
             m_touchHitIndex = -1;
@@ -2414,6 +2455,15 @@ void WiiUMenuApp::handleTouch() {
         if (m_battery && m_battery->isVisible() && m_battery->hitTest(tx, ty)
             && m_topHud && m_topHud->isVisible()) {
             m_touchBattery = true;
+            m_touchHitIndex = -1;
+            return;
+        }
+
+        // Change View sits in the top HUD — claim the tap so an open-folder
+        // outside dismiss does not steal it.
+        if (m_layoutFlip && m_layoutFlip->isVisible()
+            && m_layoutFlip->hitTest(tx, ty)) {
+            m_touchLayoutFlip = true;
             m_touchHitIndex = -1;
             return;
         }
@@ -2446,11 +2496,45 @@ void WiiUMenuApp::handleTouch() {
         m_addPageTouchHold = false;
     }
 
+    // Single-row: horizontal drag scrolls the carousel title-by-title. Grid
+    // swipes still page-flip on release (below). ZL/ZR keep half-page jumps.
+    // Use grid layoutMode (not only m_appLayoutMode) so folder/prefetch
+    // presentation stays in sync with what is on screen.
+    if (input.isTouching()
+        && !m_editMode
+        && m_grid
+        && m_grid->isDynamicLine()
+        && !m_grid->isLayoutMorphing()
+        && m_layoutTransition.kind == LayoutTransitionKind::Idle
+        && !m_touchArrowLeft && !m_touchArrowRight
+        && !m_touchBattery && !m_touchLayoutFlip && !m_touchProfileLock
+        && !m_touchDeletePage) {
+        const float dx = input.touchDeltaX();
+        const float dy = input.touchDeltaY();
+        const bool inLineBand = m_grid->contentRect().contains(input.touchX(),
+                                                               input.touchY())
+            || m_touchHitIndex >= 0
+            || m_grid->rect().contains(input.touchX(), input.touchY());
+        if (!m_grid->isLineDragActive()
+            && inLineBand
+            && std::abs(dx) > kLineDragSlop
+            && std::abs(dx) > std::abs(dy) * 1.2f) {
+            m_grid->beginLineDrag();
+            DebugLog::log("[touch] line-drag begin dx=%.1f hit=%d",
+                          dx, m_touchHitIndex);
+        }
+        if (m_grid->isLineDragActive()) {
+            m_grid->dragLineToTouchDelta(dx);
+            syncLineDragFocus();
+        }
+    }
+
     if (input.isTouching() && m_touchHitIndex >= 0) {
         float dx = input.touchDeltaX();
         float dy = input.touchDeltaY();
 
         if (!m_editMode
+            && !(m_grid && m_grid->isLineDragActive())
             && std::abs(dx) <= kLongPressMoveThreshold
             && std::abs(dy) <= kLongPressMoveThreshold
             && input.touchDuration() >= kLongPressThreshold)
@@ -2508,6 +2592,14 @@ void WiiUMenuApp::handleTouch() {
             return;
         }
 
+        if (m_touchLayoutFlip) {
+            // Claimed so open-folder outside-dismiss does not fire. FocusManager
+            // already activates Change View (activateOnFirstTouch) — do not
+            // activate again or the view toggles twice and looks stuck.
+            m_touchLayoutFlip = false;
+            return;
+        }
+
         if (m_touchArrowLeft || m_touchArrowRight) {
             const bool left = m_touchArrowLeft;
             const bool wasAddHold = m_addPageTouchHold;
@@ -2553,17 +2645,45 @@ void WiiUMenuApp::handleTouch() {
             return;
         }
 
+        if (m_grid && m_grid->isLineDragActive()) {
+            const int settled = m_grid->endLineDrag();
+            DebugLog::log("[touch] line-drag end settled=%d", settled);
+            if (settled >= 0) {
+                if (auto* focused = m_grid->focusManager().current()) {
+                    if (focusManager().current() != focused) {
+                        m_suppressNextNavigateSfx = true;
+                        focusManager().setFocus(focused);
+                    }
+                }
+                syncSteamGridDbLogoArea();
+                showFocusedSteamGridDbArtwork(false);
+                updateCursor();
+                m_audio.playSfx(Sfx::Navigate);
+            }
+            m_touchHitIndex = -1;
+            m_touchEditDragActive = false;
+            return;
+        }
+
         float dx = input.touchDeltaX();
         float dy = input.touchDeltaY();
-        if (std::abs(dx) > kSwipeThreshold && std::abs(dx) > std::abs(dy) * 1.5f) {
+        // Grid: swipe flips pages. Single-row is handled by line-drag above —
+        // do not half-page-jump on release (that was the jumpy feel).
+        if (!(m_grid && m_grid->isDynamicLine())
+            && std::abs(dx) > kSwipeThreshold
+            && std::abs(dx) > std::abs(dy) * 1.5f) {
+            DebugLog::log("[touch] grid swipe flip dx=%.1f", dx);
             flipPage(dx < 0 ? 1 : -1);
         } else if (m_openFolderId != 0
                    && m_touchHitIndex < 0
+                   && !m_touchLayoutFlip
                    && std::abs(dx) < 20.f && std::abs(dy) < 20.f
                    && m_grid
-                   && m_grid->hitTest(input.touchX(), input.touchY()) < 0) {
-            // Tap anywhere that isn't an icon (dimmed margins left/right/above/below,
-            // and empty gaps) to leave - mirrors B, including edit-mode keep-move.
+                   && m_grid->hitTest(input.touchX(), input.touchY()) < 0
+                   && !(m_layoutFlip && m_layoutFlip->isVisible()
+                        && m_layoutFlip->hitTest(input.touchX(), input.touchY()))) {
+            // Tap anywhere that isn't an icon / Change View (dimmed margins,
+            // empty gaps) to leave - mirrors B, including edit-mode keep-move.
             closeFolder(m_editMode, true);
         }
         m_touchHitIndex = -1;
