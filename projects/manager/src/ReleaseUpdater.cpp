@@ -484,6 +484,10 @@ void installFiles(const std::vector<std::string>& files,
         ec.clear();
         std::filesystem::remove(item.backup, ec);
     }
+    // Seed the user music library folder on every successful update so it
+    // appears under switch/SwitchU/ even when the zip has no music/ entries.
+    ec.clear();
+    std::filesystem::create_directories("sdmc:/switch/SwitchU/music", ec);
     fsdevCommitDevice("sdmc");
     progress.store(progressBase + progressSpan);
 }

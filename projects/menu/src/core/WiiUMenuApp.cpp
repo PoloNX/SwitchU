@@ -380,6 +380,17 @@ bool gridModelsRefreshEquivalent(const GridModel& a, const GridModel& b) {
 
 } // namespace
 
+// Official user drop folder (not the bundled wiiu sound preset).
+static constexpr const char* kUserMusicDir = "sdmc:/switch/SwitchU/music";
+
+void ensureUserMusicDirectory() {
+    std::error_code ec;
+    std::filesystem::create_directories(kUserMusicDir, ec);
+    if (ec)
+        DebugLog::log("[audio] create user music dir failed: %s (%s)",
+                      kUserMusicDir, ec.message().c_str());
+}
+
 // Shared with WiiUMenuAppSettings.cpp (theme Apply music merge). Kept outside
 // the anonymous namespace so the Settings TU can link them.
 size_t appendMp3TracksFromDir(AudioManager& audio,
@@ -408,6 +419,85 @@ size_t appendMp3TracksFromDir(AudioManager& audio,
             ++loaded;
     }
     return loaded;
+}
+
+// Root .mp3s + album subfolders (folder.jpg / embedded art). Used for the
+// active sound-preset library and the user drop folder.
+struct MusicLibraryLoadResult {
+    size_t tracks = 0;
+    size_t albums = 0;
+};
+
+MusicLibraryLoadResult loadMusicLibraryFromDir(AudioManager& audio,
+                                               const std::string& musicDir) {
+    MusicLibraryLoadResult result;
+    std::error_code ec;
+    if (!std::filesystem::is_directory(musicDir, ec))
+        return result;
+
+    std::vector<std::string> rootTracks;
+    std::vector<std::string> albumFolders;
+    ec.clear();
+    for (const auto& entry : std::filesystem::directory_iterator(musicDir, ec)) {
+        if (ec)
+            break;
+        const auto name = entry.path().filename().string();
+        if (name.empty() || name[0] == '.')
+            continue;
+        std::error_code entryEc;
+        if (entry.is_directory(entryEc)) {
+            albumFolders.push_back(name);
+        } else if (entry.is_regular_file(entryEc) && isMp3Filename(name)) {
+            rootTracks.push_back(name);
+        }
+    }
+    sortMusicTrackNames(rootTracks);
+    std::sort(albumFolders.begin(), albumFolders.end());
+
+    for (const auto& t : rootTracks) {
+        if (audio.loadTrack(musicDir + "/" + t))
+            ++result.tracks;
+    }
+    for (const auto& folder : albumFolders) {
+        const std::string albumDir = musicDir + "/" + folder;
+        std::vector<std::string> albumTracks;
+        ec.clear();
+        for (const auto& entry : std::filesystem::directory_iterator(albumDir, ec)) {
+            if (ec)
+                break;
+            std::error_code entryEc;
+            if (!entry.is_regular_file(entryEc))
+                continue;
+            const auto name = entry.path().filename().string();
+            if (isMp3Filename(name))
+                albumTracks.push_back(name);
+        }
+        if (albumTracks.empty())
+            continue;
+        sortMusicTrackNames(albumTracks);
+        auto cover = loadAlbumFolderCover(albumDir);
+        if (!cover.empty())
+            audio.setFolderCover(folder, std::move(cover));
+        size_t albumLoaded = 0;
+        for (const auto& t : albumTracks) {
+            if (audio.loadTrack(albumDir + "/" + t, folder))
+                ++albumLoaded;
+        }
+        if (albumLoaded == 0)
+            continue;
+        result.tracks += albumLoaded;
+        ++result.albums;
+        // If no folder.jpg, reuse the first track APIC as the album thumb.
+        if (!audio.folderCoverArt(folder)) {
+            for (const auto& track : audio.tracks()) {
+                if (track.albumFolder == folder && !track.coverArt.empty()) {
+                    audio.setFolderCover(folder, track.coverArt);
+                    break;
+                }
+            }
+        }
+    }
+    return result;
 }
 
 std::string resolveThemeSoundBase(const std::string& installPath) {
@@ -744,7 +834,8 @@ void WiiUMenuApp::updateLeaveSplashHandoff(float dt) {
         setLeaveMotionFrozen(true);
         m_leaveMotionFreezePending = false;
         // Snap the cursor so the live frame under the splash matches focus.
-        if (m_cursor && focusManager().current()) {
+        // Skip when Lock is up — the ring would show through a settled Lock.
+        if (m_cursor && focusManager().current() && !m_lockViewActive) {
             m_cursor->moveTo(focusManager().current()->focusRect().expanded(4.f), 0.f);
             m_cursor->setVisible(true);
         }
@@ -4873,6 +4964,20 @@ void WiiUMenuApp::openCapturedFolder() {
             snapCursorToFocus();
         }
     }
+    // Folder leave-restore can finish after enterLockView. Keep the open-folder
+    // tile as unlock return, but put focus back on Lock so the blue ring is not
+    // parked on a title that shows through a settled (no-hero) Lock plane.
+    if (m_lockViewActive && m_lockScreen && !m_lockScreen->isUnlocking()) {
+        if (auto* cur = focusManager().current();
+            cur && cur->tag() == "glossy_icon") {
+            m_lockReturnFocus = cur;
+            m_lockReturnTitleId = static_cast<GlossyIcon*>(cur)->titleId();
+        }
+        focusManager().setFocus(m_lockScreen.get());
+        if (m_cursor)
+            m_cursor->setVisible(false);
+        endForcedCursorTeleport();
+    }
     // The title lands just after the panel has reached its top edge.
     placeFolderHeader(folderPanelRect());
     if (zoom) {
@@ -6592,6 +6697,11 @@ void WiiUMenuApp::buildGrid() {
     sidebarActions.onMiiverse = [this]() {
         m_audio.playSfx(Sfx::ModalShow);
         if (!m_themeShop) return;
+        // Theme Shop is memory-heavy: while FT is capturing, drop browse
+        // caches first so the Applet pool stays above FT's tight stop margin
+        // (avoids donor teardown freezes mid-stream).
+        if (m_frameTapStatus.viewerConnected())
+            reclaimForFrameTapLaunch("theme-shop");
         m_navigator.navigate(switchu::navigation::Route::ThemeShop);
         if (m_settings && m_settings->isActive())
             m_settings->hide();
@@ -6922,78 +7032,37 @@ void WiiUMenuApp::loadSoundPreset(const std::string& preset) {
     m_audio.loadSfx(Sfx::ConfirmPositive, sfxPath("sfx/confirm.wav"));
     m_audio.loadSfx(Sfx::Volume,          sfxPath("sfx/volume.wav"));
 
-    std::string musicDir = musicBase + "/music";
-    std::error_code ec;
-    if (std::filesystem::is_directory(musicDir, ec)) {
-        std::vector<std::string> rootTracks;
-        std::vector<std::string> albumFolders;
-        ec.clear();
-        for (const auto& entry : std::filesystem::directory_iterator(musicDir, ec)) {
-            if (ec)
-                break;
-            const auto name = entry.path().filename().string();
-            if (name.empty() || name[0] == '.')
-                continue;
-            std::error_code entryEc;
-            if (entry.is_directory(entryEc)) {
-                albumFolders.push_back(name);
-            } else if (entry.is_regular_file(entryEc) && isMp3Filename(name)) {
-                rootTracks.push_back(name);
-            }
-        }
-        sortMusicTrackNames(rootTracks);
-        std::sort(albumFolders.begin(), albumFolders.end());
+    // Seed the user drop folder so it shows up on the SD even before anyone
+    // copies tracks in. Preset music under sounds/<preset>/music still loads.
+    ensureUserMusicDirectory();
 
-        size_t loaded = 0;
-        for (const auto& t : rootTracks) {
-            if (m_audio.loadTrack(musicDir + "/" + t))
-                ++loaded;
-        }
-        for (const auto& folder : albumFolders) {
-            const std::string albumDir = musicDir + "/" + folder;
-            std::vector<std::string> albumTracks;
-            ec.clear();
-            for (const auto& entry : std::filesystem::directory_iterator(albumDir, ec)) {
-                if (ec)
-                    break;
-                std::error_code entryEc;
-                if (!entry.is_regular_file(entryEc))
-                    continue;
-                const auto name = entry.path().filename().string();
-                if (isMp3Filename(name))
-                    albumTracks.push_back(name);
-            }
-            if (albumTracks.empty())
-                continue;
-            sortMusicTrackNames(albumTracks);
-            auto cover = loadAlbumFolderCover(albumDir);
-            if (!cover.empty())
-                m_audio.setFolderCover(folder, std::move(cover));
-            for (const auto& t : albumTracks) {
-                if (m_audio.loadTrack(albumDir + "/" + t, folder))
-                    ++loaded;
-            }
-            // If no folder.jpg, reuse the first track APIC as the album thumb.
-            if (!m_audio.folderCoverArt(folder)) {
-                for (const auto& track : m_audio.tracks()) {
-                    if (track.albumFolder == folder && !track.coverArt.empty()) {
-                        m_audio.setFolderCover(folder, track.coverArt);
-                        break;
-                    }
-                }
-            }
-        }
-
-        if (!m_config.musicPlaylistOrder.empty())
-            m_audio.applyPlaylistOrder(m_config.musicPlaylistOrder);
-        m_audio.setShuffle(m_config.musicShuffle);
-        m_audio.setRepeatMode(static_cast<MusicRepeatMode>(
-            std::clamp(m_config.musicRepeatMode, 0, 2)));
-        DebugLog::log("[audio] Loaded %zu music tracks (%zu albums)",
-                      loaded, albumFolders.size());
+    const std::string presetMusicDir = musicBase + "/music";
+    const auto presetLib = loadMusicLibraryFromDir(m_audio, presetMusicDir);
+    if (presetLib.tracks == 0) {
+        DebugLog::log("[audio] No music directory for preset '%s' (%s)",
+                      effectivePreset.c_str(), presetMusicDir.c_str());
     } else {
-        DebugLog::log("[audio] No music directory for preset '%s'", effectivePreset.c_str());
+        DebugLog::log("[audio] Loaded %zu preset music tracks (%zu albums) from %s",
+                      presetLib.tracks, presetLib.albums, presetMusicDir.c_str());
     }
+
+    // Always also scan the official user library. Keep sounds/wiiu/music working
+    // for anyone who already dropped files there.
+    const auto userLib = loadMusicLibraryFromDir(m_audio, kUserMusicDir);
+    if (userLib.tracks > 0) {
+        DebugLog::log("[audio] Loaded %zu user music tracks (%zu albums) from %s",
+                      userLib.tracks, userLib.albums, kUserMusicDir);
+    }
+
+    if (!m_config.musicPlaylistOrder.empty())
+        m_audio.applyPlaylistOrder(m_config.musicPlaylistOrder);
+    m_audio.setShuffle(m_config.musicShuffle);
+    m_audio.setRepeatMode(static_cast<MusicRepeatMode>(
+        std::clamp(m_config.musicRepeatMode, 0, 2)));
+    DebugLog::log("[audio] Music library total=%zu (preset=%zu user=%zu)",
+                  presetLib.tracks + userLib.tracks,
+                  presetLib.tracks,
+                  userLib.tracks);
 }
 
 void WiiUMenuApp::persistMusicPlaybackState(bool updateEnabledFlag) {

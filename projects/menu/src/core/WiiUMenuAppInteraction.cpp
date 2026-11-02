@@ -2766,11 +2766,16 @@ void WiiUMenuApp::handleSystemAction(SysAction a) {
 void WiiUMenuApp::updateCursor() {
     if (!m_cursor)
         return;
-    // Allow a forced snap onto the destination tile while the unlock curtain
-    // is still up (onUnlocking parks focus before finishExitLockView).
-    if (m_lockViewActive && !m_forceCursorTeleport) {
-        m_cursor->setVisible(false);
-        return;
+    // Settled Lock must never show the ring — without a hero the Lock plane is
+    // chrome-only, so a parked cursor reads as selection above the Lock.
+    // Unlocking may park under the curtain only via forced teleport
+    // (onUnlocking / finishExitLockView).
+    if (m_lockViewActive) {
+        const bool unlocking = m_lockScreen && m_lockScreen->isUnlocking();
+        if (!unlocking || !m_forceCursorTeleport) {
+            m_cursor->setVisible(false);
+            return;
+        }
     }
     if (m_contextMenu && m_contextMenu->isActive()) {
         m_cursor->setVisible(false);
