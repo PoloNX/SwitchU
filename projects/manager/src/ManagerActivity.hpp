@@ -46,6 +46,9 @@ private:
     void requestUpdate();
     void startUpdateCheck();
     void startUpdateInstall();
+    void requestUpdaterCancel();
+    bool canCancelUpdater() const;
+    float combinedUpdateProgress() const;
     void syncUpdater();
     void beginUpdateInputBlock();
     void endUpdateInputBlock();
@@ -80,6 +83,7 @@ private:
     std::shared_ptr<SelectionCursor> m_cursor;
 
     bool m_restartRequired = false;
+    bool m_updateInstalledRestart = false;
     bool m_loading = false;
     bool m_rebooting = false;
     bool m_pendingTargetEnabled = false;
@@ -102,9 +106,11 @@ private:
     std::atomic<float> m_updateDownloadProgress{0.f};
     std::atomic<float> m_updateInstallProgress{0.f};
     std::atomic<int> m_updateWorkerStage{static_cast<int>(UpdateWorkerStage::Idle)};
+    std::atomic<std::uint64_t> m_updateBytesReceived{0};
     int m_lastDownloadPercent = -1;
     int m_lastInstallPercent = -1;
     int m_lastUpdateStage = static_cast<int>(UpdateWorkerStage::Idle);
+    std::uint64_t m_lastBytesReceived = 0;
     bool m_exitLockedForUpdate = false;
     bool m_homeBlockedForUpdate = false;
     std::string m_updateError;

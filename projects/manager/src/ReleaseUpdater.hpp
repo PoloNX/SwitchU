@@ -19,6 +19,7 @@ struct UpdateInstallResult {
     bool success = false;
     std::string version;
     std::string error;
+    bool cancelled = false;
 };
 
 enum class UpdateWorkerStage : int {
@@ -38,7 +39,14 @@ public:
                                        bool preserveDisabledOverride,
                                        std::atomic<float>& downloadProgress,
                                        std::atomic<float>& installProgress,
-                                       std::atomic<int>& stage);
+                                       std::atomic<int>& stage,
+                                       std::atomic<std::uint64_t>* bytesReceived = nullptr);
+
+    /// Soft-cancel in-flight check/download (ignored once extract/install starts).
+    static void requestCancel();
+    static void clearCancel();
+    static bool cancelRequested();
+
     static void shutdownNetwork();
 };
 
