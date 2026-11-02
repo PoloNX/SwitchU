@@ -509,22 +509,58 @@ void installFiles(const std::vector<std::string>& files,
         std::filesystem::remove(item.backup, ec);
         ec.clear();
         item.hadOriginal = std::filesystem::is_regular_file(item.destination, ec) && !ec;
+        bool usedInPlaceOverwrite = false;
         if (item.hadOriginal) {
             std::filesystem::rename(item.destination, item.backup, ec);
             if (ec) {
-                rollback(replacements);
-                throw std::runtime_error("Unable to back up " + item.destination.string());
+                // Running NRO (or other locked file): rename fails on Horizon.
+                // Copy aside for rollback, then overwrite the live path in place.
+                ec.clear();
+                try {
+                    copyFileContents(item.destination, item.backup);
+                } catch (const std::exception&) {
+                    // Still attempt overwrite without a backup for this file.
+                    std::filesystem::remove(item.backup, ec);
+                    item.hadOriginal = false;
+                }
+                try {
+                    copyFileContents(item.temporary, item.destination);
+                    std::filesystem::remove(item.temporary, ec);
+                    usedInPlaceOverwrite = true;
+                    switchu::FileLog::log(
+                        "[updater] in-place overwrite (locked file): %s",
+                        item.destination.string().c_str());
+                } catch (const std::exception& ex) {
+                    rollback(replacements);
+                    throw std::runtime_error(
+                        "Unable to replace locked file " + item.destination.string()
+                        + ": " + ex.what());
+                }
             }
         }
-        ec.clear();
-        std::filesystem::rename(item.temporary, item.destination, ec);
-        if (ec) {
-            if (item.hadOriginal) {
-                std::error_code restoreEc;
-                std::filesystem::rename(item.backup, item.destination, restoreEc);
+        if (!usedInPlaceOverwrite) {
+            ec.clear();
+            std::filesystem::rename(item.temporary, item.destination, ec);
+            if (ec) {
+                // Destination may still be locked even when backup rename worked
+                // elsewhere; fall back to overwrite from the staged temp.
+                try {
+                    copyFileContents(item.temporary, item.destination);
+                    std::filesystem::remove(item.temporary, ec);
+                    switchu::FileLog::log(
+                        "[updater] in-place overwrite (rename failed): %s",
+                        item.destination.string().c_str());
+                } catch (const std::exception& ex) {
+                    if (item.hadOriginal) {
+                        std::error_code restoreEc;
+                        std::filesystem::rename(item.backup, item.destination, restoreEc);
+                    }
+                    rollback(replacements);
+                    throw std::runtime_error(
+                        "Unable to install " + item.destination.string()
+                        + ": " + ex.what());
+                }
             }
-            rollback(replacements);
-            throw std::runtime_error("Unable to install " + item.destination.string());
         }
         item.applied = true;
         const float fraction = static_cast<float>(i + 1)

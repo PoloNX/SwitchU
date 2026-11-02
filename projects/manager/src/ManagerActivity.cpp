@@ -431,7 +431,8 @@ void ManagerActivity::requestUpdaterCancel() {
     } else if (m_updateProgressDialog && m_updateProgressDialog->isActive()) {
         m_updateProgressDialog->setProgress(
             m_updateDownloadProgress.load(), m_updateInstallProgress.load(),
-            tr("manager.update_cancelling", "Cancelling..."));
+            tr("manager.update_cancelling", "Cancelling..."),
+            combinedUpdateProgress(), false);
     }
 }
 
@@ -506,7 +507,8 @@ void ManagerActivity::startUpdateInstall() {
     m_updateProgressDialog->show(
         tr("manager.update_progress_title", "Installing SwitchU update"));
     m_updateProgressDialog->setProgress(
-        0.f, 0.f, tr("manager.update_preparing", "Preparing update..."));
+        0.f, 0.f, tr("manager.update_preparing", "Preparing update..."),
+        0.f, true);
     m_updateInstallFuture = std::async(std::launch::async,
         [this, release, preserveDisabled]() {
             return ReleaseUpdater::install(release, preserveDisabled,
@@ -561,17 +563,22 @@ void ManagerActivity::syncUpdater() {
             m_lastInstallPercent = installPercent;
             m_lastUpdateStage = workerStage;
             m_lastBytesReceived = bytesReceived;
+            const float overall = combinedUpdateProgress();
+            const int overallPercent = std::clamp(
+                static_cast<int>(std::round(overall * 100.f)), 0, 100);
             std::string status;
             switch (static_cast<UpdateWorkerStage>(workerStage)) {
                 case UpdateWorkerStage::Downloading: {
-                    status = tr("manager.update_stage_downloading", "Downloading update...");
+                    status = tr("manager.update_stage_downloading", "Downloading update");
+                    status += " — " + std::to_string(downloadPercent) + "%";
                     if (bytesReceived > 0) {
-                        status += " ";
+                        status += "  (";
                         status += formatByteCount(bytesReceived);
                         if (m_latestRelease.downloadSize > 0) {
                             status += " / ";
                             status += formatByteCount(m_latestRelease.downloadSize);
                         }
+                        status += ")";
                     }
                     break;
                 }
@@ -579,10 +586,12 @@ void ManagerActivity::syncUpdater() {
                     status = tr("manager.update_stage_verifying", "Verifying download...");
                     break;
                 case UpdateWorkerStage::Extracting:
-                    status = tr("manager.update_stage_extracting", "Preparing installation...");
+                    status = tr("manager.update_stage_extracting", "Extracting archive");
+                    status += " — " + std::to_string(installPercent) + "%";
                     break;
                 case UpdateWorkerStage::Installing:
-                    status = tr("manager.update_stage_installing", "Installing files...");
+                    status = tr("manager.update_stage_installing", "Installing files");
+                    status += " — " + std::to_string(installPercent) + "%";
                     break;
                 default:
                     status = tr("manager.update_preparing", "Preparing update...");
@@ -594,7 +603,13 @@ void ManagerActivity::syncUpdater() {
                 status = tr("manager.update_cancelling", "Cancelling...");
             }
             m_updateProgressDialog->setProgress(
-                m_updateDownloadProgress.load(), m_updateInstallProgress.load(), status);
+                m_updateDownloadProgress.load(),
+                m_updateInstallProgress.load(),
+                status,
+                overall,
+                canCancelUpdater());
+            // Keep the main button label in sync with overall %.
+            (void)overallPercent;
             refreshPresentation();
         }
         if (m_updateInstallFuture.wait_for(0s) == std::future_status::ready) {

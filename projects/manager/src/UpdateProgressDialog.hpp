@@ -23,7 +23,8 @@ public:
     }
     void show(const std::string& title);
     void setProgress(float downloadProgress, float installProgress,
-                     const std::string& status);
+                     const std::string& status, float overallProgress = -1.f,
+                     bool cancellable = false);
     void hide();
     bool isActive() const { return m_active; }
 
@@ -43,6 +44,9 @@ private:
     std::string m_installLabel = "Installation";
     float m_downloadProgress = 0.f;
     float m_installProgress = 0.f;
+    float m_overallProgress = 0.f;
+    bool m_hasOverall = false;
+    bool m_cancellable = false;
     bool m_active = false;
 };
 
