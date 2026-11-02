@@ -3,6 +3,7 @@
 #include <switchu/smi_helpers.hpp>
 #include <switch.h>
 
+#include <algorithm>
 #include <cstring>
 #include <fstream>
 #include <string>
@@ -122,6 +123,24 @@ inline Result setInternetTimeSync(bool enabled) {
     const uint64_t requestId = nextRequestId();
     hdr->request_id = requestId;
     args->enabled = enabled ? 1 : 0;
+
+    Result rc = pushOutStorage(buf, sizeof(buf));
+    if (R_FAILED(rc)) return rc;
+
+    return waitForCommandResponse(requestId);
+}
+
+inline Result setLockScreen(bool enabled, int powerButtonAction = 0) {
+    uint8_t buf[sizeof(smi::CommandHeader) + sizeof(smi::LockScreenArgs)]{};
+    auto* hdr = reinterpret_cast<smi::CommandHeader*>(buf);
+    auto* args = reinterpret_cast<smi::LockScreenArgs*>(buf + sizeof(smi::CommandHeader));
+
+    hdr->magic = smi::kCommandMagic;
+    hdr->message = static_cast<uint32_t>(smi::SystemMessage::SetLockScreen);
+    const uint64_t requestId = nextRequestId();
+    hdr->request_id = requestId;
+    args->enabled = enabled ? 1 : 0;
+    args->power_button = static_cast<uint8_t>(std::clamp(powerButtonAction, 0, 2));
 
     Result rc = pushOutStorage(buf, sizeof(buf));
     if (R_FAILED(rc)) return rc;

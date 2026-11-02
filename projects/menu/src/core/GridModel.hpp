@@ -19,6 +19,12 @@ inline constexpr std::uint64_t kFolderTitleIdPrefix = 0xF100000000000000ULL;
 inline constexpr std::uint64_t folderTitleId(std::uint32_t folderId) {
     return kFolderTitleIdPrefix | static_cast<std::uint64_t>(folderId);
 }
+inline constexpr bool isFolderTitleId(std::uint64_t titleId) {
+    return (titleId & 0xFFFFFFFF00000000ULL) == kFolderTitleIdPrefix;
+}
+inline constexpr std::uint32_t folderIdFromTitleId(std::uint64_t titleId) {
+    return isFolderTitleId(titleId) ? static_cast<std::uint32_t>(titleId) : 0;
+}
 
 struct AppEntry {
     std::string id;

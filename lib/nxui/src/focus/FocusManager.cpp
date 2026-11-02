@@ -14,8 +14,13 @@ std::vector<FocusManager*>& registry() {
 }
 
 static bool isTouchInteractive(Widget* node) {
+    // Controller addAction() on full-screen parents (HOME root) must NOT make
+    // empty margins count as a tap target — that fired A → Activate and could
+    // launch the focused title when dismissing a folder by tapping outside.
+    // Touch targets are focusable widgets, or controls that opt into first-tap
+    // activate (toolbar-style).
     return node && node->isVisible()
-        && (node->isFocusable() || !node->actions().empty());
+        && (node->isFocusable() || node->activateOnFirstTouch());
 }
 
 static Widget* findTopHitRecursive(Widget* node, float x, float y) {

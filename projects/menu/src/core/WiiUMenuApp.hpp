@@ -20,6 +20,7 @@
 #include "widgets/QuickSettingsOverlay.hpp"
 #include "widgets/ContextMenu.hpp"
 #include "widgets/ProgressDialog.hpp"
+#include "widgets/LockScreen.hpp"
 #include "widgets/AppletButton.hpp"
 #include "widgets/PageIndicator.hpp"
 #include "widgets/ProfileCarouselScreen.hpp"
@@ -42,6 +43,7 @@
 #include "core/FolderPeekComposite.hpp"
 #include "core/WidgetStore.hpp"
 #include "core/ThemePreset.hpp"
+#include "widgets/LockClockFonts.hpp"
 #include "core/LeaveFrameCache.hpp"
 #include "sidebar/SidebarManager.hpp"
 #include "launcher/AppletLauncher.hpp"
@@ -60,6 +62,7 @@
 #include <nxui/widgets/GlassPanel.hpp>
 #include <nxui/widgets/Label.hpp>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <vector>
@@ -90,7 +93,8 @@ public:
     void setTutorialStartupFade(bool enabled);
 
 #ifdef SWITCHU_MENU
-    void setStartupStatus(const switchu::smi::SystemStatus& status, bool fastReturn = false);
+    void setStartupStatus(const switchu::smi::SystemStatus& status, bool fastReturn = false,
+                          bool startLocked = false);
 #endif
 
     bool onCreate() override;
@@ -101,6 +105,7 @@ public:
     void onAfterPresent(nxui::Renderer& ren) override;
 
     nxui::Widget* focusRoot() override;
+    bool allowDpadFocusNavigation(nxui::Button button) override;
 
 private:
     struct GridLayoutMetrics {
@@ -313,6 +318,7 @@ private:
     PageArrowAnim m_arrowAnimLeft, m_arrowAnimRight;
     bool m_touchArrowLeft = false, m_touchArrowRight = false;
     bool m_touchBattery = false;
+    bool m_touchLayoutFlip = false;
 
     nxui::Rect pageArrowRect(bool left);
     nxui::Rect deletePageButtonRect() const;
@@ -389,6 +395,28 @@ private:
                                    nxui::Texture* composite);
     void wireFocusCallback();
     void wireGlobalActions();
+    // HOME button shortcuts arm briefly so Ultrahand-style chords
+    // (L+R+Y+D-pad, etc.) can cancel before Quick Settings / sort / move /
+    // launch / page / Plus properties / Minus view / D-pad focus steps fire.
+    enum class HomeChordShortcut : std::uint8_t {
+        QuickSettings = 0, // L
+        Sort,              // R
+        EditMove,          // Y
+        Activate,          // A
+        PagePrev,          // ZL
+        PageNext,          // ZR
+        Properties,        // Plus
+        ChangeView,        // Minus
+        NavLeft,           // D-pad Left
+        NavRight,          // D-pad Right
+        NavUp,             // D-pad Up
+        NavDown,           // D-pad Down
+        Count
+    };
+    void armHomeChordShortcut(HomeChordShortcut which);
+    void cancelHomeChordShortcuts();
+    void tickHomeChordShortcutGuards(float dt);
+    void openFocusedSelectionProperties();
     void toggleAccessibilitySpeech();
     bool handleAccessibilityToggleCombo();
     bool isCurrentFocusableWidget(nxui::Widget* w) const;
@@ -403,6 +431,13 @@ private:
     // music and doing its frame work for the whole sleep.
     void enterSystemSleep();
     void leaveSystemSleep();
+    /// Sleep-only Lock view (not AppLayoutMode). Curtain unlock restores HOME.
+    void enterLockView(bool instant = false);
+    void finishExitLockView(bool resumeSuspended);
+    bool lockViewActive() const { return m_lockViewActive; }
+    void applyLockScreenClockFont();
+    void refreshLockClockFontEntries();
+    void restoreFocusAfterLock();
     void pollSleepNotifications();
     void onUpdateAwake(float dt);
     void tickFrameTapLightPath(float dt);
@@ -551,7 +586,16 @@ private:
     // Keep focus-only only long enough for FT donor map; full 30s hold stays
     // ACK-only (no re-reclaim). Soak: 30s at cap=0 → empty until visited then dump.
     static constexpr float   kFtRemountBrowseGraceSec = 2.5f;
+    // After Applet-heap shrink, wait longer before ±3 refill so the donor map
+    // isn't racing icon uploads (stuck-spinner soak).
+    static constexpr float   kFtDonorMapBrowseGraceSec = 6.f;
     bool                     m_ftRemountBrowseRestored = false;
+    // Boot only: window often opens before FT's vi mitm. Arm when FT is absent
+    // at first probe; skip on HOME return (process restart with mitm already up).
+    // See GpuDevice::remountDisplayForCaptureMitm.
+    bool                     m_ftCaptureRemountProbed = false;
+    bool                     m_ftCaptureRemountNeeded = false;
+    bool                     m_ftCaptureRemountDone = false;
     // Normal-path idle: drip-destroy unbound streamer MemBlocks.
     float                    m_streamerIdleSec = 0.f;
     int                      m_streamerIdleLastPage = -1;
@@ -605,6 +649,13 @@ private:
     std::shared_ptr<AutoThemeScreen>   m_autoThemeScreen;
     std::shared_ptr<ControllerTestScreen> m_controllerTest;
     std::shared_ptr<ProfileCarouselScreen> m_profileCarousel;
+    std::shared_ptr<LockScreen> m_lockScreen;
+    std::vector<switchu::lockfonts::Entry> m_lockClockFontEntries;
+    nxui::Widget* m_lockReturnFocus = nullptr;
+    std::uint64_t m_lockReturnTitleId = 0;
+    int m_lockExitCursorHoldFrames = 0;
+    bool m_lockViewActive = false;
+    float m_sleepHoldSec = 0.f;
     std::shared_ptr<TextEntryScreen>      m_textEntry;
 
     nxui::Texture m_gameCardTex;
@@ -698,6 +749,9 @@ private:
     // so a hang in any of them still leaves "console awake" + step logs.
     int  m_wakePostSwapchainFrames = 0;
     bool m_editMode          = false;
+    // Same-frame A after edit place: icon action exits edit, then bubbled root
+    // A would arm Activate and open/launch the tile — suppress that press.
+    bool m_editPlacementConsumedA = false;
     int  m_editSourceIndex   = -1;
     int  m_editTargetIndex   = -1;
     int  m_editOriginRootSlot = -1;
@@ -955,6 +1009,7 @@ private:
     bool  m_audioInitPending = false;
     bool  m_audioHeldLogged  = false;
     bool m_fastReturnRequested = false;
+    bool m_startLocked = false; // MenuStartMode::LockScreen with suspended game
     std::future<void> m_themePackageTransferFuture;
     std::future<void> m_softwareDeleteFuture;
     Result m_softwareDeleteResult = 0;
@@ -978,6 +1033,12 @@ private:
     bool m_accessibilityToggleComboHeld = false;
     bool m_plusExitPending = false;
     float m_plusExitPendingTimer = 0.f;
+    // >=0 while waiting out the HOME chord grace; <0 idle.
+    float m_pendingHomeChordSec[static_cast<std::size_t>(HomeChordShortcut::Count)] = {
+        -1.f, -1.f, -1.f, -1.f, -1.f, -1.f, -1.f, -1.f,
+        -1.f, -1.f, -1.f, -1.f
+    };
+    static constexpr float kHomeChordGraceSec = 0.08f;
     nxui::AnimatedFloat m_hintPanelW{0.f};
     nxui::AnimatedFloat m_hintPanelH{0.f};
     nxui::AnimatedFloat m_hintContentReveal{1.f};

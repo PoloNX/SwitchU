@@ -1,5 +1,6 @@
 #pragma once
 #include <nxui/widgets/Box.hpp>
+#include <nxui/core/Input.hpp>
 #include <nxui/focus/FocusManager.hpp>
 #include <memory>
 
@@ -66,6 +67,11 @@ public:
     /// Override to redirect to an overlay when it is active.
     /// Return nullptr to block all input dispatch for this frame.
     virtual Widget* focusRoot() { return m_rootBox.get(); }
+
+    /// Gate spatial D-pad focus steps (not stick). Return false to swallow the
+    /// direction this frame — e.g. HOME chord companions for Ultrahand overlays.
+    /// Widget-owned D-pad actions still fire before this is consulted.
+    virtual bool allowDpadFocusNavigation(Button /*button*/) { return true; }
 
 private:
     friend class Application;

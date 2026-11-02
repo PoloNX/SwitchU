@@ -234,27 +234,31 @@ TabbedOverlayScreen::~TabbedOverlayScreen() {
 }
 
 float TabbedOverlayScreen::itemHeight(const SettingItem& item, float contentWidth) const {
+    if (item.hidden) return 0.f;
     if (item.type == ItemType::Section) return kSectionHeight;
-    if (!item.wrapLabel) return kRowHeight;
 
-    // Content card inset (36), card content inset (28), row inset (40).
-    const float labelWidth = std::max(1.f, contentWidth - 104.f);
+    float height = kRowHeight;
+    if (item.wrapLabel) {
+        // Content card inset (36), card content inset (28), row inset (40).
+        const float labelWidth = std::max(1.f, contentWidth - 104.f);
 
-    std::string key = wrapHeightCacheKey(m_font, item.label, labelWidth);
-    auto cached = g_wrapHeightCache.find(key);
-    if (cached != g_wrapHeightCache.end())
-        return cached->second;
+        std::string key = wrapHeightCacheKey(m_font, item.label, labelWidth);
+        auto cached = g_wrapHeightCache.find(key);
+        if (cached != g_wrapHeightCache.end()) {
+            height = cached->second;
+        } else {
+            nxui::Label probe(item.label);
+            if (m_font) probe.setFont(m_font);
+            probe.setScale(0.94f);
+            probe.setMultiline(true);
+            height = std::max(kRowHeight, probe.measureWrappedText(labelWidth).y + 34.f);
 
-    nxui::Label probe(item.label);
-    if (m_font) probe.setFont(m_font);
-    probe.setScale(0.94f);
-    probe.setMultiline(true);
-    const float height = std::max(kRowHeight, probe.measureWrappedText(labelWidth).y + 34.f);
-
-    if (g_wrapHeightCache.size() >= kWrapHeightCacheLimit)
-        g_wrapHeightCache.clear();
-    g_wrapHeightCache.emplace(std::move(key), height);
-    return height;
+            if (g_wrapHeightCache.size() >= kWrapHeightCacheLimit)
+                g_wrapHeightCache.clear();
+            g_wrapHeightCache.emplace(std::move(key), height);
+        }
+    }
+    return height + std::max(0.f, item.extraHeight);
 }
 
 void TabbedOverlayScreen::setTheme(const nxui::Theme* t) {
@@ -681,6 +685,11 @@ void TabbedOverlayScreen::drawContent(nxui::Renderer& ren, const nxui::Rect& pan
     int n = std::min((int)itemChildren.size(), (int)items.size());
     for (int i = 0; i < n; ++i) {
         float h = itemHeight(items[i], cr.width);
+        if (items[i].hidden || h <= 0.f) {
+            items[i].contentFocused = false;
+            itemChildren[i]->setVisible(false);
+            continue;
+        }
         float insetY = (items[i].type == ItemType::Section) ? 1.f : kContentCardInsetY;
         float cardH = std::max(0.f, h - (items[i].type == ItemType::Section ? 2.f : 6.f));
         nxui::Rect itemRect = {

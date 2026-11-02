@@ -21,6 +21,44 @@ namespace {
 constexpr float kEditGhostMoveDuration = 0.20f;
 // How long a dragged game must rest on a folder tile before it opens.
 constexpr float kEditDragFolderHoldDelay = 0.55f;
+
+// True when another meaningful button is down/held with a HOME shortcut —
+// overlays like Ultrahand use L+R (+ face / D-pad) chords that should not
+// fire Quick Settings / sort / move / launch / page / Plus / Minus alone-actions.
+bool homeChordHasCompanions(const nxui::Input& input, nxui::Button self) {
+    static constexpr nxui::Button kCompanions[] = {
+        nxui::Button::A, nxui::Button::B, nxui::Button::X, nxui::Button::Y,
+        nxui::Button::Plus, nxui::Button::Minus,
+        nxui::Button::L, nxui::Button::R, nxui::Button::ZL, nxui::Button::ZR,
+        nxui::Button::DLeft, nxui::Button::DRight, nxui::Button::DUp, nxui::Button::DDown,
+        nxui::Button::LStick, nxui::Button::RStick,
+    };
+    for (nxui::Button b : kCompanions) {
+        if (b == self)
+            continue;
+        if (input.isHeld(b) || input.isDown(b))
+            return true;
+    }
+    return false;
+}
+
+// Face / shoulder modifiers used by Ultrahand-style chords. Excludes D-pad so
+// diagonals and solo browsing stay responsive; HOME spatial D-pad is gated when
+// any of these are held.
+bool homeChordHasOverlayModifiers(const nxui::Input& input) {
+    static constexpr nxui::Button kModifiers[] = {
+        nxui::Button::A, nxui::Button::B, nxui::Button::X, nxui::Button::Y,
+        nxui::Button::Plus, nxui::Button::Minus,
+        nxui::Button::L, nxui::Button::R, nxui::Button::ZL, nxui::Button::ZR,
+        nxui::Button::LStick, nxui::Button::RStick,
+    };
+    for (nxui::Button b : kModifiers) {
+        if (input.isHeld(b) || input.isDown(b))
+            return true;
+    }
+    return false;
+}
+
 }
 
 bool WiiUMenuApp::isEditableIcon(nxui::Widget* w) const {
@@ -418,20 +456,22 @@ void WiiUMenuApp::updateEditGhost(float dt) {
             }
         }
 
-        // Resting a dragged game on a folder tile for a moment opens that
-        // folder, so the release can pick the exact slot inside instead of
-        // dropping blind on the tile. Slot tracking pauses while the folder
-        // swaps in, because the hits still belong to the root model.
+        // Resting a dragged *game* on a folder tile opens it for slot pick.
+        // Dragging a folder onto a folder must not open — nesting finishes on
+        // drop without entering the destination.
         if (m_editDragFolderOpenWait > 0.f) {
             m_editDragFolderOpenWait -= dt;
             if (m_openFolderId != 0)
                 m_editDragFolderOpenWait = 0.f;
         }
         const bool folderOpening = m_editDragFolderOpenWait > 0.f;
+        const bool heldIsNestableTitle =
+            m_editHeldTitleId != 0
+            && !isFolderTitleId(m_editHeldTitleId)
+            && !switchu::widgets::isWidgetTitleId(m_editHeldTitleId);
         const bool canHoverOpen =
             m_openFolderId == 0 && !folderOpening && !m_folderCaptureRequested &&
-            m_editHeldTitleId != 0 && m_editHeldTitleId < kFolderTitleIdPrefix &&
-            !switchu::widgets::isWidgetTitleId(m_editHeldTitleId) &&
+            heldIsNestableTitle &&
             m_editTargetIndex >= 0 && m_editTargetIndex < m_model.count();
         if (canHoverOpen) {
             const AppEntry hovered = m_model.at(m_editTargetIndex);
@@ -518,7 +558,12 @@ void WiiUMenuApp::bindEditActions(GlossyIcon* icon) {
     m_editBoundIcon = icon;
 
     icon->addAction(static_cast<uint64_t>(nxui::Button::A), [this]() {
+        // Placement exits edit mode before bubbled root A runs in the same
+        // dispatch. Mark this press consumed so root does not arm Activate
+        // (which would open the folder / launch the game we just placed).
         activateEditModeTarget();
+        m_editPlacementConsumedA = true;
+        cancelHomeChordShortcuts();
     });
     icon->addAction(static_cast<uint64_t>(nxui::Button::B), [this]() {
         if (m_openFolderId != 0) {
@@ -1101,8 +1146,12 @@ bool WiiUMenuApp::activateEditModeTarget() {
     }
 
     const AppEntry targetEntry = m_model.at(target);
-    if (m_openFolderId == 0 && targetEntry.isFolder() &&
-        m_editHeldTitleId < kFolderTitleIdPrefix) {
+    // Games dropped on a folder open it for slot pick. Folders dropped on a
+    // folder fall through to commitEditModePlacement and swap like any tile.
+    if (m_openFolderId == 0 && targetEntry.isFolder()
+        && m_editHeldTitleId != 0
+        && !isFolderTitleId(m_editHeldTitleId)
+        && !switchu::widgets::isWidgetTitleId(m_editHeldTitleId)) {
         // Drop the root-grid index before the folder model loads. Leaving it
         // intact made page-2+ folders keep an out-of-range target, which pinned
         // the edit ghost at (0,0) and blocked further movement (#95).
@@ -1115,7 +1164,9 @@ bool WiiUMenuApp::activateEditModeTarget() {
         return true;
     }
 
-    if (m_openFolderId != 0 && m_editHeldTitleId < kFolderTitleIdPrefix) {
+    if (m_openFolderId != 0 && !isFolderTitleId(m_editHeldTitleId)
+        && !switchu::widgets::isWidgetTitleId(m_editHeldTitleId)
+        && m_editHeldTitleId != 0) {
         // Folder order lives in folders.json, not the HOME layoutSlots swap.
         // Same-folder drops swap; inbound drops place without insert-shifting.
         const std::uint32_t targetFolderId = m_openFolderId;
@@ -1505,12 +1556,50 @@ void WiiUMenuApp::closeActiveOverlays(bool closeFolders) {
         closeFolder();
 }
 
+bool WiiUMenuApp::allowDpadFocusNavigation(nxui::Button button) {
+    // Stick browsing and overlay focus roots keep framework steps. Widget
+    // D-pad actions (edit-mode move, chrome) still fire before this gate.
+    if (m_navigator.route() != switchu::navigation::Route::Home ||
+        focusRoot() != &rootBox())
+        return true;
+
+    HomeChordShortcut which = HomeChordShortcut::Count;
+    switch (button) {
+        case nxui::Button::DLeft:  which = HomeChordShortcut::NavLeft; break;
+        case nxui::Button::DRight: which = HomeChordShortcut::NavRight; break;
+        case nxui::Button::DUp:    which = HomeChordShortcut::NavUp; break;
+        case nxui::Button::DDown:  which = HomeChordShortcut::NavDown; break;
+        default: return true;
+    }
+
+    const auto& input = app().input();
+    const auto idx = static_cast<std::size_t>(which);
+
+    // Ultrahand-style L+R (+ face) + D-pad: swallow spatial steps.
+    if (homeChordHasOverlayModifiers(input)) {
+        m_pendingHomeChordSec[idx] = -1.f;
+        return false;
+    }
+
+    // Same grace as other HOME shortcuts: arm on press, fire after settle.
+    if (input.isDown(button)) {
+        armHomeChordShortcut(which);
+        return false;
+    }
+    if (m_pendingHomeChordSec[idx] >= 0.f)
+        return false;
+
+    // Held after grace already stepped — allow Application repeat.
+    return true;
+}
+
 nxui::Widget* WiiUMenuApp::focusRoot() {
     if (m_leaveCaptureDeferred) return nullptr;
     if (m_leaveCapturePending) return nullptr;
     if (leaveSplashActive()) return nullptr;
     if (m_launchAnim && m_launchAnim->isPlaying()) return nullptr;
     if (m_folderCaptureRequested || m_folderClosing) return nullptr;
+    if (m_lockViewActive && m_lockScreen) return m_lockScreen.get();
     if (m_progressDialog && m_progressDialog->isActive()) return m_progressDialog.get();
     if (m_textEntry && m_textEntry->isActive()) return m_textEntry.get();
     if (m_dialog && m_dialog->isActive()) return m_dialog.get();
@@ -1584,6 +1673,257 @@ bool WiiUMenuApp::handleAccessibilityToggleCombo() {
     return true;
 }
 
+void WiiUMenuApp::armHomeChordShortcut(HomeChordShortcut which) {
+    const auto idx = static_cast<std::size_t>(which);
+    if (idx >= static_cast<std::size_t>(HomeChordShortcut::Count))
+        return;
+
+    nxui::Button self = nxui::Button::L;
+    switch (which) {
+        case HomeChordShortcut::QuickSettings: self = nxui::Button::L; break;
+        case HomeChordShortcut::Sort:          self = nxui::Button::R; break;
+        case HomeChordShortcut::EditMove:      self = nxui::Button::Y; break;
+        case HomeChordShortcut::Activate:      self = nxui::Button::A; break;
+        case HomeChordShortcut::PagePrev:      self = nxui::Button::ZL; break;
+        case HomeChordShortcut::PageNext:      self = nxui::Button::ZR; break;
+        case HomeChordShortcut::Properties:    self = nxui::Button::Plus; break;
+        case HomeChordShortcut::ChangeView:    self = nxui::Button::Minus; break;
+        case HomeChordShortcut::NavLeft:       self = nxui::Button::DLeft; break;
+        case HomeChordShortcut::NavRight:      self = nxui::Button::DRight; break;
+        case HomeChordShortcut::NavUp:         self = nxui::Button::DUp; break;
+        case HomeChordShortcut::NavDown:       self = nxui::Button::DDown; break;
+        case HomeChordShortcut::Count:         return;
+    }
+
+    const auto& input = app().input();
+    // D-pad nav only treats face/shoulder as chord companions so diagonals
+    // (two D-pad buttons) still settle into a focus step.
+    const bool chordBlocked =
+        (which == HomeChordShortcut::NavLeft || which == HomeChordShortcut::NavRight ||
+         which == HomeChordShortcut::NavUp || which == HomeChordShortcut::NavDown)
+            ? homeChordHasOverlayModifiers(input)
+            : homeChordHasCompanions(input, self);
+    if (chordBlocked) {
+        if (which == HomeChordShortcut::NavLeft || which == HomeChordShortcut::NavRight ||
+            which == HomeChordShortcut::NavUp || which == HomeChordShortcut::NavDown)
+            m_pendingHomeChordSec[idx] = -1.f;
+        else
+            cancelHomeChordShortcuts();
+        return;
+    }
+    m_pendingHomeChordSec[idx] = 0.f;
+}
+
+void WiiUMenuApp::cancelHomeChordShortcuts() {
+    for (float& pending : m_pendingHomeChordSec)
+        pending = -1.f;
+}
+
+void WiiUMenuApp::openFocusedSelectionProperties() {
+#ifdef SWITCHU_MENU
+    if (m_navigator.route() != switchu::navigation::Route::Home ||
+        m_editMode ||
+        (m_contextMenu && m_contextMenu->isActive()) ||
+        (m_dialog && m_dialog->isActive()) ||
+        (m_quickSettings && m_quickSettings->isActive()) ||
+        (m_textEntry && m_textEntry->isActive()) ||
+        (m_settings && m_settings->isActive()) ||
+        (m_themeShop && m_themeShop->isActive()) ||
+        (m_gameOptions && m_gameOptions->isActive()) ||
+        (m_folderOptions && m_folderOptions->isActive()) ||
+        (m_controllerTest && m_controllerTest->isActive()) ||
+        (m_profileCarousel && m_profileCarousel->isActive()) ||
+        (m_userSelect && m_userSelect->isActive()))
+        return;
+
+    auto* current = focusManager().current();
+    if (!current || current->tag() != "glossy_icon" || !m_grid)
+        return;
+
+    auto* icon = static_cast<GlossyIcon*>(current);
+    const auto& icons = m_grid->allIcons();
+    const auto found = std::find_if(
+        icons.begin(), icons.end(),
+        [icon](const auto& candidate) { return candidate.get() == icon; });
+    const int index = found == icons.end()
+        ? -1 : static_cast<int>(std::distance(icons.begin(), found));
+    if (index < 0 || index >= m_model.count())
+        return;
+
+    DebugLog::log("[plus] direct index=%d kind=%u title=0x%016lX",
+                  index, static_cast<unsigned>(m_model.at(index).kind),
+                  static_cast<unsigned long>(m_model.at(index).titleId));
+    // titleId=0 is the canonical empty-slot marker. Keep this
+    // defensive check even if a stale loader entry carries the
+    // wrong kind so Plus can never route an empty slot as a game.
+    if (m_model.at(index).titleId == 0 ||
+        m_model.at(index).kind == GridEntryKind::Empty) {
+        if (m_openFolderId == 0) // folders do not nest
+            showAddContextMenu(index, icon->focusRect());
+    } else if (m_model.at(index).isFolder())
+        showFolderContextMenu(m_model.at(index).folderId);
+    else if (m_model.at(index).isWidget())
+        showWidgetOptionsMenu(m_model.at(index).widgetId,
+                              index, icon->focusRect());
+    else if (m_model.at(index).isApplication())
+        showGameContextMenu(icon);
+#endif
+}
+
+void WiiUMenuApp::tickHomeChordShortcutGuards(float dt) {
+    auto& input = app().input();
+
+    // Leave HOME / overlays: drop any armed HOME chord action.
+    // Edit-move / page / activate stay valid while rearranging; cancel only
+    // when focus leaves the HOME root or a modal takes over.
+    const bool homeRoot = m_navigator.route() == switchu::navigation::Route::Home
+        && focusRoot() == &rootBox();
+    if (!homeRoot
+        || (m_quickSettings && m_quickSettings->isActive())
+        || (m_settings && m_settings->isActive())
+        || (m_themeShop && m_themeShop->isActive())
+        || (m_dialog && m_dialog->isActive())
+        || (m_contextMenu && m_contextMenu->isActive())
+        || (m_textEntry && m_textEntry->isActive())
+        || (m_gameOptions && m_gameOptions->isActive())
+        || (m_folderOptions && m_folderOptions->isActive())
+        || (m_controllerTest && m_controllerTest->isActive())
+        || (m_profileCarousel && m_profileCarousel->isActive())
+        || (m_userSelect && m_userSelect->isActive())) {
+        cancelHomeChordShortcuts();
+        return;
+    }
+
+    auto settle = [&](HomeChordShortcut which, nxui::Button self, auto&& fire) {
+        float& pendingSec = m_pendingHomeChordSec[static_cast<std::size_t>(which)];
+        if (pendingSec < 0.f)
+            return;
+        const bool isNav =
+            which == HomeChordShortcut::NavLeft || which == HomeChordShortcut::NavRight ||
+            which == HomeChordShortcut::NavUp || which == HomeChordShortcut::NavDown;
+        if (isNav ? homeChordHasOverlayModifiers(input)
+                  : homeChordHasCompanions(input, self)) {
+            pendingSec = -1.f;
+            return;
+        }
+        // Tap released alone before grace ends — still counts as a solo press.
+        if (!input.isHeld(self)) {
+            pendingSec = -1.f;
+            fire();
+            return;
+        }
+        pendingSec += dt;
+        if (pendingSec >= kHomeChordGraceSec) {
+            pendingSec = -1.f;
+            fire();
+        }
+    };
+
+    settle(HomeChordShortcut::QuickSettings, nxui::Button::L, [this]() {
+        if (m_editMode || m_navigator.route() != switchu::navigation::Route::Home ||
+            focusRoot() != &rootBox())
+            return;
+        openQuickSettings();
+    });
+    settle(HomeChordShortcut::Sort, nxui::Button::R, [this]() {
+        if (m_navigator.route() != switchu::navigation::Route::Home ||
+            focusRoot() != &rootBox() || m_openFolderId != 0 || m_editMode ||
+            m_appLayoutMode == AppLayoutMode::DynamicLine)
+            return;
+        cycleSortMode();
+    });
+    settle(HomeChordShortcut::EditMove, nxui::Button::Y, [this]() {
+        if ((m_contextMenu && m_contextMenu->isActive()) ||
+            (m_dialog && m_dialog->isActive()) ||
+            (m_themeShop && m_themeShop->isActive()) ||
+            (m_settings && m_settings->isActive()) ||
+            (m_gameOptions && m_gameOptions->isActive()) ||
+            (m_folderOptions && m_folderOptions->isActive()) ||
+            (m_controllerTest && m_controllerTest->isActive()) ||
+            (m_profileCarousel && m_profileCarousel->isActive()) ||
+            (m_userSelect && m_userSelect->isActive()))
+            return;
+        if (m_editMode)
+            return;
+        auto* cur = focusManager().current();
+        if (!isEditableIcon(cur))
+            return;
+        enterEditMode();
+        m_audio.playSfx(Sfx::Activate);
+    });
+    settle(HomeChordShortcut::Activate, nxui::Button::A, [this]() {
+        if (m_editPlacementConsumedA) {
+            m_editPlacementConsumedA = false;
+            return;
+        }
+        if (m_editMode || m_navigator.route() != switchu::navigation::Route::Home ||
+            focusRoot() != &rootBox())
+            return;
+        auto* cur = focusManager().current();
+        if (!cur || cur->tag() != "glossy_icon")
+            return;
+        cur->activate();
+    });
+    settle(HomeChordShortcut::PagePrev, nxui::Button::ZL, [this]() {
+        if (m_navigator.route() != switchu::navigation::Route::Home || focusRoot() != &rootBox())
+            return;
+        flipPage(-1);
+    });
+    settle(HomeChordShortcut::PageNext, nxui::Button::ZR, [this]() {
+        if (m_navigator.route() != switchu::navigation::Route::Home || focusRoot() != &rootBox())
+            return;
+        flipPage(+1);
+    });
+    settle(HomeChordShortcut::Properties, nxui::Button::Plus, [this]() {
+#ifdef SWITCHU_HOMEBREW
+        if (m_navigator.route() == switchu::navigation::Route::ControllerTest)
+            return;
+        if (handleAccessibilityToggleCombo())
+            return;
+        m_plusExitPending = true;
+        m_plusExitPendingTimer = 0.80f;
+#endif
+        openFocusedSelectionProperties();
+    });
+    settle(HomeChordShortcut::ChangeView, nxui::Button::Minus, [this]() {
+        if (handleAccessibilityToggleCombo())
+            return;
+        if (deletePageAvailable())
+            return;
+        if (m_navigator.route() != switchu::navigation::Route::Home ||
+            m_editMode ||
+            (m_contextMenu && m_contextMenu->isActive()) ||
+            (m_dialog && m_dialog->isActive()) ||
+            (m_quickSettings && m_quickSettings->isActive()) ||
+            (m_settings && m_settings->isActive()) ||
+            (m_themeShop && m_themeShop->isActive()) ||
+            (m_gameOptions && m_gameOptions->isActive()) ||
+            (m_folderOptions && m_folderOptions->isActive()) ||
+            (m_controllerTest && m_controllerTest->isActive()) ||
+            (m_profileCarousel && m_profileCarousel->isActive()) ||
+            (m_userSelect && m_userSelect->isActive()))
+            return;
+        toggleAppLayoutMode();
+    });
+
+    auto fireNav = [this](nxui::FocusDirection dir) {
+        if (m_navigator.route() != switchu::navigation::Route::Home ||
+            focusRoot() != &rootBox())
+            return;
+        if (homeChordHasOverlayModifiers(app().input()))
+            return;
+        focusManager().navigate(dir, focusRoot());
+    };
+    settle(HomeChordShortcut::NavLeft, nxui::Button::DLeft,
+           [&]() { fireNav(nxui::FocusDirection::LEFT); });
+    settle(HomeChordShortcut::NavRight, nxui::Button::DRight,
+           [&]() { fireNav(nxui::FocusDirection::RIGHT); });
+    settle(HomeChordShortcut::NavUp, nxui::Button::DUp,
+           [&]() { fireNav(nxui::FocusDirection::UP); });
+    settle(HomeChordShortcut::NavDown, nxui::Button::DDown,
+           [&]() { fireNav(nxui::FocusDirection::DOWN); });
+}
+
 void WiiUMenuApp::wireGlobalActions() {
     auto& root = rootBox();
 
@@ -1606,7 +1946,8 @@ void WiiUMenuApp::wireGlobalActions() {
         if (m_editMode || m_navigator.route() != switchu::navigation::Route::Home ||
             focusRoot() != &rootBox())
             return;
-        openQuickSettings();
+        // Arm only — Ultrahand-style chords cancel during the grace window.
+        armHomeChordShortcut(HomeChordShortcut::QuickSettings);
     });
 
     root.addAction(static_cast<uint64_t>(nxui::Button::LStick), [this]() {
@@ -1620,19 +1961,19 @@ void WiiUMenuApp::wireGlobalActions() {
             focusRoot() != &rootBox() || m_openFolderId != 0 || m_editMode ||
             m_appLayoutMode == AppLayoutMode::DynamicLine)
             return;
-        cycleSortMode();
+        armHomeChordShortcut(HomeChordShortcut::Sort);
     });
 
     // The grid holds the open folder's model, so paging works inside a folder too.
     root.addAction(static_cast<uint64_t>(nxui::Button::ZL), [this]() {
         if (m_navigator.route() != switchu::navigation::Route::Home || focusRoot() != &rootBox())
             return;
-        flipPage(-1);
+        armHomeChordShortcut(HomeChordShortcut::PagePrev);
     });
     root.addAction(static_cast<uint64_t>(nxui::Button::ZR), [this]() {
         if (m_navigator.route() != switchu::navigation::Route::Home || focusRoot() != &rootBox())
             return;
-        flipPage(+1);
+        armHomeChordShortcut(HomeChordShortcut::PageNext);
     });
     root.addAction(static_cast<uint64_t>(nxui::Button::Y), [this]() {
         if ((m_contextMenu && m_contextMenu->isActive()) ||
@@ -1646,21 +1987,39 @@ void WiiUMenuApp::wireGlobalActions() {
             (m_userSelect && m_userSelect->isActive())) {
             return;
         }
-
-        auto* cur = focusManager().current();
         if (m_editMode)
             return;
-        if (!isEditableIcon(cur))
+        if (!isEditableIcon(focusManager().current()))
             return;
-
-        enterEditMode();
-        m_audio.playSfx(Sfx::Activate);
+        armHomeChordShortcut(HomeChordShortcut::EditMove);
+    });
+    // Consume A on HOME so Ultrahand chords can cancel launch; chrome widgets
+    // still activate immediately. Edit-mode icons keep their own A action.
+    root.addAction(static_cast<uint64_t>(nxui::Button::A), [this]() {
+        if (m_editPlacementConsumedA) {
+            m_editPlacementConsumedA = false;
+            return;
+        }
+        if (m_editMode || m_navigator.route() != switchu::navigation::Route::Home ||
+            focusRoot() != &rootBox())
+            return;
+        auto* cur = focusManager().current();
+        if (cur && cur->tag() == "glossy_icon") {
+            armHomeChordShortcut(HomeChordShortcut::Activate);
+            return;
+        }
+        if (cur)
+            cur->activate();
     });
 #ifdef SWITCHU_DEBUG_UI
     root.addAction(static_cast<uint64_t>(nxui::Button::Minus), [this]() {
         if (m_navigator.route() == switchu::navigation::Route::ControllerTest)
             return;
         if (handleAccessibilityToggleCombo())
+            return;
+        // Solo Minus still arms ChangeView from onUpdateAwake; debug overlay
+        // stays an immediate chord-safe toggle for developers.
+        if (homeChordHasCompanions(app().input(), nxui::Button::Minus))
             return;
         m_showDebugOverlay = !m_showDebugOverlay;
         DebugLog::log("[debug] ImGui overlay toggled: %d", m_showDebugOverlay ? 1 : 0);
@@ -1678,8 +2037,7 @@ void WiiUMenuApp::wireGlobalActions() {
             return;
         if (handleAccessibilityToggleCombo())
             return;
-        m_plusExitPending = true;
-        m_plusExitPendingTimer = 0.80f;
+        armHomeChordShortcut(HomeChordShortcut::Properties);
     });
 #endif
 
@@ -2006,11 +2364,30 @@ void WiiUMenuApp::handleTouch() {
     constexpr float kSwipeThreshold = 80.f;
     constexpr float kLongPressThreshold = 0.55f;
     constexpr float kLongPressMoveThreshold = 18.f;
+    constexpr float kLineDragSlop = 18.f;
 
     auto& input = app().input();
 
     auto hitProfileLock = [this](float x, float y) {
         return m_profileLock && m_profileLock->isVisible() && m_profileLock->hitTest(x, y);
+    };
+
+    auto syncLineDragFocus = [this]() {
+        if (!m_grid || !m_grid->isDynamicLine())
+            return;
+        const int nearest = m_grid->nearestFocusableToLineOffset();
+        if (nearest < 0)
+            return;
+        const auto& icons = m_grid->allIcons();
+        if (nearest >= static_cast<int>(icons.size()) || !icons[static_cast<std::size_t>(nearest)])
+            return;
+        auto* icon = icons[static_cast<std::size_t>(nearest)].get();
+        if (focusManager().current() == icon)
+            return;
+        // wireFocusCallback syncs grid focus + icon streamer; mute Navigate
+        // so a long swipe does not chirp on every title.
+        m_suppressNextNavigateSfx = true;
+        focusManager().setFocus(icon);
     };
 
     auto focusTouchedIcon = [this](int localHit) -> GlossyIcon* {
@@ -2056,6 +2433,7 @@ void WiiUMenuApp::handleTouch() {
         m_touchArrowLeft = m_touchArrowRight = false;
         m_touchDeletePage = false;
         m_touchBattery = false;
+        m_touchLayoutFlip = false;
         if (m_arrowAnimLeft.show > 0.5f && pageArrowRect(true).expanded(12.f).contains(tx, ty)) {
             m_touchArrowLeft = true;
             m_touchHitIndex = -1;
@@ -2077,6 +2455,15 @@ void WiiUMenuApp::handleTouch() {
         if (m_battery && m_battery->isVisible() && m_battery->hitTest(tx, ty)
             && m_topHud && m_topHud->isVisible()) {
             m_touchBattery = true;
+            m_touchHitIndex = -1;
+            return;
+        }
+
+        // Change View sits in the top HUD — claim the tap so an open-folder
+        // outside dismiss does not steal it.
+        if (m_layoutFlip && m_layoutFlip->isVisible()
+            && m_layoutFlip->hitTest(tx, ty)) {
+            m_touchLayoutFlip = true;
             m_touchHitIndex = -1;
             return;
         }
@@ -2109,11 +2496,45 @@ void WiiUMenuApp::handleTouch() {
         m_addPageTouchHold = false;
     }
 
+    // Single-row: horizontal drag scrolls the carousel title-by-title. Grid
+    // swipes still page-flip on release (below). ZL/ZR keep half-page jumps.
+    // Use grid layoutMode (not only m_appLayoutMode) so folder/prefetch
+    // presentation stays in sync with what is on screen.
+    if (input.isTouching()
+        && !m_editMode
+        && m_grid
+        && m_grid->isDynamicLine()
+        && !m_grid->isLayoutMorphing()
+        && m_layoutTransition.kind == LayoutTransitionKind::Idle
+        && !m_touchArrowLeft && !m_touchArrowRight
+        && !m_touchBattery && !m_touchLayoutFlip && !m_touchProfileLock
+        && !m_touchDeletePage) {
+        const float dx = input.touchDeltaX();
+        const float dy = input.touchDeltaY();
+        const bool inLineBand = m_grid->contentRect().contains(input.touchX(),
+                                                               input.touchY())
+            || m_touchHitIndex >= 0
+            || m_grid->rect().contains(input.touchX(), input.touchY());
+        if (!m_grid->isLineDragActive()
+            && inLineBand
+            && std::abs(dx) > kLineDragSlop
+            && std::abs(dx) > std::abs(dy) * 1.2f) {
+            m_grid->beginLineDrag();
+            DebugLog::log("[touch] line-drag begin dx=%.1f hit=%d",
+                          dx, m_touchHitIndex);
+        }
+        if (m_grid->isLineDragActive()) {
+            m_grid->dragLineToTouchDelta(dx);
+            syncLineDragFocus();
+        }
+    }
+
     if (input.isTouching() && m_touchHitIndex >= 0) {
         float dx = input.touchDeltaX();
         float dy = input.touchDeltaY();
 
         if (!m_editMode
+            && !(m_grid && m_grid->isLineDragActive())
             && std::abs(dx) <= kLongPressMoveThreshold
             && std::abs(dy) <= kLongPressMoveThreshold
             && input.touchDuration() >= kLongPressThreshold)
@@ -2171,6 +2592,14 @@ void WiiUMenuApp::handleTouch() {
             return;
         }
 
+        if (m_touchLayoutFlip) {
+            // Claimed so open-folder outside-dismiss does not fire. FocusManager
+            // already activates Change View (activateOnFirstTouch) — do not
+            // activate again or the view toggles twice and looks stuck.
+            m_touchLayoutFlip = false;
+            return;
+        }
+
         if (m_touchArrowLeft || m_touchArrowRight) {
             const bool left = m_touchArrowLeft;
             const bool wasAddHold = m_addPageTouchHold;
@@ -2216,17 +2645,45 @@ void WiiUMenuApp::handleTouch() {
             return;
         }
 
+        if (m_grid && m_grid->isLineDragActive()) {
+            const int settled = m_grid->endLineDrag();
+            DebugLog::log("[touch] line-drag end settled=%d", settled);
+            if (settled >= 0) {
+                if (auto* focused = m_grid->focusManager().current()) {
+                    if (focusManager().current() != focused) {
+                        m_suppressNextNavigateSfx = true;
+                        focusManager().setFocus(focused);
+                    }
+                }
+                syncSteamGridDbLogoArea();
+                showFocusedSteamGridDbArtwork(false);
+                updateCursor();
+                m_audio.playSfx(Sfx::Navigate);
+            }
+            m_touchHitIndex = -1;
+            m_touchEditDragActive = false;
+            return;
+        }
+
         float dx = input.touchDeltaX();
         float dy = input.touchDeltaY();
-        if (std::abs(dx) > kSwipeThreshold && std::abs(dx) > std::abs(dy) * 1.5f) {
+        // Grid: swipe flips pages. Single-row is handled by line-drag above —
+        // do not half-page-jump on release (that was the jumpy feel).
+        if (!(m_grid && m_grid->isDynamicLine())
+            && std::abs(dx) > kSwipeThreshold
+            && std::abs(dx) > std::abs(dy) * 1.5f) {
+            DebugLog::log("[touch] grid swipe flip dx=%.1f", dx);
             flipPage(dx < 0 ? 1 : -1);
         } else if (m_openFolderId != 0
                    && m_touchHitIndex < 0
+                   && !m_touchLayoutFlip
                    && std::abs(dx) < 20.f && std::abs(dy) < 20.f
                    && m_grid
-                   && m_grid->hitTest(input.touchX(), input.touchY()) < 0) {
-            // Tap anywhere that isn't an icon (dimmed margins left/right/above/below,
-            // and empty gaps) to leave - mirrors B, including edit-mode keep-move.
+                   && m_grid->hitTest(input.touchX(), input.touchY()) < 0
+                   && !(m_layoutFlip && m_layoutFlip->isVisible()
+                        && m_layoutFlip->hitTest(input.touchX(), input.touchY()))) {
+            // Tap anywhere that isn't an icon / Change View (dimmed margins,
+            // empty gaps) to leave - mirrors B, including edit-mode keep-move.
             closeFolder(m_editMode, true);
         }
         m_touchHitIndex = -1;
@@ -2239,6 +2696,11 @@ void WiiUMenuApp::handleSystemAction(SysAction a) {
     switch (a) {
         case SysAction::HomeDismiss: {
             // Physical HOME while already browsing the menu.
+            if (m_lockViewActive && m_lockScreen) {
+                DebugLog::log("[pump] HomeDismiss -> unlock Lock view");
+                m_lockScreen->requestUnlock();
+                break;
+            }
             DebugLog::log("[pump] HomeDismiss -> close folder/overlays");
             m_launcher.setAppHasForeground(false);
             // Like the stock HOME menu: with nothing left to dismiss, HOME goes
@@ -2304,6 +2766,12 @@ void WiiUMenuApp::handleSystemAction(SysAction a) {
 void WiiUMenuApp::updateCursor() {
     if (!m_cursor)
         return;
+    // Allow a forced snap onto the destination tile while the unlock curtain
+    // is still up (onUnlocking parks focus before finishExitLockView).
+    if (m_lockViewActive && !m_forceCursorTeleport) {
+        m_cursor->setVisible(false);
+        return;
+    }
     if (m_contextMenu && m_contextMenu->isActive()) {
         m_cursor->setVisible(false);
         return;

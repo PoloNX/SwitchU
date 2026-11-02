@@ -3,10 +3,12 @@
 #include <switchu/sd_commit.hpp>
 #include "widgets/GlossyIcon.hpp"
 #include "widgets/FolderPalette.hpp"
+#include "widgets/LockClockFonts.hpp"
 #include "themeshop/ThemeHttp.hpp"
 #include <nxui/core/Animation.hpp>
 #include <nxui/core/I18n.hpp>
 #include "DebugLog.hpp"
+#include "HeapControl.hpp"
 #include "bluetooth/BluetoothManager.hpp"
 #include "LeaveFrameCache.hpp"
 #include "screen_fit.hpp"
@@ -34,6 +36,10 @@
 #include <random>
 #include <optional>
 #include <limits>
+
+#ifndef SWITCHU_HOMEBREW
+extern "C" u64 __nx_vi_layer_id;
+#endif
 
 namespace {
 
@@ -431,10 +437,12 @@ void WiiUMenuApp::setTutorialStartupFade(bool enabled) {
 }
 
 #ifdef SWITCHU_MENU
-void WiiUMenuApp::setStartupStatus(const switchu::smi::SystemStatus& status, bool fastReturn) {
+void WiiUMenuApp::setStartupStatus(const switchu::smi::SystemStatus& status, bool fastReturn,
+                                   bool startLocked) {
     m_launcher.setStartupStatus(status.suspended_app_id, status.app_running);
     m_startupFailure = status.last_failure;
     m_fastReturnRequested = fastReturn || status.suspended_app_id != 0;
+    m_startLocked = startLocked && status.suspended_app_id != 0;
 }
 #endif
 
@@ -537,6 +545,7 @@ bool WiiUMenuApp::hasActiveLeaveCaptureOverlay() const {
         || (m_quickSettings && m_quickSettings->isActive())
         || (m_textEntry && m_textEntry->isActive())
         || (m_progressDialog && m_progressDialog->isActive())
+        || m_lockViewActive
         || (m_settings && m_settings->isActive())
         || (m_themeShop && m_themeShop->isActive())
         || (m_gameOptions && m_gameOptions->isActive())
@@ -847,8 +856,26 @@ bool WiiUMenuApp::onCreate() {
     // FT's NeedHeadroom 2s window starts as soon as 100D is up — handshake
     // here before catalog/streamer fill so cold boot / first HOME can ACK.
     m_frameTapStatus.probe(0.f, 0.f);
+    // Arm capture remount here (window already open via __nx_win_init):
+    // cold boot → FT not up yet → need remount when viewer connects.
+    // HOME return → FT already up → first window already through mitm → skip.
+    // (Must NOT decide later in tickFrameTap — by then FT is always up.)
+    m_ftCaptureRemountProbed = true;
+    m_ftCaptureRemountNeeded = !m_frameTapStatus.available();
+    DebugLog::log("[ft-light] capture remount %s (FT up at onCreate=%d)",
+                  m_ftCaptureRemountNeeded ? "armed (boot-before-mitm)" : "not needed",
+                  m_frameTapStatus.available() ? 1 : 0);
+    {
+        if (FILE* f = std::fopen("sdmc:/config/SwitchU/ft_capture_remount.txt", "w")) {
+            std::fputs(m_ftCaptureRemountNeeded ? "armed\n" : "skip\n", f);
+            std::fclose(f);
+        }
+    }
     if (m_frameTapStatus.needsHeadroom()) {
         reclaimForFrameTapLaunch("need-headroom");
+        // Return unused Applet-heap to the pool so FT's donor (~42 MB) can map.
+        // No-op when FT is absent; normal SwitchU never takes this path.
+        switchu::menu::tryShrinkHeapForFrameTapAggressive(m_frameTapStatus.headroomNeedMb());
         u32 freeKb = 0;
 #ifdef NXUI_BACKEND_DEKO3D
         u64 total = 0, used = 0;
@@ -861,9 +888,22 @@ bool WiiUMenuApp::onCreate() {
         m_ftHeadroomHoldActive = true;
         m_ftHeadroomHoldSec = 0.f;
         m_ftRemountBrowseRestored = false;
-        DebugLog::log("[ft-light] early-ACK free=%uKB (pre-fill)", freeKb);
+        DebugLog::log("[ft-light] early-ACK free=%uKB (pre-fill) heapShrunk=%d",
+                      freeKb, switchu::menu::heapShrunkForFrameTap() ? 1 : 0);
     } else if (m_frameTapStatus.viewerConnected()) {
+        // FT often asks NeedHeadroom within 2.5s of 100D — shrink before fill
+        // so the Applet pool already has donor room when the bit arrives.
         enterFrameTapLightPath("viewer-prefill");
+        reclaimForFrameTapLaunch("need-headroom");
+        const std::uint32_t needMb = m_frameTapStatus.headroomNeedMb()
+            ? m_frameTapStatus.headroomNeedMb() : 42u;
+        switchu::menu::tryShrinkHeapForFrameTapAggressive(needMb);
+        m_ftHeadroomHoldActive = true;
+        m_ftHeadroomHoldSec = 0.f;
+        m_ftRemountBrowseRestored = false;
+        DebugLog::log("[ft-light] viewer-prefill heapShrunk=%d heap=%zuKB",
+                      switchu::menu::heapShrunkForFrameTap() ? 1 : 0,
+                      switchu::menu::currentHeapSizeBytes() / 1024u);
     }
     m_iconStreamer.setThreadPool(&m_threadPool);
     // Per-title poster (2x3 grid tiles) even when the global single-row flag
@@ -989,6 +1029,21 @@ bool WiiUMenuApp::onCreate() {
 
     DebugLog::log("[init] DONE total=%lums fastReturn=%d",
                   initElapsedMs(), fastReturn ? 1 : 0);
+
+#ifdef SWITCHU_MENU
+    switchu::menu::smi_cmd::setLockScreen(m_config.lockScreenEnabled,
+                                          m_config.powerButtonAction);
+    if (m_startLocked) {
+        enterLockView(true);
+        if (!m_lockViewActive) {
+            m_startLocked = false;
+            m_launcher.resumeApplication();
+        }
+    } else if (m_config.lockScreenEnabled && !m_fastReturnRequested) {
+        // Cold boot / StartupBoot with Lock enabled: greet at the Lock view.
+        enterLockView(true);
+    }
+#endif
     return true;
 }
 
@@ -1224,7 +1279,8 @@ void WiiUMenuApp::placeLayoutFlipButton() {
     const float x = clock.x + clock.width + kGap;
     const float y = clock.y + (clock.height - kSize) * 0.5f;
     m_layoutFlip->setRect({x, y, kSize, kSize});
-    m_layoutFlip->setVisible(m_topHud && m_topHud->isVisible() && m_openFolderId == 0);
+    // Visible on HOME and inside folders (touch + controller Change View).
+    m_layoutFlip->setVisible(m_topHud && m_topHud->isVisible());
 }
 
 bool WiiUMenuApp::keepLayoutFlipFocus() const {
@@ -3907,7 +3963,8 @@ void WiiUMenuApp::toggleAppLayoutMode() {
         return;
     // Empty-page Minus hold opens the delete dialog; a further Minus press
     // must not flip layout under that modal (selector ends up orphaned).
-    if ((m_dialog && m_dialog->isActive())
+    if (m_lockViewActive
+        || (m_dialog && m_dialog->isActive())
         || (m_contextMenu && m_contextMenu->isActive())
         || (m_quickSettings && m_quickSettings->isActive())
         || (m_textEntry && m_textEntry->isActive())
@@ -3959,10 +4016,7 @@ void WiiUMenuApp::configureDynamicLineNavigation() {
     placeLayoutFlipButton();
 
     if (m_grid) {
-        // Folder chrome (top HUD / sidebars) is hidden — never wire titles into
-        // those widgets. Their own isVisible() flags stay true, so a custom UP
-        // to profile/battery would move the blue cursor along invisible chrome
-        // (notably after a grid → single-row flip inside a folder).
+        // Sidebars stay hidden in folders — never wire titles into them.
         std::vector<nxui::Widget*> leftTargets;
         std::vector<nxui::Widget*> rightTargets;
         if (!inFolder) {
@@ -3974,20 +4028,63 @@ void WiiUMenuApp::configureDynamicLineNavigation() {
                 rightTargets.push_back(button.get());
         }
         m_grid->setGridSideTargets(std::move(leftTargets), std::move(rightTargets));
-        // Titles UP → Change View (fallback: user) on HOME only.
+        // Titles UP → Change View (folders keep clock + flip; no sidebars).
         nxui::Widget* chromeUp = nullptr;
-        if (!inFolder) {
-            chromeUp = (m_layoutFlip && m_layoutFlip->isVisible())
-                ? static_cast<nxui::Widget*>(m_layoutFlip.get())
-                : static_cast<nxui::Widget*>(m_profileLock.get());
-        }
+        if (m_layoutFlip && m_layoutFlip->isVisible())
+            chromeUp = m_layoutFlip.get();
+        else if (!inFolder && m_profileLock)
+            chromeUp = m_profileLock.get();
         m_grid->setDynamicLineUpTarget(chromeUp);
         m_grid->setDynamicLineDownTarget(nullptr);
     }
 
     if (inFolder) {
-        // No HOME chrome strip while a folder is open.
+        // Compact top chrome: clock + Change View (+ profile/battery). No
+        // applet sidebars — DOWN from chrome always returns to folder titles.
         m_sidebar.setDynamicLineDownAction({});
+        auto* flip = (m_layoutFlip && m_layoutFlip->isVisible())
+            ? m_layoutFlip.get() : nullptr;
+        auto* lock = (m_profileLock && m_profileLock->isVisible())
+            ? m_profileLock.get() : nullptr;
+        auto* battery = (m_battery && m_battery->isVisible())
+            ? m_battery.get() : nullptr;
+        if (flip) {
+            wireLayoutFlipNavigation();
+            flip->setCustomNavigation(nxui::FocusDirection::LEFT,
+                                      lock ? static_cast<nxui::Widget*>(lock)
+                                           : static_cast<nxui::Widget*>(flip));
+            flip->setCustomNavigation(nxui::FocusDirection::RIGHT,
+                                      battery ? static_cast<nxui::Widget*>(battery)
+                                              : static_cast<nxui::Widget*>(flip));
+        }
+        if (lock) {
+            lock->setCustomNavigation(nxui::FocusDirection::LEFT, lock);
+            lock->setCustomNavigation(nxui::FocusDirection::UP, lock);
+            lock->setCustomNavigation(nxui::FocusDirection::RIGHT,
+                                      flip ? static_cast<nxui::Widget*>(flip)
+                                           : (battery ? static_cast<nxui::Widget*>(battery)
+                                                      : static_cast<nxui::Widget*>(lock)));
+            lock->removeAction(static_cast<uint64_t>(nxui::Button::DDown));
+            lock->removeAction(static_cast<uint64_t>(nxui::Button::LStickD));
+            lock->removeAction(static_cast<uint64_t>(nxui::Button::RStickD));
+            lock->addDirectionAction(nxui::FocusDirection::DOWN, [this]() {
+                focusHomeGridFallback();
+            });
+        }
+        if (battery) {
+            battery->setCustomNavigation(nxui::FocusDirection::UP, battery);
+            battery->setCustomNavigation(nxui::FocusDirection::RIGHT, battery);
+            battery->setCustomNavigation(nxui::FocusDirection::LEFT,
+                                         flip ? static_cast<nxui::Widget*>(flip)
+                                              : (lock ? static_cast<nxui::Widget*>(lock)
+                                                      : static_cast<nxui::Widget*>(battery)));
+            battery->removeAction(static_cast<uint64_t>(nxui::Button::DDown));
+            battery->removeAction(static_cast<uint64_t>(nxui::Button::LStickD));
+            battery->removeAction(static_cast<uint64_t>(nxui::Button::RStickD));
+            battery->addDirectionAction(nxui::FocusDirection::DOWN, [this]() {
+                focusHomeGridFallback();
+            });
+        }
         return;
     }
 
@@ -4698,7 +4795,9 @@ void WiiUMenuApp::openCapturedFolder() {
     m_requestedFolderId = 0;
     m_folderCaptureReady = false;
     const bool refocus = (m_folderOpenFocusTitleId != 0);
-    if (m_topHud) m_topHud->setVisible(false);
+    // Keep clock + Change View (and the rest of the top HUD) so view can be
+    // flipped by touch/controller inside folders. Applet sidebars stay hidden.
+    if (m_topHud) m_topHud->setVisible(true);
     placeLayoutFlipButton();
     if (m_leftSidebar) m_leftSidebar->setVisible(false);
     if (m_rightSidebar) m_rightSidebar->setVisible(false);
@@ -4741,7 +4840,7 @@ void WiiUMenuApp::openCapturedFolder() {
     applyDisplayModel(buildOpenFolderModel(m_openFolderId), openFocus,
                       zoom, appear, true);
     m_folderOpenFocusTitleId = 0;
-    // Drop HOME chrome UP / side targets now that HUD + sidebars are hidden.
+    // Wire titles UP to Change View; sidebars stay unwired while open.
     configureDynamicLineNavigation();
     // Single-row mode scrolls by index instead of paging, so a freshly opened
     // folder must be pinned to its first item explicitly — otherwise the
@@ -4863,9 +4962,12 @@ nxui::Rect WiiUMenuApp::folderPanelRect() const {
 void WiiUMenuApp::placeFolderHeader(const nxui::Rect& panel) {
     // Anchored to the panel rather than the screen, so the largest folder
     // grid pushes the title up instead of sliding the panel under it.
-    m_folderHeaderRest.y = std::max(kFolderHeaderMinY,
+    // Keep below the top HUD clock band when chrome is visible.
+    const float minY = (m_topHud && m_topHud->isVisible()) ? 88.f : kFolderHeaderMinY;
+    m_folderHeaderRest.y = std::max(minY,
         panel.y - kFolderHeaderGap - m_folderHeaderRest.height);
-    // Single-row: park the title on the left so it does not cover a Poster.
+    // Single-row: left so it does not cover clock / Change View / a Poster.
+    // Grid: centered title under the clock band.
     if (m_appLayoutMode == AppLayoutMode::DynamicLine) {
         m_folderHeaderRest.x = panel.x + 12.f;
         m_folderHeaderRest.width = 300.f;
@@ -4935,6 +5037,9 @@ void WiiUMenuApp::syncFolderHeader() {
 
 void WiiUMenuApp::closeFolder(bool preserveEditMode, bool animated) {
     if (m_openFolderId == 0) return;
+    // Outside-tap / B dismiss must not leave a pending Activate from the same
+    // gesture (root A was historically armed via FocusManager on empty taps).
+    cancelHomeChordShortcuts();
     const std::uint32_t oldId = m_openFolderId;
     const auto* old = m_folderStore.find(oldId);
     const nxui::Color tint = switchu::folders::colorForIndex(old ? old->colorIndex : 0);
@@ -6104,7 +6209,7 @@ void WiiUMenuApp::buildGrid() {
     m_layoutFlip->ensureIcon(app().gpu(), app().renderer(),
                              resolveActiveIconGlyphPath(switchu::icons::kChangeViewFile));
     m_layoutFlip->setOnActivate([this]() {
-        // Button is HOME-chrome only (hidden in folders); Minus flips in-folder.
+        // HOME and open folders — Minus also flips (session-only in folders).
         if (m_editMode || leaveSplashActive())
             return;
         if (m_layoutTransition.kind != LayoutTransitionKind::Idle)
@@ -6231,6 +6336,45 @@ void WiiUMenuApp::buildGrid() {
     m_progressDialog->setFont(&m_fontNormal);
     m_progressDialog->setSmallFont(&m_fontSmall);
     m_progressDialog->setTheme(&m_theme);
+
+    m_lockScreen = std::make_shared<LockScreen>();
+    m_lockScreen->setFonts(&m_fontNormal, &m_fontSmall);
+    applyLockScreenClockFont();
+    m_lockScreen->setTheme(&m_theme);
+    m_lockScreen->setClockService(&m_clockService);
+    m_lockScreen->setUse12HourClock(m_config.clockUse12Hour);
+    m_lockScreen->setTransition(static_cast<LockScreen::Transition>(
+        std::clamp(m_config.lockScreenTransition, 0, 3)));
+    m_lockScreen->setZoomDir(m_config.lockScreenZoomDir);
+    m_lockScreen->setWipeDir(m_config.lockScreenWipeDir);
+    m_lockScreen->setBackdropDrawer([this](nxui::Renderer& ren, float dy, float opacity, float scale) {
+        if (m_background)
+            m_background->renderShifted(ren, dy, opacity, scale);
+    });
+    m_lockScreen->setOnUnlocking([this]() {
+        // HOME chrome returns under the Lock plane (Dissolve/Zoom fade; Curtain/Wipe cover).
+        if (m_bgLayer) m_bgLayer->setVisible(true);
+        if (m_contentLayer) m_contentLayer->setVisible(true);
+        setAppLayoutMode(m_config.appLayoutMode);
+        syncLayoutFlipState();
+        // Park the blue ring on the destination tile immediately (teleport).
+        // Otherwise Translate mode morphs from the full-screen Lock focusRect.
+        beginForcedCursorTeleport();
+        m_leaveCaptureLockCursor = true;
+        if (m_cursor)
+            m_cursor->setVisible(false);
+        restoreFocusAfterLock();
+        snapCursorToFocus();
+    });
+    m_lockScreen->setOnEnterSettled([this]() {
+        // Enter finished — tuck HOME chrome away; live wallpaper stays on bgLayer.
+        if (m_contentLayer)
+            m_contentLayer->setVisible(false);
+        if (m_cursor)
+            m_cursor->setVisible(false);
+    });
+    m_lockScreen->setOnUnlocked([this]() { finishExitLockView(false); });
+    m_lockScreen->setOnResume([this]() { finishExitLockView(true); });
 
     app().renderer().setBoxWireframeEnabled(m_showWireframe);
 
@@ -6402,39 +6546,44 @@ void WiiUMenuApp::buildGrid() {
         auto& i18n = nxui::I18n::instance();
         m_audio.playSfx(Sfx::ModalShow);
         m_dialogReturnFocus = focusManager().current();
+        std::vector<OverlayDialog::ButtonDef> buttons;
+        if (m_config.lockScreenEnabled) {
+            buttons.push_back({i18n.tr("power.lock", "Lock"), [this]() {
+                m_audio.playSfx(Sfx::ConfirmPositive);
+                enterLockView(false);
+            }, true});
+        }
+        buttons.push_back({i18n.tr("power.sleep", "Sleep"), [this]() {
+#ifdef SWITCHU_MENU
+            m_audio.playSfx(Sfx::ConfirmPositive);
+            m_launcher.enterSleep();
+#else
+            m_audio.playSfx(Sfx::ConfirmPositive);
+            app().requestExit();
+#endif
+        }, true});
+        buttons.push_back({i18n.tr("power.reboot", "Reboot"), [this]() {
+#ifdef SWITCHU_MENU
+            m_audio.playSfx(Sfx::ConfirmPositive);
+            m_launcher.reboot();
+#else
+            m_audio.playSfx(Sfx::ConfirmPositive);
+            app().requestExit();
+#endif
+        }, true});
+        buttons.push_back({i18n.tr("power.off", "Off"), [this]() {
+#ifdef SWITCHU_MENU
+            m_audio.playSfx(Sfx::ConfirmPositive);
+            m_launcher.shutdown();
+#else
+            m_audio.playSfx(Sfx::ConfirmPositive);
+            app().requestExit();
+#endif
+        }, true});
         m_dialog->show(
             i18n.tr("power.title", "Power"),
             i18n.tr("power.choose_action", "Choose a power action."),
-            {
-                // {i18n.tr("button.cancel", "Cancel"), [this]() {  }, true},
-                {i18n.tr("power.sleep", "Sleep"), [this]() {
-#ifdef SWITCHU_MENU
-                    m_audio.playSfx(Sfx::ConfirmPositive);
-                    m_launcher.enterSleep();
-#else
-                    m_audio.playSfx(Sfx::ConfirmPositive);
-                    app().requestExit();
-#endif
-                }, true},
-                {i18n.tr("power.shutdown", "Shutdown"), [this]() {
-#ifdef SWITCHU_MENU
-                    m_audio.playSfx(Sfx::ConfirmPositive);
-                    m_launcher.shutdown();
-#else
-                    m_audio.playSfx(Sfx::ConfirmPositive);
-                    app().requestExit();
-#endif
-                }, true},
-                {i18n.tr("power.reboot", "Reboot"), [this]() {
-#ifdef SWITCHU_MENU
-                    m_audio.playSfx(Sfx::ConfirmPositive);
-                    m_launcher.reboot();
-#else
-                    m_audio.playSfx(Sfx::ConfirmPositive);
-                    app().requestExit();
-#endif
-                }, true}
-            },
+            std::move(buttons),
             0,
             {}
         );
@@ -6616,6 +6765,7 @@ void WiiUMenuApp::buildGrid() {
     m_overlayLayer->addChild(m_contextMenu);
     m_overlayLayer->addChild(m_dialog);
     m_overlayLayer->addChild(m_progressDialog);
+    m_overlayLayer->addChild(m_lockScreen);
     m_overlayLayer->addChild(m_launchAnim);
 
     root.addChild(m_bgLayer);
@@ -7036,9 +7186,26 @@ void WiiUMenuApp::onUpdate(float dt) {
         // Console is asleep. Application stopped presenting frames, so the only
         // work left is reading the wake notification: the frame work in
         // onUpdateAwake() kept the console warm for the whole sleep otherwise.
+        if (m_sleepHoldSec > 0.f) {
+            m_sleepHoldSec -= dt;
+            // Still presenting during the hold — keep Lock enter tweens moving
+            // so power→sleep can show the chosen transition before frames stop.
+            if (m_lockScreen && m_lockScreen->isActive())
+                m_lockScreen->update(dt);
+            nxui::AnimationManager::instance().update(dt);
+            if (m_sleepHoldSec <= 0.f) {
+                m_sleepHoldSec = 0.f;
+                DebugLog::log("[lock] sleep: hold done, stopping presents");
+                app().setSleeping(true);
+            }
+            return;
+        }
         pollSleepNotifications();
         return;
     }
+
+    if (m_lockScreen)
+        m_lockScreen->tickRelease(dt);
 
     onUpdateAwake(dt);
 }
@@ -7063,6 +7230,18 @@ void WiiUMenuApp::enterSystemSleep() {
         m_audio.pause();
     }
 
+    // Lock view becomes the last surface so wake retains it (native wake time
+    // still varies). Daemon waits ~1.5s when lock is enabled — hold long enough
+    // for the enter transition (Dissolve ~1.2s) to finish before presents stop.
+    if (m_config.lockScreenEnabled) {
+        enterLockView(false);
+        if (m_lockViewActive) {
+            m_sleepHoldSec = 1.40f;
+            DebugLog::log("[lock] sleep: holding Lock view for enter transition (1.4s)");
+            return;
+        }
+    }
+
     // Stop presenting. A loop that keeps submitting frames never lets the
     // console settle into its low-power sleep state.
     app().setSleeping(true);
@@ -7072,7 +7251,12 @@ void WiiUMenuApp::leaveSystemSleep() {
     if (!m_systemAsleep)
         return;
     m_systemAsleep = false;
+    m_sleepHoldSec = 0.f;
     app().setSleeping(false);
+
+    if (m_config.lockScreenEnabled)
+        enterLockView(true);
+    DebugLog::log("[power] wake: lockView=%d", m_lockViewActive ? 1 : 0);
 
     // The vi layer/swapchain goes stale across sleep: PresentQueue::acquireImage
     // would block forever and freeze the menu on the last presented frame.
@@ -7090,6 +7274,167 @@ void WiiUMenuApp::leaveSystemSleep() {
     m_refreshQueued = true;
     m_deferredRefreshFrames = std::max(m_deferredRefreshFrames, 3);
     DebugLog::log("[power] console awake: presentation resumed");
+}
+
+void WiiUMenuApp::enterLockView(bool instant) {
+    if (!m_lockScreen)
+        return;
+
+    if (m_lockViewActive && m_lockScreen->isActive()) {
+        m_lockScreen->rearmInput();
+        m_lockScreen->refreshNow();
+        if (m_contentLayer)
+            m_contentLayer->setVisible(false);
+        if (m_bgLayer)
+            m_bgLayer->setVisible(true);
+        focusManager().setFocus(m_lockScreen.get());
+        if (m_cursor)
+            m_cursor->setVisible(false);
+        return;
+    }
+
+    std::string suspendedGame;
+    std::vector<std::uint8_t> gameHero;
+    std::vector<std::uint8_t> gameIcon;
+    int iconW = 0, iconH = 0;
+    const auto suspendedId = m_launcher.suspendedTitleId();
+    const bool canResume = suspendedId != 0;
+    if (canResume) {
+        if (const AppEntry* entry = m_model.findByTitleId(suspendedId))
+            suspendedGame = entry->title;
+        if (m_config.steamGridDbEnabled) {
+            auto hero = steamgriddb::artwork::decode(
+                SteamGridDbManager::heroPath(suspendedId), 1280, 720, true);
+            if (hero.width == 1280 && hero.height == 720 && !hero.rgba.empty())
+                gameHero = std::move(hero.rgba);
+        }
+        auto compressed = AppListLoader::loadIconData(suspendedId, false);
+        if (!compressed.empty()) {
+            auto decoded = IconStreamer::decodeIconData(compressed);
+            if (!decoded.rgba.empty() && decoded.w > 0 && decoded.h > 0) {
+                gameIcon = std::move(decoded.rgba);
+                iconW = decoded.w;
+                iconH = decoded.h;
+            }
+        }
+    }
+    m_lockScreen->setGameArt(std::move(gameHero));
+    m_lockScreen->setGameIcon(std::move(gameIcon), iconW, iconH);
+    m_lockScreen->setSuspendedTitle(suspendedGame, canResume);
+
+    if (m_consoleBatteryPercent > 0)
+        m_lockScreen->setBatteryStatus(m_consoleBatteryPercent, m_consoleBatteryCharging);
+    m_lockScreen->setUse12HourClock(m_config.clockUse12Hour);
+    m_lockScreen->setTransition(static_cast<LockScreen::Transition>(
+        std::clamp(m_config.lockScreenTransition, 0, 3)));
+    m_lockScreen->setZoomDir(m_config.lockScreenZoomDir);
+    m_lockScreen->setWipeDir(m_config.lockScreenWipeDir);
+
+    m_lockReturnFocus = focusManager().current();
+    m_lockReturnTitleId = 0;
+    if (m_lockReturnFocus && m_lockReturnFocus->tag() == "glossy_icon")
+        m_lockReturnTitleId = static_cast<GlossyIcon*>(m_lockReturnFocus)->titleId();
+    if (m_lockReturnTitleId == 0 && m_grid) {
+        const int idx = m_grid->focusedGlobalIndex();
+        const auto& icons = m_grid->allIcons();
+        if (idx >= 0 && idx < static_cast<int>(icons.size()) && icons[idx])
+            m_lockReturnTitleId = icons[idx]->titleId();
+    }
+    m_lockViewActive = true;
+    if (m_bgLayer)
+        m_bgLayer->setVisible(true);
+    // Keep HOME under Lock during animated enter so Curtain/Wipe/Dissolve/Zoom
+    // can mirror their exit (slide/clip/fade over the real view).
+    if (m_contentLayer)
+        m_contentLayer->setVisible(!instant && m_lockScreen->keepsHomeDuringEnter());
+
+    m_lockScreen->show(instant);
+    focusManager().setFocus(m_lockScreen.get());
+    if (m_cursor)
+        m_cursor->setVisible(false);
+    DebugLog::log("[lock] Lock view shown hero=%d icon=%d resume=%d",
+                  m_lockScreen->hasHero() ? 1 : 0, iconW > 0 ? 1 : 0, canResume ? 1 : 0);
+}
+
+void WiiUMenuApp::refreshLockClockFontEntries() {
+    m_lockClockFontEntries = switchu::lockfonts::buildEntries(m_allPresets);
+    if (m_themeShop)
+        m_themeShop->setLockClockFontEntries(m_lockClockFontEntries);
+}
+
+void WiiUMenuApp::applyLockScreenClockFont() {
+    if (!m_lockScreen)
+        return;
+    if (m_lockClockFontEntries.empty())
+        m_lockClockFontEntries = switchu::lockfonts::buildEntries(m_allPresets);
+    const std::string path = switchu::lockfonts::resolvePath(
+        m_config.lockScreenClockFont,
+        m_lockClockFontEntries,
+        SD_ASSETS,
+        m_loadedRegularFontPath.empty()
+            ? std::string(SD_ASSETS) + "/fonts/DejaVuSans.ttf"
+            : m_loadedRegularFontPath);
+    m_lockScreen->setTimeFontSource(&app().gpu(), &app().renderer(), path);
+    m_lockScreen->warmTimeFont();
+}
+
+void WiiUMenuApp::restoreFocusAfterLock() {
+    if (m_lockReturnTitleId != 0 && focusTitle(m_lockReturnTitleId, true)) {
+        if (auto* cur = focusManager().current();
+            cur && cur->isFocusable() && isCurrentFocusableWidget(cur))
+            return;
+    }
+    if (isCurrentFocusableWidget(m_lockReturnFocus)) {
+        focusManager().setFocus(m_lockReturnFocus);
+        if (auto* cur = focusManager().current();
+            cur && cur->tag() == "glossy_icon")
+            return;
+    }
+    ensureHomeTitleFocus(m_lockReturnTitleId);
+}
+
+void WiiUMenuApp::finishExitLockView(bool resumeSuspended) {
+#ifdef SWITCHU_MENU
+    if (resumeSuspended) {
+        // Stay on Lock until the title claims the foreground — revealing HOME
+        // under a hide() caused a one-frame flash before resume.
+        m_startLocked = false;
+        m_leaveCaptureLockCursor = false;
+        endForcedCursorTeleport();
+        m_audio.playSfx(Sfx::Activate);
+        DebugLog::log("[lock] Lock view -> resuming suspended title (hold Lock)");
+        m_launcher.resumeApplication();
+        return;
+    }
+#endif
+
+    m_lockViewActive = false;
+    if (m_lockScreen && m_lockScreen->isActive())
+        m_lockScreen->hide();
+
+    if (m_bgLayer)
+        m_bgLayer->setVisible(true);
+    if (m_contentLayer)
+        m_contentLayer->setVisible(true);
+
+    m_audio.playSfx(Sfx::Activate);
+    beginForcedCursorTeleport();
+    m_leaveCaptureLockCursor = true;
+    m_lockExitCursorHoldFrames = 3;
+    restoreFocusAfterLock();
+    snapCursorToFocus();
+    if (m_cursor) {
+        if (auto* cur = focusManager().current())
+            m_cursor->moveTo(cur->focusRect().expanded(4.f), 0.f);
+        m_cursor->setVisible(true);
+    }
+    // Keep forced teleport for a few frames so a follow-up updateCursor cannot
+    // Translate from a stale fullscreen/grid rect.
+    m_lockReturnFocus = nullptr;
+    m_lockReturnTitleId = 0;
+
+    m_startLocked = false;
+    DebugLog::log("[lock] Lock view -> HOME layout=%d", static_cast<int>(m_appLayoutMode));
 }
 
 void WiiUMenuApp::pollSleepNotifications() {
@@ -7346,6 +7691,9 @@ void WiiUMenuApp::leaveFrameTapLightPath(const char* reason) {
         return;
     m_frameTapLightActive = false;
 
+    // Viewer gone — give the boot heap back. Never shrinks without FT.
+    switchu::menu::tryRestoreHeapAfterFrameTap();
+
 #ifdef NXUI_BACKEND_DEKO3D
     app().gpu().setAllocationHeadroom(
         nxui::GpuDevice::kDefaultAllocationHeadroom);
@@ -7428,11 +7776,46 @@ void WiiUMenuApp::restoreFrameTapLightBrowse(const char* reason) {
 }
 
 void WiiUMenuApp::tickFrameTapLightPath(float dt) {
-    // Poll faster while FT is asking for headroom (donor remount handshake).
+    // FT asks via file while waiting for binders (cold-boot seed fallback).
+    bool ftAsksRemount = false;
+    {
+        if (FILE* f = std::fopen("sdmc:/config/switch-frame-tap/need_capture_remount", "rb")) {
+            std::fclose(f);
+            ftAsksRemount = true;
+        }
+    }
+    // Poll faster while FT is asking for headroom, or while a cold-boot
+    // capture remount is armed (must beat the viewer→seed race).
     const float pollMs = m_frameTapStatus.needsHeadroom() || m_ftHeadroomHoldActive
+        || ftAsksRemount || (m_ftCaptureRemountNeeded && !m_ftCaptureRemountDone)
         ? 100.f : 500.f;
     m_frameTapStatus.probe(dt, pollMs);
     const bool viewer = m_frameTapStatus.viewerConnected();
+    // Remount only when FT asks (need_capture_remount) or a viewer connects
+    // after a cold-boot arm. Firing on "sftap appeared" alone flashes HOME
+    // whenever Frame Tap is installed but the PC viewer is not running.
+#ifndef SWITCHU_HOMEBREW
+    // Library-applet only: managed-layer remount + __nx_vi_layer_id. Homebrew
+    // builds do not declare that symbol (CI) and are not the FT capture host.
+    if (!m_ftCaptureRemountDone &&
+        (ftAsksRemount || (m_ftCaptureRemountNeeded && viewer))) {
+        m_ftCaptureRemountDone = true;
+        DebugLog::log("[ft-light] remounting display for FT capture mitm (%s)",
+                      ftAsksRemount ? "ft-request" : "viewer-connect");
+        {
+            if (FILE* f = std::fopen("sdmc:/config/SwitchU/ft_capture_remount.txt", "w")) {
+                std::fputs(ftAsksRemount ? "fired-ft-request\n" : "fired-viewer\n", f);
+                std::fclose(f);
+            }
+        }
+        app().gpu().remountDisplayForCaptureMitm();
+        // New managed layer id — re-bind underscan to it.
+        switchu::menu::initScreenFitLayer(::__nx_vi_layer_id);
+        std::remove("sdmc:/config/switch-frame-tap/need_capture_remount");
+        m_wakePostSwapchainFrames = std::max(m_wakePostSwapchainFrames, 2);
+    }
+#endif
+
     if (viewer) {
         m_frameTapViewerGoneSec = 0.f;
     } else if (m_frameTapLightActive) {
@@ -7446,16 +7829,22 @@ void WiiUMenuApp::tickFrameTapLightPath(float dt) {
         applyFrameTapLightHeadroom(true);
         // Remount grace: once NeedHeadroom clears, soft-land browse back so
         // posters are not empty for the full 30s ACK-only anti-thrash window.
+        // Heap-shrink path waits longer so icon refill can't race the donor map.
         if (!m_ftRemountBrowseRestored
-            && m_ftHeadroomHoldSec >= kFtRemountBrowseGraceSec
             && !m_frameTapStatus.needsHeadroom()
             && m_iconStreamer.pageCacheRadiusCap() == 0) {
-            restoreFrameTapLightBrowse("remount-grace");
+            const float grace = switchu::menu::heapShrunkForFrameTap()
+                ? kFtDonorMapBrowseGraceSec
+                : kFtRemountBrowseGraceSec;
+            if (m_ftHeadroomHoldSec >= grace)
+                restoreFrameTapLightBrowse("remount-grace");
         }
         if (m_ftHeadroomHoldSec >= kFtHeadroomHoldSec) {
             m_ftHeadroomHoldActive = false;
             m_ftHeadroomHoldSec = 0.f;
             applyFrameTapLightHeadroom(true);
+            if (!m_ftRemountBrowseRestored && m_iconStreamer.pageCacheRadiusCap() == 0)
+                restoreFrameTapLightBrowse("hold-expired");
             DebugLog::log("[ft-light] headroom hold expired (%.0fs)", kFtHeadroomHoldSec);
         }
     }
@@ -7470,6 +7859,9 @@ void WiiUMenuApp::tickFrameTapLightPath(float dt) {
             m_ftHeadroomHoldSec = 0.f;
             m_ftRemountBrowseRestored = false;
         }
+        // Shrink Applet heap once free space exists (viewer/NeedHeadroom only).
+        if (!switchu::menu::heapShrunkForFrameTap())
+            switchu::menu::tryShrinkHeapForFrameTapAggressive(needMb);
         std::uint32_t freeKb = 0;
 #ifdef NXUI_BACKEND_DEKO3D
         u64 total = 0, used = 0;
@@ -7480,9 +7872,11 @@ void WiiUMenuApp::tickFrameTapLightPath(float dt) {
         }
 #endif
         m_frameTapStatus.ackHeadroom(freeKb);
-        DebugLog::log("[ft-light] ACK-HEADROOM need=%uMB free=%uKB hold=%d headroom=%lluKB",
+        DebugLog::log("[ft-light] ACK-HEADROOM need=%uMB free=%uKB hold=%d headroom=%lluKB heap=%zuKB shrunk=%d",
                       needMb, freeKb, m_ftHeadroomHoldActive ? 1 : 0,
-                      static_cast<unsigned long long>(app().gpu().allocationHeadroom() / 1024ull));
+                      static_cast<unsigned long long>(app().gpu().allocationHeadroom() / 1024ull),
+                      switchu::menu::currentHeapSizeBytes() / 1024u,
+                      switchu::menu::heapShrunkForFrameTap() ? 1 : 0);
     }
 
     const bool batterySaver = m_config.batterySaver;
@@ -7517,6 +7911,14 @@ void WiiUMenuApp::tickFrameTapLightPath(float dt) {
 }
 
 void WiiUMenuApp::onUpdateAwake(float dt) {
+    if (m_lockExitCursorHoldFrames > 0) {
+        --m_lockExitCursorHoldFrames;
+        if (m_lockExitCursorHoldFrames == 0) {
+            m_leaveCaptureLockCursor = false;
+            endForcedCursorTeleport();
+        }
+    }
+
     if (m_wakePostSwapchainFrames > 0) {
         const int step = m_wakePostSwapchainFrames;
         --m_wakePostSwapchainFrames;
@@ -7535,6 +7937,53 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
     }
 
     tickFrameTapLightPath(dt);
+    // Plus / Minus arm here (before the grace tick) so solo taps share the same
+    // first-frame timing as L/R/Y/ZL/ZR actions armed during dispatchInput.
+    if (handleAccessibilityToggleCombo()) {
+        m_plusExitPending = false;
+        m_plusExitPendingTimer = 0.f;
+    }
+    if (!app().input().isHeld(nxui::Button::Plus) || !app().input().isHeld(nxui::Button::Minus))
+        m_accessibilityToggleComboHeld = false;
+#ifdef SWITCHU_MENU
+    if (app().input().isDown(nxui::Button::Plus) &&
+        !app().input().isDown(nxui::Button::Minus) &&
+        m_navigator.route() == switchu::navigation::Route::Home &&
+        !m_editMode &&
+        !(m_contextMenu && m_contextMenu->isActive()) &&
+        !(m_dialog && m_dialog->isActive()) &&
+        !(m_quickSettings && m_quickSettings->isActive()) &&
+        !(m_textEntry && m_textEntry->isActive()) &&
+        !(m_settings && m_settings->isActive()) &&
+        !(m_themeShop && m_themeShop->isActive()) &&
+        !(m_gameOptions && m_gameOptions->isActive()) &&
+        !(m_folderOptions && m_folderOptions->isActive()) &&
+        !(m_controllerTest && m_controllerTest->isActive()) &&
+        !(m_profileCarousel && m_profileCarousel->isActive()) &&
+        !(m_userSelect && m_userSelect->isActive())) {
+        auto* current = focusManager().current();
+        if (current && current->tag() == "glossy_icon")
+            armHomeChordShortcut(HomeChordShortcut::Properties);
+    }
+#endif
+    if (app().input().isDown(nxui::Button::Minus) &&
+        !app().input().isDown(nxui::Button::Plus) &&
+        !deletePageAvailable() &&
+        m_navigator.route() == switchu::navigation::Route::Home &&
+        !m_editMode &&
+        !(m_contextMenu && m_contextMenu->isActive()) &&
+        !(m_dialog && m_dialog->isActive()) &&
+        !(m_quickSettings && m_quickSettings->isActive()) &&
+        !(m_settings && m_settings->isActive()) &&
+        !(m_themeShop && m_themeShop->isActive()) &&
+        !(m_gameOptions && m_gameOptions->isActive()) &&
+        !(m_folderOptions && m_folderOptions->isActive()) &&
+        !(m_controllerTest && m_controllerTest->isActive()) &&
+        !(m_profileCarousel && m_profileCarousel->isActive()) &&
+        !(m_userSelect && m_userSelect->isActive())) {
+        armHomeChordShortcut(HomeChordShortcut::ChangeView);
+    }
+    tickHomeChordShortcutGuards(dt);
     tickMemInventory(dt);
 
     updateLeaveSplashHandoff(dt);
@@ -8317,6 +8766,8 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
                     if (m_quickSettings)
                         m_quickSettings->setBatteryStatus(
                             static_cast<int>(percent), charging);
+                    if (m_lockScreen && m_lockViewActive)
+                        m_lockScreen->setBatteryStatus(static_cast<int>(percent), charging);
                     if (m_grid) {
                         for (const auto& icon : m_grid->allIcons()) {
                             if (icon && icon->entryKind() == GridEntryKind::Widget)
@@ -8328,6 +8779,10 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
                                   (unsigned)percent,
                                   charging ? 1 : 0);
                 }
+                break;
+            case switchu::smi::MenuMessage::ShowLock:
+                if (m_config.lockScreenEnabled)
+                    enterLockView(false);
                 break;
             case switchu::smi::MenuMessage::SleepSequence:
                 // The daemon announces the sleep while the applet can still
@@ -8387,87 +8842,6 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
     debugTouchBlocked = m_showDebugOverlay;
 #endif
 
-    if (handleAccessibilityToggleCombo()) {
-        m_plusExitPending = false;
-        m_plusExitPendingTimer = 0.f;
-    }
-
-    if (!app().input().isHeld(nxui::Button::Plus) || !app().input().isHeld(nxui::Button::Minus))
-        m_accessibilityToggleComboHeld = false;
-
-#ifdef SWITCHU_MENU
-    // Handle Plus directly from the frame input. The root action depended on
-    // the focused icon still being attached through every transient grid
-    // rebuild, which could make Plus silently disappear after a page/model
-    // update even though the icon remained visibly selected.
-    if (app().input().isDown(nxui::Button::Plus) &&
-        !app().input().isDown(nxui::Button::Minus) &&
-        m_navigator.route() == switchu::navigation::Route::Home &&
-        !m_editMode &&
-        !(m_contextMenu && m_contextMenu->isActive()) &&
-        !(m_dialog && m_dialog->isActive()) &&
-        !(m_quickSettings && m_quickSettings->isActive()) &&
-        !(m_textEntry && m_textEntry->isActive()) &&
-        !(m_settings && m_settings->isActive()) &&
-        !(m_themeShop && m_themeShop->isActive()) &&
-        !(m_gameOptions && m_gameOptions->isActive()) &&
-        !(m_folderOptions && m_folderOptions->isActive()) &&
-        !(m_controllerTest && m_controllerTest->isActive()) &&
-        !(m_profileCarousel && m_profileCarousel->isActive()) &&
-        !(m_userSelect && m_userSelect->isActive())) {
-        auto* current = focusManager().current();
-        if (current && current->tag() == "glossy_icon" && m_grid) {
-            auto* icon = static_cast<GlossyIcon*>(current);
-            const auto& icons = m_grid->allIcons();
-            const auto found = std::find_if(
-                icons.begin(), icons.end(),
-                [icon](const auto& candidate) { return candidate.get() == icon; });
-            const int index = found == icons.end()
-                ? -1 : static_cast<int>(std::distance(icons.begin(), found));
-            if (index >= 0 && index < m_model.count()) {
-                DebugLog::log("[plus] direct index=%d kind=%u title=0x%016lX",
-                              index, static_cast<unsigned>(m_model.at(index).kind),
-                              static_cast<unsigned long>(m_model.at(index).titleId));
-                // titleId=0 is the canonical empty-slot marker. Keep this
-                // defensive check even if a stale loader entry carries the
-                // wrong kind so Plus can never route an empty slot as a game.
-                if (m_model.at(index).titleId == 0 ||
-                    m_model.at(index).kind == GridEntryKind::Empty) {
-                    if (m_openFolderId == 0) // folders do not nest
-                        showAddContextMenu(index, icon->focusRect());
-                } else if (m_model.at(index).isFolder())
-                    showFolderContextMenu(m_model.at(index).folderId);
-                else if (m_model.at(index).isWidget())
-                    showWidgetOptionsMenu(m_model.at(index).widgetId,
-                                          index, icon->focusRect());
-                else if (m_model.at(index).isApplication())
-                    showGameContextMenu(icon);
-            }
-        }
-    }
-#endif
-
-    // When an empty-page delete control is up, Minus is armed for hold-to-delete
-    // (handled above). Skip the instant view toggle so a hold is not also a
-    // layout switch; short tap still toggles on release.
-    if (app().input().isDown(nxui::Button::Minus) &&
-        !app().input().isDown(nxui::Button::Plus) &&
-        !deletePageAvailable() &&
-        m_navigator.route() == switchu::navigation::Route::Home &&
-        !m_editMode &&
-        !(m_contextMenu && m_contextMenu->isActive()) &&
-        !(m_dialog && m_dialog->isActive()) &&
-        !(m_quickSettings && m_quickSettings->isActive()) &&
-        !(m_settings && m_settings->isActive()) &&
-        !(m_themeShop && m_themeShop->isActive()) &&
-        !(m_gameOptions && m_gameOptions->isActive()) &&
-        !(m_folderOptions && m_folderOptions->isActive()) &&
-        !(m_controllerTest && m_controllerTest->isActive()) &&
-        !(m_profileCarousel && m_profileCarousel->isActive()) &&
-        !(m_userSelect && m_userSelect->isActive())) {
-        toggleAppLayoutMode();
-    }
-
     if (m_plusExitPending) {
         m_plusExitPendingTimer -= dt;
         if (m_plusExitPendingTimer <= 0.f) {
@@ -8483,6 +8857,7 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
     if (!debugTouchBlocked
         && !m_launchAnim->isPlaying()
         && !m_folderClosing
+        && !m_lockViewActive
         && !(m_contextMenu && m_contextMenu->isActive())
         && !(m_dialog && m_dialog->isActive())
         && !(m_quickSettings && m_quickSettings->isActive())
@@ -8542,6 +8917,9 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
 
     if (!debugTouchBlocked && m_progressDialog && m_progressDialog->isActive())
         m_progressDialog->handleTouch(app().input());
+
+    if (!debugTouchBlocked && m_lockViewActive && m_lockScreen)
+        m_lockScreen->handleTouch(app().input());
 
     if (m_dialogWasActive && !dialogActiveNow) {
         if (isCurrentFocusableWidget(m_dialogReturnFocus)) {
@@ -9904,12 +10282,14 @@ void WiiUMenuApp::onRender(nxui::Renderer& ren) {
         m_editGhostIcon->render(ren);
     }
 
-    renderPageArrows(ren);
-    renderDeletePageButton(ren);
-    if (m_config.actionHintStyle == "panel")
-        renderActionHintPanel(ren);
-    else
-        renderActionHintBar(ren);
+    if (!m_lockViewActive) {
+        renderPageArrows(ren);
+        renderDeletePageButton(ren);
+        if (m_config.actionHintStyle == "panel")
+            renderActionHintPanel(ren);
+        else
+            renderActionHintBar(ren);
+    }
 
     // Leave splash last (under debug only) so bottom-right action hints /
     // arrows do not pop on top of the frosted cover before the crossfade.

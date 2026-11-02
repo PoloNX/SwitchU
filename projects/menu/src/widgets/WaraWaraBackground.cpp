@@ -326,6 +326,56 @@ void WaraWaraBackground::renderLetterboxOverlay(nxui::Renderer& ren, float opaci
     m_opacity = prev;
 }
 
+void WaraWaraBackground::renderShifted(nxui::Renderer& ren, float dy, float opacityMul,
+                                       float scale) {
+    const nxui::Rect savedRect = m_rect;
+    const float prev = m_opacity;
+    const float s = std::max(0.01f, scale);
+    const float cx = savedRect.x + savedRect.width * 0.5f;
+    const float cy = savedRect.y + savedRect.height * 0.5f;
+
+    m_opacity = prev * std::clamp(opacityMul, 0.f, 1.f);
+    // Scale around screen center, then apply curtain dy.
+    m_rect.x = cx + (savedRect.x - cx) * s;
+    m_rect.y = cy + (savedRect.y - cy) * s + dy;
+    m_rect.width = savedRect.width * s;
+    m_rect.height = savedRect.height * s;
+
+    std::vector<nxui::Vec2> savedPos;
+    std::vector<float> savedSize;
+    savedPos.reserve(m_shapes.size());
+    savedSize.reserve(m_shapes.size());
+    for (auto& sh : m_shapes) {
+        savedPos.push_back(sh.pos);
+        savedSize.push_back(sh.size);
+        sh.pos.x = cx + (sh.pos.x - cx) * s;
+        sh.pos.y = cy + (sh.pos.y - cy) * s + dy;
+        sh.size *= s;
+    }
+
+    // Gradient must honor opacity — an opaque wash over HOME looked muddy green-grey.
+    ren.drawGradientRect(m_rect,
+                         m_secondary.withAlpha(m_secondary.a * m_opacity),
+                         m_accent.withAlpha(m_accent.a * m_opacity));
+    if (m_backgroundImage.valid() && m_config.imageOpacity > 0.f) {
+        ren.drawTexture(&m_backgroundImage,
+                        backgroundImageRect(),
+                        nxui::Color::white().withAlpha(m_config.imageOpacity * m_opacity));
+    }
+    if (!m_liteSuppressed) {
+        for (const auto& sh : m_shapes)
+            drawShapeWithSymmetry(ren, sh);
+    }
+    ren.flush();
+
+    for (size_t i = 0; i < m_shapes.size(); ++i) {
+        m_shapes[i].pos = savedPos[i];
+        m_shapes[i].size = savedSize[i];
+    }
+    m_opacity = prev;
+    m_rect = savedRect;
+}
+
 void WaraWaraBackground::drawShapeWithSymmetry(nxui::Renderer& ren, const Shape& s) const {
     drawGlassShape(ren, s);
 
