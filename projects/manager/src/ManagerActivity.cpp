@@ -12,7 +12,10 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
+#include <cstdint>
 #include <cstdio>
+#include <string>
 
 namespace switchu::manager {
 namespace {
@@ -32,6 +35,26 @@ protected:
 
 std::string tr(const char* key, const char* fallback) {
     return nxui::I18n::instance().tr(key, fallback);
+}
+
+std::string formatByteCount(std::uint64_t bytes) {
+    char buf[32]{};
+    if (bytes >= 1024ull * 1024ull) {
+        const double mb = static_cast<double>(bytes) / (1024.0 * 1024.0);
+        std::snprintf(buf, sizeof(buf), "%.1f MB", mb);
+    } else if (bytes >= 1024ull) {
+        const double kb = static_cast<double>(bytes) / 1024.0;
+        std::snprintf(buf, sizeof(buf), "%.0f KB", kb);
+    } else {
+        std::snprintf(buf, sizeof(buf), "%llu B",
+                      static_cast<unsigned long long>(bytes));
+    }
+    return buf;
+}
+
+bool looksCancelled(const std::string& message) {
+    return message.find("cancelled") != std::string::npos
+        || message.find("canceled") != std::string::npos;
 }
 
 } // namespace
@@ -185,6 +208,10 @@ bool ManagerActivity::onCreate() {
     rootBox().addChild(m_updateProgressDialog);
 
     rootBox().addAction(static_cast<uint64_t>(nxui::Button::B), [this]() {
+        if (canCancelUpdater()) {
+            requestUpdaterCancel();
+            return;
+        }
         if (!m_loading && !m_rebooting
             && m_updateState != UpdateUiState::Checking
             && m_updateState != UpdateUiState::Installing)
@@ -263,7 +290,9 @@ void ManagerActivity::refreshPresentation() {
     } else if (m_updateState == UpdateUiState::Installing) {
         m_detailLabel->setText(tr("manager.update_installing",
             "Downloading and installing the SwitchU update..."));
-        m_noticeLabel->setText(tr("manager.do_not_close", "Do not close the application."));
+        m_noticeLabel->setText(canCancelUpdater()
+            ? tr("manager.update_cancel_hint", "Press B to cancel.")
+            : tr("manager.do_not_close", "Do not close the application."));
     } else if (m_loading) {
         m_detailLabel->setText(tr("manager.applying", "Applying the change safely..."));
         m_noticeLabel->setText(tr("manager.do_not_close", "Do not close the application."));
@@ -271,10 +300,16 @@ void ManagerActivity::refreshPresentation() {
         m_detailLabel->setText(m_errorMessage);
         m_noticeLabel->setText(tr("manager.no_change", "No unrelated data was modified."));
     } else if (m_restartRequired) {
-        m_detailLabel->setText(configuredEnabled
-            ? tr("manager.next_boot_enabled", "SwitchU will be enabled after the next restart.")
-            : tr("manager.next_boot_disabled", "SwitchU will be disabled after the next restart."));
-        m_noticeLabel->setText(tr("manager.restart_required", "Restart required"));
+        if (m_updateInstalledRestart) {
+            m_detailLabel->setText(tr("manager.update_installed_detail",
+                "Update installed. Restart to apply."));
+            m_noticeLabel->setText(tr("manager.restart_required", "Restart required"));
+        } else {
+            m_detailLabel->setText(configuredEnabled
+                ? tr("manager.next_boot_enabled", "SwitchU will be enabled after the next restart.")
+                : tr("manager.next_boot_disabled", "SwitchU will be disabled after the next restart."));
+            m_noticeLabel->setText(tr("manager.restart_required", "Restart required"));
+        }
     } else if (m_snapshot.state == InstallationState::Conflict) {
         m_detailLabel->setText(tr("manager.conflict",
             "Both enabled and disabled override files exist. Resolve the installation manually."));
@@ -296,9 +331,13 @@ void ManagerActivity::refreshPresentation() {
                 tr("manager.update_available", "A new SwitchU version is available: ")
                 + m_latestRelease.version);
         } else if (m_updateState == UpdateUiState::Error && !m_updateError.empty()) {
-            m_noticeLabel->setText(tr("manager.update_check_failed",
-                "Update check failed. You can retry."));
+            m_noticeLabel->setText(m_updateError);
         }
+    }
+
+    if (m_updateState == UpdateUiState::Checking) {
+        m_noticeLabel->setText(tr("manager.update_cancel_hint",
+            "Press B to cancel."));
     }
 
     const std::string toggleText = configuredEnabled
@@ -321,7 +360,7 @@ void ManagerActivity::refreshPresentation() {
             break;
         case UpdateUiState::Installing: {
             const int percent = std::clamp(
-                static_cast<int>(m_updateInstallProgress.load() * 100.f), 0, 100);
+                static_cast<int>(std::round(combinedUpdateProgress() * 100.f)), 0, 100);
             updateText = tr("manager.updating", "Updating...") + std::string(" ")
                 + std::to_string(percent) + "%";
             break;
@@ -345,9 +384,17 @@ void ManagerActivity::refreshPresentation() {
     setButtonVisible(m_laterButton, m_restartRequired,
                      !m_loading && !m_rebooting && !updaterBusy);
 
-    m_helpLabel->setText(m_restartRequired
-        ? tr("manager.help_restart", "A: confirm  •  B: later")
-        : tr("manager.help", "D-pad / stick: navigate  •  A: confirm  •  B: quit"));
+    if (m_restartRequired) {
+        m_helpLabel->setText(tr("manager.help_restart", "A: confirm  •  B: later"));
+    } else if (canCancelUpdater()) {
+        m_helpLabel->setText(tr("manager.help_update_cancel", "B: cancel"));
+    } else if (updaterBusy) {
+        m_helpLabel->setText(tr("manager.help_update_busy",
+            "Installing — please wait"));
+    } else {
+        m_helpLabel->setText(tr("manager.help",
+            "D-pad / stick: navigate  •  A: confirm  •  B: quit"));
+    }
     if (m_cursor)
         m_cursor->setVisible(!m_loading && !m_rebooting && !updaterBusy);
 }
@@ -361,6 +408,51 @@ void ManagerActivity::focusFirstAvailable() {
         focusManager().setFocus(m_updateButton.button.get());
 }
 
+bool ManagerActivity::canCancelUpdater() const {
+    if (m_updateState == UpdateUiState::Checking)
+        return true;
+    if (m_updateState != UpdateUiState::Installing)
+        return false;
+    const auto stage = static_cast<UpdateWorkerStage>(m_updateWorkerStage.load());
+    return stage == UpdateWorkerStage::Idle
+        || stage == UpdateWorkerStage::Downloading;
+}
+
+void ManagerActivity::requestUpdaterCancel() {
+    if (!canCancelUpdater())
+        return;
+    ReleaseUpdater::requestCancel();
+    switchu::FileLog::log("[updater] cancel requested state=%d stage=%d",
+                          static_cast<int>(m_updateState),
+                          m_updateWorkerStage.load());
+    if (m_updateState == UpdateUiState::Checking) {
+        m_detailLabel->setText(tr("manager.update_cancelling", "Cancelling..."));
+        m_noticeLabel->setText("");
+    } else if (m_updateProgressDialog && m_updateProgressDialog->isActive()) {
+        m_updateProgressDialog->setProgress(
+            m_updateDownloadProgress.load(), m_updateInstallProgress.load(),
+            tr("manager.update_cancelling", "Cancelling..."));
+    }
+}
+
+float ManagerActivity::combinedUpdateProgress() const {
+    const float download = std::clamp(m_updateDownloadProgress.load(), 0.f, 1.f);
+    const float install = std::clamp(m_updateInstallProgress.load(), 0.f, 1.f);
+    const auto stage = static_cast<UpdateWorkerStage>(m_updateWorkerStage.load());
+    constexpr float kDownloadShare = 0.55f;
+    constexpr float kInstallShare = 0.45f;
+    switch (stage) {
+        case UpdateWorkerStage::Downloading:
+        case UpdateWorkerStage::Verifying:
+            return download * kDownloadShare;
+        case UpdateWorkerStage::Extracting:
+        case UpdateWorkerStage::Installing:
+            return kDownloadShare + install * kInstallShare;
+        default:
+            return download * kDownloadShare + install * kInstallShare;
+    }
+}
+
 void ManagerActivity::startUpdateCheck() {
     if (m_loading || m_rebooting || m_restartRequired
         || m_updateState == UpdateUiState::Checking
@@ -368,6 +460,7 @@ void ManagerActivity::startUpdateCheck() {
         return;
     m_updateError.clear();
     m_updateState = UpdateUiState::Checking;
+    ReleaseUpdater::clearCancel();
     m_updateCheckFuture = std::async(std::launch::async, []() {
         return ReleaseUpdater::checkLatest();
     });
@@ -403,9 +496,11 @@ void ManagerActivity::startUpdateInstall() {
     m_updateDownloadProgress.store(0.f);
     m_updateInstallProgress.store(0.f);
     m_updateWorkerStage.store(static_cast<int>(UpdateWorkerStage::Idle));
+    m_updateBytesReceived.store(0);
     m_lastDownloadPercent = -1;
     m_lastInstallPercent = -1;
     m_lastUpdateStage = static_cast<int>(UpdateWorkerStage::Idle);
+    m_lastBytesReceived = 0;
     m_updateState = UpdateUiState::Installing;
     beginUpdateInputBlock();
     m_updateProgressDialog->show(
@@ -417,7 +512,8 @@ void ManagerActivity::startUpdateInstall() {
             return ReleaseUpdater::install(release, preserveDisabled,
                                            m_updateDownloadProgress,
                                            m_updateInstallProgress,
-                                           m_updateWorkerStage);
+                                           m_updateWorkerStage,
+                                           &m_updateBytesReceived);
         });
     refreshPresentation();
 }
@@ -430,14 +526,22 @@ void ManagerActivity::syncUpdater() {
             m_latestRelease = m_updateCheckFuture.get();
             m_updateState = m_latestRelease.updateAvailable
                 ? UpdateUiState::Available : UpdateUiState::UpToDate;
+            m_updateError.clear();
         } catch (const std::exception& ex) {
             m_updateError = ex.what();
-            m_updateState = UpdateUiState::Error;
-            switchu::FileLog::log("[updater] check failed: %s", ex.what());
+            if (looksCancelled(m_updateError)) {
+                m_updateState = UpdateUiState::Idle;
+                m_updateError.clear();
+                switchu::FileLog::log("[updater] check cancelled");
+            } else {
+                m_updateState = UpdateUiState::Error;
+                switchu::FileLog::log("[updater] check failed: %s", ex.what());
+            }
         } catch (...) {
             m_updateError = "Unknown update check error";
             m_updateState = UpdateUiState::Error;
         }
+        ReleaseUpdater::clearCancel();
         refreshPresentation();
         focusFirstAvailable();
     }
@@ -448,17 +552,29 @@ void ManagerActivity::syncUpdater() {
         const int installPercent = std::clamp(
             static_cast<int>(m_updateInstallProgress.load() * 100.f), 0, 100);
         const int workerStage = m_updateWorkerStage.load();
+        const std::uint64_t bytesReceived = m_updateBytesReceived.load();
         if (downloadPercent != m_lastDownloadPercent
             || installPercent != m_lastInstallPercent
-            || workerStage != m_lastUpdateStage) {
+            || workerStage != m_lastUpdateStage
+            || bytesReceived != m_lastBytesReceived) {
             m_lastDownloadPercent = downloadPercent;
             m_lastInstallPercent = installPercent;
             m_lastUpdateStage = workerStage;
+            m_lastBytesReceived = bytesReceived;
             std::string status;
             switch (static_cast<UpdateWorkerStage>(workerStage)) {
-                case UpdateWorkerStage::Downloading:
+                case UpdateWorkerStage::Downloading: {
                     status = tr("manager.update_stage_downloading", "Downloading update...");
+                    if (bytesReceived > 0) {
+                        status += " ";
+                        status += formatByteCount(bytesReceived);
+                        if (m_latestRelease.downloadSize > 0) {
+                            status += " / ";
+                            status += formatByteCount(m_latestRelease.downloadSize);
+                        }
+                    }
                     break;
+                }
                 case UpdateWorkerStage::Verifying:
                     status = tr("manager.update_stage_verifying", "Verifying download...");
                     break;
@@ -472,6 +588,11 @@ void ManagerActivity::syncUpdater() {
                     status = tr("manager.update_preparing", "Preparing update...");
                     break;
             }
+            if (ReleaseUpdater::cancelRequested()
+                && static_cast<UpdateWorkerStage>(workerStage)
+                    == UpdateWorkerStage::Downloading) {
+                status = tr("manager.update_cancelling", "Cancelling...");
+            }
             m_updateProgressDialog->setProgress(
                 m_updateDownloadProgress.load(), m_updateInstallProgress.load(), status);
             refreshPresentation();
@@ -480,11 +601,18 @@ void ManagerActivity::syncUpdater() {
             const UpdateInstallResult result = m_updateInstallFuture.get();
             m_updateProgressDialog->hide();
             endUpdateInputBlock();
+            ReleaseUpdater::clearCancel();
             if (result.success) {
                 m_updateState = UpdateUiState::UpToDate;
                 m_restartRequired = true;
+                m_updateInstalledRestart = true;
                 m_errorMessage.clear();
+                m_updateError.clear();
                 refreshState();
+            } else if (result.cancelled || looksCancelled(result.error)) {
+                m_updateState = UpdateUiState::Available;
+                m_updateError.clear();
+                switchu::FileLog::log("[updater] install cancelled");
             } else {
                 m_updateState = UpdateUiState::Error;
                 m_updateError = result.error;
@@ -666,6 +794,10 @@ void ManagerActivity::onUpdate(float dt) {
     syncUpdater();
     if (m_dialog && m_dialog->isActive())
         m_dialog->handleTouch(app().input());
+
+    // focusRoot is null while the updater runs, so poll B here for cancel.
+    if (canCancelUpdater() && app().input().isDown(nxui::Button::B))
+        requestUpdaterCancel();
 
     if (m_operationDelayFrames > 0) {
         --m_operationDelayFrames;
