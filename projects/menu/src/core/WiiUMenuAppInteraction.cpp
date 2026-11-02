@@ -24,7 +24,7 @@ constexpr float kEditDragFolderHoldDelay = 0.55f;
 
 // True when another meaningful button is down/held with a HOME shortcut —
 // overlays like Ultrahand use L+R (+ face / D-pad) chords that should not
-// fire Quick Settings / sort / move / launch / page / Plus / Minus alone-actions.
+// fire Quick Settings / sort / move / launch / page / Plus / Minus taps.
 bool homeChordHasCompanions(const nxui::Input& input, nxui::Button self) {
     static constexpr nxui::Button kCompanions[] = {
         nxui::Button::A, nxui::Button::B, nxui::Button::X, nxui::Button::Y,
@@ -1794,19 +1794,38 @@ void WiiUMenuApp::tickHomeChordShortcutGuards(float dt) {
         return;
     }
 
-    auto settle = [&](HomeChordShortcut which, nxui::Button self, auto&& fire) {
+    // Shoulder/face: fire only on a clean short release. Holding past
+    // kHomeChordTapMaxSec (or with companions) treats the button as a modifier
+    // for Sphaira / Ultrahand / HOS — never opens Quick Settings mid-hold.
+    auto settleTapOnly = [&](HomeChordShortcut which, nxui::Button self, auto&& fire) {
         float& pendingSec = m_pendingHomeChordSec[static_cast<std::size_t>(which)];
         if (pendingSec < 0.f)
             return;
-        const bool isNav =
-            which == HomeChordShortcut::NavLeft || which == HomeChordShortcut::NavRight ||
-            which == HomeChordShortcut::NavUp || which == HomeChordShortcut::NavDown;
-        if (isNav ? homeChordHasOverlayModifiers(input)
-                  : homeChordHasCompanions(input, self)) {
+        if (homeChordHasCompanions(input, self)) {
             pendingSec = -1.f;
             return;
         }
-        // Tap released alone before grace ends — still counts as a solo press.
+        if (!input.isHeld(self)) {
+            const float heldFor = pendingSec;
+            pendingSec = -1.f;
+            if (heldFor < kHomeChordTapMaxSec)
+                fire();
+            return;
+        }
+        pendingSec += dt;
+        if (pendingSec >= kHomeChordTapMaxSec)
+            pendingSec = -1.f; // became a hold-modifier; ignore later release
+    };
+
+    // D-pad: short grace then fire while held so Application repeat can continue.
+    auto settleNav = [&](HomeChordShortcut which, nxui::Button self, auto&& fire) {
+        float& pendingSec = m_pendingHomeChordSec[static_cast<std::size_t>(which)];
+        if (pendingSec < 0.f)
+            return;
+        if (homeChordHasOverlayModifiers(input)) {
+            pendingSec = -1.f;
+            return;
+        }
         if (!input.isHeld(self)) {
             pendingSec = -1.f;
             fire();
@@ -1819,20 +1838,20 @@ void WiiUMenuApp::tickHomeChordShortcutGuards(float dt) {
         }
     };
 
-    settle(HomeChordShortcut::QuickSettings, nxui::Button::L, [this]() {
+    settleTapOnly(HomeChordShortcut::QuickSettings, nxui::Button::L, [this]() {
         if (m_editMode || m_navigator.route() != switchu::navigation::Route::Home ||
             focusRoot() != &rootBox())
             return;
         openQuickSettings();
     });
-    settle(HomeChordShortcut::Sort, nxui::Button::R, [this]() {
+    settleTapOnly(HomeChordShortcut::Sort, nxui::Button::R, [this]() {
         if (m_navigator.route() != switchu::navigation::Route::Home ||
             focusRoot() != &rootBox() || m_openFolderId != 0 || m_editMode ||
             m_appLayoutMode == AppLayoutMode::DynamicLine)
             return;
         cycleSortMode();
     });
-    settle(HomeChordShortcut::EditMove, nxui::Button::Y, [this]() {
+    settleTapOnly(HomeChordShortcut::EditMove, nxui::Button::Y, [this]() {
         if ((m_contextMenu && m_contextMenu->isActive()) ||
             (m_dialog && m_dialog->isActive()) ||
             (m_themeShop && m_themeShop->isActive()) ||
@@ -1851,7 +1870,7 @@ void WiiUMenuApp::tickHomeChordShortcutGuards(float dt) {
         enterEditMode();
         m_audio.playSfx(Sfx::Activate);
     });
-    settle(HomeChordShortcut::Activate, nxui::Button::A, [this]() {
+    settleTapOnly(HomeChordShortcut::Activate, nxui::Button::A, [this]() {
         if (m_editPlacementConsumedA) {
             m_editPlacementConsumedA = false;
             return;
@@ -1864,17 +1883,18 @@ void WiiUMenuApp::tickHomeChordShortcutGuards(float dt) {
             return;
         cur->activate();
     });
-    settle(HomeChordShortcut::PagePrev, nxui::Button::ZL, [this]() {
+    settleTapOnly(HomeChordShortcut::PagePrev, nxui::Button::ZL, [this]() {
         if (m_navigator.route() != switchu::navigation::Route::Home || focusRoot() != &rootBox())
             return;
         flipPage(-1);
     });
-    settle(HomeChordShortcut::PageNext, nxui::Button::ZR, [this]() {
+    settleTapOnly(HomeChordShortcut::PageNext, nxui::Button::ZR, [this]() {
         if (m_navigator.route() != switchu::navigation::Route::Home || focusRoot() != &rootBox())
             return;
+        // Tap flips page; long ZR hold still drives add-page in onUpdateAwake.
         flipPage(+1);
     });
-    settle(HomeChordShortcut::Properties, nxui::Button::Plus, [this]() {
+    settleTapOnly(HomeChordShortcut::Properties, nxui::Button::Plus, [this]() {
 #ifdef SWITCHU_HOMEBREW
         if (m_navigator.route() == switchu::navigation::Route::ControllerTest)
             return;
@@ -1885,9 +1905,10 @@ void WiiUMenuApp::tickHomeChordShortcutGuards(float dt) {
 #endif
         openFocusedSelectionProperties();
     });
-    settle(HomeChordShortcut::ChangeView, nxui::Button::Minus, [this]() {
+    settleTapOnly(HomeChordShortcut::ChangeView, nxui::Button::Minus, [this]() {
         if (handleAccessibilityToggleCombo())
             return;
+        // Empty-page Minus hold opens delete; that path owns the button.
         if (deletePageAvailable())
             return;
         if (m_navigator.route() != switchu::navigation::Route::Home ||
@@ -1914,14 +1935,14 @@ void WiiUMenuApp::tickHomeChordShortcutGuards(float dt) {
             return;
         focusManager().navigate(dir, focusRoot());
     };
-    settle(HomeChordShortcut::NavLeft, nxui::Button::DLeft,
-           [&]() { fireNav(nxui::FocusDirection::LEFT); });
-    settle(HomeChordShortcut::NavRight, nxui::Button::DRight,
-           [&]() { fireNav(nxui::FocusDirection::RIGHT); });
-    settle(HomeChordShortcut::NavUp, nxui::Button::DUp,
-           [&]() { fireNav(nxui::FocusDirection::UP); });
-    settle(HomeChordShortcut::NavDown, nxui::Button::DDown,
-           [&]() { fireNav(nxui::FocusDirection::DOWN); });
+    settleNav(HomeChordShortcut::NavLeft, nxui::Button::DLeft,
+              [&]() { fireNav(nxui::FocusDirection::LEFT); });
+    settleNav(HomeChordShortcut::NavRight, nxui::Button::DRight,
+              [&]() { fireNav(nxui::FocusDirection::RIGHT); });
+    settleNav(HomeChordShortcut::NavUp, nxui::Button::DUp,
+              [&]() { fireNav(nxui::FocusDirection::UP); });
+    settleNav(HomeChordShortcut::NavDown, nxui::Button::DDown,
+              [&]() { fireNav(nxui::FocusDirection::DOWN); });
 }
 
 void WiiUMenuApp::wireGlobalActions() {

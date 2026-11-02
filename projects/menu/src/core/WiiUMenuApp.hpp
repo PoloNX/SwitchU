@@ -395,9 +395,10 @@ private:
                                    nxui::Texture* composite);
     void wireFocusCallback();
     void wireGlobalActions();
-    // HOME button shortcuts arm briefly so Ultrahand-style chords
-    // (L+R+Y+D-pad, etc.) can cancel before Quick Settings / sort / move /
-    // launch / page / Plus properties / Minus view / D-pad focus steps fire.
+    // HOME button shortcuts arm on press. Shoulder/face actions fire only as
+    // clean taps (press+release under kHomeChordTapMaxSec) so holding L/R/A/…
+    // for Sphaira / Ultrahand / HOS overlays does not open Quick Settings etc.
+    // D-pad still settles after a short grace while held for focus repeat.
     enum class HomeChordShortcut : std::uint8_t {
         QuickSettings = 0, // L
         Sort,              // R
@@ -1033,12 +1034,15 @@ private:
     bool m_accessibilityToggleComboHeld = false;
     bool m_plusExitPending = false;
     float m_plusExitPendingTimer = 0.f;
-    // >=0 while waiting out the HOME chord grace; <0 idle.
+    // >=0 while an armed HOME shortcut is pending; <0 idle.
     float m_pendingHomeChordSec[static_cast<std::size_t>(HomeChordShortcut::Count)] = {
         -1.f, -1.f, -1.f, -1.f, -1.f, -1.f, -1.f, -1.f,
         -1.f, -1.f, -1.f, -1.f
     };
+    // D-pad: fire once after this grace while held, then Application repeats.
     static constexpr float kHomeChordGraceSec = 0.08f;
+    // L/R/Y/A/ZL/ZR/Plus/Minus: release under this = tap; hold longer = modifier.
+    static constexpr float kHomeChordTapMaxSec = 0.35f;
     nxui::AnimatedFloat m_hintPanelW{0.f};
     nxui::AnimatedFloat m_hintPanelH{0.f};
     nxui::AnimatedFloat m_hintContentReveal{1.f};
