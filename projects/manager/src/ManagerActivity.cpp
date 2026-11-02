@@ -202,9 +202,6 @@ bool ManagerActivity::onCreate() {
     m_updateProgressDialog = std::make_shared<UpdateProgressDialog>();
     m_updateProgressDialog->setFonts(&m_titleFont, &m_smallFont);
     m_updateProgressDialog->setTheme(&m_theme);
-    m_updateProgressDialog->setLabels(
-        tr("manager.update_download", "Download"),
-        tr("manager.update_installation", "Installation"));
     rootBox().addChild(m_updateProgressDialog);
 
     rootBox().addAction(static_cast<uint64_t>(nxui::Button::B), [this]() {
@@ -430,9 +427,9 @@ void ManagerActivity::requestUpdaterCancel() {
         m_noticeLabel->setText("");
     } else if (m_updateProgressDialog && m_updateProgressDialog->isActive()) {
         m_updateProgressDialog->setProgress(
-            m_updateDownloadProgress.load(), m_updateInstallProgress.load(),
+            combinedUpdateProgress(),
             tr("manager.update_cancelling", "Cancelling..."),
-            combinedUpdateProgress(), false);
+            false);
     }
 }
 
@@ -505,10 +502,9 @@ void ManagerActivity::startUpdateInstall() {
     m_updateState = UpdateUiState::Installing;
     beginUpdateInputBlock();
     m_updateProgressDialog->show(
-        tr("manager.update_progress_title", "Installing SwitchU update"));
+        tr("manager.update_progress_title", "Updating SwitchU"));
     m_updateProgressDialog->setProgress(
-        0.f, 0.f, tr("manager.update_preparing", "Preparing update..."),
-        0.f, true);
+        0.f, tr("manager.update_preparing", "Preparing..."), true);
     m_updateInstallFuture = std::async(std::launch::async,
         [this, release, preserveDisabled]() {
             return ReleaseUpdater::install(release, preserveDisabled,
@@ -564,52 +560,42 @@ void ManagerActivity::syncUpdater() {
             m_lastUpdateStage = workerStage;
             m_lastBytesReceived = bytesReceived;
             const float overall = combinedUpdateProgress();
-            const int overallPercent = std::clamp(
-                static_cast<int>(std::round(overall * 100.f)), 0, 100);
             std::string status;
             switch (static_cast<UpdateWorkerStage>(workerStage)) {
                 case UpdateWorkerStage::Downloading: {
-                    status = tr("manager.update_stage_downloading", "Downloading update");
-                    status += " — " + std::to_string(downloadPercent) + "%";
+                    status = tr("manager.update_stage_downloading", "Downloading…");
                     if (bytesReceived > 0) {
-                        status += "  (";
+                        status += " ";
                         status += formatByteCount(bytesReceived);
                         if (m_latestRelease.downloadSize > 0) {
                             status += " / ";
                             status += formatByteCount(m_latestRelease.downloadSize);
                         }
-                        status += ")";
                     }
                     break;
                 }
                 case UpdateWorkerStage::Verifying:
-                    status = tr("manager.update_stage_verifying", "Verifying download...");
+                    status = tr("manager.update_stage_verifying", "Verifying…");
                     break;
                 case UpdateWorkerStage::Extracting:
-                    status = tr("manager.update_stage_extracting", "Extracting archive");
-                    status += " — " + std::to_string(installPercent) + "%";
+                    status = tr("manager.update_stage_extracting", "Extracting…");
                     break;
                 case UpdateWorkerStage::Installing:
-                    status = tr("manager.update_stage_installing", "Installing files");
-                    status += " — " + std::to_string(installPercent) + "%";
+                    status = tr("manager.update_stage_installing", "Installing…");
                     break;
                 default:
-                    status = tr("manager.update_preparing", "Preparing update...");
+                    status = tr("manager.update_preparing", "Preparing…");
                     break;
             }
             if (ReleaseUpdater::cancelRequested()
                 && static_cast<UpdateWorkerStage>(workerStage)
                     == UpdateWorkerStage::Downloading) {
-                status = tr("manager.update_cancelling", "Cancelling...");
+                status = tr("manager.update_cancelling", "Cancelling…");
             }
+            (void)downloadPercent;
+            (void)installPercent;
             m_updateProgressDialog->setProgress(
-                m_updateDownloadProgress.load(),
-                m_updateInstallProgress.load(),
-                status,
-                overall,
-                canCancelUpdater());
-            // Keep the main button label in sync with overall %.
-            (void)overallPercent;
+                overall, status, canCancelUpdater());
             refreshPresentation();
         }
         if (m_updateInstallFuture.wait_for(0s) == std::future_status::ready) {
@@ -631,10 +617,15 @@ void ManagerActivity::syncUpdater() {
             } else {
                 m_updateState = UpdateUiState::Error;
                 m_updateError = result.error;
+                const std::string errorText = result.error.empty()
+                    ? tr("manager.update_error_unknown",
+                         "Update failed. See sdmc:/config/SwitchU/manager.log.")
+                    : result.error;
                 m_dialog->show(
                     tr("manager.update_error_title", "Update failed"),
-                    result.error,
-                    {{tr("manager.ok", "OK"), {}, true}});
+                    errorText,
+                    // Hardcoded label — i18n lookup has shown blank button chrome.
+                    {{"OK", {}, true}});
                 focusManager().setFocus(m_dialog.get());
             }
             refreshPresentation();

@@ -508,61 +508,55 @@ void installFiles(const std::vector<std::string>& files,
         ec.clear();
         std::filesystem::remove(item.backup, ec);
         ec.clear();
-        item.hadOriginal = std::filesystem::is_regular_file(item.destination, ec) && !ec;
-        bool usedInPlaceOverwrite = false;
-        if (item.hadOriginal) {
-            std::filesystem::rename(item.destination, item.backup, ec);
+
+        // Manager cannot replace its own running NRO (rename and overwrite both
+        // fail with I/O error). Stage beside it; daemon promotes after reboot.
+        if (item.destination.filename() == "SwitchU-Manager.nro") {
+            const std::filesystem::path pending =
+                item.destination.string() + ".new";
+            std::filesystem::remove(pending, ec);
+            ec.clear();
+            std::filesystem::rename(item.temporary, pending, ec);
             if (ec) {
-                // Running NRO (or other locked file): rename fails on Horizon.
-                // Copy aside for rollback, then overwrite the live path in place.
-                ec.clear();
                 try {
-                    copyFileContents(item.destination, item.backup);
-                } catch (const std::exception&) {
-                    // Still attempt overwrite without a backup for this file.
-                    std::filesystem::remove(item.backup, ec);
-                    item.hadOriginal = false;
-                }
-                try {
-                    copyFileContents(item.temporary, item.destination);
+                    copyFileContents(item.temporary, pending);
                     std::filesystem::remove(item.temporary, ec);
-                    usedInPlaceOverwrite = true;
-                    switchu::FileLog::log(
-                        "[updater] in-place overwrite (locked file): %s",
-                        item.destination.string().c_str());
                 } catch (const std::exception& ex) {
                     rollback(replacements);
                     throw std::runtime_error(
-                        "Unable to replace locked file " + item.destination.string()
-                        + ": " + ex.what());
+                        "Unable to stage Manager update: " + std::string(ex.what()));
                 }
             }
-        }
-        if (!usedInPlaceOverwrite) {
+            item.hadOriginal = false;
+            item.applied = true;
+            switchu::FileLog::log(
+                "[updater] staged Manager NRO for post-reboot promote: %s",
+                pending.string().c_str());
+        } else {
+            item.hadOriginal = std::filesystem::is_regular_file(item.destination, ec) && !ec;
+            if (item.hadOriginal) {
+                ec.clear();
+                std::filesystem::rename(item.destination, item.backup, ec);
+                if (ec) {
+                    rollback(replacements);
+                    throw std::runtime_error(
+                        "Unable to back up " + item.destination.string());
+                }
+            }
             ec.clear();
             std::filesystem::rename(item.temporary, item.destination, ec);
             if (ec) {
-                // Destination may still be locked even when backup rename worked
-                // elsewhere; fall back to overwrite from the staged temp.
-                try {
-                    copyFileContents(item.temporary, item.destination);
-                    std::filesystem::remove(item.temporary, ec);
-                    switchu::FileLog::log(
-                        "[updater] in-place overwrite (rename failed): %s",
-                        item.destination.string().c_str());
-                } catch (const std::exception& ex) {
-                    if (item.hadOriginal) {
-                        std::error_code restoreEc;
-                        std::filesystem::rename(item.backup, item.destination, restoreEc);
-                    }
-                    rollback(replacements);
-                    throw std::runtime_error(
-                        "Unable to install " + item.destination.string()
-                        + ": " + ex.what());
+                if (item.hadOriginal) {
+                    std::error_code restoreEc;
+                    std::filesystem::rename(item.backup, item.destination, restoreEc);
                 }
+                rollback(replacements);
+                throw std::runtime_error(
+                    "Unable to install " + item.destination.string());
             }
+            item.applied = true;
         }
-        item.applied = true;
+
         const float fraction = static_cast<float>(i + 1)
             / std::max<std::size_t>(1, replacements.size());
         progress.store(progressBase + progressSpan * (0.46f + 0.49f * fraction));

@@ -54,13 +54,19 @@
     "update_confirm_suffix": " from GitHub? Your configuration and themes will be preserved.",
     "update_install": "Install update",
     "update_error_title": "Update failed",
-    "update_progress_title": "Installing SwitchU update",
+    "update_error_unknown": "Update failed. See sdmc:/config/SwitchU/manager.log.",
+    "update_progress_title": "Updating SwitchU",
     "update_download": "Download",
     "update_installation": "Installation",
-    "update_preparing": "Preparing update...",
-    "update_stage_downloading": "Downloading update...",
-    "update_stage_verifying": "Verifying download...",
-    "update_stage_extracting": "Preparing installation...",
-    "update_stage_installing": "Installing files..."
+    "update_preparing": "Preparing…",
+    "update_stage_downloading": "Downloading…",
+    "update_stage_verifying": "Verifying…",
+    "update_stage_extracting": "Extracting…",
+    "update_stage_installing": "Installing…",
+    "update_cancelling": "Cancelling…",
+    "update_cancel_hint": "Press B to cancel.",
+    "help_update_cancel": "B: cancel",
+    "help_update_busy": "Installing — please wait",
+    "update_installed_detail": "Update installed. Restart to apply."
   }
 }
