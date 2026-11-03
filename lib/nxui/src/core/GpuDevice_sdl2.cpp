@@ -44,6 +44,10 @@ void GpuDevice::endFrame() {
     SDL_RenderPresent(m_sdlRenderer);
 }
 
+void GpuDevice::setSwapInterval(uint32_t interval) {
+    m_swapInterval = interval;
+}
+
 void GpuDevice::waitIdle() {
     // No-op for SDL2 — rendering is synchronous
 }

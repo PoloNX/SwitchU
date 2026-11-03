@@ -257,7 +257,13 @@ void Application::dispatchInput() {
 void Application::run() {
     uint64_t prevTick = armGetSystemTick();
     float idleSeconds = 0.f;
-    bool skipIdleFrame = false;
+
+    constexpr float kFrameStatsWindowSec = 10.f;
+    constexpr float kSlowFrameWorkMs = 25.f;   // update + render past this is a visible hitch
+    const float tickToMs = 1000.f / static_cast<float>(armGetSystemTickFreq());
+    FrameStats window{};
+    float windowIntervalSumMs = 0.f;
+    uint64_t lastSlowReport = 0;
 
     while (m_running) {
         uint64_t nowTick = armGetSystemTick();
@@ -286,7 +292,6 @@ void Application::run() {
         m_input.update();
         if (m_input.hasUserActivity()) {
             idleSeconds = 0.f;
-            skipIdleFrame = false;
         } else {
             idleSeconds += dt;
         }
@@ -301,24 +306,56 @@ void Application::run() {
             m_activity->m_rootBox->update(dt);
 
             if (m_renderEnabled) {
-                // Static menus do not need a full GPU submission at 60 Hz.
-                // Keep input/update responsive, but present every other frame
-                // after the UI has been idle long enough for transitions to
-                // settle. Any new input immediately restores 60 Hz.
-                if (idleSeconds >= 2.f) {
-                    skipIdleFrame = !skipIdleFrame;
-                    if (skipIdleFrame) {
-                        svcSleepThread(16'000'000ULL);
-                        continue;
-                    }
-                }
+                // Static menus do not need a full GPU submission at 60 Hz:
+                // once the UI has been idle long enough for transitions to
+                // settle, present every second vblank (a steady 30 Hz; the old
+                // 16 ms sleep drifted off vsync and stuttered anything still
+                // animating). Any new input restores 60 Hz on the next frame.
+                const bool idle = idleSeconds >= 2.f;
+                m_gpu.setSwapInterval(idle ? 2 : 1);
+                const uint64_t updateEnd = armGetSystemTick();
                 m_gpu.beginFrame();
+                const uint64_t renderStart = armGetSystemTick();
                 m_renderer->beginFrame();
                 m_activity->m_rootBox->render(*m_renderer);
                 m_activity->onRender(*m_renderer);
                 m_renderer->endFrame();
                 m_gpu.endFrame();
                 m_activity->onAfterPresent(*m_renderer);
+                const uint64_t renderEnd = armGetSystemTick();
+
+                if (m_frameStatsSink) {
+                    const float updateMs = static_cast<float>(updateEnd - nowTick) * tickToMs;
+                    const float renderMs = static_cast<float>(renderEnd - renderStart) * tickToMs;
+                    const float intervalMs = dt * 1000.f;
+                    ++window.frames;
+                    if (idle) ++window.idleFrames;
+                    window.seconds += dt;
+                    windowIntervalSumMs += intervalMs;
+                    window.maxMs = std::max(window.maxMs, intervalMs);
+                    window.maxUpdateMs = std::max(window.maxUpdateMs, updateMs);
+                    window.maxRenderMs = std::max(window.maxRenderMs, renderMs);
+                    // 60 Hz budget 16.7 ms (idle 33.3 ms); half a vblank of slack.
+                    if (intervalMs > (idle ? 41.7f : 25.f)) ++window.missed;
+
+                    if (updateMs + renderMs > kSlowFrameWorkMs
+                        && static_cast<float>(renderEnd - lastSlowReport) * tickToMs > 1000.f) {
+                        lastSlowReport = renderEnd;
+                        FrameStats slow{};
+                        slow.slowFrame = true;
+                        slow.frames = 1;
+                        slow.maxMs = intervalMs;
+                        slow.maxUpdateMs = updateMs;
+                        slow.maxRenderMs = renderMs;
+                        m_frameStatsSink(slow);
+                    }
+                    if (window.seconds >= kFrameStatsWindowSec) {
+                        window.avgMs = windowIntervalSumMs / static_cast<float>(window.frames);
+                        m_frameStatsSink(window);
+                        window = {};
+                        windowIntervalSumMs = 0.f;
+                    }
+                }
             } else {
                 // Yield CPU while another app owns the foreground.
                 svcSleepThread(100000000LL); // 100 ms
