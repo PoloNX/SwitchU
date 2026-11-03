@@ -269,6 +269,10 @@ static constexpr uint64_t kMenuEarlyExitNs = 10'000'000'000ULL;
 static constexpr uint64_t kHomeMenuSettleNsIdle = 80'000'000ULL;        // ~80ms
 static constexpr uint64_t kHomeMenuSettleNsSuspended = 300'000'000ULL;  // ~300ms
 static constexpr uint64_t kHomeMenuGfxFailSettleNs = 2'500'000'000ULL; // 2.5s before sole relaunch
+// HOME asked for the foreground but AE never sent ChangeIntoForeground (it
+// already arrived just before the request, e.g. right at an app launch). Past
+// this, launch the menu anyway instead of ignoring every later HOME.
+static constexpr uint64_t kHomeForegroundHandoffDeadlineNs = 2'000'000'000ULL; // 2s
 static constexpr const char* kLastGfxFailPath = "sdmc:/config/SwitchU/last_gfx_fail.txt";
 static uint64_t g_lastMenuLaunchTick = 0;
 static uint64_t g_lastMenuLaunchSuspended = 0;
@@ -1019,6 +1023,26 @@ static Result launchPendingHomeMenu() {
     return rc;
 }
 
+// The foreground handoff waited past kHomeForegroundHandoffDeadlineNs with no
+// ChangeIntoForeground: open the menu now (or drop the request if one is up).
+static void expirePendingHomeHandoff(const char* source) {
+    if (!g_pendingHomeMenuLaunch)
+        return;
+    const uint64_t waitedMs =
+        armTicksToNs(armGetSystemTick() - g_pendingHomeMenuStartedAt) / 1'000'000ULL;
+    if (daemon::menu_la::isActive()) {
+        switchu::FileLog::log("[%s] HOME handoff expired after %lums; menu already active",
+                              source, static_cast<unsigned long>(waitedMs));
+        g_pendingHomeMenuLaunch = false;
+        g_pendingHomeMenuSource = nullptr;
+        g_pendingHomeMenuStartedAt = 0;
+        return;
+    }
+    switchu::FileLog::log("[%s] HOME: no ChangeIntoForeground after %lums; launching MainMenu",
+                          source, static_cast<unsigned long>(waitedMs));
+    launchPendingHomeMenu();
+}
+
 static void requestPowerStateChange(const char* source, bool reboot) {
     Result rc = spsmInitialize();
     if (R_SUCCEEDED(rc)) {
@@ -1108,7 +1132,15 @@ static void openMenuFromHome(const char* source) {
     cancelViewPolling("home");
 
     if (g_pendingHomeMenuLaunch) {
-        switchu::FileLog::log("[%s] HOME ignored: foreground handoff already pending", source);
+        if (armTicksToNs(homeStartedAt - g_pendingHomeMenuStartedAt)
+                >= kHomeForegroundHandoffDeadlineNs) {
+            expirePendingHomeHandoff(source);
+            return;
+        }
+        // Ask again: a lost or pre-empted request must not leave HOME dead.
+        const Result fgRc = appletRequestToGetForeground();
+        switchu::FileLog::log("[%s] HOME repeat while handoff pending: RequestToGetForeground rc=0x%X",
+                              source, fgRc);
         return;
     }
 
@@ -1269,6 +1301,14 @@ static void handleAppletMessages() {
         case 29:
         case 32:
         switchu::FileLog::log("[ae] -> Sleep (msg=%u)", msg);
+        if (g_pendingHomeMenuLaunch) {
+            // A HOME still waiting for the foreground must not survive sleep:
+            // after wake the app resumes and a fresh HOME press starts over.
+            switchu::FileLog::log("[ae] clearing pending HOME foreground handoff: sleep");
+            g_pendingHomeMenuLaunch = false;
+            g_pendingHomeMenuSource = nullptr;
+            g_pendingHomeMenuStartedAt = 0;
+        }
         // The application keeps its IApplicationAccessor across system sleep,
         // but must reacquire the foreground after wake. Keep our session state
         // in sync so the Wakeup path is allowed to call app::resume().
@@ -2137,6 +2177,13 @@ static void mainLoop() {
                 "(tries=%d/%d) press HOME again",
                 g_menuGfxRelaunchTries, kMenuGfxRelaunchMaxTries);
         }
+        didWork = true;
+    }
+
+    if (g_pendingHomeMenuLaunch
+        && armTicksToNs(armGetSystemTick() - g_pendingHomeMenuStartedAt)
+               >= kHomeForegroundHandoffDeadlineNs) {
+        expirePendingHomeHandoff("main");
         didWork = true;
     }
 
