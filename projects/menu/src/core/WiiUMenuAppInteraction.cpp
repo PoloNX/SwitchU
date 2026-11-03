@@ -593,6 +593,19 @@ void WiiUMenuApp::enterEditMode() {
         return;
 
     auto* icon = static_cast<GlossyIcon*>(cur);
+    // A sorted grid (A-Z / Recent) only shows a projection of the personal
+    // layout: drops resolved against the wrong slots and were re-sorted away.
+    // Adopt the order on screen as "My order" first; nothing visibly moves.
+    if (m_openFolderId == 0 && m_appLayoutMode == AppLayoutMode::Grid
+        && m_config.sortMode != 0) {
+        if (!m_lastProjectedSlots.empty())
+            m_layoutSlots = m_lastProjectedSlots;
+        DebugLog::log("[edit] sort %d -> My order (adopted the on-screen order, %zu slots)",
+                      m_config.sortMode, m_layoutSlots.size());
+        m_config.sortMode = 0;
+        m_config.save();
+        m_layoutDirty = true;
+    }
     m_editMode = true;
     m_editSourceIndex = m_grid ? m_grid->focusedGlobalIndex() : -1;
     m_editTargetIndex = m_editSourceIndex;
@@ -646,10 +659,15 @@ bool WiiUMenuApp::commitEditModePlacement() {
 
     int from = m_editSourceIndex;
     int target = m_editTargetIndex;
-    if (from < 0 || target < 0 || from >= m_model.count() || target >= m_model.count())
+    if (from < 0 || target < 0 || from >= m_model.count() || target >= m_model.count()) {
+        DebugLog::log("[edit] commit failed: from=%d target=%d count=%d",
+                      from, target, m_model.count());
         return false;
-    if (m_model.at(from).titleId == 0)
+    }
+    if (m_model.at(from).titleId == 0) {
+        DebugLog::log("[edit] commit failed: source slot %d is empty", from);
         return false;
+    }
 
     int oldPage = m_grid->currentPage();
     bool changed = (from != target);
@@ -667,33 +685,50 @@ bool WiiUMenuApp::commitEditModePlacement() {
         }
         auto sourceIt = std::find(visibleOrder.begin(), visibleOrder.end(),
                                   m_editHeldTitleId);
-        if (sourceIt == visibleOrder.end())
+        if (sourceIt == visibleOrder.end()) {
+            DebugLog::log("[edit] commit failed: held title %016lX not in the row",
+                          static_cast<unsigned long>(m_editHeldTitleId));
             return false;
+        }
         const std::size_t sourceOrder = static_cast<std::size_t>(
             std::distance(visibleOrder.begin(), sourceIt));
         const std::uint64_t targetTitleId = m_model.at(target).titleId;
-        std::size_t destinationOrder = visibleOrder.empty() ? 0 : visibleOrder.size() - 1;
+        // A single row moves the held title to the drop position and shifts the
+        // titles in between. (A swap sent the displaced title back to where the
+        // held one came from, and an empty slot sent the held title to the end.)
+        std::size_t destinationOrder = 0;
         if (targetTitleId != 0) {
             const auto destinationIt = std::find(visibleOrder.begin(), visibleOrder.end(),
                                                  targetTitleId);
-            if (destinationIt == visibleOrder.end())
+            if (destinationIt == visibleOrder.end()) {
+                DebugLog::log("[edit] commit failed: target title %016lX not in the row",
+                              static_cast<unsigned long>(targetTitleId));
                 return false;
+            }
             destinationOrder = static_cast<std::size_t>(
                 std::distance(visibleOrder.begin(), destinationIt));
-            std::swap(visibleOrder[sourceOrder], visibleOrder[destinationOrder]);
         } else {
-            const auto held = visibleOrder[sourceOrder];
-            visibleOrder.erase(visibleOrder.begin() +
-                               static_cast<std::ptrdiff_t>(sourceOrder));
-            visibleOrder.push_back(held);
-            destinationOrder = visibleOrder.size() - 1;
+            // Empty slot: land after the titles that come before it.
+            for (int i = 0; i < target; ++i) {
+                const auto& entry = m_model.at(i);
+                if (entry.titleId != 0 && entry.kind != GridEntryKind::WidgetContinuation
+                    && entry.titleId != m_editHeldTitleId)
+                    ++destinationOrder;
+            }
         }
+        const auto held = visibleOrder[sourceOrder];
+        visibleOrder.erase(visibleOrder.begin() + static_cast<std::ptrdiff_t>(sourceOrder));
+        destinationOrder = std::min(destinationOrder, visibleOrder.size());
+        visibleOrder.insert(visibleOrder.begin() + static_cast<std::ptrdiff_t>(destinationOrder),
+                            held);
 
         std::vector<std::size_t> visibleSlots;
         if (m_openFolderId != 0) {
             auto* folder = m_folderStore.find(m_openFolderId);
-            if (!folder)
+            if (!folder) {
+                DebugLog::log("[edit] commit failed: folder %u not found", m_openFolderId);
                 return false;
+            }
             folder->titleIds = visibleOrder;
             if (!saveFoldersOrReport("move_single_row"))
                 return false;
@@ -706,8 +741,11 @@ bool WiiUMenuApp::commitEditModePlacement() {
                 if (visibleIds.count(m_layoutSlots[index]))
                     visibleSlots.push_back(index);
             }
-            if (visibleSlots.size() != visibleOrder.size())
+            if (visibleSlots.size() != visibleOrder.size()) {
+                DebugLog::log("[edit] commit failed: layout has %zu of the row's %zu titles",
+                              visibleSlots.size(), visibleOrder.size());
                 return false;
+            }
         }
 
         detachEditSourceIcon();
