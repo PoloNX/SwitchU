@@ -9,6 +9,7 @@
 #include <string>
 #include <string_view>
 #include <sys/time.h>
+#include <switch/arm/counter.h>
 #include <system_error>
 #include <vector>
 
@@ -67,7 +68,11 @@ inline void format_line_timestamp(char* buffer, size_t size) {
     long milliseconds = 0;
     long tenths = 0;
     if (!read_local_time(local_time, milliseconds, tenths)) {
-        std::snprintf(buffer, size, "0000-00-00 00:00:00.0");
+        // No wall clock yet (HOME return starts before time services): uptime
+        // from the CPU tick counter keeps the lines comparable instead of all
+        // reading zero (steady_clock is unimplemented there and returned -1).
+        const unsigned long long ms = armTicksToNs(armGetSystemTick()) / 1'000'000ULL;
+        std::snprintf(buffer, size, "up %llu.%03llu", ms / 1000ULL, ms % 1000ULL);
         return;
     }
 
