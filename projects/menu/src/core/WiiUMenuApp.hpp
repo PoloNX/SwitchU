@@ -535,6 +535,15 @@ private:
     // Tall Poster tiles + icon loader preference for single-row only.
     void syncSingleRowPosterPresentation(bool forceReloadIcons = false);
     bool preferPosterForMode(AppLayoutMode mode) const;
+    // Posters / heroes down: Battery Saver, or Frame Tap mapping its capture
+    // memory. A viewer merely watching HOME keeps the art.
+    bool frameTapArtSuppressed() const;
+    // NeedHeadroom that free memory already covers (logs when true).
+    bool frameTapHeadroomCoveredWithoutReclaim(std::uint32_t needMb) const;
+    // Present at start: a connected viewer always gets the hard reclaim again.
+    static constexpr const char* kFtViewerReclaimFlag =
+        "sdmc:/config/SwitchU/ft_viewer_reclaim";
+    bool m_ftViewerReclaimForced = false;
     void beginLayoutArtPrefetch();
     void beginVisibleArtWait();
     void commitPendingLayoutVisuals();
@@ -570,13 +579,30 @@ private:
     switchu::services::AutoThemeService m_autoTheme;
     switchu::services::FrameTapStatus m_frameTapStatus;
     bool                     m_frameTapLightActive = false;
-    // Heroes suppressed in lite (~8 MiB) — spend a slice on ±3 posters
-    // (was ±2); still well under remount cushion.
-    // Focus ±3 icons (posters suppressed while lite).
-    static constexpr int     kFrameTapLightBrowseRadius = 3;
+    // Focus ±4 while a viewer is connected: every card the single row shows
+    // (pitch 158 px on 1280) has its art; ~8 posters of 600 KB extra.
+    static constexpr int     kFrameTapLightBrowseRadius = 4;
     // Delay leave-light on brief viewer drops so soft-land cannot refill
     // past FT remount needs (soak: LEAVE→img 34MB→free 8KB).
     float                    m_frameTapViewerGoneSec = 0.f;
+    // Inputs of the per-frame showFocusedSteamGridDbArtwork() call.
+    struct BackdropSyncKey {
+        const void*   focus = nullptr;
+        int           focusIndex = -1;
+        std::uint64_t held = 0;
+        int           layout = -1;
+        int           modelCount = -1;
+        bool          edit = false;
+        bool          deferPreload = false;
+        bool          allowed = false;
+        bool operator==(const BackdropSyncKey&) const = default;
+    };
+    BackdropSyncKey          m_lastBackdropSync{};
+    bool                     m_backdropSyncValid = false;
+    float                    m_backdropSyncSec = 0.f;
+    // need_capture_remount poll (first tick checks at once).
+    float                    m_ftRemountFilePollSec = 1e9f;
+    bool                     m_ftAsksRemountFile = false;
     static constexpr float   kFrameTapViewerGoneLeaveSec = 4.f;
     // After NeedHeadroom reclaim+ACK, hold focus-only and skip re-reclaim so
     // restore→reload→hard-release does not flash icons (soak: 659 ACKs).

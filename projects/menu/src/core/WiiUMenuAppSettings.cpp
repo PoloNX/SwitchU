@@ -1546,10 +1546,10 @@ bool WiiUMenuApp::steamGridDbArtworkAllowedHere() const {
 
 void WiiUMenuApp::showFocusedSteamGridDbArtwork(bool forceReload) {
     if (!m_steamGridDbBackdrop) return;
-    // FT lite / NeedHeadroom hold: heroes (~8 MiB) stay down so posters can
-    // keep a wider radius. All call sites (splash handoff, morph, focus) hit
-    // this — do not reload art while light is active.
-    if (m_frameTapLightActive || m_ftHeadroomHoldActive) {
+    // Battery Saver / Frame Tap memory request: heroes (~8 MiB) stay down.
+    // All call sites (splash handoff, morph, focus) hit this. A viewer that
+    // only watches HOME keeps the focused hero.
+    if (frameTapArtSuppressed()) {
         m_steamGridDbBackdrop->setPreloadPaused(true);
         m_steamGridDbBackdrop->releaseGpuArtwork();
         m_steamGridDbBackdrop->setEnabled(false);
