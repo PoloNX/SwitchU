@@ -46,9 +46,10 @@ SourceStamp sourceStamp(const std::string& path) {
     SourceStamp stamp;
     stamp.size = std::filesystem::file_size(path, ec);
     if (ec) return stamp;
-    const auto writeTime = std::filesystem::last_write_time(path, ec);
-    if (ec) return stamp;
-    stamp.writeTime = static_cast<std::int64_t>(writeTime.time_since_epoch().count());
+    // Size only. last_write_time read differently on a HOME return before
+    // time services were up, so every poster/hero cache was rebuilt (decode +
+    // scale + 0.6-0.9 MB SD write each, 100-230 ms frames) although nothing
+    // changed. SteamGridDbManager deletes the caches when it applies new art.
     stamp.valid = true;
     return stamp;
 }
@@ -100,7 +101,6 @@ struct FitRamCache {
         auto it = found->second;
         if (!stamp.valid
             || it->stamp.size != stamp.size
-            || it->stamp.writeTime != stamp.writeTime
             || it->rgba.empty()) {
             bytes -= it->rgba.size();
             order.erase(it);
@@ -171,7 +171,6 @@ bool loadFit(const std::string& source, int maxWidth, int maxHeight,
         || header.width > static_cast<std::uint32_t>(maxWidth)
         || header.height > static_cast<std::uint32_t>(maxHeight)
         || header.sourceSize != stamp.size
-        || header.sourceWriteTime != stamp.writeTime
         || header.payloadSize
             != static_cast<std::uint64_t>(header.width) * header.height * 4ULL) {
         return false;
@@ -257,7 +256,6 @@ bool load(const std::string& source, int width, int height,
         || header.width != static_cast<std::uint32_t>(width)
         || header.height != static_cast<std::uint32_t>(height)
         || header.sourceSize != stamp.size
-        || header.sourceWriteTime != stamp.writeTime
         || header.payloadSize != expected) {
         return false;
     }
