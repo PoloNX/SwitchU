@@ -275,6 +275,13 @@ void GpuDevice::waitIdle() {
     if (m_queue) m_queue.waitIdle();
 }
 
+void GpuDevice::setSwapInterval(uint32_t interval) {
+    if (interval == 0 || interval == m_swapInterval || !m_swapchain)
+        return;
+    m_swapchain.setSwapInterval(interval);
+    m_swapInterval = interval;
+}
+
 void GpuDevice::recreateSwapchain() {
 #ifdef NXUI_BACKEND_DEKO3D
     if (!m_dev || !m_queue)
@@ -305,6 +312,8 @@ void GpuDevice::recreateSwapchain() {
 
     // Force the next beginFrame() to re-acquire a slot from the fresh swapchain.
     m_slot = -1;
+    // A new swapchain presents every vblank; the next setSwapInterval re-applies.
+    m_swapInterval = 1;
     logGpu("[GpuDevice] swapchain re-created after sleep (valid=%d)", (bool)m_swapchain);
 #endif
 }
@@ -340,6 +349,7 @@ void GpuDevice::remountDisplayForCaptureMitm() {
     }
 
     m_slot = -1;
+    m_swapInterval = 1;
     logGpu("[GpuDevice] display remounted for FT capture mitm (valid=%d newLayer=0x%llx layerRc=0x%x)",
            (bool)m_swapchain, (unsigned long long)newLayer, layerRc);
 #else

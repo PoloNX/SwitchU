@@ -1116,6 +1116,19 @@ bool WiiUMenuApp::onCreate() {
     DebugLog::log("[init] DONE total=%lums fastReturn=%d",
                   initElapsedMs(), fastReturn ? 1 : 0);
 
+    // Frame timing in the log: what a stutter cost and which phase it was in.
+    app().setFrameStatsSink([](const nxui::FrameStats& s) {
+        if (s.slowFrame) {
+            DebugLog::log("[perf] slow frame: update=%.1fms render=%.1fms interval=%.1fms",
+                          s.maxUpdateMs, s.maxRenderMs, s.maxMs);
+            return;
+        }
+        DebugLog::log("[perf] %u frames in %.1fs (%u idle 30 Hz): avg=%.1fms max=%.1fms "
+                      "missed=%u maxUpdate=%.1fms maxRender=%.1fms",
+                      s.frames, s.seconds, s.idleFrames, s.avgMs, s.maxMs,
+                      s.missed, s.maxUpdateMs, s.maxRenderMs);
+    });
+
 #ifdef SWITCHU_MENU
     switchu::menu::smi_cmd::setLockScreen(m_config.lockScreenEnabled,
                                           m_config.powerButtonAction);
