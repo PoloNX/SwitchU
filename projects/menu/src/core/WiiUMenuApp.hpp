@@ -779,6 +779,8 @@ private:
     // Countdown while the hover-opened folder swaps in.
     float m_editDragFolderOpenWait = 0.f;
     std::vector<uint64_t> m_layoutSlots;
+    // The A-Z / Recent grid as shown (empty when the personal layout is shown).
+    std::vector<uint64_t> m_lastProjectedSlots;
     std::unordered_map<std::uint64_t, switchu::widgets::WidgetSize> m_gameSizes;
     bool m_layoutDirty = false;
     struct FolderCoverCacheEntry {

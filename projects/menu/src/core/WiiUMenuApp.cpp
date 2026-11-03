@@ -2373,6 +2373,7 @@ GridModel WiiUMenuApp::buildRootFolderModel() {
             while (next < applications.size()) projected.push_back(applications[next++]);
         }
     }
+    m_lastProjectedSlots = projected;
     const auto& displaySlots = projected.empty() ? m_layoutSlots : projected;
 
     const int columns = std::clamp(m_config.gridColumns, 1, 8);
