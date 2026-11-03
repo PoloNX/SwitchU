@@ -167,9 +167,6 @@ Mp3DurationEstimate estimateMp3Duration(const std::string& path, int id3TagBytes
     return out;
 }
 
-// Deep Mix_SetMusicPosition into MP3 has frozen the menu on Switch (SDL_mixer /
-// mpg123). Shallow resume seeks (~30s) are fine; multi-minute jumps are not.
-constexpr float kMaxSafeMp3ResumeSeekSeconds = 90.f;
 // Let Mix_PlayMusic settle a few frames before jumping into the stream.
 constexpr int kDeferredSeekWarmupFrames = 20;
 
@@ -1101,17 +1098,10 @@ float AudioManager::sanitizeResumeSeekUnlocked(float positionSeconds) const {
         return 0.f;
     if (!currentTrackIsMp3Unlocked())
         return clamped;
-    if (m_current < 0 || m_current >= static_cast<int>(m_trackInfos.size()))
-        return 0.f;
-    const auto& info = m_trackInfos[static_cast<size_t>(m_current)];
-    // Bitrate-guessed lengths are not trustworthy for mpg123 jumps.
-    if (!info.seekReliable)
-        return 0.f;
-    // Deep MP3 hard-seeks have frozen AppletReturn (menu.log stopped between
-    // "music restore target" and "music playback restore returned").
-    if (clamped > kMaxSafeMp3ResumeSeekSeconds)
-        return 0.f;
-    return clamped;
+    // MP3 has no seek table: Mix_SetMusicPosition decodes from the start of the
+    // file on the UI thread (57 s cost a 436 ms frame on HOME return; deeper
+    // jumps froze AppletReturn). The track restarts with the fade-in instead.
+    return 0.f;
 }
 
 bool AudioManager::currentTrackIsMp3Unlocked() const {
