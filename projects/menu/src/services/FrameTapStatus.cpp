@@ -41,8 +41,12 @@ void FrameTapStatus::pollNeedHeadroomFile() {
 }
 
 bool FrameTapStatus::refresh() {
-    m_forceLight = false;
-    {
+    // Debug flag file: an SD open on the UI thread twice a second; every 5 s is plenty.
+    const uint64_t now = armGetSystemTick();
+    if (m_forceLightCheckedAt == 0
+        || armTicksToNs(now - m_forceLightCheckedAt) >= 5'000'000'000ULL) {
+        m_forceLightCheckedAt = now;
+        m_forceLight = false;
         FILE* f = std::fopen(kForceLightPath, "rb");
         if (f) {
             std::fclose(f);

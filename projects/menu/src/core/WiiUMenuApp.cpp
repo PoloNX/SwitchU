@@ -946,6 +946,15 @@ bool WiiUMenuApp::onCreate() {
     // cold boot → FT not up yet → need remount when viewer connects.
     // HOME return → FT already up → first window already through mitm → skip.
     // (Must NOT decide later in tickFrameTap — by then FT is always up.)
+    // Opt-out for keeping art while a viewer streams (see
+    // frameTapHeadroomCoveredWithoutReclaim): an empty file restores the reclaim.
+    if (FILE* f = std::fopen(kFtViewerReclaimFlag, "rb")) {
+        std::fclose(f);
+        m_ftViewerReclaimForced = true;
+    }
+    DebugLog::log("[ft-light] viewer reclaim %s (%s)",
+                  m_ftViewerReclaimForced ? "forced" : "only when memory is short",
+                  kFtViewerReclaimFlag);
     m_ftCaptureRemountProbed = true;
     m_ftCaptureRemountNeeded = !m_frameTapStatus.available();
     DebugLog::log("[ft-light] capture remount %s (FT up at onCreate=%d)",
@@ -958,7 +967,10 @@ bool WiiUMenuApp::onCreate() {
         }
     }
     if (m_frameTapStatus.needsHeadroom()) {
-        reclaimForFrameTapLaunch("need-headroom");
+        const bool covered = frameTapHeadroomCoveredWithoutReclaim(
+            m_frameTapStatus.headroomNeedMb());
+        if (!covered)
+            reclaimForFrameTapLaunch("need-headroom");
         // Return unused Applet-heap to the pool so FT's donor (~42 MB) can map.
         // No-op when FT is absent; normal SwitchU never takes this path.
         switchu::menu::tryShrinkHeapForFrameTapAggressive(m_frameTapStatus.headroomNeedMb());
@@ -973,20 +985,22 @@ bool WiiUMenuApp::onCreate() {
         m_frameTapStatus.ackHeadroom(freeKb);
         m_ftHeadroomHoldActive = true;
         m_ftHeadroomHoldSec = 0.f;
-        m_ftRemountBrowseRestored = false;
+        m_ftRemountBrowseRestored = covered;
         DebugLog::log("[ft-light] early-ACK free=%uKB (pre-fill) heapShrunk=%d",
                       freeKb, switchu::menu::heapShrunkForFrameTap() ? 1 : 0);
     } else if (m_frameTapStatus.viewerConnected()) {
         // FT often asks NeedHeadroom within 2.5s of 100D — shrink before fill
         // so the Applet pool already has donor room when the bit arrives.
         enterFrameTapLightPath("viewer-prefill");
-        reclaimForFrameTapLaunch("need-headroom");
         const std::uint32_t needMb = m_frameTapStatus.headroomNeedMb()
             ? m_frameTapStatus.headroomNeedMb() : 42u;
+        const bool covered = frameTapHeadroomCoveredWithoutReclaim(needMb);
+        if (!covered)
+            reclaimForFrameTapLaunch("need-headroom");
         switchu::menu::tryShrinkHeapForFrameTapAggressive(needMb);
         m_ftHeadroomHoldActive = true;
         m_ftHeadroomHoldSec = 0.f;
-        m_ftRemountBrowseRestored = false;
+        m_ftRemountBrowseRestored = covered;
         DebugLog::log("[ft-light] viewer-prefill heapShrunk=%d heap=%zuKB",
                       switchu::menu::heapShrunkForFrameTap() ? 1 : 0,
                       switchu::menu::currentHeapSizeBytes() / 1024u);
@@ -4209,12 +4223,57 @@ void WiiUMenuApp::configureDynamicLineNavigation() {
 }
 
 bool WiiUMenuApp::preferPosterForMode(AppLayoutMode mode) const {
-    // Lite / Frame Tap: icons only — posters are the big single-row GPU bite.
-    if (m_frameTapLightActive)
+    // Battery Saver / Frame Tap memory request: icons only — posters are the
+    // big single-row GPU bite.
+    if (frameTapArtSuppressed())
         return false;
     return mode == AppLayoutMode::DynamicLine
         && m_config.steamGridDbEnabled
         && m_config.steamGridDbShowPosterInDynamicLine;
+}
+
+bool WiiUMenuApp::frameTapHeadroomCoveredWithoutReclaim(std::uint32_t needMb) const {
+    // FT asks on every HOME return, viewer or not. When free memory already
+    // covers the request, dropping every card and the hero only blanked HOME
+    // for ~2.5 s (108 MB free vs 42 MB asked): keep them and let the heap
+    // shrink + ACK serve FT. A streaming viewer gets a wider margin, and the
+    // kFtViewerReclaimFlag file brings its unconditional reclaim back.
+    const bool viewer = m_frameTapStatus.viewerConnected();
+    if (viewer && m_ftViewerReclaimForced)
+        return false;
+    std::uint64_t freeBytes = 0;
+#ifdef NXUI_BACKEND_DEKO3D
+    u64 total = 0, used = 0;
+    if (R_SUCCEEDED(svcGetInfo(&total, InfoType_TotalMemorySize, CUR_PROCESS_HANDLE, 0)) &&
+        R_SUCCEEDED(svcGetInfo(&used, InfoType_UsedMemorySize, CUR_PROCESS_HANDLE, 0)) &&
+        total > used) {
+        freeBytes = total - used;
+    }
+#endif
+    const std::uint64_t marginBytes = (viewer ? 48ull : 32ull) * 1024ull * 1024ull;
+    const std::uint64_t needBytes = static_cast<std::uint64_t>(needMb ? needMb : 42u)
+                                  * 1024ull * 1024ull;
+    if (freeBytes < needBytes + marginBytes)
+        return false;
+    DebugLog::log("[ft-light] NeedHeadroom %uMB covered by %lluKB free (viewer=%d): "
+                  "keeping cards and art", needMb,
+                  static_cast<unsigned long long>(freeBytes / 1024ull), viewer ? 1 : 0);
+    return true;
+}
+
+bool WiiUMenuApp::frameTapArtSuppressed() const {
+    // Battery Saver keeps the icon-only lite look on purpose.
+    if (m_config.batterySaver)
+        return true;
+    // Frame Tap is mapping its capture memory after a hard reclaim: keep art
+    // down until the browse radius comes back (remount grace or hold expiry).
+    // A request served from free memory keeps the art (restored is set then).
+    if (m_ftHeadroomHoldActive && !m_ftRemountBrowseRestored)
+        return true;
+    // Launch/resume reclaim holds focus-only until browse is restored.
+    if (m_frameTapLightActive && m_iconStreamer.pageCacheRadiusCap() == 0)
+        return true;
+    return false;
 }
 
 void WiiUMenuApp::layoutPrefetchWindow(int& page, int& pageSize) const {
@@ -7646,22 +7705,27 @@ void WiiUMenuApp::enterFrameTapLightPath(const char* reason) {
         return;
     m_frameTapLightActive = true;
 
-    // Icons only (±3); no heroes / WaraWara / single-row posters.
+    // Focus ±4; no WaraWara / folder covers / neighbour hero preload. Posters
+    // and the focused hero stay unless frameTapArtSuppressed() (Battery Saver).
     // Cap also applies to grid. Cancel prefetch so soft-land cannot refill past it.
     m_iconStreamer.setPageCacheRadiusCap(kFrameTapLightBrowseRadius);
     m_iconStreamer.cancelShadowPrefetch();
     m_iconStreamer.cancelPending();
+    const bool dropArt = frameTapArtSuppressed();
     if (m_steamGridDbBackdrop) {
         m_steamGridDbBackdrop->setPreloadPaused(true);
-        // Heroes ~8 MiB — clear and keep cleared via showFocusedSteamGridDbArtwork.
-        m_steamGridDbBackdrop->releaseGpuArtwork();
-        m_steamGridDbBackdrop->setEnabled(false);
-        m_steamGridDbBackdrop->showTitle(0, true);
+        if (dropArt) {
+            // Heroes ~8 MiB — clear and keep cleared via showFocusedSteamGridDbArtwork.
+            m_steamGridDbBackdrop->releaseGpuArtwork();
+            m_steamGridDbBackdrop->setEnabled(false);
+            m_steamGridDbBackdrop->showTitle(0, true);
+        }
     }
 
     clearFolderCoversForFrameTapLight();
-    // Drop poster tiles → square icons while lite (soft art-kind flip).
-    syncSingleRowPosterPresentation(false);
+    // Drop poster tiles → square icons while art is suppressed (soft art-kind flip).
+    if (dropArt)
+        syncSingleRowPosterPresentation(false);
 
     if (m_grid && m_grid->iconsPerPage() > 0) {
         // Single-row streams by focus index even when posters are off.
@@ -7848,20 +7912,36 @@ void WiiUMenuApp::restoreFrameTapLightBrowse(const char* reason) {
                                      m_grid->allIcons());
     }
     m_ftRemountBrowseRestored = true;
-    DebugLog::log("[ft-light] restore browse radius=%d (%s)",
-                  kFrameTapLightBrowseRadius, reason ? reason : "-");
+    // Capture memory is mapped: bring posters and the focused hero back
+    // while the viewer keeps watching HOME.
+    const bool artBack = !frameTapArtSuppressed();
+    if (artBack) {
+        if (m_steamGridDbBackdrop)
+            m_steamGridDbBackdrop->setEnabled(m_config.steamGridDbEnabled);
+        syncSingleRowPosterPresentation(false);
+        showFocusedSteamGridDbArtwork(true);
+    }
+    DebugLog::log("[ft-light] restore browse radius=%d art=%d (%s)",
+                  kFrameTapLightBrowseRadius, artBack ? 1 : 0, reason ? reason : "-");
     logFrameTapLightSoak("restore");
 }
 
 void WiiUMenuApp::tickFrameTapLightPath(float dt) {
     // FT asks via file while waiting for binders (cold-boot seed fallback).
-    bool ftAsksRemount = false;
-    {
+    // Opening it on the SD every frame cost the UI thread an SD round trip at
+    // 60 Hz: poll it, fast while a cold-boot remount is armed, else once a second.
+    m_ftRemountFilePollSec += dt;
+    const float remountFilePollSec =
+        (m_ftCaptureRemountNeeded && !m_ftCaptureRemountDone) ? 0.1f : 1.0f;
+    if (m_ftRemountFilePollSec >= remountFilePollSec) {
+        m_ftRemountFilePollSec = 0.f;
+        m_ftAsksRemountFile = false;
         if (FILE* f = std::fopen("sdmc:/config/switch-frame-tap/need_capture_remount", "rb")) {
             std::fclose(f);
-            ftAsksRemount = true;
+            m_ftAsksRemountFile = true;
         }
     }
+    const bool ftAsksRemount = m_ftAsksRemountFile;
     // Poll faster while FT is asking for headroom, or while a cold-boot
     // capture remount is armed (must beat the viewer→seed race).
     const float pollMs = m_frameTapStatus.needsHeadroom() || m_ftHeadroomHoldActive
@@ -7890,6 +7970,7 @@ void WiiUMenuApp::tickFrameTapLightPath(float dt) {
         // New managed layer id — re-bind underscan to it.
         switchu::menu::initScreenFitLayer(::__nx_vi_layer_id);
         std::remove("sdmc:/config/switch-frame-tap/need_capture_remount");
+        m_ftAsksRemountFile = false;
         m_wakePostSwapchainFrames = std::max(m_wakePostSwapchainFrames, 2);
     }
 #endif
@@ -7932,10 +8013,14 @@ void WiiUMenuApp::tickFrameTapLightPath(float dt) {
         // One hard reclaim per hold window. Re-ACK without destroy/reload so
         // icons do not flash (soak: restore±2 then hard-release 9 every ~0.5s).
         if (!m_ftHeadroomHoldActive) {
-            reclaimForFrameTapLaunch("need-headroom");
+            if (frameTapHeadroomCoveredWithoutReclaim(needMb)) {
+                m_ftRemountBrowseRestored = true;
+            } else {
+                reclaimForFrameTapLaunch("need-headroom");
+                m_ftRemountBrowseRestored = false;
+            }
             m_ftHeadroomHoldActive = true;
             m_ftHeadroomHoldSec = 0.f;
-            m_ftRemountBrowseRestored = false;
         }
         // Shrink Applet heap once free space exists (viewer/NeedHeadroom only).
         if (!switchu::menu::heapShrunkForFrameTap())
@@ -8197,10 +8282,34 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
         && !(m_gameOptions && m_gameOptions->isActive())
         && !(m_folderOptions && m_folderOptions->isActive())
         && !(m_userSelect && m_userSelect->isActive())) {
-        // Lite: keep hero GPU freed for FT remount (~8 MiB). Do not spend it
-        // on peeks; posters stay at ±2. After leave-light, heroes return.
-        if (!m_frameTapLightActive && !m_ftHeadroomHoldActive)
-            showFocusedSteamGridDbArtwork();
+        // Keep hero GPU freed while Frame Tap maps its capture memory (~8 MiB);
+        // a connected viewer alone keeps the focused hero (neighbour preload
+        // stays paused below).
+        if (!frameTapArtSuppressed()) {
+            // It rebuilt the neighbour list and logo area every frame: re-run
+            // only when an input changes, plus a once-a-second safety net.
+            BackdropSyncKey key;
+            if (m_grid) {
+                key.focus = m_grid->focusManager().current();
+                key.focusIndex = m_grid->focusedGlobalIndex();
+            }
+            key.held = m_editMode ? m_editHeldTitleId : 0;
+            key.layout = static_cast<int>(presentationLayoutMode());
+            key.modelCount = m_model.count();
+            key.edit = m_editMode;
+            key.deferPreload = m_deferBackdropPreloadSec > 0.f;
+            key.allowed = steamGridDbArtworkAllowedHere();
+            m_backdropSyncSec += dt;
+            if (!m_backdropSyncValid || !(key == m_lastBackdropSync)
+                || m_backdropSyncSec >= 1.f) {
+                m_lastBackdropSync = key;
+                m_backdropSyncValid = true;
+                m_backdropSyncSec = 0.f;
+                showFocusedSteamGridDbArtwork();
+            }
+        } else {
+            m_backdropSyncValid = false;
+        }
         // Dynamic-line focus can move without a global focus callback — warm
         // folder peeks from the grid's source of truth the same way.
         if (m_grid && preferSingleRowPosters()
