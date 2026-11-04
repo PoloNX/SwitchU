@@ -449,7 +449,7 @@
       "music_volume": "Music Volume",
       "sfx_volume": "SFX Volume",
       "resume_on_home": "Resume music on return home",
-      "resume_on_home_desc": "When possible, continue mid-track after HOME or reboot. Off always restarts from the beginning. Deep MP3 seeks may still restart for stability.",
+      "resume_on_home_desc": "When possible, continue mid-track after HOME or reboot. Deep MP3 seeks may still restart for stability.",
       "next_track": "Next Track",
       "track_changed": "Track changed"
     },
