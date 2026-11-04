@@ -1,5 +1,8 @@
 #include "BluetoothManager.hpp"
 #include "core/DebugLog.hpp"
+#ifdef SWITCHU_MENU
+#include "smi_commands.hpp"
+#endif
 #include <atomic>
 #include <algorithm>
 #include <cctype>
@@ -38,6 +41,8 @@ std::atomic_bool g_discoveredChanged = false;
 std::atomic_bool g_threadRunning = false;
 std::atomic_int g_pendingOps = 0;
 std::atomic_bool g_discovering = false;
+// The search was started by the daemon (btm:sys refused it from this applet).
+std::atomic_bool g_discoveringViaDaemon = false;
 std::atomic_bool g_initialized = false;
 
 Thread g_thread;
@@ -209,8 +214,13 @@ void ThreadFunc(void*) {
             svcSleepThread(100'000'000);
             continue;
         }
-        if (R_FAILED(rc))
-            continue; // timed out: nothing changed
+        if (R_FAILED(rc)) {
+            // Timed out. The connection event does not fire for found devices,
+            // so a running search is read every half second.
+            if (g_discovering)
+                ReloadDiscovered();
+            continue;
+        }
         ReloadConnected();
         ReloadPaired();
         ReloadDiscovered();
@@ -338,23 +348,64 @@ std::string DeviceName(const BtmAudioDevice& device) {
 }
 
 void StartDiscovery() {
-    Result rc = btmsysStartAudioDeviceDiscovery();
-    if (R_FAILED(rc))
-        DebugLog::log("[bt] StartDiscovery failed: 0x%x", rc);
-    else {
+    auto markStarted = [](const char* how) {
         g_discovering = true;
         g_discoveredChanged = true;
-        DebugLog::log("[bt] Discovery started");
+        DebugLog::log("[bt] Discovery started (%s)", how);
+    };
+
+    bool alreadySearching = false;
+    if (R_SUCCEEDED(btmsysIsDiscoveryingAudioDevice(&alreadySearching)) && alreadySearching) {
+        markStarted("already running");
+        return;
     }
+    bool radioOn = false;
+    const Result radioRc = btmsysGetRadioOnOff(&radioOn);
+    bool gamepadPairing = false;
+    const Result pairingRc = btmsysIsGamepadPairingStarted(&gamepadPairing);
+    if (R_SUCCEEDED(pairingRc) && gamepadPairing) {
+        // A controller pairing session left running holds the radio's search.
+        const Result cancelRc = btmsysCancelGamepadPairing();
+        DebugLog::log("[bt] Gamepad pairing was running: cancel rc=0x%x", cancelRc);
+    }
+
+    const Result rc = btmsysStartAudioDeviceDiscovery();
+    if (R_SUCCEEDED(rc)) {
+        g_discoveringViaDaemon = false;
+        markStarted("menu");
+        return;
+    }
+    DebugLog::log("[bt] StartDiscovery failed: 0x%x radio=%d(rc=0x%x) gamepadPairing=%d(rc=0x%x)",
+                  rc, radioOn ? 1 : 0, radioRc, gamepadPairing ? 1 : 0, pairingRc);
+
+    // Stock HOME searches from the system applet (System Settings lives in
+    // qlaunch); from this library applet btm:sys answers 0x4028F, as uLaunch's
+    // menu also sees. Ask the daemon, which holds the system applet.
+    const Result daemonRc = switchu::menu::smi_cmd::setAudioDeviceDiscovery(true);
+    if (R_SUCCEEDED(daemonRc)) {
+        g_discoveringViaDaemon = true;
+        markStarted("daemon");
+        return;
+    }
+    DebugLog::log("[bt] StartDiscovery via daemon failed: 0x%x", daemonRc);
 }
 
 void StopDiscovery() {
-    Result rc = btmsysStopAudioDeviceDiscovery();
+    bool viaDaemon = g_discoveringViaDaemon;
+    Result rc = viaDaemon
+        ? switchu::menu::smi_cmd::setAudioDeviceDiscovery(false)
+        : btmsysStopAudioDeviceDiscovery();
+    if (R_FAILED(rc) && !viaDaemon) {
+        // A search found already running may be the daemon's (menu restarted).
+        viaDaemon = true;
+        rc = switchu::menu::smi_cmd::setAudioDeviceDiscovery(false);
+    }
     if (R_FAILED(rc))
-        DebugLog::log("[bt] StopDiscovery failed: 0x%x", rc);
+        DebugLog::log("[bt] StopDiscovery (%s) failed: 0x%x", viaDaemon ? "daemon" : "menu", rc);
     else
-        DebugLog::log("[bt] Discovery stopped");
+        DebugLog::log("[bt] Discovery stopped (%s)", viaDaemon ? "daemon" : "menu");
     g_discovering = false;
+    g_discoveringViaDaemon = false;
     g_discoveredChanged = true;
 }
 
