@@ -206,12 +206,7 @@ std::string installedThemePathFromPackagePreset(const std::string& preset) {
     if (!isPackageSoundPreset(preset))
         return {};
 
-    const std::string slug = preset.substr(std::strlen("package:"));
-    if (slug.empty())
-        return {};
-
-    const std::string installPath = std::string("sdmc:/config/SwitchU/themes/") + slug;
-    return directoryExists(installPath) ? installPath : std::string();
+    return ThemePreset::resolveInstalledThemePath(preset);
 }
 
 // Keep enough side/top clearance so large grids do not overlap HUD/side buttons.

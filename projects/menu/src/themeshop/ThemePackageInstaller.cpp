@@ -1,4 +1,5 @@
 #include "ThemePackageInstaller.hpp"
+#include "../core/ThemePreset.hpp"
 
 #include "ThemeHttp.hpp"
 
@@ -671,7 +672,7 @@ ThemePackageInstaller::listRemoteFolder(const std::string& catalogUrl,
 
 std::string ThemePackageInstaller::destinationRootFor(const std::string& themeId, Mode mode) {
     (void)mode;
-    return "sdmc:/config/SwitchU/themes/" + themeId;
+    return std::string(kShopThemesDir) + "/" + themeId;
 }
 
 ThemePackageInstaller::Result ThemePackageInstaller::run(const std::string& catalogUrl,

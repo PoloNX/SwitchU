@@ -155,10 +155,13 @@ std::string resolvePackDisplayName(const std::string& packId, const fs::path& pa
         return fromPack;
 
     nlohmann::json themeManifest;
-    if (readThemeJson(fs::path(kInstalledThemesDir) / packId, themeManifest)) {
-        const std::string fromTheme = readJsonStringMember(themeManifest, "name");
-        if (!fromTheme.empty())
-            return fromTheme;
+    const fs::path themeRoots[] = { fs::path(kInstalledThemesDir), fs::path(kManualThemesDir) };
+    for (const auto& root : themeRoots) {
+        if (readThemeJson(root / packId, themeManifest)) {
+            const std::string fromTheme = readJsonStringMember(themeManifest, "name");
+            if (!fromTheme.empty())
+                return fromTheme;
+        }
     }
 
     return displayNameForPack(packId);
@@ -237,10 +240,15 @@ std::vector<IconPackInfo> discoverPacks(const std::string& assetsBase) {
         else
             info.author = "Icon pack";
         nlohmann::json themeManifest;
-        if (readThemeJson(fs::path(kInstalledThemesDir) / id, themeManifest)) {
-            const std::string author = readJsonStringMember(themeManifest, "author");
-            if (!author.empty())
-                info.author = author;
+        const fs::path themeRoots[] = { fs::path(kInstalledThemesDir), fs::path(kManualThemesDir) };
+        for (const auto& themeRoot : themeRoots) {
+            if (readThemeJson(themeRoot / id, themeManifest)) {
+                const std::string author = readJsonStringMember(themeManifest, "author");
+                if (!author.empty()) {
+                    info.author = author;
+                    break;
+                }
+            }
         }
         info.directory = dir.generic_string();
         info.isDefault = (id == kDefaultPackId);
@@ -302,19 +310,35 @@ std::vector<IconPackInfo> discoverPacks(const std::string& assetsBase) {
 std::vector<IconPackInfo> discoverThemePacks() {
     std::vector<IconPackInfo> packs;
     std::error_code ec;
-    if (!fs::is_directory(kInstalledThemesDir, ec))
-        return packs;
 
+    // Shop (config) first so it wins on folder-name collision with manual drops.
+    const char* roots[] = { kInstalledThemesDir, kManualThemesDir };
     std::vector<fs::path> themes;
-    for (fs::directory_iterator it(kInstalledThemesDir, ec); !ec && it != fs::directory_iterator(); it.increment(ec)) {
-        if (it->is_directory(ec))
-            themes.push_back(it->path());
+    for (const char* root : roots) {
+        ec.clear();
+        if (!fs::is_directory(root, ec))
+            continue;
+        std::vector<fs::path> rootThemes;
+        for (fs::directory_iterator it(root, ec); !ec && it != fs::directory_iterator(); it.increment(ec)) {
+            if (it->is_directory(ec))
+                rootThemes.push_back(it->path());
+        }
+        std::sort(rootThemes.begin(), rootThemes.end());
+        themes.insert(themes.end(), rootThemes.begin(), rootThemes.end());
     }
-    std::sort(themes.begin(), themes.end());
 
     for (const auto& themeDir : themes) {
         const std::string folder = themeDir.filename().string();
         if (folder.empty() || folder == "." || folder == "..")
+            continue;
+        // Built-in Default themes are not icon packs from the InstalledPackages scan.
+        if (folder == "Default Dark" || folder == "Default Light")
+            continue;
+
+        const std::string packId = makeThemePackId(folder);
+        const bool already = std::any_of(packs.begin(), packs.end(),
+            [&](const IconPackInfo& pack) { return pack.id == packId; });
+        if (already)
             continue;
 
         std::string rel = readThemeJsonIconsBase(themeDir);
@@ -326,7 +350,7 @@ std::vector<IconPackInfo> discoverThemePacks() {
             continue;
 
         IconPackInfo info;
-        info.id = makeThemePackId(folder);
+        info.id = packId;
         info.name = folder;
         // Prefer the manifest's display name / author when it declares them.
         nlohmann::json manifest;
@@ -360,9 +384,13 @@ std::string resolvePackIconsDirectory(const std::string& assetsBase, const std::
             return {};
         // Do not use std::filesystem operators on sdmc: roots — they can yield
         // paths that exist() rejects on Switch. String-join like the rest of SwitchU.
-        const std::string conventional = join(join(join(kInstalledThemesDir, folder), "assets"), "icons");
-        if (iconDirLooksUsable(conventional))
-            return conventional;
+        // Prefer Theme Shop (config) over manual (/switch) when both exist.
+        const char* roots[] = { kInstalledThemesDir, kManualThemesDir };
+        for (const char* root : roots) {
+            const std::string conventional = join(join(join(root, folder), "assets"), "icons");
+            if (iconDirLooksUsable(conventional))
+                return conventional;
+        }
         for (const auto& pack : discoverThemePacks()) {
             if (pack.id == makeThemePackId(folder) || themeFolderFromPackId(pack.id) == folder)
                 return pack.directory;
