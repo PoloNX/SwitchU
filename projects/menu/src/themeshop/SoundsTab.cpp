@@ -59,7 +59,7 @@ ThemeShopScreen::Tab themeshop::tabs::SoundsTab::build(ThemeShopScreen& screen) 
                            "Resume music on return home");
         it.description = i18n.tr(
             "settings.music.resume_on_home_desc",
-            "When possible, continue mid-track after HOME or reboot. Deep MP3 seeks may still restart for stability.");
+            "When possible, continue mid-track after HOME or reboot.");
         it.type = ItemType::Toggle;
         it.boolVal = screen.m_musicResumePosition;
         it.anim01 = it.boolVal ? 1.f : 0.f;
