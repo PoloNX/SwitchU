@@ -62,10 +62,10 @@ public:
     bool  hasUserActivity() const;
 
 private:
-    PadState m_pad{};
     uint64_t m_kDown = 0;
     uint64_t m_kUp   = 0;
     uint64_t m_kHeld = 0;
+    uint32_t m_loggedSingleJoyCons = 0;  // bit per npad id, logged once
     float m_lx = 0, m_ly = 0;
     float m_rx = 0, m_ry = 0;
     bool  m_touching    = false;
