@@ -6,6 +6,7 @@
 #include <nlohmann/json.hpp>
 #include <sstream>
 #include <algorithm>
+#include <cstring>
 #include <cctype>
 #include <system_error>
 
@@ -676,7 +677,56 @@ const std::vector<ThemePreset>& ThemePreset::builtInPresets() {
 }
 
 static constexpr const char* kUserPresetsPath = "sdmc:/config/SwitchU/theme_presets.ini";
-static constexpr const char* kInstalledThemesDir = "sdmc:/config/SwitchU/themes";
+
+static bool isReservedBuiltInThemeFolder(const std::string& dirName) {
+    return dirName == "Default Dark" || dirName == "Default Light";
+}
+
+static void ensureThemeInstallRoots() {
+    std::error_code ec;
+    std::filesystem::create_directories("sdmc:/config/SwitchU/themes", ec);
+    ec.clear();
+    // Keep the user-facing manual drop folder visible even before the first zip install.
+    std::filesystem::create_directories("sdmc:/switch/SwitchU/themes", ec);
+}
+
+static void appendInstalledPackagesFromRoot(const char* rootDir,
+                                            bool skipReservedBuiltIns,
+                                            std::vector<ThemePreset>& result,
+                                            std::vector<std::string>& seenIds) {
+    std::error_code ec;
+    for (const auto& entry : std::filesystem::directory_iterator(rootDir, ec)) {
+        if (ec)
+            break;
+        if (!entry.is_directory(ec)) {
+            ec.clear();
+            continue;
+        }
+
+        std::string dirName = entry.path().filename().string();
+        if (dirName.empty() || dirName == "." || dirName == "..")
+            continue;
+        if (skipReservedBuiltIns && isReservedBuiltInThemeFolder(dirName))
+            continue;
+
+        std::string installDir = entry.path().string();
+        std::string manifestPath = installDir + "/theme.json";
+        ThemePreset preset;
+        if (!loadThemePresetFromManifest(manifestPath,
+                                         ThemePresetSource::InstalledPackage,
+                                         dirName,
+                                         nxui::ThemeMode::Dark,
+                                         installDir,
+                                         preset)) {
+            continue;
+        }
+
+        if (std::find(seenIds.begin(), seenIds.end(), preset.id) != seenIds.end())
+            continue;
+        seenIds.push_back(preset.id);
+        result.push_back(std::move(preset));
+    }
+}
 
 std::vector<ThemePreset> ThemePreset::loadUserPresets() {
     std::vector<ThemePreset> result;
@@ -741,37 +791,41 @@ std::vector<ThemePreset> ThemePreset::loadUserPresets() {
 }
 
 std::vector<ThemePreset> ThemePreset::loadInstalledPackages() {
+    ensureThemeInstallRoots();
+
     std::vector<ThemePreset> result;
+    std::vector<std::string> seenIds;
 
-    std::error_code ec;
-    for (const auto& entry : std::filesystem::directory_iterator(kInstalledThemesDir, ec)) {
-        if (ec)
-            break;
-        if (!entry.is_directory(ec)) {
-            ec.clear();
-            continue;
-        }
-
-        std::string dirName = entry.path().filename().string();
-        std::string installDir = entry.path().string();
-
-        std::string manifestPath = installDir + "/theme.json";
-        ThemePreset preset;
-        if (!loadThemePresetFromManifest(manifestPath,
-                                         ThemePresetSource::InstalledPackage,
-                                         dirName,
-                                         nxui::ThemeMode::Dark,
-                                         installDir,
-                                         preset)) {
-            continue;
-        }
-        result.push_back(std::move(preset));
-    }
+    // Theme Shop / managed installs win on id collision.
+    // Skip Default Dark/Light in both roots so they stay BuiltIn-only.
+    appendInstalledPackagesFromRoot(kShopThemesDir, true, result, seenIds);
+    // Manual drops under /switch/SwitchU/themes.
+    appendInstalledPackagesFromRoot(kManualThemesDir, true, result, seenIds);
 
     std::sort(result.begin(), result.end(), [](const ThemePreset& lhs, const ThemePreset& rhs) {
         return lhs.name < rhs.name;
     });
     return result;
+}
+
+std::string ThemePreset::resolveInstalledThemePath(const std::string& packageOrSlug) {
+    std::string slug = packageOrSlug;
+    constexpr const char* kPrefix = "package:";
+    if (slug.rfind(kPrefix, 0) == 0)
+        slug = slug.substr(std::strlen(kPrefix));
+    if (slug.empty())
+        return {};
+
+    const std::string shopPath = std::string(kShopThemesDir) + "/" + slug;
+    std::error_code ec;
+    if (std::filesystem::is_directory(shopPath, ec))
+        return shopPath;
+    ec.clear();
+
+    const std::string manualPath = std::string(kManualThemesDir) + "/" + slug;
+    if (std::filesystem::is_directory(manualPath, ec))
+        return manualPath;
+    return {};
 }
 
 bool ThemePreset::saveUserPresets(const std::vector<ThemePreset>& presets) {

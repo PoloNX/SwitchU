@@ -9,6 +9,12 @@ enum class ThemePresetSource {
     InstalledPackage,
 };
 
+// Theme Shop + managed installs.
+inline constexpr const char* kShopThemesDir = "sdmc:/config/SwitchU/themes";
+// Manual / user-facing drop folder (same tree as icons sibling under /switch/SwitchU).
+inline constexpr const char* kManualThemesDir = "sdmc:/switch/SwitchU/themes";
+
+
 struct ThemeColorSet {
     float cursorH = -1.f, cursorS = -1.f, cursorL = -1.f;
     float accentH = 0.f, accentS = 0.f, accentL = 0.f;
@@ -98,6 +104,9 @@ struct ThemePreset {
     static std::vector<ThemePreset> loadUserPresets();
 
     static std::vector<ThemePreset> loadInstalledPackages();
+
+    // Resolve package:<slug> to an on-disk folder (config first, then switch).
+    static std::string resolveInstalledThemePath(const std::string& packageOrSlug);
 
     static bool saveUserPresets(const std::vector<ThemePreset>& presets);
 };
