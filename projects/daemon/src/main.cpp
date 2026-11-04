@@ -741,6 +741,20 @@ static Result setLiveAutomaticCorrection(bool enabled) {
     return rc;
 }
 
+// btm:sys accepts the audio device search from the system applet (stock HOME
+// runs System Settings in qlaunch); the menu's library applet gets 0x4028F.
+// The session stays open for the daemon's lifetime once a search was asked.
+static Result setAudioDeviceDiscovery(bool start) {
+    static bool btmsysOpen = false;
+    if (!btmsysOpen) {
+        const Result rc = btmsysInitialize();
+        if (R_FAILED(rc))
+            return rc;
+        btmsysOpen = true;
+    }
+    return start ? btmsysStartAudioDeviceDiscovery() : btmsysStopAudioDeviceDiscovery();
+}
+
 static Result setInternetTimeSync(bool enabled) {
     const Result setsysRc =
         setsysSetUserSystemClockAutomaticCorrectionEnabled(enabled);
@@ -1741,6 +1755,17 @@ static void handleMenuCommand() {
         auto args = reader.pop<smi::InternetTimeSyncArgs>();
         result = setInternetTimeSync(args.enabled != 0);
         pushCommandResult(requestId, result, "SetInternetTimeSync");
+        return;
+    }
+
+    case smi::SystemMessage::StartAudioDiscovery:
+    case smi::SystemMessage::StopAudioDiscovery: {
+        const bool start = msg == smi::SystemMessage::StartAudioDiscovery;
+        result = setAudioDeviceDiscovery(start);
+        switchu::FileLog::log("[smi] Bluetooth audio search %s rc=0x%X",
+                              start ? "start" : "stop", result);
+        pushCommandResult(requestId, result,
+                          start ? "StartAudioDiscovery" : "StopAudioDiscovery");
         return;
     }
 

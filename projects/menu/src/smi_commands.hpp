@@ -130,6 +130,21 @@ inline Result setInternetTimeSync(bool enabled) {
     return waitForCommandResponse(requestId);
 }
 
+// Start or stop the Bluetooth audio device search from the daemon.
+inline Result setAudioDeviceDiscovery(bool start) {
+    const uint64_t requestId = nextRequestId();
+    const smi::CommandHeader hdr{
+        smi::kCommandMagic,
+        static_cast<uint32_t>(start ? smi::SystemMessage::StartAudioDiscovery
+                                    : smi::SystemMessage::StopAudioDiscovery),
+        requestId,
+    };
+    Result rc = pushOutStorage(&hdr, sizeof(hdr));
+    if (R_FAILED(rc)) return rc;
+
+    return waitForCommandResponse(requestId);
+}
+
 inline Result setLockScreen(bool enabled, int powerButtonAction = 0) {
     uint8_t buf[sizeof(smi::CommandHeader) + sizeof(smi::LockScreenArgs)]{};
     auto* hdr = reinterpret_cast<smi::CommandHeader*>(buf);
