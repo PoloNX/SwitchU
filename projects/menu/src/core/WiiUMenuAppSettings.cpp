@@ -1988,6 +1988,7 @@ void WiiUMenuApp::createThemeShop() {
     m_themeShop->setThemeMusicOverrideState(m_config.themeMusicOverride);
     m_themeShop->setThemeMusicAddToPlaylistState(m_config.themeMusicAddToPlaylist);
     m_themeShop->setThemeMusicPlayOnApplyState(m_config.themeMusicPlayOnApply);
+    m_themeShop->setMusicResumePositionState(m_config.musicResumePosition);
     m_themeShop->setThemeMatchAccent(m_activeColors.accentH,
                                      m_activeColors.accentS,
                                      m_activeColors.accentL);
@@ -2203,6 +2204,13 @@ void WiiUMenuApp::createThemeShop() {
         if (m_config.themeMusicPlayOnApply == enabled)
             return;
         m_config.themeMusicPlayOnApply = enabled;
+        m_config.save();
+    });
+    m_themeShop->onMusicResumePositionChange([this](bool enabled) {
+        if (m_config.musicResumePosition == enabled)
+            return;
+        m_config.musicResumePosition = enabled;
+        m_audio.setResumePositionEnabled(enabled);
         m_config.save();
     });
     m_themeShop->onIconPackTintChange([this](const std::string& packId,
@@ -3147,6 +3155,7 @@ void WiiUMenuApp::refreshThemeShopState(bool rebuildTab) {
     m_themeShop->setThemeMusicOverrideState(m_config.themeMusicOverride);
     m_themeShop->setThemeMusicAddToPlaylistState(m_config.themeMusicAddToPlaylist);
     m_themeShop->setThemeMusicPlayOnApplyState(m_config.themeMusicPlayOnApply);
+    m_themeShop->setMusicResumePositionState(m_config.musicResumePosition);
     m_themeShop->setCursorMotionModeState(m_config.cursorMotionMode);
     m_themeShop->setPageTransitionModeState(m_config.pageTransitionMode);
     m_themeShop->setThemeMatchAccent(m_activeColors.accentH,

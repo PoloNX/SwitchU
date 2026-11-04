@@ -8615,11 +8615,13 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
                 m_config.save();
             }
             DebugLog::log(
-                "[boot] music restore target key=%s index=%d pos=%.2f enabled=%d",
+                "[boot] music restore target key=%s index=%d pos=%.2f enabled=%d resumePos=%d",
                 m_config.musicTrackKey.c_str(),
                 m_config.musicTrackIndex,
                 m_config.musicPositionSeconds,
-                m_config.musicEnabled ? 1 : 0);
+                m_config.musicEnabled ? 1 : 0,
+                m_config.musicResumePosition ? 1 : 0);
+            m_audio.setResumePositionEnabled(m_config.musicResumePosition);
             m_audio.restorePlaybackState(m_config.musicTrackIndex,
                                          m_config.musicPositionSeconds,
                                          m_config.musicEnabled,
@@ -8668,6 +8670,7 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
         m_audioFuture.get();
         m_audio.setVolume(m_config.musicVolume);
         m_audio.setSfxVolume(m_config.sfxVolume);
+        m_audio.setResumePositionEnabled(m_config.musicResumePosition);
         m_audio.setShuffle(m_config.musicShuffle);
         m_audio.setRepeatMode(static_cast<MusicRepeatMode>(
             std::clamp(m_config.musicRepeatMode, 0, 2)));
