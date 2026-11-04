@@ -17,6 +17,9 @@ struct AppConfig {
     // when users add/remove/reorder files between boots.
     std::string musicTrackKey;
     float musicPositionSeconds = 0.f;
+    // Theme Shop → Sounds: resume mid-track after HOME / reboot when safe.
+    // Off always restarts from 0 (OGG/etc still cheap; MP3 hard-seeks skip).
+    bool  musicResumePosition = true;
     bool  musicShuffle = false;
     int   musicRepeatMode = 1; // MusicRepeatMode::All
     std::vector<std::string> musicPlaylistOrder;

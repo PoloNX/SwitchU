@@ -7,8 +7,14 @@
 #include <fstream>
 #include <random>
 #include <system_error>
+#include <thread>
 
 namespace {
+
+// Deep Mix_SetMusicPosition into MP3 has frozen the menu on Switch (SDL_mixer /
+// mpg123). Shallow resume seeks (~30–90s) are usually fine; multi-minute jumps
+// are not. Expensive seeks still run off the UI thread when possible.
+constexpr float kMaxSafeMp3ResumeSeekSeconds = 90.f;
 
 std::string decodeId3Text(const char* data, int size) {
     if (!data || size <= 0)
@@ -225,6 +231,7 @@ void AudioManager::shutdown() {
 
     Mix_HookMusicFinished(nullptr);
     s_instance.store(nullptr);
+    joinSeekWorker();
     Mix_HaltMusic();
     Mix_HaltChannel(-1);
     Mix_CloseAudio();
@@ -806,6 +813,7 @@ void AudioManager::setRepeatMode(MusicRepeatMode mode) {
 void AudioManager::update(float dt) {
     // Apply resume seeks off the splash/GPU burst, after Mix_PlayMusic has
     // actually started (see updateDeferredSeek warm-up).
+    finishSeekWorkerIfReady();
     updateDeferredSeek();
 
     if (m_restoreFadeIn && dt > 0.f) {
@@ -926,8 +934,31 @@ void AudioManager::restorePlaybackState(int trackIndex,
     }
 }
 
+void AudioManager::joinSeekWorker() {
+    if (m_seekWorker.joinable())
+        m_seekWorker.join();
+    m_seekWorkerActive = false;
+    m_seekWorkerDone.store(false);
+}
+
+void AudioManager::finishSeekWorkerIfReady() {
+    if (!m_seekWorkerActive)
+        return;
+    if (!m_seekWorkerDone.load(std::memory_order_acquire))
+        return;
+    joinSeekWorker();
+    std::lock_guard<std::mutex> lk(m_trackMutex);
+    m_musicFade = 1.f;
+    m_restoreFadeIn = false;
+    applyMusicVolume();
+}
+
 void AudioManager::updateDeferredSeek() {
+    if (m_seekWorkerActive)
+        return;
+
     float seekTo = -1.f;
+    bool offUiThread = false;
     {
         std::lock_guard<std::mutex> lk(m_trackMutex);
         if (m_deferredSeekSeconds < 0.f || !m_playing.load())
@@ -947,7 +978,25 @@ void AudioManager::updateDeferredSeek() {
             applyMusicVolume();
             return;
         }
+        // MP3 hard-seek decodes from file start — keep that work off the
+        // HOME frame so the menu stays interactive while the jump lands.
+        offUiThread = currentTrackIsMp3Unlocked();
+        if (offUiThread) {
+            m_musicFade = 0.f;
+            applyMusicVolume();
+        }
     }
+
+    if (offUiThread) {
+        m_seekWorkerDone.store(false, std::memory_order_release);
+        m_seekWorkerActive = true;
+        m_seekWorker = std::thread([this, seekTo]() {
+            Mix_SetMusicPosition(static_cast<double>(seekTo));
+            m_seekWorkerDone.store(true, std::memory_order_release);
+        });
+        return;
+    }
+
     Mix_SetMusicPosition(static_cast<double>(seekTo));
     {
         std::lock_guard<std::mutex> lk(m_trackMutex);
@@ -1096,12 +1145,21 @@ float AudioManager::sanitizeResumeSeekUnlocked(float positionSeconds) const {
     const float clamped = sanitizeSeekSecondsUnlocked(positionSeconds);
     if (clamped <= 0.25f)
         return 0.f;
+    if (!m_resumePositionEnabled)
+        return 0.f;
     if (!currentTrackIsMp3Unlocked())
         return clamped;
-    // MP3 has no seek table: Mix_SetMusicPosition decodes from the start of the
-    // file on the UI thread (57 s cost a 436 ms frame on HOME return; deeper
-    // jumps froze AppletReturn). The track restarts with the fade-in instead.
-    return 0.f;
+    if (m_current < 0 || m_current >= static_cast<int>(m_trackInfos.size()))
+        return 0.f;
+    const auto& info = m_trackInfos[static_cast<size_t>(m_current)];
+    // Bitrate-guessed lengths are not trustworthy for mpg123 jumps.
+    if (!info.seekReliable)
+        return 0.f;
+    // Deep MP3 hard-seeks have frozen AppletReturn; keep the previous safety
+    // ceiling. Seeks that pass still run off the UI thread.
+    if (clamped > kMaxSafeMp3ResumeSeekSeconds)
+        return 0.f;
+    return clamped;
 }
 
 bool AudioManager::currentTrackIsMp3Unlocked() const {

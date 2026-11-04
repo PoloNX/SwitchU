@@ -89,6 +89,7 @@ public:
     void onThemeMusicOverrideChange(BoolCb cb) { m_themeMusicOverrideCb = std::move(cb); }
     void onThemeMusicAddToPlaylistChange(BoolCb cb) { m_themeMusicAddToPlaylistCb = std::move(cb); }
     void onThemeMusicPlayOnApplyChange(BoolCb cb) { m_themeMusicPlayOnApplyCb = std::move(cb); }
+    void onMusicResumePositionChange(BoolCb cb) { m_musicResumePositionCb = std::move(cb); }
     struct IconPackTintState {
         bool enabled = false;
         bool flatten = false;
@@ -166,6 +167,7 @@ public:
     void setThemeMusicOverrideState(bool enabled) { m_themeMusicOverride = enabled; }
     void setThemeMusicAddToPlaylistState(bool enabled) { m_themeMusicAddToPlaylist = enabled; }
     void setThemeMusicPlayOnApplyState(bool enabled) { m_themeMusicPlayOnApply = enabled; }
+    void setMusicResumePositionState(bool enabled) { m_musicResumePosition = enabled; }
     void setIconPackTintState(const std::unordered_map<std::string, IconPackTintState>& tints) {
         m_iconPackTints = tints;
     }
@@ -463,6 +465,7 @@ private:
     BoolCb m_themeMusicOverrideCb;
     BoolCb m_themeMusicAddToPlaylistCb;
     BoolCb m_themeMusicPlayOnApplyCb;
+    BoolCb m_musicResumePositionCb;
     IconPackTintCb m_iconPackTintCb;
     VoidCb m_autoThemeOpenCb;
     IntCb m_cursorMotionModeCb;
@@ -505,6 +508,7 @@ private:
     bool m_themeMusicOverride = true;
     bool m_themeMusicAddToPlaylist = true;
     bool m_themeMusicPlayOnApply = true;
+    bool m_musicResumePosition = true;
     bool m_themeMatchAccentValid = false;
     float m_themeMatchAccentH = 0.f;
     float m_themeMatchAccentS = 0.55f;
