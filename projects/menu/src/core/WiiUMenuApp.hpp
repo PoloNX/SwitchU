@@ -94,7 +94,7 @@ public:
 
 #ifdef SWITCHU_MENU
     void setStartupStatus(const switchu::smi::SystemStatus& status, bool fastReturn = false,
-                          bool startLocked = false);
+                          bool startLocked = false, bool startupBoot = false);
 #endif
 
     bool onCreate() override;

@@ -3,6 +3,7 @@
 #include "core/DebugLog.hpp"
 #include "bluetooth/BluetoothManager.hpp"
 #include "smi_commands.hpp"
+#include "services/ClockService.hpp"
 #include "themeshop/ThemeHttp.hpp"
 #include <nxui/core/I18n.hpp>
 #include <switch.h>
@@ -174,11 +175,13 @@ void SettingsScreen::prefetchOneTab() {
 void SettingsScreen::onContentUpdate(float dt) {
     pollTabLoaders();
     pollClockSync();
+    pollClockVerify();
     if (isActive())
         prefetchOneTab();
     TabbedOverlayScreen::onContentUpdate(dt);
     pollTabLoaders();
     pollClockSync();
+    pollClockVerify();
 }
 
 void SettingsScreen::emitClockSyncToast(const std::string& msg, float holdSeconds) {
@@ -225,6 +228,9 @@ void SettingsScreen::startWebClockSync(bool toastFailureOnly) {
             out.ok = false;
             out.error = "Unknown clock sync error";
         }
+        // Don't keep nifm/sockets pinned after a one-shot clock fetch — other
+        // sysmodules (Discord Activity, etc.) also need those services.
+        themeshop::http::shutdown();
         return out;
     });
 }
@@ -257,12 +263,12 @@ void SettingsScreen::pollClockSync() {
         return;
     }
 
-    // Nintendo auto-sync needs Nintendo servers; turn it off so DNS-blocked
-    // setups keep the web-synced time.
+    // Prefer setsys over time:a — Discord can own the admin time session.
     bool automatic = false;
     if (R_SUCCEEDED(setsysIsUserSystemClockAutomaticCorrectionEnabled(&automatic))
         && automatic) {
-        const Result disableRc = switchu::menu::smi_cmd::setInternetTimeSync(false);
+        const Result disableRc =
+            setsysSetUserSystemClockAutomaticCorrectionEnabled(false);
         DebugLog::log("[settings-time] web sync disabled nintendo auto rc=0x%X",
                       disableRc);
     }
@@ -287,58 +293,97 @@ void SettingsScreen::pollClockSync() {
         }
     }
 
-    TimeCalendarTime calendar{};
-    TimeCalendarAdditionalInfo additional{};
-    const Result calRc = timeToCalendarTimeWithMyRule(
-        fetched.posixUtc, &calendar, &additional);
-    if (R_FAILED(calRc)) {
-        DebugLog::log("[settings-time] web sync calendar convert rc=0x%X", calRc);
-        emitClockSyncToast(i18n.tr(
-            "settings.system.time_change_failed",
-            "The date and time setting could not be changed."));
+    const Result applyRc =
+        switchu::services::ClockService::applyPosix(fetched.posixUtc);
+    DebugLog::log(
+        "[settings-time] web sync menu apply posix=%llu rc=0x%X quiet=%d",
+        static_cast<unsigned long long>(fetched.posixUtc), applyRc,
+        failureOnly ? 1 : 0);
+
+    if (R_SUCCEEDED(applyRc)) {
+        m_clockVerifyPosix = fetched.posixUtc;
+        m_clockVerifyFrames = 60 * 3;
+        m_clockVerifyQuiet = failureOnly;
+        m_clockVerifyAnnounced = false;
         return;
     }
 
-    TabbedOverlayScreen::DateTimeEditorValue value;
-    value.year = calendar.year;
-    value.month = calendar.month;
-    value.day = calendar.day;
-    value.hour = calendar.hour;
-    value.minute = calendar.minute;
-
-    switchu::smi::ManualDateTimeArgs daemonArgs{};
-    daemonArgs.year = static_cast<uint32_t>(value.year);
-    daemonArgs.month = static_cast<uint32_t>(value.month);
-    daemonArgs.day = static_cast<uint32_t>(value.day);
-    daemonArgs.hour = static_cast<uint32_t>(value.hour);
-    daemonArgs.minute = static_cast<uint32_t>(value.minute);
-    const Result daemonRc = switchu::menu::smi_cmd::setManualDateTime(daemonArgs);
+    // Last resort: daemon time:s cannot write, but keep the queue for logs.
+    const Result daemonRc = switchu::menu::smi_cmd::setPosixNetworkTime(
+        fetched.posixUtc, false);
     DebugLog::log(
-        "[settings-time] web sync apply %04u-%02u-%02u %02u:%02u rc=0x%X posix=%llu",
-        daemonArgs.year, daemonArgs.month, daemonArgs.day,
-        daemonArgs.hour, daemonArgs.minute, daemonRc,
-        static_cast<unsigned long long>(fetched.posixUtc));
+        "[settings-time] web sync daemon fallback posix=%llu rc=0x%X",
+        static_cast<unsigned long long>(fetched.posixUtc), daemonRc);
+    if (failureOnly)
+        return;
 
-    if (R_SUCCEEDED(daemonRc)) {
-        if (!failureOnly) {
-            char buf[96];
-            std::snprintf(buf, sizeof(buf),
-                          "%s (%04u-%02u-%02u %02u:%02u)",
-                          i18n.tr("settings.system.web_time_saved",
-                                  "Clock synced from the web.").c_str(),
-                          daemonArgs.year, daemonArgs.month, daemonArgs.day,
-                          daemonArgs.hour, daemonArgs.minute);
-            emitClockSyncToast(buf, 3.2f);
-        } else {
-            DebugLog::log("[settings-time] boot web sync ok (quiet)");
+    char buf[128];
+    std::snprintf(
+        buf, sizeof(buf), "%s (0x%X)",
+        i18n.tr("settings.system.time_change_failed",
+                "The date and time setting could not be changed.").c_str(),
+        applyRc);
+    emitClockSyncToast(buf);
+}
+
+void SettingsScreen::pollClockVerify() {
+    if (m_clockVerifyPosix == 0)
+        return;
+
+    u64 now = 0;
+    Result rc = timeGetCurrentTime(TimeType_UserSystemClock, &now);
+    if (R_FAILED(rc))
+        rc = timeGetCurrentTime(TimeType_LocalSystemClock, &now);
+    if (R_SUCCEEDED(rc)) {
+        const u64 delta = now > m_clockVerifyPosix ? now - m_clockVerifyPosix
+                                                   : m_clockVerifyPosix - now;
+        if (delta <= 15) {
+            DebugLog::log(
+                "[settings-time] web sync verified posix=%llu delta=%llu quiet=%d",
+                static_cast<unsigned long long>(m_clockVerifyPosix),
+                static_cast<unsigned long long>(delta),
+                m_clockVerifyQuiet ? 1 : 0);
+            if (!m_clockVerifyQuiet) {
+                auto& i18n = nxui::I18n::instance();
+                TimeCalendarTime calendar{};
+                TimeCalendarAdditionalInfo additional{};
+                char buf[96];
+                if (R_SUCCEEDED(timeToCalendarTimeWithMyRule(
+                        now, &calendar, &additional))) {
+                    std::snprintf(buf, sizeof(buf),
+                                  "%s (%04u-%02u-%02u %02u:%02u)",
+                                  i18n.tr("settings.system.web_time_saved",
+                                          "Clock synced from the web.").c_str(),
+                                  static_cast<unsigned>(calendar.year),
+                                  static_cast<unsigned>(calendar.month),
+                                  static_cast<unsigned>(calendar.day),
+                                  static_cast<unsigned>(calendar.hour),
+                                  static_cast<unsigned>(calendar.minute));
+                } else {
+                    std::snprintf(buf, sizeof(buf), "%s",
+                                  i18n.tr("settings.system.web_time_saved",
+                                          "Clock synced from the web.").c_str());
+                }
+                emitClockSyncToast(buf, 3.2f);
+            }
+            m_clockVerifyPosix = 0;
+            m_clockVerifyFrames = 0;
+            return;
         }
-    } else {
-        char buf[128];
-        std::snprintf(
-            buf, sizeof(buf), "%s (0x%X)",
-            i18n.tr("settings.system.time_change_failed",
-                    "The date and time setting could not be changed.").c_str(),
-            daemonRc);
-        emitClockSyncToast(buf);
+    }
+
+    if (m_clockVerifyFrames <= 0)
+        return;
+    --m_clockVerifyFrames;
+    if (m_clockVerifyFrames > 0)
+        return;
+
+    DebugLog::log("[settings-time] web sync still pending posix=%llu",
+                  static_cast<unsigned long long>(m_clockVerifyPosix));
+    if (!m_clockVerifyQuiet && !m_clockVerifyAnnounced) {
+        m_clockVerifyAnnounced = true;
+        emitClockSyncToast(nxui::I18n::instance().tr(
+            "settings.system.web_time_waiting",
+            "Waiting for time services to free, then applying."));
     }
 }
