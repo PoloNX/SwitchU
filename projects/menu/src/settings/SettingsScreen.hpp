@@ -38,6 +38,7 @@ public:
 
     void startWebClockSync(bool toastFailureOnly = false);
     void pollClockSync();
+    void pollClockVerify();
     void openSettingDropdown(int rawIdx) { openDropdown(rawIdx); }
     void onAccessibilityEnabledChange(BoolCb cb) { m_accessibilityEnabledCb = std::move(cb); }
     void onAccessibilitySpeakHintsChange(BoolCb cb) { m_accessibilitySpeakHintsCb = std::move(cb); }
@@ -204,6 +205,10 @@ private:
         std::string error;
     };
     std::future<ClockSyncFetch> m_clockSyncFuture;
+    std::uint64_t m_clockVerifyPosix = 0;
+    int m_clockVerifyFrames = 0;
+    bool m_clockVerifyQuiet = false;
+    bool m_clockVerifyAnnounced = false;
 
     Tab buildTabNow(int tabIndex);
     Tab makeLoadingTab(int tabIndex) const;

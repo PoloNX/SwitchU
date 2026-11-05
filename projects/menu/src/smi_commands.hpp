@@ -78,10 +78,12 @@ inline Result launchUserPage(AccountUid uid) {
     return pushOutStorage(buf, sizeof(buf));
 }
 
-static Result waitForCommandResponse(uint64_t requestId) {
+static Result waitForCommandResponse(uint64_t requestId,
+                                     int maxRetries = kCommandResponseRetries) {
     uint8_t response[smi::kStorageSize]{};
     size_t actual = 0;
-    for (int retry = 0; retry < kCommandResponseRetries; ++retry) {
+    const int retries = maxRetries > 0 ? maxRetries : 1;
+    for (int retry = 0; retry < retries; ++retry) {
         const Result rc = popInStorage(response, sizeof(response), &actual);
         if (R_SUCCEEDED(rc) && actual >= sizeof(smi::CommandHeader)) {
             smi::CommandHeader responseHeader{};
@@ -111,6 +113,26 @@ inline Result setManualDateTime(const smi::ManualDateTimeArgs& value) {
     if (R_FAILED(rc)) return rc;
 
     return waitForCommandResponse(requestId);
+}
+
+inline Result setPosixNetworkTime(uint64_t posixUtc, bool wait = false) {
+    uint8_t buf[sizeof(smi::CommandHeader) + sizeof(smi::PosixTimeArgs)]{};
+    auto* hdr = reinterpret_cast<smi::CommandHeader*>(buf);
+    auto* args = reinterpret_cast<smi::PosixTimeArgs*>(buf + sizeof(smi::CommandHeader));
+
+    hdr->magic = smi::kCommandMagic;
+    hdr->message = static_cast<uint32_t>(smi::SystemMessage::SetPosixNetworkTime);
+    const uint64_t requestId = nextRequestId();
+    hdr->request_id = requestId;
+    args->posix_utc = posixUtc;
+
+    Result rc = pushOutStorage(buf, sizeof(buf));
+    if (R_FAILED(rc)) return rc;
+    if (!wait)
+        return 0;
+
+    // Short wait only — a 4s IPC stall freezes HOME. Daemon apply is fail-fast.
+    return waitForCommandResponse(requestId, 15);
 }
 
 inline Result setInternetTimeSync(bool enabled) {
