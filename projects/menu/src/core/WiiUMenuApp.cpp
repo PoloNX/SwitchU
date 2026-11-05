@@ -523,11 +523,19 @@ void WiiUMenuApp::setTutorialStartupFade(bool enabled) {
 
 #ifdef SWITCHU_MENU
 void WiiUMenuApp::setStartupStatus(const switchu::smi::SystemStatus& status, bool fastReturn,
-                                   bool startLocked) {
+                                   bool startLocked, bool startupBoot) {
     m_launcher.setStartupStatus(status.suspended_app_id, status.app_running);
     m_startupFailure = status.last_failure;
     m_fastReturnRequested = fastReturn || status.suspended_app_id != 0;
     m_startLocked = startLocked && status.suspended_app_id != 0;
+    // Public HTTPS Date once per console boot. HOME restarts after homebrew;
+    // the daemon keeps the session flag and the RTC keeps ticking.
+    if (status.web_clock_synced || !startupBoot) {
+        m_webClockBootSyncStarted = true;
+        DebugLog::log("[boot] skip public clock sync (synced=%u startupBoot=%d)",
+                      static_cast<unsigned>(status.web_clock_synced),
+                      startupBoot ? 1 : 0);
+    }
 }
 #endif
 
@@ -8689,7 +8697,7 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
         }
     }
 
-    // Public HTTPS clock sync once per boot (failure toast only; retry until online).
+    // Public HTTPS clock sync once per console boot (quiet; retry until online).
     if (m_config.webClockSyncEnabled && !m_webClockBootSyncStarted) {
         if (leaveSplashActive() || m_deferredInitialAssetFrames > 0) {
             m_webClockBootSyncDelayFrames =
@@ -8708,8 +8716,10 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
             }
         }
     }
-    if (m_settings)
+    if (m_settings) {
         m_settings->pollClockSync();
+        m_settings->pollClockVerify();
+    }
 
     // Finish music start only after leave-splash + deferred assets. Doing
     // Mix_PlayMusic/seek in the same burst as sidebar/icon GPU uploads was

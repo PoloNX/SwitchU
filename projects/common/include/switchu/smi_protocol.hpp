@@ -54,6 +54,8 @@ enum class SystemMessage : uint32_t {
     // btm:sys refuses it from the menu's library applet with 0x4028F.
     StartAudioDiscovery   = 36,
     StopAudioDiscovery    = 37,
+    // POSIX UTC seconds — skip timezone calendar convert (sysmodule coexistence).
+    SetPosixNetworkTime   = 38,
 
     MenuReady             = 40,
     MenuClosing           = 41,
@@ -101,6 +103,11 @@ struct ManualDateTimeArgs {
 };
 static_assert(sizeof(ManualDateTimeArgs) == 20);
 
+struct PosixTimeArgs {
+    uint64_t posix_utc;
+};
+static_assert(sizeof(PosixTimeArgs) == 8);
+
 struct InternetTimeSyncArgs {
     uint8_t enabled;
     uint8_t _pad[7];
@@ -119,7 +126,9 @@ struct SystemStatus {
     uint64_t  suspended_app_id;
     uint8_t   selected_user[16];
     bool      app_running;
-    uint8_t   _pad[7];
+    // Daemon-lived: public clock already applied this console boot.
+    uint8_t   web_clock_synced;
+    uint8_t   _pad[6];
     OperationOutcome last_failure;
 };
 static_assert(sizeof(SystemStatus) == 56);

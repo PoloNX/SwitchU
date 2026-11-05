@@ -1,5 +1,6 @@
 #include "TabBuilders.hpp"
 #include "core/DebugLog.hpp"
+#include "services/ClockService.hpp"
 #include "smi_commands.hpp"
 #include <nxui/core/I18n.hpp>
 #include <switch.h>
@@ -122,25 +123,48 @@ bool setManualDateTime(
     SettingsScreen& screen,
     const TabbedOverlayScreen::DateTimeEditorValue& value) {
     auto& i18n = nxui::I18n::instance();
+    TimeCalendarTime calendar{};
+    calendar.year = static_cast<u16>(value.year);
+    calendar.month = static_cast<u8>(value.month);
+    calendar.day = static_cast<u8>(value.day);
+    calendar.hour = static_cast<u8>(value.hour);
+    calendar.minute = static_cast<u8>(value.minute);
+    calendar.second = 0;
+
+    u64 timestamps[2]{};
+    s32 timestampCount = 0;
+    Result rc = timeToPosixTimeWithMyRule(&calendar, timestamps, 2, &timestampCount);
+    DebugLog::log(
+        "[settings-time] menu manual convert %04u-%02u-%02u %02u:%02u rc=0x%X count=%d",
+        value.year, value.month, value.day, value.hour, value.minute,
+        rc, timestampCount);
+    if (R_SUCCEEDED(rc) && timestampCount > 0)
+        rc = switchu::services::ClockService::applyPosix(timestamps[0]);
+    else if (R_SUCCEEDED(rc))
+        rc = MAKERESULT(Module_Libnx, 902);
+
+    if (R_SUCCEEDED(rc)) {
+        screen.requestToast(i18n.tr(
+            "settings.system.manual_time_saved", "Date and time updated."));
+        return true;
+    }
+
     switchu::smi::ManualDateTimeArgs daemonArgs{};
     daemonArgs.year = static_cast<uint32_t>(value.year);
     daemonArgs.month = static_cast<uint32_t>(value.month);
     daemonArgs.day = static_cast<uint32_t>(value.day);
     daemonArgs.hour = static_cast<uint32_t>(value.hour);
     daemonArgs.minute = static_cast<uint32_t>(value.minute);
-    Result daemonRc = switchu::menu::smi_cmd::setManualDateTime(daemonArgs);
-    DebugLog::log("[settings-time] daemon SetManualDateTime rc=0x%X", daemonRc);
-    if (R_SUCCEEDED(daemonRc)) {
-        screen.requestToast(i18n.tr(
-            "settings.system.manual_time_saved", "Date and time updated."));
-        return true;
-    }
+    const Result daemonRc = switchu::menu::smi_cmd::setManualDateTime(daemonArgs);
+    DebugLog::log("[settings-time] daemon SetManualDateTime fallback rc=0x%X menu=0x%X",
+                  daemonRc, rc);
+
     const std::string failureText = i18n.tr(
         "settings.system.time_change_failed",
         "The date and time setting could not be changed.");
     char fallback[128];
     std::snprintf(fallback, sizeof(fallback),
-                  "%s (0x%X)", failureText.c_str(), daemonRc);
+                  "%s (0x%X)", failureText.c_str(), rc);
     screen.requestToast(fallback);
     return false;
 }
@@ -333,7 +357,7 @@ SettingsScreen::Tab settings::tabs::SystemTab::build(SettingsScreen& screen) {
         const Result stateResult =
             setsysIsUserSystemClockAutomaticCorrectionEnabled(&automatic);
         if (screen.m_webClockSyncEnabled && R_SUCCEEDED(stateResult) && automatic) {
-            const Result rc = switchu::menu::smi_cmd::setInternetTimeSync(false);
+            const Result rc = setsysSetUserSystemClockAutomaticCorrectionEnabled(false);
             DebugLog::log(
                 "[settings-time] public preferred; disable nintendo on build rc=0x%X",
                 rc);
@@ -396,20 +420,12 @@ SettingsScreen::Tab settings::tabs::SystemTab::build(SettingsScreen& screen) {
             bool automatic = false;
             if (R_SUCCEEDED(setsysIsUserSystemClockAutomaticCorrectionEnabled(&automatic))
                 && automatic) {
-                const Result rc = switchu::menu::smi_cmd::setInternetTimeSync(false);
+                const Result rc =
+                    setsysSetUserSystemClockAutomaticCorrectionEnabled(false);
                 DebugLog::log(
                     "[settings-time] public sync disabled nintendo rc=0x%X", rc);
-                if (R_FAILED(rc)) {
-                    self.boolVal = false;
-                    screen.m_webClockSyncEnabled = false;
-                    if (screen.m_webClockSyncCb)
-                        screen.m_webClockSyncCb(false);
-                    screen.requestToast(nxui::I18n::instance().tr(
-                        "settings.system.time_change_failed",
-                        "The date and time setting could not be changed."));
-                    return;
-                }
-                SystemTab::setToggleByLabel(screen, nintendoSyncLabel(), false);
+                if (R_SUCCEEDED(rc))
+                    SystemTab::setToggleByLabel(screen, nintendoSyncLabel(), false);
             }
             screen.startWebClockSync(false);
         };

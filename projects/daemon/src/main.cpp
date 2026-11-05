@@ -247,6 +247,7 @@ static int  g_menuFastExitCount = 0;
 // MenuReady for the current Album holder session. Used to detect BadGfxInit /
 // early aborts that exit before the menu can talk to the daemon.
 static bool g_menuReadyThisSession = false;
+static bool g_webClockSyncedThisBoot = false;
 static int  g_menuGfxRelaunchTries = 0;
 static int  g_menuGfxRelaunchDelay = 0;
 static bool g_menuGfxRelaunchPending = false;
@@ -645,6 +646,7 @@ static smi::SystemStatus buildSystemStatus() {
     smi::SystemStatus st{};
     st.suspended_app_id = daemon::app::suspendedTitleId();
     st.app_running = daemon::app::isRunning();
+    st.web_clock_synced = g_webClockSyncedThisBoot ? 1 : 0;
     st.last_failure = g_lastOperationFailure;
     return st;
 }
@@ -756,20 +758,16 @@ static Result setAudioDeviceDiscovery(bool start) {
 }
 
 static Result setInternetTimeSync(bool enabled) {
+    // setsys only — do not open time:a. That admin session is single-client and
+    // Discord Activity / similar sysmodules can hold it for the whole boot.
     const Result setsysRc =
         setsysSetUserSystemClockAutomaticCorrectionEnabled(enabled);
-    const Result liveRc = R_SUCCEEDED(setsysRc)
-        ? setLiveAutomaticCorrection(enabled)
-        : setsysRc;
-
     bool confirmed = !enabled;
     const Result confirmRc =
         setsysIsUserSystemClockAutomaticCorrectionEnabled(&confirmed);
     Result result = 0;
     if (R_FAILED(setsysRc)) {
         result = setsysRc;
-    } else if (R_FAILED(liveRc)) {
-        result = liveRc;
     } else if (R_FAILED(confirmRc)) {
         result = confirmRc;
     } else if (confirmed != enabled) {
@@ -777,10 +775,117 @@ static Result setInternetTimeSync(bool enabled) {
     }
 
     switchu::FileLog::log(
-        "[settings-time] daemon internetTimeSync enabled=%d setsys=0x%X live=0x%X confirm=0x%X state=%d result=0x%X",
-        enabled ? 1 : 0, setsysRc, liveRc, confirmRc,
+        "[settings-time] daemon internetTimeSync enabled=%d setsys=0x%X confirm=0x%X state=%d result=0x%X",
+        enabled ? 1 : 0, setsysRc, confirmRc,
         confirmed ? 1 : 0, result);
     return result;
+}
+
+static Result setClockFromPosix(u64 targetTimestamp) {
+    // Write through the daemon's existing time:s session. Never open time:a —
+    // that is the exclusive seat Discord can occupy. If the time sysmodule is
+    // busy this IPC waits here (worker thread only) until it is our turn.
+    const Result userRc = timeSetCurrentTime(TimeType_UserSystemClock, targetTimestamp);
+    const Result localRc = timeSetCurrentTime(TimeType_LocalSystemClock, targetTimestamp);
+    switchu::FileLog::log(
+        "[settings-time] daemon posix user=0x%X local=0x%X posix=%llu",
+        userRc, localRc, (unsigned long long)targetTimestamp);
+    if (R_SUCCEEDED(userRc) || R_SUCCEEDED(localRc))
+        return 0;
+    return R_FAILED(userRc) ? userRc : localRc;
+}
+
+static bool clockMatchesPosix(u64 targetTimestamp) {
+    u64 now = 0;
+    Result rc = timeGetCurrentTime(TimeType_UserSystemClock, &now);
+    if (R_FAILED(rc))
+        rc = timeGetCurrentTime(TimeType_LocalSystemClock, &now);
+    if (R_FAILED(rc))
+        return false;
+    const u64 delta = now > targetTimestamp ? now - targetTimestamp
+                                            : targetTimestamp - now;
+    return delta <= 15;
+}
+
+static std::atomic<u64> g_clockApplyPosix{0};
+static std::atomic<bool> g_clockWorkerRunning{false};
+static Thread g_clockThread{};
+static bool g_clockWorkerStarted = false;
+
+static void requestClockApply(u64 posixUtc) {
+    if (posixUtc == 0)
+        return;
+    g_clockApplyPosix.store(posixUtc, std::memory_order_relaxed);
+    if (!g_clockWorkerStarted)
+        setClockFromPosix(posixUtc);
+}
+
+static void clockWorkerThreadFunc(void* arg) {
+    (void)arg;
+    switchu::FileLog::log("[settings-time] clock worker alive");
+    int backoffMs = 50;
+    while (g_clockWorkerRunning.load(std::memory_order_relaxed)) {
+        const u64 target = g_clockApplyPosix.load(std::memory_order_relaxed);
+        if (target == 0) {
+            svcSleepThread(50'000'000ULL);
+            backoffMs = 50;
+            continue;
+        }
+
+        const Result rc = setClockFromPosix(target);
+        if (R_SUCCEEDED(rc) || clockMatchesPosix(target)) {
+            u64 expected = target;
+            g_clockApplyPosix.compare_exchange_strong(
+                expected, 0, std::memory_order_relaxed);
+            g_webClockSyncedThisBoot = true;
+            if (g_setsysReady)
+                setsysSetUserSystemClockAutomaticCorrectionEnabled(false);
+            switchu::FileLog::log(
+                "[settings-time] public clock applied posix=%llu rc=0x%X",
+                (unsigned long long)target, rc);
+            backoffMs = 50;
+            continue;
+        }
+
+        switchu::FileLog::log(
+            "[settings-time] clock apply retry posix=%llu rc=0x%X backoff=%dms",
+            (unsigned long long)target, rc, backoffMs);
+        svcSleepThread(static_cast<u64>(backoffMs) * 1'000'000ULL);
+        if (backoffMs < 2000)
+            backoffMs *= 2;
+    }
+    switchu::FileLog::log("[settings-time] clock worker exiting");
+}
+
+static Result startClockWorker() {
+    g_clockWorkerRunning.store(true);
+    Result rc = threadCreate(&g_clockThread, clockWorkerThreadFunc, nullptr,
+                             nullptr, 0x4000, 0x2C, -2);
+    if (R_FAILED(rc)) {
+        g_clockWorkerRunning.store(false);
+        switchu::FileLog::log("[settings-time] clock threadCreate FAIL: 0x%X", rc);
+        return rc;
+    }
+    rc = threadStart(&g_clockThread);
+    if (R_FAILED(rc)) {
+        g_clockWorkerRunning.store(false);
+        threadClose(&g_clockThread);
+        switchu::FileLog::log("[settings-time] clock threadStart FAIL: 0x%X", rc);
+        return rc;
+    }
+    g_clockWorkerStarted = true;
+    switchu::FileLog::log("[settings-time] clock worker started");
+    return 0;
+}
+
+static void stopClockWorker() {
+    if (!g_clockWorkerStarted)
+        return;
+    g_clockWorkerRunning.store(false);
+    threadWaitForExit(&g_clockThread);
+    threadClose(&g_clockThread);
+    g_clockWorkerStarted = false;
+    switchu::FileLog::log("[settings-time] clock worker stopped");
 }
 
 static Result setManualDateTime(const smi::ManualDateTimeArgs& args) {
@@ -804,55 +909,8 @@ static Result setManualDateTime(const smi::ManualDateTimeArgs& args) {
         rc = MAKERESULT(Module_Libnx, 902);
     if (R_FAILED(rc))
         return rc;
-    const u64 targetTimestamp = timestamps[0];
-
-    auto isCloseToTarget = [&](u64 actual) -> bool {
-        const u64 delta = actual > targetTimestamp ? actual - targetTimestamp
-                                                   : targetTimestamp - actual;
-        return delta <= 120;
-    };
-
-    auto waitForUserClock = [&]() -> Result {
-        Result lastRc = 0;
-        u64 last = 0;
-        for (int attempt = 0; attempt < 20; ++attempt) {
-            lastRc = timeGetCurrentTime(TimeType_UserSystemClock, &last);
-            const bool close = R_SUCCEEDED(lastRc) && isCloseToTarget(last);
-            if (close)
-                return 0;
-            svcSleepThread(100'000'000ULL);
-        }
-        switchu::FileLog::log(
-            "[settings-time] daemon user clock verification failed rc=0x%X posix=%llu",
-            lastRc, (unsigned long long)last);
-        return R_FAILED(lastRc) ? lastRc : MAKERESULT(Module_Libnx, 906);
-    };
-
-    const Result enableRc = setLiveAutomaticCorrection(true);
-    Result networkRc = enableRc;
-    Result waitRc = enableRc;
-    if (R_SUCCEEDED(enableRc)) {
-        networkRc = timeSetCurrentTime(
-            TimeType_NetworkSystemClock, targetTimestamp);
-        switchu::FileLog::log(
-            "[settings-time] daemon temporary automaticCorrection network set rc=0x%X",
-            networkRc);
-        if (R_SUCCEEDED(networkRc))
-            waitRc = waitForUserClock();
-    }
-
-    const Result restoreRc = setLiveAutomaticCorrection(false);
-    switchu::FileLog::log(
-        "[settings-time] daemon temporary automaticCorrection enable=0x%X network=0x%X wait=0x%X restore=0x%X",
-        enableRc, networkRc, waitRc, restoreRc);
-
-    if (R_FAILED(enableRc))
-        return enableRc;
-    if (R_FAILED(networkRc))
-        return networkRc;
-    if (R_FAILED(waitRc))
-        return waitRc;
-    return restoreRc;
+    requestClockApply(timestamps[0]);
+    return 0;
 }
 
 static void pushNotification(smi::MenuMessage msg,
@@ -1751,6 +1809,16 @@ static void handleMenuCommand() {
         return;
     }
 
+    case smi::SystemMessage::SetPosixNetworkTime: {
+        auto args = reader.pop<smi::PosixTimeArgs>();
+        switchu::FileLog::log(
+            "[settings-time] daemon SetPosixNetworkTime queued posix=%llu",
+            (unsigned long long)args.posix_utc);
+        requestClockApply(args.posix_utc);
+        pushCommandResult(requestId, 0, "SetPosixNetworkTime");
+        return;
+    }
+
     case smi::SystemMessage::SetInternetTimeSync: {
         auto args = reader.pop<smi::InternetTimeSyncArgs>();
         result = setInternetTimeSync(args.enabled != 0);
@@ -2594,6 +2662,10 @@ int main(int argc, char* argv[]) {
     if (R_FAILED(rc))
         switchu::FileLog::log("[daemon] event manager failed: 0x%X (non-fatal)", rc);
 
+    rc = startClockWorker();
+    if (R_FAILED(rc))
+        switchu::FileLog::log("[daemon] clock worker failed: 0x%X (non-fatal)", rc);
+
     switchu::FileLog::log("[daemon] launching menu...");
     rc = daemon::menu_la::launch(smi::MenuStartMode::StartupBoot, buildSystemStatus());
     if (R_FAILED(rc))
@@ -2606,6 +2678,7 @@ int main(int argc, char* argv[]) {
 
     stopEventManager();
     stopControlCacheWorker();
+    stopClockWorker();
     daemon::menu_la::terminate();
     daemon::app::cleanup();
     if (g_generalChannelEventReady) {
