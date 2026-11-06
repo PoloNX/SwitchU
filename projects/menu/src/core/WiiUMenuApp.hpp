@@ -398,7 +398,8 @@ private:
     // HOME button shortcuts arm on press. Shoulder/face actions fire only as
     // clean taps (press+release under kHomeChordTapMaxSec) so holding L/R/A/…
     // for Sphaira / Ultrahand / HOS overlays does not open Quick Settings etc.
-    // D-pad still settles after a short grace while held for focus repeat.
+    // R+A is Atmosphere title override (hbmenu, full RAM) — Activate still
+    // launches while R is held. D-pad settles after a short grace while held.
     enum class HomeChordShortcut : std::uint8_t {
         QuickSettings = 0, // L
         Sort,              // R
@@ -417,6 +418,7 @@ private:
     void armHomeChordShortcut(HomeChordShortcut which);
     void cancelHomeChordShortcuts();
     void tickHomeChordShortcutGuards(float dt);
+    void tryActivateFocusedHomeIcon();
     void openFocusedSelectionProperties();
     void toggleAccessibilitySpeech();
     bool handleAccessibilityToggleCombo();
