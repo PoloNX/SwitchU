@@ -25,7 +25,8 @@ constexpr float kEditDragFolderHoldDelay = 0.55f;
 // True when another meaningful button is down/held with a HOME shortcut —
 // overlays like Ultrahand use L+R (+ face / D-pad) chords that should not
 // fire Quick Settings / sort / move / launch / page / Plus / Minus taps.
-bool homeChordHasCompanions(const nxui::Input& input, nxui::Button self) {
+bool homeChordHasCompanions(const nxui::Input& input, nxui::Button self,
+                            nxui::Button alsoIgnore) {
     static constexpr nxui::Button kCompanions[] = {
         nxui::Button::A, nxui::Button::B, nxui::Button::X, nxui::Button::Y,
         nxui::Button::Plus, nxui::Button::Minus,
@@ -34,12 +35,16 @@ bool homeChordHasCompanions(const nxui::Input& input, nxui::Button self) {
         nxui::Button::LStick, nxui::Button::RStick,
     };
     for (nxui::Button b : kCompanions) {
-        if (b == self)
+        if (b == self || b == alsoIgnore)
             continue;
         if (input.isHeld(b) || input.isDown(b))
             return true;
     }
     return false;
+}
+
+bool homeChordHasCompanions(const nxui::Input& input, nxui::Button self) {
+    return homeChordHasCompanions(input, self, self);
 }
 
 // Face / shoulder modifiers used by Ultrahand-style chords. Excludes D-pad so
@@ -1711,6 +1716,23 @@ bool WiiUMenuApp::handleAccessibilityToggleCombo() {
     return true;
 }
 
+void WiiUMenuApp::tryActivateFocusedHomeIcon() {
+    if (m_editPlacementConsumedA) {
+        m_editPlacementConsumedA = false;
+        return;
+    }
+    if (m_editMode || m_navigator.route() != switchu::navigation::Route::Home ||
+        focusRoot() != &rootBox())
+        return;
+    auto* cur = focusManager().current();
+    if (!cur || cur->tag() != "glossy_icon")
+        return;
+    const auto& input = app().input();
+    if (input.isHeld(nxui::Button::R) || input.isDown(nxui::Button::R))
+        DebugLog::log("[launch] title override (R held)");
+    cur->activate();
+}
+
 void WiiUMenuApp::armHomeChordShortcut(HomeChordShortcut which) {
     const auto idx = static_cast<std::size_t>(which);
     if (idx >= static_cast<std::size_t>(HomeChordShortcut::Count))
@@ -1736,17 +1758,26 @@ void WiiUMenuApp::armHomeChordShortcut(HomeChordShortcut which) {
     const auto& input = app().input();
     // D-pad nav only treats face/shoulder as chord companions so diagonals
     // (two D-pad buttons) still settle into a focus step.
-    const bool chordBlocked =
-        (which == HomeChordShortcut::NavLeft || which == HomeChordShortcut::NavRight ||
-         which == HomeChordShortcut::NavUp || which == HomeChordShortcut::NavDown)
+    // Atmosphere title override is R held + A — do not treat R as an overlay
+    // companion for Activate, and launch immediately while R is still down.
+    const bool overlayNav =
+        which == HomeChordShortcut::NavLeft || which == HomeChordShortcut::NavRight ||
+        which == HomeChordShortcut::NavUp || which == HomeChordShortcut::NavDown;
+    const bool chordBlocked = overlayNav
             ? homeChordHasOverlayModifiers(input)
-            : homeChordHasCompanions(input, self);
+            : (which == HomeChordShortcut::Activate
+                   ? homeChordHasCompanions(input, self, nxui::Button::R)
+                   : homeChordHasCompanions(input, self));
     if (chordBlocked) {
-        if (which == HomeChordShortcut::NavLeft || which == HomeChordShortcut::NavRight ||
-            which == HomeChordShortcut::NavUp || which == HomeChordShortcut::NavDown)
+        if (overlayNav)
             m_pendingHomeChordSec[idx] = -1.f;
         else
             cancelHomeChordShortcuts();
+        return;
+    }
+    if (which == HomeChordShortcut::Activate &&
+        (input.isHeld(nxui::Button::R) || input.isDown(nxui::Button::R))) {
+        tryActivateFocusedHomeIcon();
         return;
     }
     m_pendingHomeChordSec[idx] = 0.f;
@@ -1908,19 +1939,25 @@ void WiiUMenuApp::tickHomeChordShortcutGuards(float dt) {
         enterEditMode();
         m_audio.playSfx(Sfx::Activate);
     });
-    settleTapOnly(HomeChordShortcut::Activate, nxui::Button::A, [this]() {
-        if (m_editPlacementConsumedA) {
-            m_editPlacementConsumedA = false;
-            return;
+    {
+        // R is Atmosphere title override — keep Activate armed while R is held.
+        float& pendingSec =
+            m_pendingHomeChordSec[static_cast<std::size_t>(HomeChordShortcut::Activate)];
+        if (pendingSec >= 0.f) {
+            if (homeChordHasCompanions(input, nxui::Button::A, nxui::Button::R)) {
+                pendingSec = -1.f;
+            } else if (!input.isHeld(nxui::Button::A)) {
+                const float heldFor = pendingSec;
+                pendingSec = -1.f;
+                if (heldFor < kHomeChordTapMaxSec)
+                    tryActivateFocusedHomeIcon();
+            } else {
+                pendingSec += dt;
+                if (pendingSec >= kHomeChordTapMaxSec)
+                    pendingSec = -1.f;
+            }
         }
-        if (m_editMode || m_navigator.route() != switchu::navigation::Route::Home ||
-            focusRoot() != &rootBox())
-            return;
-        auto* cur = focusManager().current();
-        if (!cur || cur->tag() != "glossy_icon")
-            return;
-        cur->activate();
-    });
+    }
     settleTapOnly(HomeChordShortcut::PagePrev, nxui::Button::ZL, [this]() {
         if (m_navigator.route() != switchu::navigation::Route::Home || focusRoot() != &rootBox())
             return;
@@ -2052,8 +2089,9 @@ void WiiUMenuApp::wireGlobalActions() {
             return;
         armHomeChordShortcut(HomeChordShortcut::EditMove);
     });
-    // Consume A on HOME so Ultrahand chords can cancel launch; chrome widgets
-    // still activate immediately. Edit-mode icons keep their own A action.
+    // Consume A on HOME so Ultrahand chords can cancel launch. R+A is
+    // Atmosphere title override and still launches. Chrome widgets activate
+    // immediately. Edit-mode icons keep their own A action.
     root.addAction(static_cast<uint64_t>(nxui::Button::A), [this]() {
         if (m_editPlacementConsumedA) {
             m_editPlacementConsumedA = false;
