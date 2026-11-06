@@ -29,6 +29,28 @@ void SteamGridDbBackdrop::setEnabled(bool enabled) {
     setVisible(enabled);
 }
 
+void SteamGridDbBackdrop::setHeroCanvas(int width, int height) {
+    // 0×0 means Off: keep logos, skip hero decode and GPU hero slots.
+    const int w = (width > 0 && height > 0) ? std::max(1, width) : 0;
+    const int h = (width > 0 && height > 0) ? std::max(1, height) : 0;
+    if (w == m_heroW && h == m_heroH)
+        return;
+    m_heroW = w;
+    m_heroH = h;
+    // Slot MemBlocks were allocated for the previous canvas. Releasing here
+    // avoids a mid-upload free+waitIdle when quality changes.
+    releaseGpuArtwork();
+    m_waitForGpuBeforeUpload = true;
+}
+
+void SteamGridDbBackdrop::setHeroBlur(int amount) {
+    const int next = std::clamp(amount, 0, 10);
+    if (m_heroBlur == next)
+        return;
+    m_heroBlur = next;
+    invalidateArtworkCaches();
+}
+
 void SteamGridDbBackdrop::invalidateArtworkCaches() {
     // Forget which title each uploaded set belongs to. No texture is released
     // here: a settings change can land mid-frame while the GPU still reads these
@@ -270,6 +292,122 @@ SteamGridDbBackdrop::DecodedImage SteamGridDbBackdrop::decodeImage(
     return out;
 }
 
+void SteamGridDbBackdrop::blurHero(DecodedImage& image, int amount) {
+    amount = std::clamp(amount, 0, 10);
+    if (amount <= 0 || image.rgba.empty() || image.width <= 1 || image.height <= 1)
+        return;
+
+    const int outW = image.width;
+    const int outH = image.height;
+    // One unique radius per notch. Downsample only to keep the kernel cheap;
+    // bilinear upsample so that is a stronger frost, not a nearest-neighbor jump.
+    int radius = amount;
+    const int iterations = amount >= 8 ? 3 : 2;
+
+    std::vector<std::uint8_t> work = image.rgba;
+    int workW = outW;
+    int workH = outH;
+    while (radius > 6 && workW >= 80 && workH >= 45) {
+        const int nextW = std::max(1, workW / 2);
+        const int nextH = std::max(1, workH / 2);
+        std::vector<std::uint8_t> down(static_cast<std::size_t>(nextW) * nextH * 4u, 0);
+        for (int y = 0; y < nextH; ++y) {
+            const int y0 = std::min(workH - 1, y * 2);
+            const int y1 = std::min(workH - 1, y0 + 1);
+            for (int x = 0; x < nextW; ++x) {
+                const int x0 = std::min(workW - 1, x * 2);
+                const int x1 = std::min(workW - 1, x0 + 1);
+                int r = 0, g = 0, b = 0, a = 0;
+                const auto sample = [&](int sx, int sy) {
+                    const std::uint8_t* p = work.data()
+                        + (static_cast<std::size_t>(sy) * workW + sx) * 4u;
+                    r += p[0]; g += p[1]; b += p[2]; a += p[3];
+                };
+                sample(x0, y0); sample(x1, y0); sample(x0, y1); sample(x1, y1);
+                std::uint8_t* d = down.data()
+                    + (static_cast<std::size_t>(y) * nextW + x) * 4u;
+                d[0] = static_cast<std::uint8_t>(r / 4);
+                d[1] = static_cast<std::uint8_t>(g / 4);
+                d[2] = static_cast<std::uint8_t>(b / 4);
+                d[3] = static_cast<std::uint8_t>(a / 4);
+            }
+        }
+        work = std::move(down);
+        workW = nextW;
+        workH = nextH;
+        radius = (radius + 1) / 2;
+    }
+
+    std::vector<std::uint8_t> tmp(work.size());
+    auto pass = [&](const std::uint8_t* src, std::uint8_t* dst, bool horizontal) {
+        for (int y = 0; y < workH; ++y) {
+            for (int x = 0; x < workW; ++x) {
+                int r = 0, g = 0, b = 0, a = 0, n = 0;
+                for (int k = -radius; k <= radius; ++k) {
+                    int xx = x;
+                    int yy = y;
+                    if (horizontal)
+                        xx = std::clamp(x + k, 0, workW - 1);
+                    else
+                        yy = std::clamp(y + k, 0, workH - 1);
+                    const std::uint8_t* p = src
+                        + (static_cast<std::size_t>(yy) * workW + xx) * 4u;
+                    r += p[0]; g += p[1]; b += p[2]; a += p[3];
+                    ++n;
+                }
+                std::uint8_t* d = dst
+                    + (static_cast<std::size_t>(y) * workW + x) * 4u;
+                d[0] = static_cast<std::uint8_t>(r / n);
+                d[1] = static_cast<std::uint8_t>(g / n);
+                d[2] = static_cast<std::uint8_t>(b / n);
+                d[3] = static_cast<std::uint8_t>(a / n);
+            }
+        }
+    };
+    std::uint8_t* src = work.data();
+    std::uint8_t* dst = tmp.data();
+    for (int i = 0; i < iterations; ++i) {
+        pass(src, dst, true);
+        pass(dst, src, false);
+    }
+
+    if (workW == outW && workH == outH) {
+        image.rgba = std::move(work);
+        return;
+    }
+
+    for (int y = 0; y < outH; ++y) {
+        const float fy = (static_cast<float>(y) + 0.5f) * static_cast<float>(workH)
+            / static_cast<float>(outH) - 0.5f;
+        const int y0 = std::clamp(static_cast<int>(std::floor(fy)), 0, workH - 1);
+        const int y1 = std::min(workH - 1, y0 + 1);
+        const float ty = std::clamp(fy - static_cast<float>(y0), 0.f, 1.f);
+        for (int x = 0; x < outW; ++x) {
+            const float fx = (static_cast<float>(x) + 0.5f) * static_cast<float>(workW)
+                / static_cast<float>(outW) - 0.5f;
+            const int x0 = std::clamp(static_cast<int>(std::floor(fx)), 0, workW - 1);
+            const int x1 = std::min(workW - 1, x0 + 1);
+            const float tx = std::clamp(fx - static_cast<float>(x0), 0.f, 1.f);
+            const auto sample = [&](int sx, int sy, int c) {
+                return work[static_cast<std::size_t>(sy) * workW * 4u
+                            + static_cast<std::size_t>(sx) * 4u
+                            + static_cast<std::size_t>(c)];
+            };
+            std::uint8_t* d = image.rgba.data()
+                + (static_cast<std::size_t>(y) * outW + x) * 4u;
+            for (int c = 0; c < 4; ++c) {
+                const float v00 = sample(x0, y0, c);
+                const float v10 = sample(x1, y0, c);
+                const float v01 = sample(x0, y1, c);
+                const float v11 = sample(x1, y1, c);
+                const float v0 = v00 + (v10 - v00) * tx;
+                const float v1 = v01 + (v11 - v01) * tx;
+                d[c] = static_cast<std::uint8_t>(v0 + (v1 - v0) * ty + 0.5f);
+            }
+        }
+    }
+}
+
 float SteamGridDbBackdrop::sampleLuminance(const DecodedImage& image) {
     if (image.rgba.empty() || image.width <= 0 || image.height <= 0)
         return -1.f;
@@ -319,21 +457,26 @@ void SteamGridDbBackdrop::startPendingDecode(std::uint64_t titleId) {
     state->artwork.titleId = titleId;
     state->artwork.generation = titleId == m_requestedTitleId ? m_requestGeneration : 0;
 
-    auto work = [state, titleId]() {
+    const int heroW = m_heroW;
+    const int heroH = m_heroH;
+    const int blur = m_heroBlur;
+    auto work = [state, titleId, heroW, heroH, blur]() {
         const auto started = std::chrono::steady_clock::now();
         if (titleId != 0 && SteamGridDbManager::hasArtwork(titleId)) {
             // Fixed canvases let both double-buffer slots reuse their existing
             // MemBlocks. Variable source dimensions previously triggered a
             // free + waitIdle on the render thread during focus changes.
-            //
-            // 640×360 (not 1280×720): same canvas SteamGridDbManager preps for
-            // UI cards. Full-screen fillRect stretch looks fine with the soft
-            // scrim; quarter the RGBA (~0.9 MiB vs ~3.6 MiB) cuts the SD hitch
-            // that made single-row + heroes feel sticky vs theme-only.
-            state->artwork.hero = decodeImage(
-                SteamGridDbManager::heroPath(titleId), 640, 360, true);
-            if (!state->cancelled.load())
-                state->artwork.heroLuminance = sampleLuminance(state->artwork.hero);
+            // Medium 640×360 (~0.9 MiB) is the 1.4.0 default. High 1280×720
+            // (~3.6 MiB) matches the screen so Hero+Logo no longer upsamples.
+            // Off (0×0) skips the hero so logos still load without a backdrop.
+            if (heroW > 0 && heroH > 0) {
+                state->artwork.hero = decodeImage(
+                    SteamGridDbManager::heroPath(titleId), heroW, heroH, true);
+                if (blur > 0 && !state->cancelled.load())
+                    blurHero(state->artwork.hero, blur);
+                if (!state->cancelled.load())
+                    state->artwork.heroLuminance = sampleLuminance(state->artwork.hero);
+            }
             if (!state->cancelled.load())
                 state->artwork.logo = decodeImage(
                     SteamGridDbManager::logoPath(titleId), 384, 192, false);
@@ -425,10 +568,12 @@ void SteamGridDbBackdrop::onUpdate(float dt) {
         if (state && !state->cancelled.load()
             && state->artwork.titleId == m_requestedTitleId
             && state->artwork.generation == m_requestGeneration) {
-            DebugLog::log("[steamgriddb-ui] decoded title=%016llX in %ldms hero=%d logo=%d",
+            DebugLog::log("[steamgriddb-ui] decoded title=%016llX in %ldms hero=%d %dx%d blur=%d logo=%d",
                           static_cast<unsigned long long>(state->artwork.titleId),
                           state->artwork.decodeMilliseconds,
                           state->artwork.hero.rgba.empty() ? 0 : 1,
+                          state->artwork.hero.width, state->artwork.hero.height,
+                          m_heroBlur,
                           state->artwork.logo.rgba.empty() ? 0 : 1);
             const bool hasArtwork = !state->artwork.hero.rgba.empty()
                                  || !state->artwork.logo.rgba.empty();
@@ -445,10 +590,12 @@ void SteamGridDbBackdrop::onUpdate(float dt) {
         } else if (state && !state->cancelled.load()
                    && std::find(m_preloadTitleIds.begin(), m_preloadTitleIds.end(),
                                 state->artwork.titleId) != m_preloadTitleIds.end()) {
-            DebugLog::log("[steamgriddb-ui] prefetched title=%016llX in %ldms hero=%d logo=%d",
+            DebugLog::log("[steamgriddb-ui] prefetched title=%016llX in %ldms hero=%d %dx%d blur=%d logo=%d",
                           static_cast<unsigned long long>(state->artwork.titleId),
                           state->artwork.decodeMilliseconds,
                           state->artwork.hero.rgba.empty() ? 0 : 1,
+                          state->artwork.hero.width, state->artwork.hero.height,
+                          m_heroBlur,
                           state->artwork.logo.rgba.empty() ? 0 : 1);
             m_decodedCache.erase(
                 std::remove_if(m_decodedCache.begin(), m_decodedCache.end(),

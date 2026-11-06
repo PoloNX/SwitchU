@@ -174,6 +174,9 @@ public:
         int actionButtonFocus = 0;
         // Set each frame by the overlay when this row owns content focus.
         bool contentFocused = false;
+        // Fade the rest of the panel so HOME (e.g. a hero) shows through
+        // while this row is focused. Used by the hero blur slider.
+        bool peekBackground = false;
 
         // Filled by ActionRowWidget for touch hit-testing.
         nxui::Rect primaryHit{};
@@ -285,6 +288,8 @@ protected:
     int rawIndexFromFocusable(int focIdx) const;
     int focusableCount() const;
     bool itemFocusable(const SettingItem& item) const;
+    bool focusedItemPeeksBackground() const;
+    float backgroundPeekAmount() const;
     bool tabIsTextOnly() const;
     void clampContentIdx();
     float visibilityProgress() const;
@@ -332,6 +337,7 @@ protected:
     nxui::AnimatedFloat m_tabReveal;
     nxui::AnimatedFloat m_dropdownAnim;
     nxui::AnimatedFloat m_trackToastAnim;
+    nxui::AnimatedFloat m_backgroundPeek;
     float m_trackToastHold = 0.f;
     bool  m_trackToastFading = false;
     std::string m_toastText;

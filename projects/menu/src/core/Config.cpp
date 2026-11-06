@@ -98,6 +98,34 @@ bool AppConfig::load() {
     readJsonOpt(j, "steamGridDbShowInFolders", steamGridDbShowInFolders);
     readJsonOpt(j, "steamGridDbShowPosterInDynamicLine", steamGridDbShowPosterInDynamicLine);
     readJsonOpt(j, "steamGridDbShowLogoInDynamicLine", steamGridDbShowLogoInDynamicLine);
+    readJsonOpt(j, "steamGridDbHeroQuality", steamGridDbHeroQuality);
+    {
+        int qualityScale = 0;
+        readJsonOpt(j, "steamGridDbHeroQualityScale", qualityScale);
+        if (qualityScale < 4) {
+            // v1: 0 Standard, 1 Sharp → Medium / High.
+            steamGridDbHeroQuality = (steamGridDbHeroQuality == 1) ? 3 : 2;
+        }
+        steamGridDbHeroQuality = std::clamp(steamGridDbHeroQuality, 0, 3);
+    }
+    if (auto it = j.find("steamGridDbHeroBlur"); it != j.end() && !it->is_null()) {
+        try {
+            if (it->is_boolean())
+                steamGridDbHeroBlur = it->get<bool>() ? 6 : 0;
+            else
+                steamGridDbHeroBlur = it->get<int>();
+        } catch (...) {
+        }
+    }
+    {
+        int blurSteps = 0;
+        readJsonOpt(j, "steamGridDbHeroBlurSteps", blurSteps);
+        if (blurSteps != 10) {
+            static constexpr int kMap[] = {0, 3, 6, 10};
+            steamGridDbHeroBlur = kMap[std::clamp(steamGridDbHeroBlur, 0, 3)];
+        }
+        steamGridDbHeroBlur = std::clamp(steamGridDbHeroBlur, 0, 10);
+    }
     readJsonOpt(j, "steamGridDbApiKey", steamGridDbApiKey);
     readJsonOpt(j, "sortMode", sortMode);
     readJsonOpt(j, "sortLargeTiles", sortLargeTiles);
@@ -294,6 +322,10 @@ bool AppConfig::save() const {
     j["steamGridDbShowInFolders"] = steamGridDbShowInFolders;
     j["steamGridDbShowPosterInDynamicLine"] = steamGridDbShowPosterInDynamicLine;
     j["steamGridDbShowLogoInDynamicLine"] = steamGridDbShowLogoInDynamicLine;
+    j["steamGridDbHeroQuality"] = std::clamp(steamGridDbHeroQuality, 0, 3);
+    j["steamGridDbHeroQualityScale"] = 4;
+    j["steamGridDbHeroBlur"] = std::clamp(steamGridDbHeroBlur, 0, 10);
+    j["steamGridDbHeroBlurSteps"] = 10;
     j["steamGridDbApiKey"] = steamGridDbApiKey;
     j["sortMode"] = std::clamp(sortMode, 0, 2);
     j["sortLargeTiles"] = sortLargeTiles;

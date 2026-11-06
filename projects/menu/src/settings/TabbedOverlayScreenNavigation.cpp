@@ -1200,6 +1200,13 @@ void TabbedOverlayScreen::onContentUpdate(float dt) {
 
     updateCustomContent(dt);
 
+    {
+        const float peekTarget = focusedItemPeeksBackground() ? 1.f : 0.f;
+        if (std::abs(m_backgroundPeek.target() - peekTarget) > 0.001f)
+            m_backgroundPeek.set(peekTarget, 0.28f, nxui::Easing::outCubic);
+        m_backgroundPeek.update(dt);
+    }
+
     m_focusCursor.update(dt);
     m_tabReveal.update(std::min(dt, 0.03f));
     m_dropdownAnim.update(dt);

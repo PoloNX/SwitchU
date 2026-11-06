@@ -52,6 +52,13 @@ struct AppConfig {
     bool  steamGridDbShowPosterInDynamicLine = true;
     // Logo overlay above / beside the single-row carousel.
     bool  steamGridDbShowLogoInDynamicLine = true;
+    // Fullscreen hero GPU canvas. Tiles/posters are unchanged.
+    // 0 = Off (no backdrop; skip new hero downloads), 1 = Low 320×180,
+    // 2 = Medium 640×360, 3 = High 1280×720. Default Medium.
+    int   steamGridDbHeroQuality = 2;
+    // Decode-time blur on the fullscreen hero, 0–10. 0 = off; 10 matches
+    // the music-player / leave-splash frost. Default off.
+    int   steamGridDbHeroBlur = 0;
     std::string steamGridDbApiKey;
 
     // 0 keeps the hand-made layout. The other modes are display-only
