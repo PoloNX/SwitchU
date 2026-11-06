@@ -73,7 +73,8 @@ public:
     SteamGridDbManager() = default;
     ~SteamGridDbManager();
 
-    bool start(const std::string& apiKey, const std::vector<AppEntry>& apps);
+    bool start(const std::string& apiKey, const std::vector<AppEntry>& apps,
+               bool fetchHeroes = true);
     bool startSelectNext(const std::string& apiKey, std::uint64_t titleId,
                          const std::string& title, ArtworkKind kind, int direction);
     void wait();
@@ -117,7 +118,7 @@ public:
     static bool hasArtwork(std::uint64_t titleId);
 
 private:
-    void scrape(std::string apiKey, std::vector<AppEntry> apps);
+    void scrape(std::string apiKey, std::vector<AppEntry> apps, bool fetchHeroes);
     void selectNext(std::string apiKey, std::uint64_t titleId,
                     std::string title, ArtworkKind kind, int direction);
     void updateStatus(const std::function<void(Status&)>& change);

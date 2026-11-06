@@ -3,6 +3,7 @@
 #include <nxui/core/I18n.hpp>
 
 #include <algorithm>
+#include <cmath>
 
 SettingsScreen::Tab settings::tabs::SteamGridDbTab::build(SettingsScreen& screen) {
     using ItemType = SettingsScreen::ItemType;
@@ -21,7 +22,7 @@ SettingsScreen::Tab settings::tabs::SteamGridDbTab::build(SettingsScreen& screen
     enabled.type = ItemType::Toggle;
     enabled.label = i18n.tr("settings.steamgriddb.enabled", "Display SteamGridDB artwork");
     enabled.description = i18n.tr("settings.steamgriddb.enabled_desc",
-        "Choose where artwork appears below.");
+        "Where artwork appears.");
     enabled.boolVal = screen.m_steamGridDbEnabled;
     enabled.anim01 = enabled.boolVal ? 1.f : 0.f;
     enabled.onChange = [&screen](SettingItem& item) {
@@ -57,15 +58,15 @@ SettingsScreen::Tab settings::tabs::SteamGridDbTab::build(SettingsScreen& screen
 
     addViewToggle("settings.steamgriddb.show_grid", "Show on grid menu",
                   "settings.steamgriddb.show_grid_desc",
-                  "Hero backdrop behind the standard HOME grid.",
+                  "Behind the grid.",
                   screen.m_steamGridDbShowInGrid);
     addViewToggle("settings.steamgriddb.show_line", "Show on single-row menu",
                   "settings.steamgriddb.show_line_desc",
-                  "Hero backdrop behind the single-row carousel.",
+                  "Behind the carousel.",
                   screen.m_steamGridDbShowInDynamicLine);
     addViewToggle("settings.steamgriddb.show_folders", "Show inside folders",
                   "settings.steamgriddb.show_folders_desc",
-                  "Artwork while browsing games inside an open folder.",
+                  "Inside open folders.",
                   screen.m_steamGridDbShowInFolders);
 
     SettingItem poster;
@@ -73,7 +74,7 @@ SettingsScreen::Tab settings::tabs::SteamGridDbTab::build(SettingsScreen& screen
     poster.label = i18n.tr("settings.steamgriddb.show_poster_line",
                            "Show Poster artwork in single-row view");
     poster.description = i18n.tr("settings.steamgriddb.show_poster_line_desc",
-        "Use tall SteamGridDB covers on the carousel. Grid layout stays on icons.");
+        "Tall covers on the carousel.");
     poster.boolVal = screen.m_steamGridDbShowPosterInDynamicLine;
     poster.anim01 = poster.boolVal ? 1.f : 0.f;
     poster.indentLevel = 1;
@@ -92,7 +93,7 @@ SettingsScreen::Tab settings::tabs::SteamGridDbTab::build(SettingsScreen& screen
     logo.label = i18n.tr("settings.steamgriddb.show_logo_line",
                          "Show logo in single-row view");
     logo.description = i18n.tr("settings.steamgriddb.show_logo_line_desc",
-        "Game logo above the carousel. Turn off to keep only the hero and covers.");
+        "Logo above the carousel.");
     logo.boolVal = screen.m_steamGridDbShowLogoInDynamicLine;
     logo.anim01 = logo.boolVal ? 1.f : 0.f;
     logo.indentLevel = 1;
@@ -105,6 +106,50 @@ SettingsScreen::Tab settings::tabs::SteamGridDbTab::build(SettingsScreen& screen
             screen.m_steamGridDbLogoInLineCb(self.boolVal);
     };
     tab.items.push_back(std::move(logo));
+
+    SettingItem quality;
+    quality.type = ItemType::Selector;
+    quality.label = i18n.tr("settings.steamgriddb.hero_quality", "Hero backdrop quality");
+    quality.description = i18n.tr("settings.steamgriddb.hero_quality_desc",
+        "Fullscreen hero only. Off skips new hero downloads.");
+    quality.options = {
+        i18n.tr("settings.steamgriddb.hero_quality_off", "Off (don't store files)"),
+        i18n.tr("settings.steamgriddb.hero_quality_low", "Low (320, 4×)"),
+        i18n.tr("settings.steamgriddb.hero_quality_medium", "Medium (640, 2×)"),
+        i18n.tr("settings.steamgriddb.hero_quality_high", "High (full 1280)")
+    };
+    quality.intVal = std::clamp(screen.m_steamGridDbHeroQuality, 0, 3);
+    quality.indentLevel = 1;
+    quality.enabled = screen.m_steamGridDbEnabled;
+    quality.onChange = [&screen](SettingItem& self) {
+        if (!screen.m_steamGridDbEnabled)
+            return;
+        screen.m_steamGridDbHeroQuality = std::clamp(self.intVal, 0, 3);
+        if (screen.m_steamGridDbHeroQualityCb)
+            screen.m_steamGridDbHeroQualityCb(screen.m_steamGridDbHeroQuality);
+    };
+    tab.items.push_back(std::move(quality));
+
+    SettingItem blur;
+    blur.type = ItemType::Slider;
+    blur.label = i18n.tr("settings.steamgriddb.hero_blur", "Hero backdrop blur");
+    blur.description = i18n.tr("settings.steamgriddb.hero_blur_desc",
+        "0 is off. 100 matches the music-player frost.");
+    blur.sliderSteps = 10;
+    blur.floatVal = std::clamp(screen.m_steamGridDbHeroBlur, 0, 10) / 10.f;
+    blur.anim01 = blur.floatVal;
+    blur.indentLevel = 1;
+    blur.peekBackground = true;
+    blur.enabled = screen.m_steamGridDbEnabled && screen.m_steamGridDbHeroQuality != 0;
+    blur.onChange = [&screen](SettingItem& self) {
+        if (!screen.m_steamGridDbEnabled)
+            return;
+        screen.m_steamGridDbHeroBlur = std::clamp(
+            static_cast<int>(std::lround(self.floatVal * 10.f)), 0, 10);
+        if (screen.m_steamGridDbHeroBlurCb)
+            screen.m_steamGridDbHeroBlurCb(screen.m_steamGridDbHeroBlur);
+    };
+    tab.items.push_back(std::move(blur));
 
     SettingItem apiKey;
     apiKey.type = ItemType::Action;
@@ -123,7 +168,7 @@ SettingsScreen::Tab settings::tabs::SteamGridDbTab::build(SettingsScreen& screen
     scan.label = i18n.tr("settings.steamgriddb.scan", "Search artwork for missing assets");
     scan.buttonLabel = i18n.tr("button.search", "Search");
     scan.description = i18n.tr("settings.steamgriddb.scan_desc",
-        "Retrieve hero, logo, and poster for titles that are missing art.");
+        "Fill missing hero, logo, and poster.");
     scan.onChange = [&screen](SettingItem&) {
         if (screen.m_steamGridDbRunning) {
             screen.requestToast(nxui::I18n::instance().tr(
@@ -141,15 +186,18 @@ SettingsScreen::Tab settings::tabs::SteamGridDbTab::build(SettingsScreen& screen
 
     tab.onUpdate = [](SettingsScreen::Tab& current, TabbedOverlayScreen& base) {
         auto& owner = static_cast<SettingsScreen&>(base);
-        // Section, master, 3 view toggles, poster, logo, API key, scan
-        if (current.items.size() < 9) return;
+        // Section, master, 3 view toggles, poster, logo, quality, blur, API key, scan
+        if (current.items.size() < 11) return;
 
-        for (int i = 2; i <= 6; ++i) {
+        for (int i = 2; i <= 8; ++i) {
             current.items[static_cast<std::size_t>(i)].enabled = owner.m_steamGridDbEnabled;
             current.items[static_cast<std::size_t>(i)].indentLevel = 1;
         }
+        // Blur only applies when a hero canvas is actually decoded.
+        current.items[8].enabled = owner.m_steamGridDbEnabled
+            && owner.m_steamGridDbHeroQuality != 0;
 
-        auto& key = current.items[7];
+        auto& key = current.items[9];
         key.description = owner.m_steamGridDbHasApiKey
             ? nxui::I18n::instance().tr("settings.steamgriddb.api_key_set", "Configured (hidden)")
             : nxui::I18n::instance().tr("settings.steamgriddb.api_key_missing", "Not configured");

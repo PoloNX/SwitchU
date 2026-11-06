@@ -266,6 +266,7 @@ private:
     void syncSteamGridDb();
     void showFocusedSteamGridDbArtwork(bool forceReload = false);
     bool steamGridDbArtworkAllowedHere() const;
+    void applySteamGridDbHeroPresentation();
     // Layout the user still sees (grid stays up during poster prefetch).
     AppLayoutMode presentationLayoutMode() const;
     void applyTheme();

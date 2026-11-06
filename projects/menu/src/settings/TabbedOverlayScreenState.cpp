@@ -208,6 +208,24 @@ void TabbedOverlayScreen::clampContentIdx() {
     else m_contentIdx = std::clamp(m_contentIdx, 0, count - 1);
 }
 
+bool TabbedOverlayScreen::focusedItemPeeksBackground() const {
+    if (!m_active || !m_showing || m_dropdownOpen)
+        return false;
+    if (m_focusArea != FocusArea::Content || focusableCount() <= 0)
+        return false;
+    if (m_tabIndex < 0 || m_tabIndex >= (int)m_tabs.size())
+        return false;
+    const auto& items = m_tabs[m_tabIndex].items;
+    const int raw = rawIndexFromFocusable(m_contentIdx);
+    if (raw < 0 || raw >= (int)items.size())
+        return false;
+    return items[raw].peekBackground && items[raw].enabled;
+}
+
+float TabbedOverlayScreen::backgroundPeekAmount() const {
+    return std::clamp(m_backgroundPeek.value(), 0.f, 1.f);
+}
+
 float TabbedOverlayScreen::visibilityProgress() const {
     float t = std::clamp(m_animT, 0.f, 1.f);
     return m_showing ? easeOutCubic(t) : 1.f - easeInCubic(t);

@@ -209,6 +209,7 @@ TabbedOverlayScreen::TabbedOverlayScreen(ScreenMode mode)
     m_tabReveal.setImmediate(1.f);
     m_dropdownAnim.setImmediate(0.f);
     m_trackToastAnim.setImmediate(0.f);
+    m_backgroundPeek.setImmediate(0.f);
     m_trackToastHold = 0.f;
     m_trackToastFading = false;
     m_contentSlideAnim.setImmediate(1.f);
@@ -472,9 +473,11 @@ void TabbedOverlayScreen::onRender(nxui::Renderer& ren) {
     if (m_tabBar) m_tabBar->setRect(tabsRect(p));
     if (m_tabContent) m_tabContent->setRect(contentRect(p));
 
-    drawBackground(ren, p, opacity * 0.72f);
+    const float peek = backgroundPeekAmount();
+    const float chrome = 1.f - peek;
+    drawBackground(ren, p, opacity * 0.72f * chrome);
 
-    if (opacity > 0.01f) {
+    if (opacity > 0.01f && chrome > 0.01f) {
         const nxui::Color panel = m_theme ? m_theme->panelBase : m_base;
         const nxui::Color border = m_theme
             ? m_theme->panelBorder
@@ -483,13 +486,13 @@ void TabbedOverlayScreen::onRender(nxui::Renderer& ren) {
             ? m_theme->panelHighlight
             : nxui::Color::white().withAlpha(0.08f);
         ren.drawRoundedRect({p.x, p.y + 7.f, p.width, p.height},
-                            nxui::Color(0.f, 0.f, 0.f, 0.20f * opacity),
+                            nxui::Color(0.f, 0.f, 0.f, 0.20f * opacity * chrome),
                             kPanelRadius);
-        ren.drawRoundedRect(p, panel.withAlpha(0.98f * opacity), kPanelRadius);
+        ren.drawRoundedRect(p, panel.withAlpha(0.98f * opacity * chrome), kPanelRadius);
         ren.drawRoundedRectOutline(p.shrunk(1.f),
-                                   highlight.withAlpha(0.28f * opacity),
+                                   highlight.withAlpha(0.28f * opacity * chrome),
                                    std::max(0.f, kPanelRadius - 1.f), 1.f);
-        ren.drawRoundedRectOutline(p, border.withAlpha(0.72f * opacity),
+        ren.drawRoundedRectOutline(p, border.withAlpha(0.72f * opacity * chrome),
                                    kPanelRadius, 1.5f);
     }
 
@@ -508,10 +511,14 @@ void TabbedOverlayScreen::onContentRender(nxui::Renderer& ren) {
     float opacity = visibilityProgress();
     nxui::Rect p = panelRect(scale());
     float textOp = m_showing ? opacity : opacity * opacity;
+    const float peek = backgroundPeekAmount();
+    const float chrome = 1.f - peek;
+    // Tabs stay faintly readable so you can still see which page you are on.
+    const float tabOp = textOp * (0.18f + 0.82f * chrome);
 
     ren.pushClipRect(p);
-    drawOverlayHeader(ren, p, textOp);
-    drawTabs(ren, p, textOp);
+    drawOverlayHeader(ren, p, textOp * chrome);
+    drawTabs(ren, p, tabOp);
     drawContent(ren, p, textOp);
     drawDropdown(ren, p, textOp);
     drawTrackChangedToast(ren, p, textOp);
@@ -654,15 +661,18 @@ void TabbedOverlayScreen::drawContent(nxui::Renderer& ren, const nxui::Rect& pan
     if (!m_tabContent) return;
 
     nxui::Rect cr = contentRect(panel);
+    const float peek = backgroundPeekAmount();
+    const float chrome = 1.f - peek;
     auto* contentPanel = static_cast<nxui::GlassBox*>(m_tabContent.get());
     contentPanel->setRect(cr);
     contentPanel->setOpacity(opacity);
     contentPanel->setCornerRadius(26.f);
-    contentPanel->setBorderWidth(1.f);
-    contentPanel->setBaseColor(m_theme->panelBase.withAlpha(m_theme->mode == nxui::ThemeMode::Dark ? 0.94f : 0.96f));
-    contentPanel->setBorderColor(m_theme->panelBorder.withAlpha(0.30f));
-    contentPanel->setHighlightColor(m_theme->panelHighlight.withAlpha(0.08f));
-    contentPanel->setPanelOpacity(1.f);
+    contentPanel->setBorderWidth(chrome > 0.01f ? 1.f : 0.f);
+    contentPanel->setBaseColor(m_theme->panelBase.withAlpha(
+        (m_theme->mode == nxui::ThemeMode::Dark ? 0.94f : 0.96f) * chrome));
+    contentPanel->setBorderColor(m_theme->panelBorder.withAlpha(0.30f * chrome));
+    contentPanel->setHighlightColor(m_theme->panelHighlight.withAlpha(0.08f * chrome));
+    contentPanel->setPanelOpacity(chrome);
 
     if (usesCustomContentLayout()) {
         contentPanel->render(ren);
@@ -718,7 +728,9 @@ void TabbedOverlayScreen::drawContent(nxui::Renderer& ren, const nxui::Rect& pan
         ++visibleRank;
 
         itemRect.y += (1.f - rowEase) * 18.f * (float)m_tabSwitchDir;
-        const float rowOpacity = reveal * rowEase;
+        float rowOpacity = reveal * rowEase;
+        if (!selected)
+            rowOpacity *= chrome;
 
         itemChildren[i]->setRect(itemRect);
         itemChildren[i]->setOpacity(rowOpacity);
@@ -762,8 +774,8 @@ void TabbedOverlayScreen::drawContent(nxui::Renderer& ren, const nxui::Rect& pan
         float thumbY = trackY + (trackAreaH - trackH) * std::clamp(m_scrollY / maxScroll, 0.f, 1.f);
         nxui::Rect rail = {trackX, trackY, 3.f, trackAreaH};
         nxui::Rect thumb = {trackX - 0.5f, thumbY, 4.f, trackH};
-        ren.drawRoundedRect(rail, m_theme->panelBorder.withAlpha(0.16f * opacity), 1.5f);
-        ren.drawRoundedRect(thumb, m_theme->cursorNormal.withAlpha(0.46f * opacity), 2.f);
+        ren.drawRoundedRect(rail, m_theme->panelBorder.withAlpha(0.16f * opacity * chrome), 1.5f);
+        ren.drawRoundedRect(thumb, m_theme->cursorNormal.withAlpha(0.46f * opacity * chrome), 2.f);
     }
 }
 

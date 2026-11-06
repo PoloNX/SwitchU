@@ -6801,6 +6801,7 @@ void WiiUMenuApp::buildGrid() {
         app().gpu(), app().renderer(), &m_threadPool);
     m_steamGridDbBackdrop->setEnabled(m_config.steamGridDbEnabled);
     m_steamGridDbBackdrop->setLayoutMode(m_appLayoutMode);
+    applySteamGridDbHeroPresentation();
     syncSteamGridDbLogoArea();
 
     m_contentLayer = std::make_shared<nxui::Box>();

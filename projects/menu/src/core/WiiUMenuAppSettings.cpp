@@ -314,7 +314,9 @@ void WiiUMenuApp::createSettings() {
                                     m_config.steamGridDbShowInDynamicLine,
                                     m_config.steamGridDbShowInFolders,
                                     m_config.steamGridDbShowPosterInDynamicLine,
-                                    m_config.steamGridDbShowLogoInDynamicLine);
+                                    m_config.steamGridDbShowLogoInDynamicLine,
+                                    m_config.steamGridDbHeroQuality,
+                                    m_config.steamGridDbHeroBlur);
 
     m_settings->onNavigateSfx([this]() { m_audio.playSfx(Sfx::Navigate); });
     m_settings->onActivateSfx([this]() { m_audio.playSfx(Sfx::Activate); });
@@ -551,6 +553,28 @@ void WiiUMenuApp::createSettings() {
         m_config.save();
         syncSteamGridDbLogoArea();
     });
+    m_settings->onSteamGridDbHeroQualityChange([this](int quality) {
+        m_config.steamGridDbHeroQuality = std::clamp(quality, 0, 3);
+        m_config.save();
+        applySteamGridDbHeroPresentation();
+        if (m_steamGridDbBackdrop) {
+            m_steamGridDbBackdrop->releaseGpuArtwork();
+            m_steamGridDbBackdrop->setEnabled(m_config.steamGridDbEnabled
+                                              && steamGridDbArtworkAllowedHere());
+        }
+        showFocusedSteamGridDbArtwork(true);
+    });
+    m_settings->onSteamGridDbHeroBlurChange([this](int amount) {
+        m_config.steamGridDbHeroBlur = std::clamp(amount, 0, 10);
+        m_config.save();
+        applySteamGridDbHeroPresentation();
+        if (m_steamGridDbBackdrop) {
+            m_steamGridDbBackdrop->invalidateArtworkCaches();
+            m_steamGridDbBackdrop->setEnabled(m_config.steamGridDbEnabled
+                                              && steamGridDbArtworkAllowedHere());
+        }
+        showFocusedSteamGridDbArtwork(true);
+    });
     m_settings->onSteamGridDbApiKeyRequest([this]() {
         editSteamGridDbApiKey();
     });
@@ -699,7 +723,9 @@ void WiiUMenuApp::editSteamGridDbApiKey() {
                                              m_config.steamGridDbShowInDynamicLine,
                                              m_config.steamGridDbShowInFolders,
                                              m_config.steamGridDbShowPosterInDynamicLine,
-                                             m_config.steamGridDbShowLogoInDynamicLine);
+                                             m_config.steamGridDbShowLogoInDynamicLine,
+                                             m_config.steamGridDbHeroQuality,
+                                             m_config.steamGridDbHeroBlur);
             m_settings->refreshCurrentTabWidgets();
             m_settings->requestToast(value.empty()
                 ? nxui::I18n::instance().tr("settings.steamgriddb.key_cleared", "API key cleared.")
@@ -951,7 +977,8 @@ void WiiUMenuApp::startSteamGridDbScrape() {
         app.widgetColumns = size.columns;
         app.widgetRows = size.rows;
     }
-    if (!m_steamGridDb.start(m_config.steamGridDbApiKey, scrapeApps)) {
+    if (!m_steamGridDb.start(m_config.steamGridDbApiKey, scrapeApps,
+                             m_config.steamGridDbHeroQuality != 0)) {
         if (m_settings)
             m_settings->requestToast(nxui::I18n::instance().tr(
                 "settings.steamgriddb.start_failed", "The artwork scan could not be started."));
@@ -1532,6 +1559,21 @@ AppLayoutMode WiiUMenuApp::presentationLayoutMode() const {
     if (m_grid)
         return m_grid->layoutMode();
     return m_appLayoutMode;
+}
+
+void WiiUMenuApp::applySteamGridDbHeroPresentation() {
+    if (!m_steamGridDbBackdrop)
+        return;
+    int w = 640;
+    int h = 360;
+    switch (m_config.steamGridDbHeroQuality) {
+        case 0: w = 0; h = 0; break;
+        case 1: w = 320; h = 180; break;
+        case 3: w = 1280; h = 720; break;
+        default: break;
+    }
+    m_steamGridDbBackdrop->setHeroCanvas(w, h);
+    m_steamGridDbBackdrop->setHeroBlur(m_config.steamGridDbHeroBlur);
 }
 
 bool WiiUMenuApp::steamGridDbArtworkAllowedHere() const {
