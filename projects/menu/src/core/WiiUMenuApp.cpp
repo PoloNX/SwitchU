@@ -582,7 +582,7 @@ bool WiiUMenuApp::presentInitialFrame(nxui::Renderer& ren) {
 
 void WiiUMenuApp::scheduleLeaveCapture(std::function<void()> afterCapture,
                                        std::uint64_t previewSuspendedTitleId) {
-    // Title launch/resume: lock green pulse, blue cursor, and session focus to
+    // Title launch (not resume): lock green pulse, blue cursor, and session focus to
     // the launching title before this frame renders. Without that, a fast
     // Spharia↔MPO hop can capture the previous tile's focus while the green
     // outline already moved.
@@ -5349,18 +5349,21 @@ void WiiUMenuApp::resumeSuspendedApplication(std::uint64_t titleId,
                                              const std::string& launchTitle) {
     if (titleId == 0 || !m_launchAnim)
         return;
-    scheduleLeaveCapture([this, titleId, launchTitle]() {
-        reclaimForFrameTapLaunch("resume");
-        m_audio.playSfx(Sfx::LaunchGame);
-        m_launchAnim->startResume([this, titleId, launchTitle]() {
-            m_config.noteOpened(titleId);
-            m_config.save();
-            m_widgetStore.recordLaunch(titleId, launchTitle,
-                static_cast<std::int64_t>(std::time(nullptr)));
-            m_widgetStore.save();
-            m_launcher.resumeApplication();
-        });
-    }, titleId);
+    // Keep the splash captured at the original launch. Recapturing on resume
+    // (tile or HOME) often mismatches — folder closed, page changed, or the
+    // post-return HOME scene is not the launch view.
+    DebugLog::log("[leave] skip capture on resume tid=%016lX",
+                  static_cast<unsigned long>(titleId));
+    reclaimForFrameTapLaunch("resume");
+    m_audio.playSfx(Sfx::LaunchGame);
+    m_launchAnim->startResume([this, titleId, launchTitle]() {
+        m_config.noteOpened(titleId);
+        m_config.save();
+        m_widgetStore.recordLaunch(titleId, launchTitle,
+            static_cast<std::int64_t>(std::time(nullptr)));
+        m_widgetStore.save();
+        m_launcher.resumeApplication();
+    });
 }
 
 void WiiUMenuApp::activateApplication(GlossyIcon* source, AppEntry* entry,
