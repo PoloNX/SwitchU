@@ -456,6 +456,7 @@ private:
     void applyBatterySaver(bool enabled);
     void applyConsoleBatteryStatus(int percent, bool charging);
     void tickControllerBatteries(float dt);
+    void tickDisplayMode();
     void logFrameTapLightSoak(const char* tag);
     // Free GPU icon/poster memory before resume/launch so FT can remount.
     void reclaimForFrameTapLaunch(const char* reason);
@@ -898,6 +899,7 @@ private:
     bool m_consoleBatteryCharging = false;
     std::vector<GlossyIcon::ControllerBattery> m_controllerBatteries;
     float m_controllerBatteryAge = 8.f;
+    int m_lastOperationMode = -1;
     std::vector<AppEntry> m_allApps;
     std::uint32_t m_openFolderId = 0;
     std::uint32_t m_requestedFolderId = 0;

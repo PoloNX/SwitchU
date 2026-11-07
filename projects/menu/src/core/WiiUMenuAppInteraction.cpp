@@ -2,6 +2,7 @@
 #include "widgets/GlossyIcon.hpp"
 #include "widgets/FolderPalette.hpp"
 #include "DebugLog.hpp"
+#include "screen_fit.hpp"
 #ifdef SWITCHU_MENU
 #include <switchu/control_cache.hpp>
 #endif
@@ -2863,6 +2864,12 @@ void WiiUMenuApp::handleSystemAction(SysAction a) {
                 focusTitle(folderTitleId(folderBefore));
             }
             showFocusedSteamGridDbArtwork(true);
+            break;
+        }
+        case SysAction::OperationModeChanged: {
+            DebugLog::log("[display] OperationModeChanged -> apply layer fit");
+            switchu::menu::applyScreenUnderscan();
+            m_lastOperationMode = static_cast<int>(appletGetOperationMode());
             break;
         }
         case SysAction::HomeButton: {

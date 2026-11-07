@@ -73,10 +73,23 @@ bool applyScreenUnderscan() {
     if (g_managedLayerId == 0)
         return false;
 
-    // Underscan is a TV concern: in handheld the layer is already exactly
-    // 1280x720 and must stay untouched.
-    if (appletGetOperationMode() != AppletOperationMode_Console)
-        return true;
+    ViLayer layer{};
+    layer.initialized = true;
+    layer.layer_id = g_managedLayerId;
+
+    // Docked: size the managed layer toward 1920x1080 (underscan %). Handheld:
+    // always reset to 1280x720 — otherwise a prior dock pass leaves the LCD
+    // stuck on a TV-sized layer (soft/pixelated / wrong crop).
+    if (appletGetOperationMode() != AppletOperationMode_Console) {
+        constexpr s32 kHandW = 1280;
+        constexpr s32 kHandH = 720;
+        const Result rc = viSetLayerSize(&layer, kHandW, kHandH);
+        if (R_SUCCEEDED(rc))
+            viSetLayerPosition(&layer, 0.f, 0.f);
+        DebugLog::log("[menu] display mode=handheld layer %dx%d rc=0x%X",
+                      kHandW, kHandH, rc);
+        return R_SUCCEEDED(rc);
+    }
 
     constexpr s32 kFullW = 1920;
     constexpr s32 kFullH = 1080;
@@ -89,17 +102,13 @@ bool applyScreenUnderscan() {
     const s32 w = kFullW * static_cast<s32>(underscan) / 100;
     const s32 h = kFullH * static_cast<s32>(underscan) / 100;
 
-    ViLayer layer{};
-    layer.initialized = true;
-    layer.layer_id = g_managedLayerId;
-
     const Result rc = viSetLayerSize(&layer, w, h);
     if (R_SUCCEEDED(rc)) {
         viSetLayerPosition(&layer, static_cast<float>(kFullW - w) / 2.f,
                            static_cast<float>(kFullH - h) / 2.f);
     }
 
-    DebugLog::log("[menu] underscan=%u%% -> layer %dx%d centered rc=0x%X",
+    DebugLog::log("[menu] display mode=docked underscan=%u%% -> layer %dx%d rc=0x%X",
                   underscan, w, h, rc);
     return R_SUCCEEDED(rc);
 }

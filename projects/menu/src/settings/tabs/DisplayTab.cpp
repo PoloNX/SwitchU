@@ -79,6 +79,9 @@ SettingsScreen::Tab settings::tabs::DisplayTab::build(SettingsScreen& screen) {
                 tv.tv_resolution = (s32)self.intVal;
                 setsysSetTvSettings(&tv);
             }
+            // Refresh the managed layer after the HDMI preference changes so a
+            // docked session does not keep a stale size until the next redock.
+            switchu::menu::applyScreenUnderscan();
         };
         t.items.push_back(std::move(it));
     }
