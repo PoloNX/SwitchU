@@ -8166,12 +8166,13 @@ void WiiUMenuApp::applyBatterySaver(bool enabled) {
 
 void WiiUMenuApp::tickDisplayMode() {
 #ifdef SWITCHU_MENU
-    const int mode = static_cast<int>(appletGetOperationMode());
-    if (mode == m_lastOperationMode)
-        return;
-    DebugLog::log("[display] operation mode %d -> %d", m_lastOperationMode, mode);
-    m_lastOperationMode = mode;
-    switchu::menu::applyScreenUnderscan();
+    // Do not drive layer fit from appletGetOperationMode() here.
+    // The menu is a library applet: its libnx OperationMode cache stays frozen
+    // (never processes msg=30), so polling it after a daemon-forwarded dock
+    // immediately "reverts" Console → Handheld and undoes the TV layer size.
+    // Live dock/undock: MenuMessage::OperationModeChanged from the daemon.
+    // Boot / wake / settings still call applyScreenUnderscan() directly.
+    (void)0;
 #endif
 }
 
@@ -8371,8 +8372,9 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
         const int step = m_wakePostSwapchainFrames;
         --m_wakePostSwapchainFrames;
         if (step == 3) {
-            DebugLog::log("[power] wake step: underscan");
-            switchu::menu::applyScreenUnderscan();
+            DebugLog::log("[power] wake step: underscan mode=%d", m_lastOperationMode);
+            // Prefer last daemon-forwarded mode; avoid stale local libnx cache.
+            switchu::menu::applyScreenUnderscan(m_lastOperationMode);
         } else if (step == 2) {
             DebugLog::log("[power] wake step: audio");
             if (m_musicWasPlayingBeforeSleep && m_config.musicEnabled)
@@ -9239,6 +9241,16 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
                 DebugLog::log("[battery] daemon status percent=%u charging=%d",
                               (unsigned)percent,
                               charging ? 1 : 0);
+                break;
+            }
+            case switchu::smi::MenuMessage::OperationModeChanged: {
+                // Daemon processed AppletMessage_OperationModeChanged and sent
+                // the fresh Console/Handheld value (menu libnx cache is stale).
+                const int mode = static_cast<int>(notif.payload);
+                DebugLog::log("[display] daemon operation mode -> %d (was %d)",
+                              mode, m_lastOperationMode);
+                m_lastOperationMode = mode;
+                switchu::menu::applyScreenUnderscan(mode);
                 break;
             }
             case switchu::smi::MenuMessage::ShowLock:

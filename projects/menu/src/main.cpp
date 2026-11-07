@@ -55,7 +55,7 @@ namespace switchu::menu {
 
 #ifdef SWITCHU_HOMEBREW
 bool initScreenFitLayer(std::uint64_t) { return false; }
-bool applyScreenUnderscan() { return true; }
+bool applyScreenUnderscan(int) { return true; }
 #else
 namespace {
 u64 g_managedLayerId = 0;
@@ -68,7 +68,7 @@ bool initScreenFitLayer(std::uint64_t managedLayerId) {
     return applyScreenUnderscan();
 }
 
-bool applyScreenUnderscan() {
+bool applyScreenUnderscan(int operationMode) {
     if (g_managedLayerId == 0)
         return false;
 
@@ -76,10 +76,14 @@ bool applyScreenUnderscan() {
     layer.initialized = true;
     layer.layer_id = g_managedLayerId;
 
+    const AppletOperationMode mode = operationMode >= 0
+        ? static_cast<AppletOperationMode>(operationMode)
+        : appletGetOperationMode();
+
     // Docked: size the managed layer toward 1920x1080 (underscan %). Handheld:
     // always reset to 1280x720 — otherwise a prior dock pass leaves the LCD
     // stuck on a TV-sized layer (soft/pixelated / wrong crop).
-    if (appletGetOperationMode() != AppletOperationMode_Console) {
+    if (mode != AppletOperationMode_Console) {
         constexpr s32 kHandW = 1280;
         constexpr s32 kHandH = 720;
         const Result rc = viSetLayerSize(&layer, kHandW, kHandH);

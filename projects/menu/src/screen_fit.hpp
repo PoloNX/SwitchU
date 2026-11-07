@@ -16,6 +16,9 @@ bool initScreenFitLayer(std::uint64_t managedLayerId);
 
 // Re-reads operation mode + tv.underscan and resizes the layer. Returns true on
 // success, or when there is nothing to adjust (standalone homebrew / no layer).
-bool applyScreenUnderscan();
+// operationMode: <0 = query appletGetOperationMode(); else treat as
+// AppletOperationMode (menu's libnx cache is often stale until messages are
+// processed — prefer the mode the daemon forwarded).
+bool applyScreenUnderscan(int operationMode = -1);
 
 } // namespace switchu::menu
