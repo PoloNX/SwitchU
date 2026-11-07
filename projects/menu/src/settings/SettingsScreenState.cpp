@@ -4,6 +4,7 @@
 #include "bluetooth/BluetoothManager.hpp"
 #include "smi_commands.hpp"
 #include "themeshop/ThemeHttp.hpp"
+#include "services/SystemTime.hpp"
 #include <nxui/core/I18n.hpp>
 #include <switch.h>
 #include <chrono>
@@ -320,6 +321,8 @@ void SettingsScreen::pollClockSync() {
         static_cast<unsigned long long>(fetched.posixUtc));
 
     if (R_SUCCEEDED(daemonRc)) {
+        // The daemon moved the system clock; libnx's wall clock is a copy.
+        switchu::services::system_time::reseedWallClock("web clock sync");
         if (!failureOnly) {
             char buf[96];
             std::snprintf(buf, sizeof(buf),

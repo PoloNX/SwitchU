@@ -1,6 +1,7 @@
 #include "SteamGridDbManager.hpp"
 
 #include "ArtworkCache.hpp"
+#include "core/ChunkedIo.hpp"
 #include "core/DebugLog.hpp"
 #include "themeshop/ThemeHttp.hpp"
 
@@ -85,19 +86,17 @@ std::string pathForKind(SteamGridDbManager::ArtworkKind kind, std::uint64_t titl
     }
 }
 
+// Only TLS/certificate failures can come from a wrong console clock. Every
+// transport error starts with "HTTPS failed", so matching that (or an empty
+// message) used to blame the clock for timeouts and DNS failures too.
 bool looksLikeHttpsClockFailure(const std::string& error) {
-    if (error.empty())
-        return true;
     std::string lower = error;
     for (char& c : lower)
         c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     return lower.find("ssl") != std::string::npos
         || lower.find("tls") != std::string::npos
         || lower.find("certificate") != std::string::npos
-        || lower.find("cert verify") != std::string::npos
-        || lower.find("peer certificate") != std::string::npos
-        || lower.find("certificate has expired") != std::string::npos
-        || lower.find("https failed") != std::string::npos;
+        || lower.find("cert verify") != std::string::npos;
 }
 
 // Wrong console clocks break TLS to SteamGridDB and used to surface as a blank
@@ -364,9 +363,7 @@ bool saveBytes(const std::string& path, const std::vector<std::uint8_t>& bytes) 
     {
         std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
         if (!out.is_open()) return false;
-        out.write(reinterpret_cast<const char*>(bytes.data()),
-                  static_cast<std::streamsize>(bytes.size()));
-        if (!out.good()) return false;
+        if (!switchu::io::writeChunked(out, bytes.data(), bytes.size())) return false;
     }
     std::error_code ec;
     std::filesystem::remove(path, ec);

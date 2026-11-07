@@ -26,7 +26,7 @@ protected:
 private:
     nxui::Font* m_font = nullptr;
     nxui::Font* m_smallFont = nullptr;
-    float m_timer = 0.f;
+    float m_timer = 1.f; // Fill in on the first frame (rebuilt widgets started blank).
     std::string m_timeStr;
     std::string m_dateStr;
     bool m_use12HourClock = false;

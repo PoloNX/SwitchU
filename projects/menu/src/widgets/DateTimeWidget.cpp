@@ -8,13 +8,16 @@ void DateTimeWidget::setUse12HourClock(bool enabled) {
         return;
 
     m_use12HourClock = enabled;
-    m_timeStr.clear();
+    // Keep the current text until the next refresh replaces it: clearing it
+    // left the HUD clock blank whenever that refresh could not read the time.
     m_timer = 1.f;
 }
 
 void DateTimeWidget::onContentUpdate(float dt) {
+    // Once a second, also while the text is still empty (that used to be a
+    // time-service round trip every frame until the clock answered).
     m_timer += dt;
-    if (m_timer < 1.f && !m_timeStr.empty()) return;
+    if (m_timer < 1.f) return;
     m_timer = 0.f;
 
     if (!m_clockService)
