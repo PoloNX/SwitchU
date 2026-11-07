@@ -128,6 +128,9 @@ public:
     bool hasAlbumFolders() const { return m_music.hasAlbumFolders; }
 
     void setBatteryStatus(int percent, bool charging);
+    void onBatterySampled(std::function<void(int, bool)> cb) {
+        m_batterySampledCb = std::move(cb);
+    }
     void setBatterySaver(bool enabled);
     bool batterySaver() const { return m_batterySaver; }
     // When Frame Tap's viewer holds lite, lock the Battery Saver row ON and
@@ -330,6 +333,7 @@ private:
 
     int   m_batteryPercent = -1;
     bool  m_batteryCharging = false;
+    std::function<void(int, bool)> m_batterySampledCb;
     float m_socTemp = -1.f;
     float m_pcbTemp = -1.f;
     bool  m_hasSocTemp = false;

@@ -144,18 +144,96 @@ void decodeWidgetGif(const std::string& path,
         std::chrono::steady_clock::now() - started).count();
 }
 
+enum class BatteryGlyphKind { Console, JoyLeft, JoyRight, Pro };
+
+float textureAspect(nxui::Texture* tex, float fallback) {
+    if (!tex || !tex->valid())
+        return fallback;
+    return static_cast<float>(tex->width()) /
+        std::max(1.f, static_cast<float>(tex->height()));
+}
+
+nxui::Rect containIcon(const nxui::Vec2& center, float maxWidth, float maxHeight,
+                       float aspect) {
+    nxui::Rect iconRect{center.x - maxWidth * 0.5f,
+                        center.y - maxHeight * 0.50f,
+                        maxWidth, maxHeight};
+    if (aspect > maxWidth / maxHeight) {
+        iconRect.height = maxWidth / aspect;
+        iconRect.y += (maxHeight - iconRect.height) * 0.5f;
+    } else {
+        iconRect.width = maxHeight * aspect;
+        iconRect.x += (maxWidth - iconRect.width) * 0.5f;
+    }
+    return iconRect;
+}
+
+void drawSwitchAssembly(nxui::Renderer& ren, const nxui::Rect& bounds,
+                        nxui::Texture* body, nxui::Texture* left,
+                        nxui::Texture* right, const nxui::Color& bodyTint,
+                        const nxui::Color& leftTint, const nxui::Color& rightTint) {
+    // Tablet-only Console_Screen between independently tinted Joy-Cons.
+    // Console.png draws the rails ~95% of the tablet height and centered;
+    // standalone Joy-Con glyphs are taller, so match that composite ratio.
+    constexpr float kJoyHeightFrac = 238.6f / 250.f;
+    const float joyAspect = textureAspect(left, 194.f / 600.f);
+    const float rightAspect = textureAspect(right, joyAspect);
+    const float bodyAspect = textureAspect(body, 431.f / 250.f);
+    float bodyH = bounds.height;
+    float joyH = bodyH * kJoyHeightFrac;
+    float joyW = joyH * joyAspect;
+    float rightW = joyH * rightAspect;
+    float bodyW = bodyH * bodyAspect;
+    float gap = std::max(1.6f, bodyH * 0.028f);
+    float width = joyW + rightW + bodyW + 2.f * gap;
+    if (width > bounds.width && width > 1.f) {
+        const float scale = bounds.width / width;
+        bodyH *= scale;
+        joyH *= scale;
+        joyW *= scale;
+        rightW *= scale;
+        bodyW *= scale;
+        gap *= scale;
+        width = bounds.width;
+    }
+    const float x0 = bounds.x + (bounds.width - width) * 0.5f;
+    const float bodyY = bounds.y + (bounds.height - bodyH) * 0.5f;
+    const float joyY = bodyY + (bodyH - joyH) * 0.5f;
+    if (left && left->valid())
+        ren.drawTexture(left, {x0, joyY, joyW, joyH}, leftTint);
+    if (body && body->valid())
+        ren.drawTexture(body, {x0 + joyW + gap, bodyY, bodyW, bodyH}, bodyTint);
+    if (right && right->valid())
+        ren.drawTexture(right,
+                        {x0 + joyW + gap + bodyW + gap, joyY, rightW, joyH},
+                        rightTint);
+}
+
 void drawBatteryRing(nxui::Renderer& ren, const nxui::Vec2& center,
                      float radius, int percent, bool charging,
-                     bool console, nxui::Texture* deviceIcon,
-                     nxui::Font* font, float opacity) {
-    constexpr int segments = 96;
+                     BatteryGlyphKind kind, nxui::Texture* deviceIcon,
+                     const nxui::Color& deviceTint,
+                     nxui::Texture* consoleBody, nxui::Texture* joyLeft,
+                     nxui::Texture* joyRight, const nxui::Color& bodyTint,
+                     const nxui::Color& railLeft, const nxui::Color& railRight,
+                     nxui::Font* font, float opacity,
+                     float percentY, float percentScale,
+                     bool lightTheme) {
+    constexpr int segments = 64;
     constexpr float tau = 6.28318530718f;
     constexpr float startAngle = -1.57079632679f;
-    const float thickness = std::max(4.f, radius * 0.13f);
+    const float thickness = std::max(3.2f, radius * 0.075f);
     const float progress = std::clamp(percent / 100.f, 0.f, 1.f);
+    const nxui::Color track = lightTheme
+        ? nxui::Color(0.f, 0.f, 0.f, 0.16f * opacity)
+        : nxui::Color::white().withAlpha(0.22f * opacity);
     const nxui::Color activeColor = percent <= 20
-        ? nxui::Color(1.f, 0.25f, 0.22f, opacity)
-        : nxui::Color(0.25f, 0.92f, 0.48f, opacity);
+        ? nxui::Color(1.f, 0.32f, 0.28f, opacity)
+        : nxui::Color(0.18f, 0.86f, 0.48f, opacity);
+    const nxui::Color stage = lightTheme
+        ? nxui::Color(0.f, 0.f, 0.f, 0.05f * opacity)
+        : nxui::Color::white().withAlpha(0.08f * opacity);
+    ren.drawCircle(center, std::max(1.f, radius - thickness), stage, 40);
     for (int i = 0; i < segments; ++i) {
         const float a0 = startAngle + tau * static_cast<float>(i) / segments;
         const float a1 = startAngle + tau * static_cast<float>(i + 1) / segments;
@@ -163,7 +241,7 @@ void drawBatteryRing(nxui::Renderer& ren, const nxui::Vec2& center,
                       center.y + std::sin(a0) * radius},
                      {center.x + std::cos(a1) * radius,
                       center.y + std::sin(a1) * radius},
-                     nxui::Color::white().withAlpha(0.13f * opacity), thickness);
+                     track, thickness);
     }
     if (progress > 0.f) {
         const int activeSegments = std::max(1,
@@ -180,54 +258,47 @@ void drawBatteryRing(nxui::Renderer& ren, const nxui::Vec2& center,
                          activeColor, thickness);
         }
         const float endAngle = startAngle + tau * progress;
-        ren.drawCircle({center.x, center.y - radius}, thickness * 0.5f,
-                       activeColor, 20);
+        const float cap = thickness * 0.5f;
+        ren.drawCircle({center.x, center.y - radius}, cap, activeColor, 16);
         ren.drawCircle({center.x + std::cos(endAngle) * radius,
                         center.y + std::sin(endAngle) * radius},
-                       thickness * 0.5f, activeColor, 20);
+                       cap, activeColor, 16);
     }
 
-    const nxui::Color glyph = nxui::Color::white().withAlpha(0.88f * opacity);
-    if (deviceIcon && deviceIcon->valid()) {
-        const float maxWidth = radius * (console ? 0.86f : 0.48f);
-        const float maxHeight = radius * (console ? 0.55f : 0.78f);
-        const float aspect = static_cast<float>(deviceIcon->width()) /
-            std::max(1.f, static_cast<float>(deviceIcon->height()));
-        nxui::Rect iconRect{center.x - maxWidth * 0.5f,
-                            center.y - maxHeight * 0.58f,
-                            maxWidth, maxHeight};
-        if (aspect > maxWidth / maxHeight) {
-            iconRect.height = maxWidth / aspect;
-            iconRect.y += (maxHeight - iconRect.height) * 0.5f;
-        } else {
-            iconRect.width = maxHeight * aspect;
-            iconRect.x += (maxWidth - iconRect.width) * 0.5f;
-        }
-        ren.drawTexture(deviceIcon, iconRect,
-                        nxui::Color::white().withAlpha(0.95f * opacity));
-    } else if (console) {
-        const nxui::Rect body{center.x - radius * 0.22f,
-                              center.y - radius * 0.30f,
-                              radius * 0.44f, radius * 0.56f};
-        ren.drawRoundedRectOutline(body, glyph, radius * 0.07f,
-                                   std::max(1.4f, radius * 0.045f));
-        ren.drawLine({body.x + body.width * 0.35f, body.bottom() - radius * 0.07f},
-                     {body.x + body.width * 0.65f, body.bottom() - radius * 0.07f},
-                     glyph, std::max(1.f, radius * 0.025f));
+    const nxui::Color tint = deviceTint.withAlpha(opacity);
+    if (kind == BatteryGlyphKind::Console) {
+        // Keep a clear air gap vs the ring (same breathing room as Joy-Cons).
+        const nxui::Rect assembly{center.x - radius * 0.82f,
+                                  center.y - radius * 0.34f,
+                                  radius * 1.64f, radius * 0.68f};
+        drawSwitchAssembly(ren, assembly, consoleBody, joyLeft, joyRight,
+                           bodyTint.withAlpha(opacity),
+                           railLeft.withAlpha(opacity),
+                           railRight.withAlpha(opacity));
+    } else if (deviceIcon && deviceIcon->valid()) {
+        const bool landscape = kind == BatteryGlyphKind::Pro;
+        const float maxWidth = radius * (landscape ? 1.58f : 0.58f);
+        const float maxHeight = radius * (landscape ? 1.08f : 1.52f);
+        const float aspect = textureAspect(deviceIcon, landscape ? 1.44f : 0.33f);
+        ren.drawTexture(deviceIcon,
+                        containIcon(center, maxWidth, maxHeight, aspect), tint);
+    } else if (kind == BatteryGlyphKind::Pro) {
+        const nxui::Rect hull{center.x - radius * 0.64f,
+                              center.y - radius * 0.24f,
+                              radius * 1.28f, radius * 0.48f};
+        ren.drawRoundedRect(hull, tint, hull.height * 0.42f);
     } else {
-        ren.drawCircle({center.x - radius * 0.16f, center.y - radius * 0.05f},
-                       radius * 0.13f, glyph, 18);
-        ren.drawCircle({center.x + radius * 0.16f, center.y - radius * 0.05f},
-                       radius * 0.13f, glyph, 18);
-        ren.drawRoundedRect({center.x - radius * 0.22f,
-                             center.y - radius * 0.09f,
-                             radius * 0.44f, radius * 0.18f}, glyph,
-                            radius * 0.08f);
+        const float jw = radius * 0.42f;
+        const float jh = radius * 1.28f;
+        const nxui::Rect joy{center.x - jw * 0.5f, center.y - jh * 0.5f, jw, jh};
+        ren.drawRoundedRect(joy, tint, jw * 0.46f);
     }
-    if (charging) {
-        const nxui::Rect bolt{center.x + radius * 0.18f,
-                              center.y - radius * 0.52f,
-                              radius * 0.25f, radius * 0.34f};
+    // Console charging is already shown in the top HUD; keep the bolt for
+    // controller rings only so the handheld glyph stays uncluttered.
+    if (charging && kind != BatteryGlyphKind::Console) {
+        const nxui::Rect bolt{center.x + radius * 0.42f,
+                              center.y - radius * 0.62f,
+                              radius * 0.22f, radius * 0.30f};
         switchu::battery_drawing::drawLightningBolt(
             ren, bolt, nxui::Color(1.f, 0.86f, 0.18f, opacity),
             nxui::Color(1.f, 0.64f, 0.08f, opacity * 0.72f),
@@ -235,12 +306,13 @@ void drawBatteryRing(nxui::Renderer& ren, const nxui::Vec2& center,
     }
     if (font) {
         const std::string text = std::to_string(percent) + "%";
-        const float scale = std::max(0.34f, radius / 72.f * 0.50f);
         const auto measured = font->measure(text);
+        const nxui::Color textColor = lightTheme
+            ? nxui::Color(0.12f, 0.14f, 0.18f, 0.92f * opacity)
+            : nxui::Color::white().withAlpha(0.94f * opacity);
         ren.drawText(text,
-                     {center.x - measured.x * scale * 0.5f,
-                      center.y + radius * 0.28f}, font,
-                     nxui::Color::white().withAlpha(0.92f * opacity), scale);
+                     {center.x - measured.x * percentScale * 0.5f, percentY}, font,
+                     textColor, percentScale);
     }
 }
 
@@ -490,7 +562,13 @@ void GlossyIcon::copyWidgetPresentationFrom(GlossyIcon& source) {
     m_widgetHeader = source.m_widgetHeader;
     m_consoleBatteryPercent = source.m_consoleBatteryPercent;
     m_consoleBatteryCharging = source.m_consoleBatteryCharging;
+    m_controllerBatteries = source.m_controllerBatteries;
     m_batteryConsoleIcon = source.m_batteryConsoleIcon;
+    m_batteryJoyconLeftIcon = source.m_batteryJoyconLeftIcon;
+    m_batteryJoyconRightIcon = source.m_batteryJoyconRightIcon;
+    m_batteryProIcon = source.m_batteryProIcon;
+    m_batteryRailLeft = source.m_batteryRailLeft;
+    m_batteryRailRight = source.m_batteryRailRight;
     m_widgetGameTitleId = source.m_widgetGameTitleId;
     m_widgetHero = source.m_widgetHero;
     m_widgetLogo = source.m_widgetLogo;
@@ -858,16 +936,74 @@ void GlossyIcon::onContentRender(nxui::Renderer& ren) {
             ren.drawRoundedRect(inner,
                 m_loadingColor.withAlpha(0.13f * m_opacity),
                 std::max(12.f, rad - 5.f));
-            const float cellW = inner.width;
-            const float cellH = inner.height;
-            const float radius = std::max(24.f,
-                std::min(cellW, cellH) * 0.36f);
-            const nxui::Vec2 center{
-                inner.x + cellW * 0.5f,
-                inner.y + cellH * 0.47f};
-            drawBatteryRing(ren, center, radius,
-                m_consoleBatteryPercent, m_consoleBatteryCharging,
-                true, m_batteryConsoleIcon, m_font, m_opacity);
+            const int capacity = m_widgetRows >= 2 ? 4 : 3;
+            const int count = std::min(capacity,
+                1 + static_cast<int>(m_controllerBatteries.size()));
+            const int columns = capacity == 4 ? 2 : 3;
+            const int rows = capacity == 4 ? 2 : 1;
+            const float cellW = inner.width / columns;
+            const float cellH = inner.height / rows;
+            const bool lightTheme = m_themeMode == nxui::ThemeMode::Light;
+            const nxui::Vec2 sample = m_font
+                ? m_font->measure("100%") : nxui::Vec2{48.f, 28.f};
+            const float pad = std::max(8.f, std::min(cellW, cellH) * 0.08f);
+            const float gap = std::max(10.f, cellH * 0.08f);
+            const float usableW = std::max(28.f, cellW - pad * 2.f);
+            const float usableH = std::max(28.f, cellH - pad * 2.f);
+            float percentScale = 0.56f;
+            if (sample.x > 0.f)
+                percentScale = std::min(percentScale, usableW * 0.70f / sample.x);
+            percentScale = std::clamp(percentScale, 0.46f, 0.64f);
+            const float percentH = sample.y * percentScale;
+            const float radius = std::max(18.f, std::min(usableW * 0.48f,
+                (usableH - gap - percentH) * 0.5f));
+            const float contentH = radius * 2.f + gap + percentH;
+            const nxui::Color bodyTint{0.06f, 0.06f, 0.07f, 1.f};
+            for (int i = 0; i < count; ++i) {
+                const int column = i % columns;
+                const int row = i / columns;
+                const float cellX = inner.x + cellW * column;
+                const float cellY = inner.y + cellH * row;
+                const float stackTop = cellY + (cellH - contentH) * 0.5f;
+                const nxui::Vec2 center{cellX + cellW * 0.5f, stackTop + radius};
+                const float percentY = stackTop + radius * 2.f + gap;
+                if (i == 0) {
+                    drawBatteryRing(ren, center, radius,
+                        m_consoleBatteryPercent, m_consoleBatteryCharging,
+                        BatteryGlyphKind::Console, nullptr, bodyTint,
+                        m_batteryConsoleIcon, m_batteryJoyconLeftIcon,
+                        m_batteryJoyconRightIcon, bodyTint,
+                        m_batteryRailLeft, m_batteryRailRight,
+                        m_font, m_opacity, percentY, percentScale, lightTheme);
+                } else {
+                    const auto& controller =
+                        m_controllerBatteries[static_cast<std::size_t>(i - 1)];
+                    BatteryGlyphKind kind = BatteryGlyphKind::Pro;
+                    nxui::Texture* controllerIcon = m_batteryProIcon;
+                    nxui::Color tint = controller.hasColor
+                        ? controller.tint
+                        : (lightTheme
+                            ? nxui::Color(0.16f, 0.18f, 0.22f, 1.f)
+                            : nxui::Color(0.90f, 0.92f, 0.95f, 1.f));
+                    if (controller.kind == GlossyIcon::BatteryDeviceKind::JoyLeft) {
+                        kind = BatteryGlyphKind::JoyLeft;
+                        controllerIcon = m_batteryJoyconLeftIcon;
+                        if (!controller.hasColor)
+                            tint = m_batteryRailLeft;
+                    } else if (controller.kind == GlossyIcon::BatteryDeviceKind::JoyRight) {
+                        kind = BatteryGlyphKind::JoyRight;
+                        controllerIcon = m_batteryJoyconRightIcon;
+                        if (!controller.hasColor)
+                            tint = m_batteryRailRight;
+                    }
+                    drawBatteryRing(ren, center, radius, controller.percent,
+                        controller.charging, kind, controllerIcon, tint,
+                        m_batteryConsoleIcon, m_batteryJoyconLeftIcon,
+                        m_batteryJoyconRightIcon, bodyTint,
+                        m_batteryRailLeft, m_batteryRailRight,
+                        m_font, m_opacity, percentY, percentScale, lightTheme);
+                }
+            }
             return;
         }
 
