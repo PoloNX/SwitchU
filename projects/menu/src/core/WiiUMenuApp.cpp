@@ -8164,6 +8164,17 @@ void WiiUMenuApp::applyBatterySaver(bool enabled) {
     }
 }
 
+void WiiUMenuApp::tickDisplayMode() {
+#ifdef SWITCHU_MENU
+    const int mode = static_cast<int>(appletGetOperationMode());
+    if (mode == m_lastOperationMode)
+        return;
+    DebugLog::log("[display] operation mode %d -> %d", m_lastOperationMode, mode);
+    m_lastOperationMode = mode;
+    switchu::menu::applyScreenUnderscan();
+#endif
+}
+
 void WiiUMenuApp::restoreFrameTapLightBrowse(const char* reason) {
     if (!m_frameTapLightActive)
         return;
@@ -8375,6 +8386,7 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
 
     tickFrameTapLightPath(dt);
     tickControllerBatteries(dt);
+    tickDisplayMode();
     // Plus / Minus arm here (before the grace tick) so solo taps share the same
     // first-frame timing as L/R/Y/ZL/ZR actions armed during dispatchInput.
     if (handleAccessibilityToggleCombo()) {
