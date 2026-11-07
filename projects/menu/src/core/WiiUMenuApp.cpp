@@ -7934,9 +7934,31 @@ void WiiUMenuApp::tickControllerBatteries(float dt) {
     const nxui::Color neonBlue{0.043f, 0.725f, 0.902f, 1.f};
     const nxui::Color neonRed{0.902f, 0.f, 0.071f, 1.f};
     const nxui::Color proGray{0.72f, 0.74f, 0.78f, 1.f};
-    nxui::Color railLeft = neonBlue;
-    nxui::Color railRight = neonRed;
+    // Prefer last known shell colors while docked — Handheld often drops and
+    // neon fallback made the console glyph look wrong next to a Pro-only list.
+    nxui::Color railLeft = m_batteryRailLeft;
+    nxui::Color railRight = m_batteryRailRight;
     bool railsFromHardware = false;
+
+    const auto takeRails = [&](u32 leftMain, u32 rightMain) {
+        if (leftMain == 0 && rightMain == 0)
+            return;
+        railLeft = hidTint(leftMain, railLeft.a > 0.f ? railLeft : neonBlue);
+        railRight = hidTint(rightMain, railRight.a > 0.f ? railRight : neonRed);
+        railsFromHardware = true;
+    };
+    const auto takeRailLeft = [&](u32 main) {
+        if (main == 0)
+            return;
+        railLeft = hidTint(main, railLeft.a > 0.f ? railLeft : neonBlue);
+        railsFromHardware = true;
+    };
+    const auto takeRailRight = [&](u32 main) {
+        if (main == 0)
+            return;
+        railRight = hidTint(main, railRight.a > 0.f ? railRight : neonRed);
+        railsFromHardware = true;
+    };
 
     const auto add = [&next](const HidPowerInfo& info, std::string label,
                              GlossyIcon::BatteryDeviceKind kind,
@@ -7953,15 +7975,42 @@ void WiiUMenuApp::tickControllerBatteries(float dt) {
         next.push_back(std::move(row));
     };
 
+    // Colors: Handheld when present, otherwise any wireless Joy-Con pair/side —
+    // docked sessions often lose Handheld but still expose JoyDual on No1+.
     const u32 handheldStyle = hidGetNpadStyleSet(HidNpadIdType_Handheld);
+    if (handheldStyle != 0) {
+        HidNpadControllerColor leftColor{}, rightColor{};
+        hidGetNpadControllerColorSplit(HidNpadIdType_Handheld, &leftColor, &rightColor);
+        takeRails(leftColor.main, rightColor.main);
+    }
+    if (!railsFromHardware) {
+        for (int player = 0; player < 8; ++player) {
+            const auto id = static_cast<HidNpadIdType>(HidNpadIdType_No1 + player);
+            const u32 style = hidGetNpadStyleSet(id);
+            if (style == 0 || (style & HidNpadStyleTag_NpadHandheld))
+                continue;
+            if (style & HidNpadStyleTag_NpadJoyDual) {
+                HidNpadControllerColor leftColor{}, rightColor{};
+                hidGetNpadControllerColorSplit(id, &leftColor, &rightColor);
+                takeRails(leftColor.main, rightColor.main);
+                if (railsFromHardware)
+                    break;
+            } else if (style & HidNpadStyleTag_NpadJoyLeft) {
+                HidNpadControllerColor color{};
+                hidGetNpadControllerColorSingle(id, &color);
+                takeRailLeft(color.main);
+            } else if (style & HidNpadStyleTag_NpadJoyRight) {
+                HidNpadControllerColor color{};
+                hidGetNpadControllerColorSingle(id, &color);
+                takeRailRight(color.main);
+            }
+        }
+    }
+
+    // Batteries: Joy-Cons before Pro so a docked Pro does not crowd out L/R.
     if (handheldStyle != 0) {
         HidPowerInfo left{}, right{};
         hidGetNpadPowerInfoSplit(HidNpadIdType_Handheld, &left, &right);
-        HidNpadControllerColor leftColor{}, rightColor{};
-        hidGetNpadControllerColorSplit(HidNpadIdType_Handheld, &leftColor, &rightColor);
-        railLeft = hidTint(leftColor.main, neonBlue);
-        railRight = hidTint(rightColor.main, neonRed);
-        railsFromHardware = true;
         add(left, "L", GlossyIcon::BatteryDeviceKind::JoyLeft, railLeft);
         add(right, "R", GlossyIcon::BatteryDeviceKind::JoyRight, railRight);
     }
@@ -7973,43 +8022,32 @@ void WiiUMenuApp::tickControllerBatteries(float dt) {
         if (style & HidNpadStyleTag_NpadJoyDual) {
             HidPowerInfo left{}, right{};
             hidGetNpadPowerInfoSplit(id, &left, &right);
-            HidNpadControllerColor leftColor{}, rightColor{};
-            hidGetNpadControllerColorSplit(id, &leftColor, &rightColor);
-            const nxui::Color lTint = hidTint(leftColor.main, neonBlue);
-            const nxui::Color rTint = hidTint(rightColor.main, neonRed);
-            if (!railsFromHardware) {
-                railLeft = lTint;
-                railRight = rTint;
-                railsFromHardware = true;
-            }
-            add(left, "L", GlossyIcon::BatteryDeviceKind::JoyLeft, lTint);
-            add(right, "R", GlossyIcon::BatteryDeviceKind::JoyRight, rTint);
+            add(left, "L", GlossyIcon::BatteryDeviceKind::JoyLeft, railLeft);
+            add(right, "R", GlossyIcon::BatteryDeviceKind::JoyRight, railRight);
         } else if (style & HidNpadStyleTag_NpadJoyLeft) {
             HidPowerInfo info{};
             hidGetNpadPowerInfoSingle(id, &info);
-            HidNpadControllerColor color{};
-            hidGetNpadControllerColorSingle(id, &color);
-            const nxui::Color tint = hidTint(color.main, neonBlue);
-            if (!railsFromHardware)
-                railLeft = tint;
-            add(info, "L", GlossyIcon::BatteryDeviceKind::JoyLeft, tint);
+            add(info, "L", GlossyIcon::BatteryDeviceKind::JoyLeft, railLeft);
         } else if (style & HidNpadStyleTag_NpadJoyRight) {
             HidPowerInfo info{};
             hidGetNpadPowerInfoSingle(id, &info);
-            HidNpadControllerColor color{};
-            hidGetNpadControllerColorSingle(id, &color);
-            const nxui::Color tint = hidTint(color.main, neonRed);
-            if (!railsFromHardware)
-                railRight = tint;
-            add(info, "R", GlossyIcon::BatteryDeviceKind::JoyRight, tint);
-        } else {
-            HidPowerInfo info{};
-            hidGetNpadPowerInfoSingle(id, &info);
-            HidNpadControllerColor color{};
-            hidGetNpadControllerColorSingle(id, &color);
-            add(info, std::to_string(player + 1), GlossyIcon::BatteryDeviceKind::Pro,
-                hidTint(color.main, proGray));
+            add(info, "R", GlossyIcon::BatteryDeviceKind::JoyRight, railRight);
         }
+    }
+    for (int player = 0; player < 8 && next.size() < 3; ++player) {
+        const auto id = static_cast<HidNpadIdType>(HidNpadIdType_No1 + player);
+        const u32 style = hidGetNpadStyleSet(id);
+        if (style == 0 || (style & HidNpadStyleTag_NpadHandheld))
+            continue;
+        if (style & (HidNpadStyleTag_NpadJoyDual | HidNpadStyleTag_NpadJoyLeft
+                     | HidNpadStyleTag_NpadJoyRight))
+            continue;
+        HidPowerInfo info{};
+        hidGetNpadPowerInfoSingle(id, &info);
+        HidNpadControllerColor color{};
+        hidGetNpadControllerColorSingle(id, &color);
+        add(info, std::to_string(player + 1), GlossyIcon::BatteryDeviceKind::Pro,
+            hidTint(color.main, proGray));
     }
 
     const auto colorsMatch = [](const nxui::Color& a, const nxui::Color& b) {
