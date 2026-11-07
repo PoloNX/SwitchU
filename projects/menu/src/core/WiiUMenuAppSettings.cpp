@@ -873,6 +873,9 @@ void WiiUMenuApp::createQuickSettings() {
         applyBatterySaver(enabled);
     };
     m_quickSettings->setCallbacks(callbacks);
+    m_quickSettings->onBatterySampled([this](int percent, bool charging) {
+        applyConsoleBatteryStatus(percent, charging);
+    });
     m_quickSettings->setBatterySaver(m_config.batterySaver);
     m_quickSettings->setLockScreenEnabled(m_config.lockScreenEnabled);
     m_quickSettings->setIconGlyphResolver([this](const char* fileName) {

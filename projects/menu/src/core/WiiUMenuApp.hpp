@@ -6,6 +6,7 @@
 #include <nxui/core/I18n.hpp>
 #include <nxui/Theme.hpp>
 #include "widgets/IconGrid.hpp"
+#include "widgets/GlossyIcon.hpp"
 #include "core/GridModel.hpp"
 #include "widgets/SelectionCursor.hpp"
 #include "widgets/WaraWaraBackground.hpp"
@@ -450,6 +451,8 @@ private:
     void applyFrameTapLiteBackground(bool lite);
     // Persist + sync QS/Theme Shop; enter/leave lite when FT viewer is not holding it.
     void applyBatterySaver(bool enabled);
+    void applyConsoleBatteryStatus(int percent, bool charging);
+    void tickControllerBatteries(float dt);
     void logFrameTapLightSoak(const char* tag);
     // Free GPU icon/poster memory before resume/launch so FT can remount.
     void reclaimForFrameTapLaunch(const char* reason);
@@ -691,6 +694,9 @@ private:
     nxui::Texture m_batteryConsoleTex;
     nxui::Texture m_batteryJoyconLeftTex;
     nxui::Texture m_batteryJoyconRightTex;
+    nxui::Texture m_batteryProTex;
+    nxui::Color m_batteryRailLeft{0.043f, 0.725f, 0.902f, 1.f};
+    nxui::Color m_batteryRailRight{0.902f, 0.f, 0.071f, 1.f};
     nxui::AnimatedFloat m_arrowCenterY;
     bool m_arrowCenterInit = false;
 
@@ -883,6 +889,8 @@ private:
     std::vector<std::uint8_t> m_widgetAssetKeepScratch;
     int m_consoleBatteryPercent = 0;
     bool m_consoleBatteryCharging = false;
+    std::vector<GlossyIcon::ControllerBattery> m_controllerBatteries;
+    float m_controllerBatteryAge = 8.f;
     std::vector<AppEntry> m_allApps;
     std::uint32_t m_openFolderId = 0;
     std::uint32_t m_requestedFolderId = 0;

@@ -233,6 +233,10 @@ static std::atomic<bool> g_batteryRefreshPending{true};
 // Extra forced pushes after MenuReady so a notify that races the menu's first
 // AppletStorage drain still lands (undock/redock was the only recovery before).
 static int g_batteryReadyPushesLeft = 0;
+// PSM events fire on plug/unplug, not every 1% drain. A slow heartbeat while
+// HOME is up keeps the pill in sync without a per-frame query.
+static uint64_t g_lastBatteryPollTick = 0;
+static constexpr uint64_t kBatteryHeartbeatNs = 30ULL * 1'000'000'000ULL;
 static std::atomic<Result> g_eventGcMountRc{0};
 static bool g_initialEventSkipped = false;
 static int  g_eventPollCountdown  = 0;
@@ -913,8 +917,10 @@ static bool pushBatteryStatusNotification(bool force) {
     if (!queryBatteryStatus(percent, chargerType))
         return false;
 
-    if (!force && percent == g_lastBatteryPercent && chargerType == g_lastChargerType)
+    if (!force && percent == g_lastBatteryPercent && chargerType == g_lastChargerType) {
+        g_lastBatteryPollTick = armGetSystemTick();
         return true;
+    }
 
     g_lastBatteryPercent = percent;
     g_lastChargerType = chargerType;
@@ -924,6 +930,7 @@ static bool pushBatteryStatusNotification(bool force) {
                           (unsigned)percent,
                           (unsigned)chargerType);
     pushNotification(smi::MenuMessage::BatteryStatusChanged, 0, payload);
+    g_lastBatteryPollTick = armGetSystemTick();
     return true;
 }
 
@@ -2037,6 +2044,12 @@ static void mainLoop() {
             g_batteryRefreshPending.store(false);
             if (g_batteryReadyPushesLeft > 0)
                 --g_batteryReadyPushesLeft;
+        }
+    } else if (daemon::menu_la::isActive()) {
+        const uint64_t now = armGetSystemTick();
+        if (g_lastBatteryPollTick == 0
+            || armTicksToNs(now - g_lastBatteryPollTick) >= kBatteryHeartbeatNs) {
+            pushBatteryStatusNotification(false);
         }
     }
 

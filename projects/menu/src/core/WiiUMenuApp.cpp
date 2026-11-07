@@ -1291,11 +1291,13 @@ void WiiUMenuApp::loadStaticTextures() {
     m_arrowTexRight.loadFromFile(app().gpu(), app().renderer(),
                                  std::string(SD_ASSETS) + "/icons/default/page_arrow_right.png");
     m_batteryConsoleTex.loadFromFile(app().gpu(), app().renderer(),
-                                     std::string(SD_ASSETS) + "/icons/default/widget_battery_switch.png");
+                                     std::string(SD_ASSETS) + "/icons/default/widget_battery_switch.png", 256);
     m_batteryJoyconLeftTex.loadFromFile(app().gpu(), app().renderer(),
-                                        std::string(SD_ASSETS) + "/icons/default/widget_battery_joycon_left.png");
+                                        std::string(SD_ASSETS) + "/icons/default/widget_battery_joycon_left.png", 256);
     m_batteryJoyconRightTex.loadFromFile(app().gpu(), app().renderer(),
-                                         std::string(SD_ASSETS) + "/icons/default/widget_battery_joycon_right.png");
+                                         std::string(SD_ASSETS) + "/icons/default/widget_battery_joycon_right.png", 256);
+    m_batteryProTex.loadFromFile(app().gpu(), app().renderer(),
+                                 std::string(SD_ASSETS) + "/icons/default/widget_battery_pro.png", 256);
 }
 
 void WiiUMenuApp::loadProfiles(bool loadImmediately) {
@@ -6147,12 +6149,16 @@ std::shared_ptr<GlossyIcon> WiiUMenuApp::makeIcon(const AppEntry& entry) {
             icon->setWidgetHeader(i18n.tr("widget.recently_played", "Recently played"));
         if (entry.widgetType == switchu::widgets::WidgetType::RecentPlaytime)
             icon->setWidgetHeader(i18n.tr("widget.played_recently", "Played recently"));
-        if (entry.widgetType == switchu::widgets::WidgetType::Batteries)
-        icon->setConsoleBattery(m_consoleBatteryPercent,
-                                m_consoleBatteryCharging);
+        if (entry.widgetType == switchu::widgets::WidgetType::Batteries) {
+            icon->setConsoleBattery(m_consoleBatteryPercent,
+                                    m_consoleBatteryCharging);
+            icon->setConsoleRailColors(m_batteryRailLeft, m_batteryRailRight);
+            icon->setControllerBatteries(m_controllerBatteries);
+        }
         icon->setBatteryIconTextures(&m_batteryConsoleTex,
                                      &m_batteryJoyconLeftTex,
-                                     &m_batteryJoyconRightTex);
+                                     &m_batteryJoyconRightTex,
+                                     &m_batteryProTex);
         if ((entry.widgetType == switchu::widgets::WidgetType::RecentlyPlayed ||
              entry.widgetType == switchu::widgets::WidgetType::RecentPlaytime) &&
             recent.titleId != 0) {
@@ -7867,6 +7873,175 @@ void WiiUMenuApp::leaveFrameTapLightPath(const char* reason) {
     logFrameTapLightSoak("leave");
 }
 
+void WiiUMenuApp::applyConsoleBatteryStatus(int percent, bool charging) {
+    percent = std::clamp(percent, 0, 100);
+    const bool changed = percent != m_consoleBatteryPercent
+        || charging != m_consoleBatteryCharging;
+    m_consoleBatteryPercent = percent;
+    m_consoleBatteryCharging = charging;
+    if (m_battery)
+        m_battery->setBatteryStatus(static_cast<uint32_t>(percent), charging);
+    if (m_quickSettings)
+        m_quickSettings->setBatteryStatus(percent, charging);
+    if (m_lockScreen && m_lockViewActive)
+        m_lockScreen->setBatteryStatus(percent, charging);
+    if (!changed || !m_grid)
+        return;
+    for (const auto& icon : m_grid->allIcons()) {
+        if (icon && icon->widgetType() == switchu::widgets::WidgetType::Batteries)
+            icon->setConsoleBattery(percent, charging);
+    }
+}
+
+void WiiUMenuApp::tickControllerBatteries(float dt) {
+#ifdef SWITCHU_MENU
+    if (!m_grid || m_lockViewActive || leaveSplashActive())
+        return;
+    if (m_navigator.route() != switchu::navigation::Route::Home)
+        return;
+    if ((m_quickSettings && m_quickSettings->isActive())
+        || (m_settings && m_settings->isActive())
+        || (m_themeShop && m_themeShop->isActive()))
+        return;
+
+    m_controllerBatteryAge += dt;
+    if (m_controllerBatteryAge < 8.f)
+        return;
+    m_controllerBatteryAge = 0.f;
+
+    bool haveWidget = false;
+    for (const auto& icon : m_grid->allIcons()) {
+        if (icon && icon->widgetType() == switchu::widgets::WidgetType::Batteries) {
+            haveWidget = true;
+            break;
+        }
+    }
+    if (!haveWidget) {
+        m_controllerBatteries.clear();
+        return;
+    }
+
+    std::vector<GlossyIcon::ControllerBattery> next;
+    next.reserve(3);
+    const auto hidTint = [](u32 rgba, nxui::Color fallback) {
+        if (rgba == 0)
+            return fallback;
+        return nxui::Color((rgba & 0xFFu) / 255.f,
+                           ((rgba >> 8) & 0xFFu) / 255.f,
+                           ((rgba >> 16) & 0xFFu) / 255.f,
+                           1.f);
+    };
+    const nxui::Color neonBlue{0.043f, 0.725f, 0.902f, 1.f};
+    const nxui::Color neonRed{0.902f, 0.f, 0.071f, 1.f};
+    const nxui::Color proGray{0.72f, 0.74f, 0.78f, 1.f};
+    nxui::Color railLeft = neonBlue;
+    nxui::Color railRight = neonRed;
+    bool railsFromHardware = false;
+
+    const auto add = [&next](const HidPowerInfo& info, std::string label,
+                             GlossyIcon::BatteryDeviceKind kind,
+                             nxui::Color tint) {
+        if (next.size() >= 3)
+            return;
+        GlossyIcon::ControllerBattery row;
+        row.percent = std::clamp(static_cast<int>(info.battery_level) * 25, 0, 100);
+        row.charging = info.is_charging != 0;
+        row.label = std::move(label);
+        row.kind = kind;
+        row.tint = tint;
+        row.hasColor = true;
+        next.push_back(std::move(row));
+    };
+
+    const u32 handheldStyle = hidGetNpadStyleSet(HidNpadIdType_Handheld);
+    if (handheldStyle != 0) {
+        HidPowerInfo left{}, right{};
+        hidGetNpadPowerInfoSplit(HidNpadIdType_Handheld, &left, &right);
+        HidNpadControllerColor leftColor{}, rightColor{};
+        hidGetNpadControllerColorSplit(HidNpadIdType_Handheld, &leftColor, &rightColor);
+        railLeft = hidTint(leftColor.main, neonBlue);
+        railRight = hidTint(rightColor.main, neonRed);
+        railsFromHardware = true;
+        add(left, "L", GlossyIcon::BatteryDeviceKind::JoyLeft, railLeft);
+        add(right, "R", GlossyIcon::BatteryDeviceKind::JoyRight, railRight);
+    }
+    for (int player = 0; player < 8 && next.size() < 3; ++player) {
+        const auto id = static_cast<HidNpadIdType>(HidNpadIdType_No1 + player);
+        const u32 style = hidGetNpadStyleSet(id);
+        if (style == 0 || (style & HidNpadStyleTag_NpadHandheld))
+            continue;
+        if (style & HidNpadStyleTag_NpadJoyDual) {
+            HidPowerInfo left{}, right{};
+            hidGetNpadPowerInfoSplit(id, &left, &right);
+            HidNpadControllerColor leftColor{}, rightColor{};
+            hidGetNpadControllerColorSplit(id, &leftColor, &rightColor);
+            const nxui::Color lTint = hidTint(leftColor.main, neonBlue);
+            const nxui::Color rTint = hidTint(rightColor.main, neonRed);
+            if (!railsFromHardware) {
+                railLeft = lTint;
+                railRight = rTint;
+                railsFromHardware = true;
+            }
+            add(left, "L", GlossyIcon::BatteryDeviceKind::JoyLeft, lTint);
+            add(right, "R", GlossyIcon::BatteryDeviceKind::JoyRight, rTint);
+        } else if (style & HidNpadStyleTag_NpadJoyLeft) {
+            HidPowerInfo info{};
+            hidGetNpadPowerInfoSingle(id, &info);
+            HidNpadControllerColor color{};
+            hidGetNpadControllerColorSingle(id, &color);
+            const nxui::Color tint = hidTint(color.main, neonBlue);
+            if (!railsFromHardware)
+                railLeft = tint;
+            add(info, "L", GlossyIcon::BatteryDeviceKind::JoyLeft, tint);
+        } else if (style & HidNpadStyleTag_NpadJoyRight) {
+            HidPowerInfo info{};
+            hidGetNpadPowerInfoSingle(id, &info);
+            HidNpadControllerColor color{};
+            hidGetNpadControllerColorSingle(id, &color);
+            const nxui::Color tint = hidTint(color.main, neonRed);
+            if (!railsFromHardware)
+                railRight = tint;
+            add(info, "R", GlossyIcon::BatteryDeviceKind::JoyRight, tint);
+        } else {
+            HidPowerInfo info{};
+            hidGetNpadPowerInfoSingle(id, &info);
+            HidNpadControllerColor color{};
+            hidGetNpadControllerColorSingle(id, &color);
+            add(info, std::to_string(player + 1), GlossyIcon::BatteryDeviceKind::Pro,
+                hidTint(color.main, proGray));
+        }
+    }
+
+    const auto colorsMatch = [](const nxui::Color& a, const nxui::Color& b) {
+        return a.r == b.r && a.g == b.g && a.b == b.b;
+    };
+    const bool same = next.size() == m_controllerBatteries.size()
+        && colorsMatch(railLeft, m_batteryRailLeft)
+        && colorsMatch(railRight, m_batteryRailRight)
+        && std::equal(next.begin(), next.end(), m_controllerBatteries.begin(),
+                      [&colorsMatch](const GlossyIcon::ControllerBattery& a,
+                                     const GlossyIcon::ControllerBattery& b) {
+                          return a.percent == b.percent && a.charging == b.charging
+                              && a.label == b.label && a.kind == b.kind
+                              && a.hasColor == b.hasColor
+                              && colorsMatch(a.tint, b.tint);
+                      });
+    if (same)
+        return;
+    m_controllerBatteries = std::move(next);
+    m_batteryRailLeft = railLeft;
+    m_batteryRailRight = railRight;
+    for (const auto& icon : m_grid->allIcons()) {
+        if (icon && icon->widgetType() == switchu::widgets::WidgetType::Batteries) {
+            icon->setConsoleRailColors(m_batteryRailLeft, m_batteryRailRight);
+            icon->setControllerBatteries(m_controllerBatteries);
+        }
+    }
+#else
+    (void)dt;
+#endif
+}
+
 void WiiUMenuApp::applyBatterySaver(bool enabled) {
     if (m_config.batterySaver != enabled) {
         m_config.batterySaver = enabled;
@@ -8100,6 +8275,7 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
     }
 
     tickFrameTapLightPath(dt);
+    tickControllerBatteries(dt);
     // Plus / Minus arm here (before the grace tick) so solo taps share the same
     // first-frame timing as L/R/Y/ZL/ZR actions armed during dispatchInput.
     if (handleAccessibilityToggleCombo()) {
@@ -8943,30 +9119,15 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
                 }
                 break;
             }
-            case switchu::smi::MenuMessage::BatteryStatusChanged:
-                if (m_battery) {
-                    const uint32_t percent = switchu::smi::batteryPayloadPercentage(notif.payload);
-                    const bool charging = switchu::smi::batteryPayloadCharging(notif.payload);
-                    m_consoleBatteryPercent = static_cast<int>(percent);
-                    m_consoleBatteryCharging = charging;
-                    m_battery->setBatteryStatus(percent, charging);
-                    if (m_quickSettings)
-                        m_quickSettings->setBatteryStatus(
-                            static_cast<int>(percent), charging);
-                    if (m_lockScreen && m_lockViewActive)
-                        m_lockScreen->setBatteryStatus(static_cast<int>(percent), charging);
-                    if (m_grid) {
-                        for (const auto& icon : m_grid->allIcons()) {
-                            if (icon && icon->entryKind() == GridEntryKind::Widget)
-                                icon->setConsoleBattery(m_consoleBatteryPercent,
-                                                        m_consoleBatteryCharging);
-                        }
-                    }
-                    DebugLog::log("[battery] daemon status percent=%u charging=%d",
-                                  (unsigned)percent,
-                                  charging ? 1 : 0);
-                }
+            case switchu::smi::MenuMessage::BatteryStatusChanged: {
+                const uint32_t percent = switchu::smi::batteryPayloadPercentage(notif.payload);
+                const bool charging = switchu::smi::batteryPayloadCharging(notif.payload);
+                applyConsoleBatteryStatus(static_cast<int>(percent), charging);
+                DebugLog::log("[battery] daemon status percent=%u charging=%d",
+                              (unsigned)percent,
+                              charging ? 1 : 0);
                 break;
+            }
             case switchu::smi::MenuMessage::ShowLock:
                 if (m_config.lockScreenEnabled)
                     enterLockView(false);

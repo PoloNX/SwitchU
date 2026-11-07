@@ -116,10 +116,30 @@ public:
         m_consoleBatteryPercent = std::clamp(percentage, 0, 100);
         m_consoleBatteryCharging = charging;
     }
+    enum class BatteryDeviceKind { JoyLeft, JoyRight, Pro };
+    struct ControllerBattery {
+        int percent = 0;
+        bool charging = false;
+        std::string label;
+        BatteryDeviceKind kind = BatteryDeviceKind::Pro;
+        nxui::Color tint{1.f, 1.f, 1.f, 1.f};
+        bool hasColor = false;
+    };
+    void setControllerBatteries(std::vector<ControllerBattery> batteries) {
+        m_controllerBatteries = std::move(batteries);
+    }
+    void setConsoleRailColors(nxui::Color left, nxui::Color right) {
+        m_batteryRailLeft = left;
+        m_batteryRailRight = right;
+    }
     void setBatteryIconTextures(nxui::Texture* console,
-                                nxui::Texture*,
-                                nxui::Texture*) {
+                                nxui::Texture* joyconLeft,
+                                nxui::Texture* joyconRight,
+                                nxui::Texture* pro = nullptr) {
         m_batteryConsoleIcon = console;
+        m_batteryJoyconLeftIcon = joyconLeft;
+        m_batteryJoyconRightIcon = joyconRight;
+        m_batteryProIcon = pro;
     }
     void setWideGameTextures(nxui::Texture* hero, nxui::Texture* logo) {
         m_wideGameHero = hero;
@@ -177,7 +197,13 @@ private:
     float       m_suspendPulse = 0.f;
     int         m_consoleBatteryPercent = 0;
     bool        m_consoleBatteryCharging = false;
+    std::vector<ControllerBattery> m_controllerBatteries;
     nxui::Texture* m_batteryConsoleIcon = nullptr;
+    nxui::Texture* m_batteryJoyconLeftIcon = nullptr;
+    nxui::Texture* m_batteryJoyconRightIcon = nullptr;
+    nxui::Texture* m_batteryProIcon = nullptr;
+    nxui::Color m_batteryRailLeft{0.043f, 0.725f, 0.902f, 1.f};
+    nxui::Color m_batteryRailRight{0.902f, 0.f, 0.071f, 1.f};
 
     nxui::AnimatedFloat m_animScale;
     nxui::AnimatedFloat m_appearOpacity;

@@ -1961,15 +1961,14 @@ void QuickSettingsOverlay::refreshHardwareStatus() {
         m_wifiEnabled = wf;
     }
 
-    if (m_batteryPercent < 0) {
-        u32 pct = 0;
-        if (R_SUCCEEDED(psmGetBatteryChargePercentage(&pct))) {
-            m_batteryPercent = static_cast<int>(pct);
-            PsmChargerType ct = PsmChargerType_Unconnected;
-            if (R_SUCCEEDED(psmGetChargerType(&ct))) {
-                m_batteryCharging = (ct != PsmChargerType_Unconnected);
-            }
-        }
+    u32 pct = 0;
+    if (R_SUCCEEDED(psmGetBatteryChargePercentage(&pct))) {
+        m_batteryPercent = static_cast<int>(std::min(pct, 100u));
+        PsmChargerType ct = PsmChargerType_Unconnected;
+        if (R_SUCCEEDED(psmGetChargerType(&ct)))
+            m_batteryCharging = (ct != PsmChargerType_Unconnected);
+        if (m_batterySampledCb)
+            m_batterySampledCb(m_batteryPercent, m_batteryCharging);
     }
 
     s32 soc = 0;
