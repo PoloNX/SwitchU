@@ -2867,9 +2867,11 @@ void WiiUMenuApp::handleSystemAction(SysAction a) {
             break;
         }
         case SysAction::OperationModeChanged: {
-            DebugLog::log("[display] OperationModeChanged -> apply layer fit");
-            switchu::menu::applyScreenUnderscan();
-            m_lastOperationMode = static_cast<int>(appletGetOperationMode());
+            // Prefer daemon-forwarded mode (payload path). Fallback query is
+            // often stale — library applet rarely processes msg=30 itself.
+            DebugLog::log("[display] OperationModeChanged -> apply layer fit mode=%d",
+                          m_lastOperationMode);
+            switchu::menu::applyScreenUnderscan(m_lastOperationMode);
             break;
         }
         case SysAction::HomeButton: {

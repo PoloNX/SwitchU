@@ -22,6 +22,9 @@ enum class MenuMessage : uint32_t {
     BatteryStatusChanged  = 10,
     OperationFailed       = 11,
     ShowLock              = 12, // power-button Lock mode: show Lock, stay awake
+    // Daemon saw AppletMessage_OperationModeChanged (dock/TV ↔ handheld).
+    // payload = AppletOperationMode (0 handheld, 1 console).
+    OperationModeChanged  = 13,
 };
 
 enum class SystemMessage : uint32_t {

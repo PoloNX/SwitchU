@@ -1359,6 +1359,15 @@ static void handleAppletMessages() {
         return;
 
     switchu::FileLog::log("[ae] msg=%u", msg);
+
+    // appletGetMessage only dequeues — libnx caches (operation/performance/
+    // focus) refresh in appletProcessMessage. Do that before we read mode.
+    if (msg == AppletMessage_OperationModeChanged
+        || msg == AppletMessage_PerformanceModeChanged
+        || msg == AppletMessage_FocusStateChanged) {
+        appletProcessMessage(msg);
+    }
+
     switch (msg) {
         case 1:
         switchu::FileLog::log("[ae] -> ChangeIntoForeground");
@@ -1413,10 +1422,23 @@ static void handleAppletMessages() {
         }
         if (daemon::menu_la::isActive()) {
             pushNotification(smi::MenuMessage::WakeUp);
+            // Menu libnx mode cache is stale across sleep; re-send current mode
+            // so layer fit matches TV vs LCD after wake.
+            const auto mode = static_cast<uint32_t>(appletGetOperationMode());
+            pushNotification(smi::MenuMessage::OperationModeChanged, 0, mode);
         } else if (!daemon::app::isRunning()) {
             daemon::menu_la::launch(smi::MenuStartMode::MainMenu, buildSystemStatus());
         }
         break;
+
+        case AppletMessage_OperationModeChanged: {
+            // Live dock/undock: tell the menu so it can resize its VI layer.
+            // payload carries Console(1)/Handheld(0) — menu libnx cache is stale.
+            const auto mode = static_cast<uint32_t>(appletGetOperationMode());
+            switchu::FileLog::log("[ae] -> OperationModeChanged mode=%u", mode);
+            pushNotification(smi::MenuMessage::OperationModeChanged, 0, mode);
+            break;
+        }
     }
 }
 
