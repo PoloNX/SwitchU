@@ -2,6 +2,7 @@
 #include "core/DebugLog.hpp"
 #include "services/ClockService.hpp"
 #include "smi_commands.hpp"
+#include "services/SystemTime.hpp"
 #include <nxui/core/I18n.hpp>
 #include <switch.h>
 #include <algorithm>
@@ -105,10 +106,10 @@ bool SystemTab::anyClockSyncEnabled(const SettingsScreen& screen) {
 }
 
 bool currentDateTimeValue(TabbedOverlayScreen::DateTimeEditorValue& value) {
-    u64 timestamp = 0;
+    std::uint64_t timestamp = 0;
     TimeCalendarTime calendar{};
     TimeCalendarAdditionalInfo additional{};
-    if (R_FAILED(timeGetCurrentTime(TimeType_UserSystemClock, &timestamp)) ||
+    if (R_FAILED(switchu::services::system_time::currentPosixTime(&timestamp)) ||
         R_FAILED(timeToCalendarTimeWithMyRule(timestamp, &calendar, &additional)))
         return false;
     value.year = calendar.year;

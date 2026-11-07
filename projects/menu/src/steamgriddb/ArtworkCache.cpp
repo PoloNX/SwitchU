@@ -1,5 +1,6 @@
 #include "ArtworkCache.hpp"
 
+#include "core/ChunkedIo.hpp"
 #include "core/DebugLog.hpp"
 
 #include <nxui/third_party/stb/stb_image.h>
@@ -12,6 +13,7 @@
 #include <mutex>
 #include <system_error>
 #include <unordered_map>
+#include <vector>
 
 namespace {
 
@@ -34,6 +36,22 @@ struct ArtworkCacheHeader {
     std::uint64_t payloadSize = 0;
 };
 static_assert(sizeof(ArtworkCacheHeader) == 40);
+
+// stbi_load reads through stdio about a kilobyte at a time, so a multi-MB
+// SteamGridDB PNG cost thousands of SD round trips (load=561ms for a 4.4 MB
+// logo). Read the file in large chunks and decode from memory instead.
+stbi_uc* loadSourceRgba(const std::string& source, int& width, int& height,
+                        int& channels) {
+    std::ifstream input(source, std::ios::binary | std::ios::ate);
+    if (!input) return nullptr;
+    const std::streamoff size = input.tellg();
+    if (size <= 0 || size > (64ll << 20)) return nullptr;
+    input.seekg(0);
+    std::vector<stbi_uc> bytes(static_cast<std::size_t>(size));
+    if (!switchu::io::readChunked(input, bytes.data(), bytes.size())) return nullptr;
+    return stbi_load_from_memory(bytes.data(), static_cast<int>(bytes.size()),
+                                 &width, &height, &channels, 4);
+}
 
 struct SourceStamp {
     std::uint64_t size = 0;
@@ -177,9 +195,7 @@ bool loadFit(const std::string& source, int maxWidth, int maxHeight,
     }
 
     rgba.resize(static_cast<std::size_t>(header.payloadSize));
-    input.read(reinterpret_cast<char*>(rgba.data()),
-               static_cast<std::streamsize>(header.payloadSize));
-    if (!input) {
+    if (!switchu::io::readChunked(input, rgba.data(), rgba.size())) {
         rgba.clear();
         return false;
     }
@@ -216,8 +232,7 @@ void saveFit(const std::string& source, int maxWidth, int maxHeight,
     std::ofstream output(temporaryPath, std::ios::binary | std::ios::trunc);
     if (!output) return;
     output.write(reinterpret_cast<const char*>(&header), sizeof(header));
-    output.write(reinterpret_cast<const char*>(rgba.data()),
-                 static_cast<std::streamsize>(rgba.size()));
+    switchu::io::writeChunked(output, rgba.data(), rgba.size());
     output.close();
     if (!output) {
         std::error_code cleanupEc;
@@ -261,8 +276,7 @@ bool load(const std::string& source, int width, int height,
     }
 
     rgba.resize(static_cast<std::size_t>(expected));
-    input.read(reinterpret_cast<char*>(rgba.data()), static_cast<std::streamsize>(expected));
-    if (!input) {
+    if (!switchu::io::readChunked(input, rgba.data(), rgba.size())) {
         rgba.clear();
         return false;
     }
@@ -293,8 +307,7 @@ void save(const std::string& source, int width, int height,
     std::ofstream output(temporaryPath, std::ios::binary | std::ios::trunc);
     if (!output) return;
     output.write(reinterpret_cast<const char*>(&header), sizeof(header));
-    output.write(reinterpret_cast<const char*>(rgba.data()),
-                 static_cast<std::streamsize>(rgba.size()));
+    switchu::io::writeChunked(output, rgba.data(), rgba.size());
     output.close();
     if (!output) {
         std::error_code cleanupEc;
@@ -328,7 +341,7 @@ DecodedImage decode(const std::string& source, int outputWidth, int outputHeight
 
     const auto loadStarted = std::chrono::steady_clock::now();
     int width = 0, height = 0, channels = 0;
-    stbi_uc* raw = stbi_load(source.c_str(), &width, &height, &channels, 4);
+    stbi_uc* raw = loadSourceRgba(source, width, height, channels);
     if (!raw || width <= 0 || height <= 0) {
         if (raw) stbi_image_free(raw);
         return out;
@@ -413,7 +426,7 @@ DecodedImage decodeFit(const std::string& source, int maxWidth, int maxHeight) {
 
     const auto loadStarted = std::chrono::steady_clock::now();
     int width = 0, height = 0, channels = 0;
-    stbi_uc* raw = stbi_load(source.c_str(), &width, &height, &channels, 4);
+    stbi_uc* raw = loadSourceRgba(source, width, height, channels);
     if (!raw || width <= 0 || height <= 0) {
         if (raw) stbi_image_free(raw);
         return out;
