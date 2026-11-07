@@ -127,6 +127,8 @@ public:
     }
     nxui::Texture* wideGameHero() const { return m_wideGameHero; }
     nxui::Texture* wideGameLogo() const { return m_wideGameLogo; }
+    void setTallGamePoster(nxui::Texture* poster) { m_tallGamePoster = poster; }
+    nxui::Texture* tallGamePoster() const { return m_tallGamePoster; }
     int gridSpanColumns() const { return m_widgetColumns; }
     int gridSpanRows() const { return m_widgetRows; }
 
@@ -165,6 +167,7 @@ private:
     nxui::Texture*    m_gameCardTex = nullptr;
     nxui::Texture*    m_wideGameHero = nullptr;
     nxui::Texture*    m_wideGameLogo = nullptr;
+    nxui::Texture*    m_tallGamePoster = nullptr;
     uint64_t    m_titleId = 0;
     bool        m_focused = false;
     bool        m_focusable = true;

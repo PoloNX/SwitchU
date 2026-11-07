@@ -1152,10 +1152,12 @@ void WiiUMenuApp::clearSteamGridDbArtwork(std::uint64_t titleId,
     }
     if (managerKind == SteamGridDbManager::ArtworkKind::GridWide
         || managerKind == SteamGridDbManager::ArtworkKind::Hero
-        || managerKind == SteamGridDbManager::ArtworkKind::Logo) {
+        || managerKind == SteamGridDbManager::ArtworkKind::Logo
+        || managerKind == SteamGridDbManager::ArtworkKind::Poster) {
         m_gameArtwork.erase(titleId);
         const auto size = gameGridSize(titleId, AppLayoutMode::Grid);
-        if (switchu::widgets::isLandscapeWideGameTile(size))
+        if (switchu::widgets::isLandscapeWideGameTile(size)
+            || switchu::widgets::isTallPosterGameTile(size))
             ensureGameArtwork(titleId);
     }
     showFocusedSteamGridDbArtwork(true);
@@ -1378,10 +1380,12 @@ void WiiUMenuApp::syncSteamGridDb() {
             }
             if (result.kind == SteamGridDbManager::ArtworkKind::GridWide
                 || result.kind == SteamGridDbManager::ArtworkKind::Hero
-                || result.kind == SteamGridDbManager::ArtworkKind::Logo) {
+                || result.kind == SteamGridDbManager::ArtworkKind::Logo
+                || result.kind == SteamGridDbManager::ArtworkKind::Poster) {
                 m_gameArtwork.erase(result.titleId);
                 const auto size = gameGridSize(result.titleId, AppLayoutMode::Grid);
-                if (switchu::widgets::isLandscapeWideGameTile(size))
+                if (switchu::widgets::isLandscapeWideGameTile(size)
+                    || switchu::widgets::isTallPosterGameTile(size))
                     ensureGameArtwork(result.titleId);
             }
             if (m_grid && m_openFolderId == 0 &&
@@ -1495,7 +1499,8 @@ void WiiUMenuApp::syncSteamGridDb() {
                 const auto tid = icon->titleId();
                 const int cols = icon->gridSpanColumns();
                 const int rows = icon->gridSpanRows();
-                if (switchu::widgets::isLandscapeWideGameTile(cols, rows)) {
+                if (switchu::widgets::isLandscapeWideGameTile(cols, rows)
+                    || switchu::widgets::isTallPosterGameTile(cols, rows)) {
                     m_gameArtwork.erase(tid);
                     ensureGameArtwork(tid);
                 } else if (preferPosterIconData(tid) && !preferPosterTiles) {

@@ -497,6 +497,7 @@ void GlossyIcon::copyWidgetPresentationFrom(GlossyIcon& source) {
     m_widgetGameIcon = source.m_widgetGameIcon;
     m_wideGameHero = source.m_wideGameHero;
     m_wideGameLogo = source.m_wideGameLogo;
+    m_tallGamePoster = source.m_tallGamePoster;
     m_widgetExternalTexture = source.m_widgetAnimation.hasFrames()
         ? source.m_widgetAnimation.currentFrame()
         : source.m_widgetTexture.get();
@@ -1001,16 +1002,20 @@ void GlossyIcon::onContentRender(nxui::Renderer& ren) {
         switchu::widgets::isLandscapeWideGameTile(m_widgetColumns, m_widgetRows);
     // Tall poster face: 2x3 (and legacy 1x2). 2x2 / 1x1 always use the icon path.
     const bool tallPosterTile =
-        (m_widgetColumns == 2 && m_widgetRows == 3)
-        || (m_widgetColumns == 1 && m_widgetRows == 2);
+        switchu::widgets::isTallPosterGameTile(m_widgetColumns, m_widgetRows);
 
     if (m_entryKind == GridEntryKind::Application && tallPosterTile) {
         const nxui::Rect card = r.shrunk(std::max(8.f, 10.f * s));
         const float contentRadius = std::max(8.f, rad - 5.f);
-        if (m_tex && m_tex->valid()) {
+        // Prefer dedicated high-res game-artwork poster (same treatment as
+        // 4x2 hero); fall back to streamer icon/poster while it loads.
+        nxui::Texture* face = (m_tallGamePoster && m_tallGamePoster->valid())
+            ? m_tallGamePoster
+            : m_tex;
+        if (face && face->valid()) {
             // Cover-fit so poster/icon aspect is never stretched into the cell.
             ren.drawTextureSubRounded(
-                m_tex, centeredCoverSource(*m_tex, card), card,
+                face, centeredCoverSource(*face, card), card,
                 contentRadius, nxui::Color::white().withAlpha(m_opacity));
         } else {
             ren.drawRoundedRect(card,
