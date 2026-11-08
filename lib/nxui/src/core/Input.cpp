@@ -67,13 +67,37 @@ uint64_t mapSidewaysJoyCon(const HidNpadCommonState& state, bool left,
 }
 
 size_t readNpadState(HidNpadIdType id, uint32_t style, HidNpadCommonState& state) {
+    // GameCube uses a sibling state (same button/stick lifo as FullKey plus
+    // analog triggers). Prefer it when the pad is in Gc style so we do not
+    // miss adapters that only advertise NpadGc.
+    if (style & HidNpadStyleTag_NpadGc) {
+        HidNpadGcState gc{};
+        const size_t n = hidGetNpadStatesGc(id, &gc, 1);
+        if (n == 0)
+            return 0;
+        state.sampling_number = gc.sampling_number;
+        state.buttons = gc.buttons;
+        state.analog_stick_l = gc.analog_stick_l;
+        state.analog_stick_r = gc.analog_stick_r;
+        state.attributes = gc.attributes;
+        state.reserved = 0;
+        return n;
+    }
     if (style & HidNpadStyleTag_NpadFullKey)  return hidGetNpadStatesFullKey(id, &state, 1);
     if (style & HidNpadStyleTag_NpadHandheld) return hidGetNpadStatesHandheld(id, &state, 1);
     if (style & HidNpadStyleTag_NpadJoyDual)  return hidGetNpadStatesJoyDual(id, &state, 1);
     if (style & HidNpadStyleTag_NpadJoyLeft)  return hidGetNpadStatesJoyLeft(id, &state, 1);
     if (style & HidNpadStyleTag_NpadJoyRight) return hidGetNpadStatesJoyRight(id, &state, 1);
+    if (style & HidNpadStyleTag_NpadSystemExt) return hidGetNpadStatesSystemExt(id, &state, 1);
     return 0;
 }
+
+// Standard Joy/Pro set plus GameCube adapters and generic external pads so
+// Player 2+ / USB GC can drive HOME (issue #99). NpadStandard alone drops Gc.
+constexpr uint32_t kSupportedNpadStyles =
+    HidNpadStyleSet_NpadStandard
+    | HidNpadStyleTag_NpadGc
+    | HidNpadStyleTag_NpadSystemExt;
 
 constexpr HidNpadIdType kNpadIds[] = {
     HidNpadIdType_Handheld,
@@ -84,7 +108,7 @@ constexpr HidNpadIdType kNpadIds[] = {
 } // namespace
 
 void Input::initialize() {
-    padConfigureInput(8, HidNpadStyleSet_NpadStandard);
+    padConfigureInput(8, kSupportedNpadStyles);
     hidInitializeTouchScreen();
 }
 
@@ -111,7 +135,9 @@ void Input::update() {
 
         const bool single = !(style & (HidNpadStyleTag_NpadFullKey
                                        | HidNpadStyleTag_NpadHandheld
-                                       | HidNpadStyleTag_NpadJoyDual));
+                                       | HidNpadStyleTag_NpadJoyDual
+                                       | HidNpadStyleTag_NpadGc
+                                       | HidNpadStyleTag_NpadSystemExt));
         const bool leftJoyCon = single && (style & HidNpadStyleTag_NpadJoyLeft);
         const bool rightJoyCon = single && (style & HidNpadStyleTag_NpadJoyRight);
         if (leftJoyCon || rightJoyCon) {
