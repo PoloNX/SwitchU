@@ -6,6 +6,7 @@
 #include <string>
 #include <unordered_map>
 #include <list>
+#include <vector>
 
 namespace nxui {
 
@@ -17,8 +18,20 @@ public:
     Font() = default;
     ~Font();
 
+    Font(const Font&) = delete;
+    Font& operator=(const Font&) = delete;
+
     bool load(GpuDevice& gpu, Renderer& ren,
               const std::string& path, int ptSize);
+
+    // Open a TTF/OTF already mapped in memory (e.g. pl shared font). The buffer
+    // must outlive this Font (Nintendo sharedmem does).
+    bool loadFromMemory(GpuDevice& gpu, Renderer& ren,
+                        const void* data, std::size_t size, int ptSize);
+
+    // Extra faces consulted when the primary font lacks a glyph (CJK).
+    bool addFallbackFromMemory(const void* data, std::size_t size);
+    void clearFallbacks();
 
     // Render a string to a texture (cached) and draw it
     void draw(Renderer& ren, const std::string& text,
@@ -38,12 +51,17 @@ public:
 
     int ptSize() const { return m_ptSize; }
     std::uint64_t revision() const { return m_revision; }
+    bool valid() const { return m_font != nullptr; }
 
 private:
-    // Render full string to texture (cache by string)
     Texture* getOrRender(GpuDevice& gpu, Renderer& ren, const std::string& text);
+    SDL_Surface* renderTextSurface(const std::string& text) const;
+    TTF_Font* fontForCodepoint(std::uint32_t cp) const;
+    bool primaryCovers(const std::string& text) const;
+    void closePrimary();
 
     TTF_Font* m_font = nullptr;
+    std::vector<TTF_Font*> m_fallbacks;
     int       m_ptSize = 0;
     GpuDevice* m_gpu = nullptr;
     Renderer*  m_ren = nullptr;
