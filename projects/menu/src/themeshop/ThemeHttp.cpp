@@ -24,6 +24,11 @@ std::mutex g_themeHttpMutex;
 bool g_nifmInitialized = false;
 bool g_socketInitialized = false;
 bool g_curlInitialized = false;
+// DNS answers and open connections shared by every request. Requests are
+// serialized by g_themeHttpMutex, so the share needs no lock callbacks. Art
+// downloads hit the same two hosts back to back; without this each one paid a
+// fresh DNS lookup and TLS handshake.
+CURLSH* g_share = nullptr;
 
 constexpr int kRequestAttemptCount = 2;
 
@@ -38,6 +43,10 @@ bool runtimeInitializedLocked() {
 }
 
 void shutdownRuntimeLocked() {
+    if (g_share) {
+        curl_share_cleanup(g_share);
+        g_share = nullptr;
+    }
     if (g_curlInitialized) {
         curl_global_cleanup();
         g_curlInitialized = false;
@@ -86,6 +95,14 @@ bool initializeRuntimeLocked() {
         g_curlInitialized = true;
     }
 
+    if (!g_share) {
+        g_share = curl_share_init();
+        if (g_share) {
+            curl_share_setopt(g_share, CURLSHOPT_SHARE, CURL_LOCK_DATA_DNS);
+            curl_share_setopt(g_share, CURLSHOPT_SHARE, CURL_LOCK_DATA_CONNECT);
+        }
+    }
+
     DebugLog::log("[themeshop] http runtime ready");
     return true;
 }
@@ -113,6 +130,8 @@ void configureRequest(curlpp::Easy& request,
                       const themeshop::http::ProgressCallback& onProgress = {},
                       const themeshop::http::AbortCheck& shouldAbort = {}) {
     request.setOpt<curlpp::options::Url>(url);
+    if (g_share)
+        curl_easy_setopt(request.getHandle(), CURLOPT_SHARE, g_share);
     request.setOpt<curlpp::options::FollowLocation>(true);
     request.setOpt<curlpp::options::NoSignal>(true);
     request.setOpt<curlpp::options::ConnectTimeout>(12L);

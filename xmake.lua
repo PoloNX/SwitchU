@@ -210,6 +210,8 @@ target("SwitchU")
         add_linkorders(is_mode("debug") and "deko3dd" or "deko3d", "nx")
     end
     add_syslinks("nx")
+    -- CLOCK_MONOTONIC from the CPU counter (projects/menu/src/services/SystemTime.cpp).
+    add_ldflags("-Wl,--wrap=clock_gettime", {force = true})
 
     if is_mode("release") then
         add_cxflags("-O3", "-ffast-math", {force = true})

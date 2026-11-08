@@ -5,6 +5,7 @@
 #include "tutorial/TutorialActivity.hpp"
 #include "screen_fit.hpp"
 #include "usb/Mtp.hpp"
+#include "services/SystemTime.hpp"
 #include <nxui/Application.hpp>
 #include <nxui/core/GpuDevice.hpp>
 #include <fmt/format.h>
@@ -237,7 +238,9 @@ extern "C" void __appInit(void) {
     rc = hidInitialize();
     if (R_FAILED(rc)) svcOutputDebugString("[SwitchU-menu] hidInitialize FAIL", 33);
 
-    timeInitialize();
+    // On a HOME return this can fail or answer before the clocks are set;
+    // services/SystemTime recovers both later (logged once the SD log is open).
+    const Result timeRc = timeInitialize();
     __libnx_init_time();
     setsysInitialize();
     setInitialize();
@@ -263,6 +266,8 @@ extern "C" void __appInit(void) {
     switchu::FileLog::open("menu");
     DebugLog::openFileLog();
     DebugLog::log("[menu] __appInit complete (sd mount: 0x%X)", rc);
+    DebugLog::log("[time] timeInitialize rc=0x%X", timeRc);
+    switchu::services::system_time::logBootState();
     // Grow off the boot-lean heap when Frame Tap is not installed.
     expandHeapIfNoFrameTap();
 

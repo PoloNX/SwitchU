@@ -5,6 +5,7 @@
 #include "smi_commands.hpp"
 #include "services/ClockService.hpp"
 #include "themeshop/ThemeHttp.hpp"
+#include "services/SystemTime.hpp"
 #include <nxui/core/I18n.hpp>
 #include <switch.h>
 #include <chrono>
@@ -301,6 +302,7 @@ void SettingsScreen::pollClockSync() {
         failureOnly ? 1 : 0);
 
     if (R_SUCCEEDED(applyRc)) {
+        switchu::services::system_time::reseedWallClock("web clock sync");
         m_clockVerifyPosix = fetched.posixUtc;
         m_clockVerifyFrames = 60 * 3;
         m_clockVerifyQuiet = failureOnly;

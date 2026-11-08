@@ -157,7 +157,7 @@ public:
         if (!m_file.is_open())
             return;
         if (m_pending.empty())
-            m_pending_since = std::time(nullptr);
+            m_pending_since = uptime_seconds();
         m_pending.append(line);
         m_pending.push_back('\n');
         if (m_pending.size() >= flush_threshold_bytes)
@@ -169,7 +169,7 @@ public:
     void flush_if_stale(std::time_t max_age_seconds) {
         if (m_pending.empty())
             return;
-        if (std::time(nullptr) - m_pending_since >= max_age_seconds)
+        if (uptime_seconds() - m_pending_since >= max_age_seconds)
             flush();
     }
 
@@ -189,6 +189,12 @@ public:
     }
 
 private:
+    // The wall clock can be unavailable for a whole process (HOME return), so
+    // age is measured on the CPU counter.
+    static std::time_t uptime_seconds() {
+        return static_cast<std::time_t>(armTicksToNs(armGetSystemTick()) / 1'000'000'000ULL);
+    }
+
     std::ofstream m_file;
     std::string m_pending;
     std::time_t m_pending_since = 0;
