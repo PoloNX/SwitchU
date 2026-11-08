@@ -376,6 +376,7 @@ protected:
     int  m_dropdownVisible = 6;
 
     bool m_stashFocusRestore = false;
+    int  m_stashTabIndex = 0;
     int  m_stashContentIdx = 0;
     float m_stashScrollY = 0.f;
     FocusArea m_stashFocusArea = FocusArea::Content;

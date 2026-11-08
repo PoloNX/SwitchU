@@ -18,6 +18,7 @@ float easeInCubic(float t) {
 
 void TabbedOverlayScreen::stashFocusForLanguageRestore() {
     m_stashFocusRestore = true;
+    m_stashTabIndex = m_tabIndex;
     m_stashContentIdx = m_contentIdx;
     m_stashScrollY = m_scrollTarget;
     m_stashFocusArea = m_focusArea;
@@ -26,6 +27,13 @@ void TabbedOverlayScreen::stashFocusForLanguageRestore() {
 bool TabbedOverlayScreen::applyStashedFocusRestore() {
     if (!m_stashFocusRestore || !canApplyStashedFocusRestore())
         return false;
+
+    // User left the tab that triggered the language refresh — drop the stash
+    // instead of restoring content/scroll onto a different tab.
+    if (m_tabIndex != m_stashTabIndex) {
+        m_stashFocusRestore = false;
+        return false;
+    }
 
     m_stashFocusRestore = false;
     m_focusArea = m_stashFocusArea;
