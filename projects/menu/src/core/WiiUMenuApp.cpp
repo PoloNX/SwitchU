@@ -1014,8 +1014,8 @@ bool WiiUMenuApp::onCreate() {
                       switchu::menu::currentHeapSizeBytes() / 1024u);
     }
     m_iconStreamer.setThreadPool(&m_threadPool);
-    // Per-title poster (2x3 grid tiles) even when the global single-row flag
-    // is off — including Battery Saver / Frame Tap lite.
+    // Per-title poster query (single-row / legacy). Grid 2x3 uses dedicated
+    // game-artwork posters instead of the streamer fit budget.
     m_iconStreamer.setPreferPosterQuery([this](uint64_t titleId) {
         return preferPosterIconData(titleId);
     });
@@ -2730,15 +2730,6 @@ void WiiUMenuApp::completeDisplayModelApply(
         m_grid->rebindLayoutMorphAnchor();
     if (artKindChanged)
         m_iconStreamer.startBurst(0.85f);
-    // 2x3 tiles always want poster when available — drop prefetch icon bytes
-    // so the loader can supply poster even with single-row posters disabled.
-    if (m_appLayoutMode == AppLayoutMode::Grid) {
-        for (int i = 0; i < m_model.count(); ++i) {
-            const auto& entry = m_model.at(i);
-            if (entry.isApplication() && preferPosterIconData(entry.titleId))
-                m_iconStreamer.invalidateTitleArt(entry.titleId);
-        }
-    }
     {
         int page = 0, pageSize = 1;
         if (m_appLayoutMode == AppLayoutMode::DynamicLine) {
@@ -3058,45 +3049,61 @@ void WiiUMenuApp::startNextGameArtworkDecode() {
     m_gameArtworkDecodeQueue.erase(m_gameArtworkDecodeQueue.begin());
     auto state = std::make_shared<GameArtworkDecodeState>();
     state->titleId = titleId;
+    const auto size = gameGridSize(titleId, AppLayoutMode::Grid);
+    state->wantWide = switchu::widgets::isLandscapeWideGameTile(size);
+    state->wantTall = switchu::widgets::isTallPosterGameTile(size);
     m_gameArtworkDecode = state;
     const std::string heroPath = SteamGridDbManager::heroPath(titleId);
     const std::string logoPath = SteamGridDbManager::logoPath(titleId);
     const std::string gridWidePath = SteamGridDbManager::gridWidePath(titleId);
+    const std::string posterPath = SteamGridDbManager::posterPath(titleId);
+    const bool wantWide = state->wantWide;
+    const bool wantTall = state->wantTall;
     m_gameArtworkFuture = m_threadPool.submit(
-        [state, heroPath, logoPath, gridWidePath]() {
+        [state, heroPath, logoPath, gridWidePath, posterPath, wantWide, wantTall]() {
         const auto started = std::chrono::steady_clock::now();
         std::error_code error;
-        bool usedGridWide = false;
-        // Prefer landscape SGDB grid for 2x1 / 4x2 tiles when present.
-        if (std::filesystem::is_regular_file(gridWidePath, error) &&
-            !state->cancelled.load()) {
-            state->hero = steamgriddb::artwork::decode(gridWidePath, 460, 215, true);
-            usedGridWide = !state->hero.rgba.empty();
+        if (wantWide) {
+            bool usedGridWide = false;
+            // Prefer landscape SGDB grid for 2x1 / 4x2 tiles when present.
+            if (std::filesystem::is_regular_file(gridWidePath, error) &&
+                !state->cancelled.load()) {
+                state->hero = steamgriddb::artwork::decode(gridWidePath, 460, 215, true);
+                usedGridWide = !state->hero.rgba.empty();
+            }
+            error.clear();
+            if (!usedGridWide &&
+                std::filesystem::is_regular_file(heroPath, error) &&
+                !state->cancelled.load()) {
+                state->hero = steamgriddb::artwork::decode(heroPath, 640, 360, true);
+            }
+            error.clear();
+            // Grid-wide art is a complete card face — skip logo overlay.
+            if (!usedGridWide &&
+                std::filesystem::is_regular_file(logoPath, error) &&
+                !state->cancelled.load()) {
+                state->logo = steamgriddb::artwork::decode(logoPath, 384, 192, false);
+            }
         }
         error.clear();
-        if (!usedGridWide &&
-            std::filesystem::is_regular_file(heroPath, error) &&
+        // 2x3 tall face: dedicated 400x600 poster (not the 320x480 streamer fit).
+        if (wantTall &&
+            std::filesystem::is_regular_file(posterPath, error) &&
             !state->cancelled.load()) {
-            state->hero = steamgriddb::artwork::decode(heroPath, 640, 360, true);
-        }
-        error.clear();
-        // Grid-wide art is a complete card face — skip logo overlay.
-        if (!usedGridWide &&
-            std::filesystem::is_regular_file(logoPath, error) &&
-            !state->cancelled.load()) {
-            state->logo = steamgriddb::artwork::decode(logoPath, 384, 192, false);
+            state->poster = steamgriddb::artwork::decode(posterPath, 400, 600, true);
         }
         state->elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now() - started).count();
     });
-    DebugLog::log("[game-artwork] queued title=0x%016lX remaining=%zu",
+    DebugLog::log("[game-artwork] queued title=0x%016lX wide=%d tall=%d remaining=%zu",
                   static_cast<unsigned long>(titleId),
+                  wantWide ? 1 : 0, wantTall ? 1 : 0,
                   m_gameArtworkDecodeQueue.size());
 }
 
 void WiiUMenuApp::syncGameArtworkTextures(std::uint64_t titleId) {
     if (!m_grid) return;
-    // Wide faces are grid-only; single-row always uses poster/icon via streamer.
+    // Wide / tall faces are grid-only; single-row uses poster/icon via streamer.
     if (m_appLayoutMode != AppLayoutMode::Grid) return;
     const auto artwork = m_gameArtwork.find(titleId);
     if (artwork == m_gameArtwork.end()) return;
@@ -3108,6 +3115,8 @@ void WiiUMenuApp::syncGameArtworkTextures(std::uint64_t titleId) {
             if (switchu::widgets::isLandscapeWideGameTile(cols, rows))
                 icon->setWideGameTextures(artwork->second.hero.get(),
                                           artwork->second.logo.get());
+            if (switchu::widgets::isTallPosterGameTile(cols, rows))
+                icon->setTallGamePoster(artwork->second.poster.get());
         }
     }
 }
@@ -3121,9 +3130,10 @@ void WiiUMenuApp::pollGameArtworkAssets() {
             auto decoded = std::move(m_gameArtworkDecode);
             if (decoded && !decoded->cancelled.load()) {
                 DebugLog::log(
-                    "[game-artwork] decoded title=0x%016lX hero=%zu logo=%zu in %ldms",
+                    "[game-artwork] decoded title=0x%016lX hero=%zu logo=%zu poster=%zu in %ldms",
                     static_cast<unsigned long>(decoded->titleId),
                     decoded->hero.rgba.size(), decoded->logo.rgba.size(),
+                    decoded->poster.rgba.size(),
                     static_cast<long>(decoded->elapsedMs));
                 m_gameArtworkReady = std::move(decoded);
                 m_gameArtworkUploadTextures = {};
@@ -3159,7 +3169,7 @@ void WiiUMenuApp::pollGameArtworkAssets() {
                 decoded.hero.width, decoded.hero.height))
             m_gameArtworkUploadTextures.hero = std::move(texture);
         decoded.hero.rgba.clear();
-    } else {
+    } else if (m_gameArtworkUploadStage == 1) {
         auto texture = std::make_unique<nxui::Texture>();
         if (!decoded.logo.rgba.empty() &&
             app().gpu().imageMemoryAvailable() >
@@ -3169,9 +3179,19 @@ void WiiUMenuApp::pollGameArtworkAssets() {
                 decoded.logo.width, decoded.logo.height))
             m_gameArtworkUploadTextures.logo = std::move(texture);
         decoded.logo.rgba.clear();
+    } else {
+        auto texture = std::make_unique<nxui::Texture>();
+        if (!decoded.poster.rgba.empty() &&
+            app().gpu().imageMemoryAvailable() >
+                kTextImageReserve + decoded.poster.rgba.size() &&
+            texture->loadFromPixels(
+                app().gpu(), app().renderer(), decoded.poster.rgba.data(),
+                decoded.poster.width, decoded.poster.height))
+            m_gameArtworkUploadTextures.poster = std::move(texture);
+        decoded.poster.rgba.clear();
     }
     ++m_gameArtworkUploadStage;
-    if (m_gameArtworkUploadStage >= 2) {
+    if (m_gameArtworkUploadStage >= 3) {
         const std::uint64_t titleId = decoded.titleId;
         m_gameArtwork[titleId] = std::move(m_gameArtworkUploadTextures);
         m_gameArtworkReady.reset();
@@ -3554,10 +3574,10 @@ void WiiUMenuApp::syncWidgetPageAssets() {
         markPage(page + 1, false);
     }
 
-    // Each wide game card owns a 640x360 hero and a 384x192 logo. Loading
-    // those textures while constructing the complete grid made their lifetime
-    // global and exhausted the 32 MiB Deko image budget. Keep only the page
-    // being rendered (plus the outgoing page during a slide) resident.
+    // Each wide card owns a 640x360 hero (+ logo); each tall 2x3 owns a
+    // 400x600 poster. Loading those for the whole grid exhausted the 32 MiB
+    // Deko image budget — keep only the page being rendered (plus the
+    // outgoing page during a slide) resident.
     std::unordered_set<std::uint64_t> currentGameArtwork;
     std::unordered_set<std::uint64_t> retainedGameArtwork;
     for (std::size_t i = 0; i < icons.size(); ++i) {
@@ -3566,8 +3586,9 @@ void WiiUMenuApp::syncWidgetPageAssets() {
             continue;
         const int cols = icon->gridSpanColumns();
         const int rows = icon->gridSpanRows();
-        // 2x1 / 4x2 landscape tiles own hero/grid-wide GPU art.
-        if (!switchu::widgets::isLandscapeWideGameTile(cols, rows))
+        // 2x1 / 4x2 landscape + 2x3 tall tiles own dedicated GPU art.
+        if (!switchu::widgets::isLandscapeWideGameTile(cols, rows)
+            && !switchu::widgets::isTallPosterGameTile(cols, rows))
             continue;
         if (current[i]) {
             currentGameArtwork.insert(icon->titleId());
@@ -3604,8 +3625,10 @@ void WiiUMenuApp::syncWidgetPageAssets() {
         for (const auto& icon : icons) {
             if (icon && std::find(releaseGameArtwork.begin(),
                                   releaseGameArtwork.end(), icon->titleId()) !=
-                            releaseGameArtwork.end())
+                            releaseGameArtwork.end()) {
                 icon->setWideGameTextures(nullptr, nullptr);
+                icon->setTallGamePoster(nullptr);
+            }
         }
         app().gpu().waitIdle();
         for (const std::uint64_t titleId : releaseGameArtwork)
@@ -3626,20 +3649,28 @@ void WiiUMenuApp::syncWidgetPageAssets() {
                 continue;
             const int cols = icon->gridSpanColumns();
             const int rows = icon->gridSpanRows();
-            if (!switchu::widgets::isLandscapeWideGameTile(cols, rows))
+            const bool wide = switchu::widgets::isLandscapeWideGameTile(cols, rows);
+            const bool tall = switchu::widgets::isTallPosterGameTile(cols, rows);
+            if (!wide && !tall)
                 continue;
             const auto artwork = m_gameArtwork.find(icon->titleId());
-            if (artwork != m_gameArtwork.end())
-                icon->setWideGameTextures(artwork->second.hero.get(),
-                                          artwork->second.logo.get());
-            else
+            if (artwork != m_gameArtwork.end()) {
+                if (wide)
+                    icon->setWideGameTextures(artwork->second.hero.get(),
+                                              artwork->second.logo.get());
+                if (tall)
+                    icon->setTallGamePoster(artwork->second.poster.get());
+            } else {
                 ensureGameArtwork(icon->titleId());
+            }
         }
     } else {
         for (std::size_t i = 0; i < icons.size(); ++i) {
             auto* icon = icons[i].get();
-            if (icon && icon->entryKind() == GridEntryKind::Application)
+            if (icon && icon->entryKind() == GridEntryKind::Application) {
                 icon->setWideGameTextures(nullptr, nullptr);
+                icon->setTallGamePoster(nullptr);
+            }
         }
     }
 
@@ -4486,12 +4517,13 @@ bool WiiUMenuApp::tryCommitInPlaceLayoutMorph(std::uint64_t focused) {
     for (const auto& icon : icons) {
         if (!icon)
             continue;
-        // In-place morph reuses grid tiles — drop wide spans / grid-wide faces
-        // so single-row shows poster (or icon), never landscape wide art.
+        // In-place morph reuses grid tiles — drop wide/tall spans / dedicated
+        // faces so single-row shows poster (or icon), never grid card art.
         if (icon->entryKind() == GridEntryKind::Application
             || icon->entryKind() == GridEntryKind::Widget) {
             icon->setGridSpan(1, 1);
             icon->setWideGameTextures(nullptr, nullptr);
+            icon->setTallGamePoster(nullptr);
         }
         bool posterTile = false;
         if (preferPoster && icon->titleId() != 0) {
@@ -4796,14 +4828,14 @@ bool WiiUMenuApp::preferSingleRowPosters() const {
 bool WiiUMenuApp::preferPosterIconData(std::uint64_t titleId) const {
     if (titleId == 0)
         return false;
-    // Grid: only tall poster tiles (2x3 / legacy 1x2) keep poster art — never
-    // 1x1 or 2x2. Independent of single-row / Battery Saver lite.
-    const auto size = gameGridSize(titleId, AppLayoutMode::Grid);
-    const bool tallPosterSpan =
-        (size.columns == 2 && size.rows == 3)
-        || (size.columns == 1 && size.rows == 2);
-    if (tallPosterSpan && SteamGridDbManager::hasPoster(titleId))
-        return true;
+    // Grid 2x3 / legacy 1x2 use dedicated 400x600 game-artwork posters (same
+    // treatment as 4x2 hero). IconStreamer keeps a cheap icon as interim
+    // fallback — never the shared 320x480 single-row fit budget.
+    if (m_appLayoutMode == AppLayoutMode::Grid) {
+        const auto size = gameGridSize(titleId, AppLayoutMode::Grid);
+        if (switchu::widgets::isTallPosterGameTile(size))
+            return false;
+    }
     return preferSingleRowPosters();
 }
 
@@ -5408,7 +5440,9 @@ void WiiUMenuApp::activateApplication(GlossyIcon* source, AppEntry* entry,
     const auto gridSize = gameGridSize(titleId, AppLayoutMode::Grid);
     const bool landscapeTile = m_appLayoutMode == AppLayoutMode::Grid
         && switchu::widgets::isLandscapeWideGameTile(gridSize);
-    const bool posterTile = source->usesPosterFrame();
+    const bool tallGridTile = m_appLayoutMode == AppLayoutMode::Grid
+        && switchu::widgets::isTallPosterGameTile(gridSize);
+    const bool posterTile = source->usesPosterFrame() || tallGridTile;
     const nxui::Texture* texture = source->texture();
     if (landscapeTile) {
         if (auto* wide = source->wideGameHero(); wide && wide->valid()) {
@@ -5431,10 +5465,13 @@ void WiiUMenuApp::activateApplication(GlossyIcon* source, AppEntry* entry,
                 texture = &m_launchPosterTex;
         }
     } else if (posterTile) {
-        if (!(texture && texture->valid())
+        if (auto* tall = source->tallGamePoster(); tall && tall->valid()) {
+            texture = tall;
+        } else if (!(texture && texture->valid())
             && SteamGridDbManager::hasPoster(titleId)) {
-            auto decoded = steamgriddb::artwork::decodeFit(
-                SteamGridDbManager::posterPath(titleId), 320, 480);
+            // Match grid 2x3 game-artwork budget (not the 320x480 streamer fit).
+            auto decoded = steamgriddb::artwork::decode(
+                SteamGridDbManager::posterPath(titleId), 400, 600, true);
             if (!decoded.rgba.empty()
                 && m_launchPosterTex.loadFromPixels(
                     app().gpu(), app().renderer(), decoded.rgba.data(),
@@ -6252,9 +6289,8 @@ std::shared_ptr<GlossyIcon> WiiUMenuApp::makeIcon(const AppEntry& entry) {
     icon->setGameCardTexture(&m_gameCardTex);
     icon->setNotLaunchable(!entry.isLaunchable());
     {
-        const bool tallPosterTile =
-            (entry.widgetColumns == 2 && entry.widgetRows == 3)
-            || (entry.widgetColumns == 1 && entry.widgetRows == 2);
+        const bool tallPosterTile = switchu::widgets::isTallPosterGameTile(
+            entry.widgetColumns, entry.widgetRows);
         icon->setPosterFrame(
             (preferSingleRowPosters() || tallPosterTile)
             && SteamGridDbManager::hasPoster(entry.titleId));
@@ -6262,15 +6298,28 @@ std::shared_ptr<GlossyIcon> WiiUMenuApp::makeIcon(const AppEntry& entry) {
     icon->setGridSpan(entry.widgetColumns, entry.widgetRows);
     const bool landscapeTile = switchu::widgets::isLandscapeWideGameTile(
         entry.widgetColumns, entry.widgetRows);
-    if (landscapeTile && m_appLayoutMode == AppLayoutMode::Grid) {
+    const bool tallTile = switchu::widgets::isTallPosterGameTile(
+        entry.widgetColumns, entry.widgetRows);
+    if (m_appLayoutMode == AppLayoutMode::Grid
+        && (landscapeTile || tallTile)) {
         const auto artwork = m_gameArtwork.find(entry.titleId);
-        if (artwork != m_gameArtwork.end())
-            icon->setWideGameTextures(artwork->second.hero.get(),
-                                      artwork->second.logo.get());
-        else
+        if (artwork != m_gameArtwork.end()) {
+            if (landscapeTile)
+                icon->setWideGameTextures(artwork->second.hero.get(),
+                                          artwork->second.logo.get());
+            else
+                icon->setWideGameTextures(nullptr, nullptr);
+            if (tallTile)
+                icon->setTallGamePoster(artwork->second.poster.get());
+            else
+                icon->setTallGamePoster(nullptr);
+        } else {
             icon->setWideGameTextures(nullptr, nullptr);
+            icon->setTallGamePoster(nullptr);
+        }
     } else {
         icon->setWideGameTextures(nullptr, nullptr);
+        icon->setTallGamePoster(nullptr);
     }
 
 #ifdef SWITCHU_MENU
@@ -9377,7 +9426,7 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
                 const int cols = icon->gridSpanColumns();
                 const int rows = icon->gridSpanRows();
                 resample =
-                    (cols == 2 && rows == 3) || (cols == 1 && rows == 2)
+                    switchu::widgets::isTallPosterGameTile(cols, rows)
                     || switchu::widgets::isLandscapeWideGameTile(cols, rows);
             }
             if (resample)

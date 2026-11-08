@@ -235,8 +235,49 @@ nxui::Texture* WiiUMenuApp::adoptEditGhostTexture(GlossyIcon* sourceIcon) {
     // recycled at that point, replacing the carried icon with a spinner (or,
     // worse, another game's icon). Give the ghost one stable texture for the
     // complete edit operation. The source bytes include custom SGDB icons.
-    // Match on-tile art: single-row posters and grid 2x3 posters both carry
-    // tall artwork — never fall back to a square icon while a poster exists.
+    // Match on-tile art: grid 2x3 / 4x2 dedicated faces, else streamer poster.
+    if (sourceIcon->entryKind() == GridEntryKind::Application) {
+        const int cols = sourceIcon->gridSpanColumns();
+        const int rows = sourceIcon->gridSpanRows();
+        auto owned = std::make_unique<nxui::Texture>();
+        if (switchu::widgets::isTallPosterGameTile(cols, rows)
+            && SteamGridDbManager::hasPoster(sourceIcon->titleId())) {
+            auto decoded = steamgriddb::artwork::decode(
+                SteamGridDbManager::posterPath(sourceIcon->titleId()),
+                400, 600, true);
+            if (!decoded.rgba.empty()
+                && owned->loadFromPixels(app().gpu(), app().renderer(),
+                                         decoded.rgba.data(),
+                                         decoded.width, decoded.height)) {
+                m_editGhostTexture = std::move(owned);
+                return m_editGhostTexture.get();
+            }
+        } else if (switchu::widgets::isLandscapeWideGameTile(cols, rows)) {
+            if (SteamGridDbManager::hasGridWide(sourceIcon->titleId())) {
+                auto decoded = steamgriddb::artwork::decode(
+                    SteamGridDbManager::gridWidePath(sourceIcon->titleId()),
+                    460, 215, true);
+                if (!decoded.rgba.empty()
+                    && owned->loadFromPixels(app().gpu(), app().renderer(),
+                                             decoded.rgba.data(),
+                                             decoded.width, decoded.height)) {
+                    m_editGhostTexture = std::move(owned);
+                    return m_editGhostTexture.get();
+                }
+            } else if (SteamGridDbManager::hasArtwork(sourceIcon->titleId())) {
+                auto decoded = steamgriddb::artwork::decode(
+                    SteamGridDbManager::heroPath(sourceIcon->titleId()),
+                    640, 360, true);
+                if (!decoded.rgba.empty()
+                    && owned->loadFromPixels(app().gpu(), app().renderer(),
+                                             decoded.rgba.data(),
+                                             decoded.width, decoded.height)) {
+                    m_editGhostTexture = std::move(owned);
+                    return m_editGhostTexture.get();
+                }
+            }
+        }
+    }
     const bool preferPoster = sourceIcon->entryKind() == GridEntryKind::Application
         && preferPosterIconData(sourceIcon->titleId());
     const auto bytes = AppListLoader::loadIconData(sourceIcon->titleId(), preferPoster);
@@ -2239,7 +2280,8 @@ void WiiUMenuApp::showGameContextMenu(GlossyIcon* icon) {
             default: break;
         }
         m_gameSizes[titleId] = requested;
-        if (switchu::widgets::isLandscapeWideGameTile(requested)) {
+        if (switchu::widgets::isLandscapeWideGameTile(requested)
+            || switchu::widgets::isTallPosterGameTile(requested)) {
             m_gameArtwork.erase(titleId);
             ensureGameArtwork(titleId);
         } else {
@@ -2911,9 +2953,8 @@ void WiiUMenuApp::updateCursor() {
             auto* icon = static_cast<GlossyIcon*>(cur);
             const int cols = icon->gridSpanColumns();
             const int rows = icon->gridSpanRows();
-            const bool tallPosterTile =
-                (cols == 2 && rows == 3) || (cols == 1 && rows == 2);
-            outsideFitCursor = tallPosterTile
+            outsideFitCursor =
+                switchu::widgets::isTallPosterGameTile(cols, rows)
                 || switchu::widgets::isLandscapeWideGameTile(cols, rows);
         }
         if (m_editMode && m_editGhostIcon && m_grid) {

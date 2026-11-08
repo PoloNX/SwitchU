@@ -33,6 +33,15 @@ inline constexpr bool isLandscapeWideGameTile(WidgetSize size) {
     return isLandscapeWideGameTile(size.columns, size.rows);
 }
 
+/// 2×3 (and legacy 1×2) — tall Poster faces via dedicated game-artwork GPU art.
+inline constexpr bool isTallPosterGameTile(int columns, int rows) {
+    return (columns == 2 && rows == 3) || (columns == 1 && rows == 2);
+}
+
+inline constexpr bool isTallPosterGameTile(WidgetSize size) {
+    return isTallPosterGameTile(size.columns, size.rows);
+}
+
 struct Widget {
     std::uint32_t id = 0;
     WidgetType type = WidgetType::Clock;
