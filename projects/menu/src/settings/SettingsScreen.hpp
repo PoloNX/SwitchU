@@ -135,6 +135,7 @@ protected:
     void buildTabs() override;
     void ensureTabLoaded(int tabIndex) override;
     void onContentUpdate(float dt) override;
+    bool canApplyStashedFocusRestore() const override;
 
 private:
     friend class settings::tabs::SystemTab;

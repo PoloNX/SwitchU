@@ -117,6 +117,12 @@ void SettingsScreen::startAsyncTabLoad(int tabIndex) {
     });
 }
 
+bool SettingsScreen::canApplyStashedFocusRestore() const {
+    if (m_tabIndex < 0 || m_tabIndex >= static_cast<int>(m_loadedTabs.size()))
+        return false;
+    return m_loadedTabs[static_cast<std::size_t>(m_tabIndex)];
+}
+
 void SettingsScreen::pollTabLoaders() {
     bool rebuiltCurrent = false;
     for (std::size_t i = 0; i < m_tabTasks.size(); ++i) {
@@ -138,11 +144,13 @@ void SettingsScreen::pollTabLoaders() {
                       (int)i, (int)m_tabs[i].items.size());
 
         if ((int)i == m_tabIndex && !rebuiltCurrent) {
-            clampContentIdx();
-            m_contentIdx = 0;
-            m_scrollY = 0.f;
-            m_scrollTarget = 0.f;
             rebuildContentItems();
+            if (!applyStashedFocusRestore()) {
+                clampContentIdx();
+                m_contentIdx = 0;
+                m_scrollY = 0.f;
+                m_scrollTarget = 0.f;
+            }
             rebuiltCurrent = true;
         }
     }
