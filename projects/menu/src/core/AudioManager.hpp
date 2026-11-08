@@ -6,6 +6,7 @@
 #include <mutex>
 #include <atomic>
 #include <cstdint>
+#include <thread>
 
 enum class Sfx {
     Navigate,
@@ -95,6 +96,11 @@ public:
     void setRepeatMode(MusicRepeatMode mode);
     MusicRepeatMode repeatMode() const { return m_repeat; }
 
+    /// When false, HOME/boot restore always starts the track at 0.
+    /// When true, mid-track resume is attempted (MP3 only with safety caps).
+    void setResumePositionEnabled(bool enabled) { m_resumePositionEnabled = enabled; }
+    bool resumePositionEnabled() const { return m_resumePositionEnabled; }
+
     void update(float dt);
     float positionSeconds() const { return m_positionSeconds; }
     float durationSeconds() const;
@@ -147,6 +153,8 @@ private:
     /// Resume-only sanitizer: drops unreliable / deep MP3 hard-seeks that can
     /// freeze SDL_mixer on Switch, while keeping shallow mid-track resume.
     float sanitizeResumeSeekUnlocked(float positionSeconds) const;
+    void finishSeekWorkerIfReady();
+    void joinSeekWorker();
     bool currentTrackFileExistsUnlocked() const;
     bool currentTrackIsMp3Unlocked() const;
     static std::string cleanedFilenameTitle(const std::string& filename);
@@ -168,6 +176,10 @@ private:
     float m_deferredSeekSeconds = -1.f;
     int   m_deferredSeekWarmupFrames = 0;
     bool  m_restoreFadeIn = false;
+    bool  m_resumePositionEnabled = true;
+    std::thread m_seekWorker;
+    std::atomic<bool> m_seekWorkerDone{false};
+    bool  m_seekWorkerActive = false;
     std::atomic<bool> m_playing{false};
     bool  m_paused = false;
     bool  m_shuffle = false;

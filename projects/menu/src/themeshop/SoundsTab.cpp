@@ -55,6 +55,24 @@ ThemeShopScreen::Tab themeshop::tabs::SoundsTab::build(ThemeShopScreen& screen) 
 
     {
         SettingItem it;
+        it.label = i18n.tr("settings.music.resume_on_home",
+                           "Resume music on return home");
+        it.description = i18n.tr(
+            "settings.music.resume_on_home_desc",
+            "When possible, continue mid-track after HOME or reboot.");
+        it.type = ItemType::Toggle;
+        it.boolVal = screen.m_musicResumePosition;
+        it.anim01 = it.boolVal ? 1.f : 0.f;
+        it.onChange = [&screen](SettingItem& self) {
+            screen.m_musicResumePosition = self.boolVal;
+            if (screen.m_musicResumePositionCb)
+                screen.m_musicResumePositionCb(self.boolVal);
+        };
+        t.items.push_back(std::move(it));
+    }
+
+    {
+        SettingItem it;
         it.label = i18n.tr("themeshop.options.theme_music_override",
                            "Allow themes to replace my playlist");
         it.description = i18n.tr(
