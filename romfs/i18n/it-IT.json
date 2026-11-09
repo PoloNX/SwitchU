@@ -39,7 +39,7 @@
       "serial_number": "Numero di serie",
       "timezone": "Fuso orario",
       "usb30": "USB 3.0",
-      "usb30_desc": "Abilita USB 3.0 per trasferimenti più veloci.",
+      "usb30_desc": "USB più veloce",
       "battery_lot": "Lotto batteria",
       "ui_language": "Lingua interfaccia",
       "console_language": "Lingua console",
@@ -113,7 +113,7 @@
     "controllers": {
       "vibration": "Vibrazione",
       "usb_wired": "Comunicazione USB cablata",
-      "usb_wired_desc": "Usa la modalità cablata USB per ridurre la latenza sui controller compatibili.",
+      "usb_wired_desc": "Usa la modalità USB cablata per ridurre la latenza.",
       "nfc": "NFC (amiibo)"
     },
     "bluetooth": {
@@ -154,7 +154,7 @@
       "media_sleep": "Sospensione durante i media",
       "media_sleep_desc": "Consente la sospensione automatica durante la riproduzione di media.",
       "wake_power": "Riattiva al cambio alimentazione",
-      "wake_power_desc": "Riattiva la console quando l'adattatore AC viene collegato o scollegato."
+      "wake_power_desc": "Riattiva la console alla connessione o disconnessione AC."
     },
     "theme": {
       "preset": "Preset",
@@ -232,7 +232,7 @@
       "speak_hints": "Leggi aiuti azione",
       "speak_hints_desc": "Legge le azioni disponibili dopo l’elemento selezionato.",
       "repeat_context": "Ripeti sempre posizione",
-      "repeat_context_desc": "Ripete l’area corrente a ogni cambio focus.",
+      "repeat_context_desc": "Ripete l’area corrente a ogni spostamento del focus.",
       "speak_position": "Leggi posizione",
       "speak_position_desc": "Legge riga, colonna e posizione quando disponibili."
     }

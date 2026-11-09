@@ -241,7 +241,7 @@
       "clock_12h": "12시간제",
       "clock_12h_desc": "홈 시계에 AM과 PM을 표시합니다.",
       "usb30": "USB 3.0",
-      "usb30_desc": "선택 기능인 SwitchU-MTP(HOME이 열려 있는 동안 SD 마운트)용 고속 USB입니다.",
+      "usb30_desc": "더 빠른 USB",
       "usb30_restart": "USB 3.0 변경 사항은 다시 시작한 후에 적용됩니다.",
       "battery_lot": "배터리 로트",
       "ui_language": "UI 언어",
@@ -268,7 +268,7 @@
       "speak_hints": "동작 힌트 읽기",
       "speak_hints_desc": "선택한 항목 뒤에 사용 가능한 동작을 안내합니다.",
       "repeat_context": "이동할 때마다 위치 반복",
-      "repeat_context_desc": "영역이 바뀔 때만이 아니라 포커스가 이동할 때마다 현재 영역을 반복해서 안내합니다.",
+      "repeat_context_desc": "포커스가 이동할 때마다 현재 영역을 반복합니다.",
       "speak_position": "위치 읽기",
       "speak_position_desc": "가능한 경우 행, 열, 항목 위치를 안내합니다."
     },
@@ -341,13 +341,13 @@
       "show_logo_line": "한 줄 보기에서 로고 표시",
       "show_logo_line_desc": "캐러셀 위에 로고를 표시합니다.",
       "hero_quality": "히어로 배경 품질",
-      "hero_quality_desc": "전체 화면 히어로에만 적용됩니다. 끄면 새 히어로를 다운로드하지 않습니다.",
+      "hero_quality_desc": "히어로 배경의 화질/성능을 조정합니다.",
       "hero_quality_off": "끔(파일 저장 안 함)",
       "hero_quality_low": "낮음(320, 4×)",
       "hero_quality_medium": "보통(640, 2×)",
       "hero_quality_high": "높음(전체 1280)",
       "hero_blur": "히어로 배경 흐림",
-      "hero_blur_desc": "0은 끔입니다. 100은 음악 플레이어의 서리 효과와 같습니다.",
+      "hero_blur_desc": "히어로 블러를 조정합니다(저화질을 가리기 좋음).",
       "api_key": "API 키",
       "api_key_set": "설정됨(숨김)",
       "api_key_missing": "설정되지 않음",
@@ -381,7 +381,7 @@
       "remapping_desc": "시스템 컨트롤러 버튼 배치 도구를 엽니다.",
       "vibration": "진동",
       "usb_wired": "USB 유선 통신",
-      "usb_wired_desc": "호환되는 컨트롤러에서 USB 유선 모드를 사용하여 지연 시간을 줄입니다.",
+      "usb_wired_desc": "USB 유선 모드로 지연을 줄입니다.",
       "nfc": "NFC (amiibo)"
     },
     "bluetooth": {
@@ -427,7 +427,7 @@
       "media_sleep": "미디어 재생 중 절전",
       "media_sleep_desc": "미디어 재생 중에도 본체가 자동으로 절전 모드에 들어가도록 허용합니다.",
       "wake_power": "전원 상태 변경 시 깨우기",
-      "wake_power_desc": "AC 어댑터를 연결하거나 분리하면 본체를 깨웁니다."
+      "wake_power_desc": "AC 연결/분리 시 본체를 깨웁니다."
     },
     "theme": {
       "preset": "프리셋",
@@ -524,14 +524,14 @@
     "information": "정보",
     "move": "이동",
     "move_title": "소프트웨어 이동",
-    "move_desc": "이 소프트웨어를 HOME 메뉴의 다른 위치로 이동합니다.",
+    "move_desc": "소프트웨어 그리드 위치를 이동합니다.",
     "move_prefix": "이동: ",
     "version": "버전",
     "version_unknown": "알 수 없음",
     "publisher_unknown": "알 수 없는 퍼블리셔",
     "title_id": "Title ID",
     "delete_software": "소프트웨어 삭제",
-    "delete_software_desc": "본체에서 소프트웨어를 삭제합니다. 세이브 데이터는 삭제되지 않습니다.",
+    "delete_software_desc": "본체에서 소프트웨어를 삭제합니다.",
     "delete_gamecard_unavailable": "게임 카드 소프트웨어는 본체에서 삭제할 수 없습니다.",
     "delete_confirmation": "소프트웨어가 삭제됩니다. 세이브 데이터는 유지됩니다.",
     "close_desc": "실행 중인 소프트웨어를 종료합니다. 저장하지 않은 진행 상황은 사라질 수 있습니다.",
@@ -550,7 +550,7 @@
       "logo": "로고",
       "logo_desc": "로고를 선택합니다.",
       "poster": "포스터",
-      "poster_desc": "한 줄 보기와 2x3 격자 타일용 세로형 커버입니다.",
+      "poster_desc": "한 줄 보기와 2x3용 세로 아트.",
       "poster_wide": "와이드 포스터",
       "poster_wide_desc": "이 2x1 타일용 가로형 격자 아트입니다.",
       "icon": "대체 아이콘",
@@ -570,7 +570,7 @@
     "rename": "이름 변경",
     "rename_title": "폴더 이름",
     "delete": "폴더 삭제",
-    "delete_desc": "폴더 안의 게임은 HOME 메뉴로 돌아갑니다.",
+    "delete_desc": "안의 게임은 HOME으로 돌아갑니다.",
     "name_guide": "폴더 이름을 입력하세요",
     "default_name": "폴더",
     "rename_guide": "폴더 이름 변경",
@@ -617,10 +617,12 @@
     "show_cover": "커버 표시",
     "show_cover_desc": "폴더에 첫 번째 앱의 아이콘을 표시합니다.",
     "custom_icon": "커스텀 커버 아이콘",
-    "custom_icon_desc": "SteamGridDB에서 검색하여 아이콘을 사용합니다.",
+    "custom_icon_desc": "SteamGridDB에서 아이콘을 검색합니다.",
     "custom_icon_set_desc": "이 폴더에 SteamGridDB 아이콘이 적용되어 있습니다. 커버 표시가 필요합니다.",
     "custom_icon_clear_desc": "커스텀 SteamGridDB 커버를 제거하고 첫 번째 게임을 다시 사용합니다.",
-    "items": "개 항목"
+    "items": "개 항목",
+    "custom_poster": "사용자 지정 포스터",
+    "custom_poster_desc": "SteamGridDB에서 세로 아트를 검색합니다."
   },
   "add": {
     "title": "추가"
@@ -785,7 +787,9 @@
       "theme_icon_override": "테마가 내 아이콘을 교체하도록 허용",
       "theme_icon_override_desc": "테마가 아이콘 팩을 변경할 수 있습니다.",
       "frame_tap_engaged": "Frame Tap 사용 중",
-      "frame_tap_engaged_desc": "Frame Tap이 스트리밍되는 동안 고정됩니다. 연결을 해제하면 변경할 수 있습니다."
+      "frame_tap_engaged_desc": "Frame Tap이 스트리밍되는 동안 고정됩니다. 연결을 해제하면 변경할 수 있습니다.",
+      "icon_contrast": "적응형 아이콘 대비",
+      "icon_contrast_desc": "한 줄+히어로일 때 HOME 아이콘이 인터페이스에 맞습니다."
     },
     "badge": {
       "icons": "아이콘",

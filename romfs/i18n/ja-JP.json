@@ -241,7 +241,7 @@
       "clock_12h": "12時間表示",
       "clock_12h_desc": "HOMEの時計をAM/PM付きで表示します。",
       "usb30": "USB 3.0",
-      "usb30_desc": "オプションのSwitchU-MTP用の高速USB（HOME表示中にSDをマウント）。",
+      "usb30_desc": "高速USB",
       "usb30_restart": "USB 3.0の変更は再起動後に反映されます。",
       "battery_lot": "バッテリーロット",
       "ui_language": "UIの言語",
@@ -268,7 +268,7 @@
       "speak_hints": "操作ヒントを読み上げ",
       "speak_hints_desc": "選択した項目のあとに使用できる操作を読み上げます。",
       "repeat_context": "移動のたびに場所を繰り返す",
-      "repeat_context_desc": "変更時だけでなく、フォーカスが移動するたびに現在の場所を読み上げます。",
+      "repeat_context_desc": "フォーカス移動のたびに現在の場所を繰り返します。",
       "speak_position": "位置を読み上げ",
       "speak_position_desc": "可能な場合、行・列・項目の位置を読み上げます。"
     },
@@ -341,13 +341,13 @@
       "show_logo_line": "1列表示でロゴを表示",
       "show_logo_line_desc": "カルーセルの上にロゴを表示します。",
       "hero_quality": "ヒーロー背景の画質",
-      "hero_quality_desc": "全画面のヒーローのみ。OFFにすると新しいヒーローをダウンロードしません。",
+      "hero_quality_desc": "ヒーロー背景の画質とパフォーマンスを調整します。",
       "hero_quality_off": "OFF（ファイルを保存しない）",
       "hero_quality_low": "低（320、4×）",
       "hero_quality_medium": "中（640、2×）",
       "hero_quality_high": "高（フル 1280）",
       "hero_blur": "ヒーロー背景のぼかし",
-      "hero_blur_desc": "0でOFF。100でミュージックプレイヤーのすりガラスと同じになります。",
+      "hero_blur_desc": "ヒーローのぼかしを調整します（低画質を隠しやすい）。",
       "api_key": "APIキー",
       "api_key_set": "設定済み（非表示）",
       "api_key_missing": "未設定",
@@ -381,7 +381,7 @@
       "remapping_desc": "システムのコントローラーボタン配置ツールを開きます。",
       "vibration": "振動",
       "usb_wired": "USB有線通信",
-      "usb_wired_desc": "対応コントローラーでUSB有線モードを使い、遅延を減らします。",
+      "usb_wired_desc": "USB有線モードで遅延を減らします。",
       "nfc": "NFC（amiibo）"
     },
     "bluetooth": {
@@ -427,7 +427,7 @@
       "media_sleep": "メディア再生中もスリープ",
       "media_sleep_desc": "メディア再生中でも本体が自動スリープできるようにします。",
       "wake_power": "電源状態の変化で復帰",
-      "wake_power_desc": "ACアダプターの接続または取り外し時に本体を復帰させます。"
+      "wake_power_desc": "AC接続／切断で本体を起動します。"
     },
     "theme": {
       "preset": "プリセット",
@@ -524,14 +524,14 @@
     "information": "情報",
     "move": "移動",
     "move_title": "ソフトを移動",
-    "move_desc": "このソフトをHOMEメニュー内の別の位置に移動します。",
+    "move_desc": "ソフトのグリッド位置を移動します。",
     "move_prefix": "移動: ",
     "version": "バージョン",
     "version_unknown": "不明",
     "publisher_unknown": "発売元不明",
     "title_id": "タイトルID",
     "delete_software": "ソフトを削除",
-    "delete_software_desc": "ソフトを本体から削除します。セーブデータは削除されません。",
+    "delete_software_desc": "本体からソフトを削除します。",
     "delete_gamecard_unavailable": "ゲームカードのソフトは本体から削除できません。",
     "delete_confirmation": "ソフトを削除します。セーブデータは残ります。",
     "close_desc": "起動中のソフトを終了します。保存されていない進行状況は失われる場合があります。",
@@ -550,7 +550,7 @@
       "logo": "ロゴ",
       "logo_desc": "ロゴを選択します。",
       "poster": "ポスター",
-      "poster_desc": "1列表示と2x3グリッドタイル用の縦長カバーです。",
+      "poster_desc": "1列表示と2×3の縦長アート。",
       "poster_wide": "ワイドポスター",
       "poster_wide_desc": "この2x1タイル用の横長グリッドアートです。",
       "icon": "アイコンの置き換え",
@@ -570,7 +570,7 @@
     "rename": "名前を変更",
     "rename_title": "フォルダー名",
     "delete": "フォルダーを削除",
-    "delete_desc": "中のゲームはHOMEメニューに戻ります。",
+    "delete_desc": "中のゲームはHOMEに戻ります。",
     "name_guide": "フォルダー名を入力",
     "default_name": "フォルダー",
     "rename_guide": "フォルダー名を変更",
@@ -617,10 +617,12 @@
     "show_cover": "カバーを表示",
     "show_cover_desc": "フォルダーに最初のアプリのアイコンを表示します。",
     "custom_icon": "カスタムカバーアイコン",
-    "custom_icon_desc": "SteamGridDBを検索してアイコンを使用します。",
+    "custom_icon_desc": "SteamGridDBでアイコンを検索します。",
     "custom_icon_set_desc": "このフォルダーではSteamGridDBのアイコンが有効です。カバーを表示が必要です。",
     "custom_icon_clear_desc": "カスタムのSteamGridDBカバーを削除し、最初のゲームを再び使用します。",
-    "items": "件"
+    "items": "件",
+    "custom_poster": "カスタムポスター",
+    "custom_poster_desc": "SteamGridDBで縦長アートを検索します。"
   },
   "add": {
     "title": "追加"
@@ -785,7 +787,9 @@
       "theme_icon_override": "テーマによるアイコンの置き換えを許可",
       "theme_icon_override_desc": "テーマがアイコンパックを切り替えることがあります。",
       "frame_tap_engaged": "フレームタップ接続中",
-      "frame_tap_engaged_desc": "フレームタップのストリーミング中は固定されます。変更するには切断してください。"
+      "frame_tap_engaged_desc": "フレームタップのストリーミング中は固定されます。変更するには切断してください。",
+      "icon_contrast": "アダプティブアイコンコントラスト",
+      "icon_contrast_desc": "1列表示＋ヒーロー時、HOMEアイコンがインターフェースに合わせます。"
     },
     "badge": {
       "icons": "アイコン",

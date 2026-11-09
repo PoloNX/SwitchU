@@ -39,7 +39,7 @@
       "serial_number": "Número de Série",
       "timezone": "Fuso Horário",
       "usb30": "USB 3.0",
-      "usb30_desc": "Ative o USB 3.0 para velocidades de transferência mais rápidas.",
+      "usb30_desc": "USB mais rápido",
       "battery_lot": "Lote da Bateria",
       "ui_language": "Idioma da Interface",
       "console_language": "Idioma do Console",
@@ -113,7 +113,7 @@
     "controllers": {
       "vibration": "Vibração",
       "usb_wired": "Comunicação por Cabo USB",
-      "usb_wired_desc": "Usa o modo com fio USB para reduzir a latência em controles compatíveis.",
+      "usb_wired_desc": "Usa o modo USB com fio para reduzir a latência.",
       "nfc": "NFC (amiibo)"
     },
     "bluetooth": {
@@ -154,7 +154,7 @@
       "media_sleep": "Descanso Durante Reprodução de Mídia",
       "media_sleep_desc": "Permite que o console entre em descanso automático mesmo durante a reprodução de mídia.",
       "wake_power": "Despertar ao Mudar Estado de Energia",
-      "wake_power_desc": "Desperta o console quando o adaptador AC é conectado ou desconectado."
+      "wake_power_desc": "Desperta o console ao conectar ou desconectar o AC."
     },
     "theme": {
       "preset": "Predefinição",
@@ -232,7 +232,7 @@
       "speak_hints": "Ler dicas de ação",
       "speak_hints_desc": "Lê as ações disponíveis após o item selecionado.",
       "repeat_context": "Repetir local sempre",
-      "repeat_context_desc": "Repete a área atual a cada mudança de foco.",
+      "repeat_context_desc": "Repete a área atual a cada movimento de foco.",
       "speak_position": "Ler posição",
       "speak_position_desc": "Lê linha, coluna e posição quando disponível."
     }

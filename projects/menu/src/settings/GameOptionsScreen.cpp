@@ -66,7 +66,7 @@ void GameOptionsScreen::buildTabs() {
         SettingItem move;
         move.label = i18n.tr("game.move_title", "Move software");
         move.buttonLabel = i18n.tr("button.move", "Move");
-        move.description = i18n.tr("game.move_desc", "Move this software to another position on the HOME menu.");
+        move.description = i18n.tr("game.move_desc", "Move software grid position.");
         move.type = ItemType::Action;
         move.onChange = [this](SettingItem&) { if (m_moveCb) m_moveCb(); };
         data.items.push_back(std::move(move));
@@ -106,7 +106,7 @@ void GameOptionsScreen::buildTabs() {
     erase.buttonLabel = i18n.tr("button.uninstall", "Uninstall");
     erase.description = m_game.gameCard
         ? i18n.tr("game.delete_gamecard_unavailable", "Game card software cannot be deleted from the console.")
-        : i18n.tr("game.delete_software_desc", "Deletes the software from the console. Save data is not deleted.");
+        : i18n.tr("game.delete_software_desc", "Delete software from the console.");
     erase.type = m_game.gameCard ? ItemType::Info : ItemType::Action;
     erase.onChange = [this](SettingItem&) { if (m_deleteSoftwareCb) m_deleteSoftwareCb(); };
     data.items.push_back(std::move(erase));
@@ -163,7 +163,7 @@ void GameOptionsScreen::buildTabs() {
                       ArtworkKind::Logo, m_game.hasLogoArt);
     addArtworkActions("game.steamgriddb.poster", "Poster",
                       "game.steamgriddb.poster_desc",
-                      "Tall cover for single-row and 2x3 grid tiles.",
+                      "Tall art in single-row and 2x3.",
                       ArtworkKind::Poster, m_game.hasPosterArt);
     // 2x1 / 4x2 tiles can use a landscape SGDB grid instead of Hero+Logo.
     if (m_game.sizeIndex == 1 || m_game.sizeIndex == 2) {

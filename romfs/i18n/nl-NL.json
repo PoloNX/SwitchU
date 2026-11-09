@@ -39,7 +39,7 @@
       "serial_number": "Serienummer",
       "timezone": "Tijdzone",
       "usb30": "USB 3.0",
-      "usb30_desc": "Activeer USB 3.0 voor snellere overdracht.",
+      "usb30_desc": "Snellere USB",
       "battery_lot": "Batterijpartij",
       "ui_language": "Taal van de interface",
       "console_language": "Taal van de console",
@@ -113,7 +113,7 @@
     "controllers": {
       "vibration": "Trilling",
       "usb_wired": "USB-bedrade communicatie",
-      "usb_wired_desc": "Gebruik USB-bedrade modus om latentie te verminderen bij compatibele controllers.",
+      "usb_wired_desc": "Gebruik USB-bedrade modus om latentie te verminderen.",
       "nfc": "NFC (amiibo)"
     },
     "bluetooth": {
@@ -154,7 +154,7 @@
       "media_sleep": "Slaapstand tijdens media",
       "media_sleep_desc": "Sta automatische slaapstand toe tijdens mediagebruik.",
       "wake_power": "Wakker worden bij stroom",
-      "wake_power_desc": "Maak de console wakker bij aansluiten of loskoppelen van de adapter."
+      "wake_power_desc": "Maak de console wakker bij aan- of afkoppelen van AC."
     },
     "theme": {
       "preset": "Voorinstelling",

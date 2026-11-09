@@ -235,7 +235,7 @@
       "clock_12h": "Horloge 12 heures",
       "clock_12h_desc": "Affiche l'horloge du menu avec AM et PM.",
       "usb30": "USB 3.0",
-      "usb30_desc": "Active l'USB 3.0 pour des transferts plus rapides.",
+      "usb30_desc": "USB plus rapide",
       "battery_lot": "Lot de batterie",
       "ui_language": "Langue de l'interface",
       "console_language": "Langue de la console",
@@ -261,7 +261,7 @@
       "speak_hints": "Lire les aides d'action",
       "speak_hints_desc": "Annonce les actions disponibles après l'élément sélectionné.",
       "repeat_context": "Répéter l'emplacement à chaque déplacement",
-      "repeat_context_desc": "Répète la zone actuelle à chaque changement de focus au lieu de seulement quand elle change.",
+      "repeat_context_desc": "Répète la zone actuelle à chaque déplacement du focus.",
       "speak_position": "Lire la position",
       "speak_position_desc": "Annonce la ligne, la colonne et la position quand elles sont disponibles."
     },
@@ -354,7 +354,7 @@
       "remapping_desc": "Ouvre l'outil système de remappage des boutons.",
       "vibration": "Vibration",
       "usb_wired": "Communication USB filaire",
-      "usb_wired_desc": "Utilise l'USB filaire pour réduire la latence des manettes compatibles.",
+      "usb_wired_desc": "Utilise l’USB filaire pour réduire la latence.",
       "nfc": "NFC (amiibo)"
     },
     "bluetooth": {
@@ -400,7 +400,7 @@
       "media_sleep": "Veille pendant les médias",
       "media_sleep_desc": "Permet la mise en veille automatique pendant la lecture de médias.",
       "wake_power": "Réveil au changement d'alimentation",
-      "wake_power_desc": "Réveille la console quand l'adaptateur secteur est connecté ou déconnecté."
+      "wake_power_desc": "Réveille la console à la connexion ou déconnexion AC."
     },
     "theme": {
       "preset": "Preset",
@@ -495,14 +495,14 @@
     "information": "Informations",
     "move": "Déplacer",
     "move_title": "Déplacer le logiciel",
-    "move_desc": "Déplace ce logiciel à une autre position du menu HOME.",
+    "move_desc": "Déplacer la position sur la grille.",
     "move_prefix": "Déplacer : ",
     "version": "Version",
     "version_unknown": "Inconnue",
     "publisher_unknown": "Éditeur inconnu",
     "title_id": "ID du titre",
     "delete_software": "Effacer le logiciel",
-    "delete_software_desc": "Efface le logiciel. Les sauvegardes sont conservées.",
+    "delete_software_desc": "Supprimer le logiciel de la console.",
     "delete_gamecard_unavailable": "Le logiciel d'une carte de jeu ne peut pas être effacé de la console.",
     "delete_confirmation": "Le logiciel va être effacé. Les données de sauvegarde seront conservées.",
     "close_desc": "Ferme le logiciel en cours. La progression non sauvegardée peut être perdue.",
@@ -534,7 +534,7 @@
     "rename": "Renommer",
     "rename_title": "Nom du dossier",
     "delete": "Supprimer le dossier",
-    "delete_desc": "Les jeux du dossier retourneront au menu HOME.",
+    "delete_desc": "Les jeux retourneront au menu HOME.",
     "name_guide": "Saisissez un nom de dossier",
     "default_name": "Dossier",
     "rename_guide": "Renommer le dossier",

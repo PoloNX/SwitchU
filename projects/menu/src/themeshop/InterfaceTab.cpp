@@ -119,7 +119,7 @@ ThemeShopScreen::Tab themeshop::tabs::InterfaceTab::build(ThemeShopScreen& scree
         it.label = i18n.tr("themeshop.options.icon_contrast", "Adaptive icon contrast");
         it.description = i18n.tr(
             "themeshop.options.icon_contrast_desc",
-            "In single-row with a hero, colour HOME icons follow the interface light/dark chrome. Without a hero they keep authored colours (or your custom tint).");
+            "In single-row with a hero, HOME icons match the interface.");
         it.type = ItemType::Toggle;
         it.boolVal = screen.m_iconContrastAdapt;
         it.anim01 = it.boolVal ? 1.f : 0.f;

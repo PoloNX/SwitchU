@@ -83,7 +83,7 @@ SettingsScreen::Tab settings::tabs::AccessibilityTab::build(SettingsScreen& scre
         SettingItem it;
         it.label = i18n.tr("settings.accessibility.repeat_context", "Repeat Location Every Move");
         it.description = i18n.tr("settings.accessibility.repeat_context_desc",
-                                 "Repeat the current area on every focus move instead of only when it changes.");
+                                 "Repeat the current area on every focus move.");
         it.type = ItemType::Toggle;
         it.boolVal = screen.m_accessibilitySpeakContextEveryFocus;
         it.anim01 = it.boolVal ? 1.f : 0.f;

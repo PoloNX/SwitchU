@@ -152,7 +152,7 @@ void FolderOptionsScreen::buildTabs() {
         ? i18n.tr("folder.custom_icon_set_desc",
                   "SteamGridDB icon is active for this folder. Requires Show cover.")
         : i18n.tr("folder.custom_icon_desc",
-                  "Search SteamGridDB and use an icon.");
+                  "Search SteamGridDB for an icon.");
     customIcon.type = ItemType::Action;
     customIcon.onChange = [this](SettingItem&) {
         if (m_customIconSelectCb) m_customIconSelectCb();
@@ -172,7 +172,7 @@ void FolderOptionsScreen::buildTabs() {
         ? i18n.tr("folder.custom_poster_set_desc",
                   "SteamGridDB poster is active for this folder in single-row view.")
         : i18n.tr("folder.custom_poster_desc",
-                  "Search SteamGridDB for a tall poster (single-row view).");
+                  "Search SteamGridDB for tall art.");
     customPoster.type = ItemType::Action;
     customPoster.onChange = [this](SettingItem&) {
         if (m_customPosterSelectCb) m_customPosterSelectCb();
@@ -200,7 +200,7 @@ void FolderOptionsScreen::buildTabs() {
     SettingItem erase;
     erase.label = i18n.tr("folder.delete", "Delete folder");
     erase.buttonLabel = i18n.tr("button.delete", "Delete");
-    erase.description = i18n.tr("folder.delete_desc", "Games inside will return to the HOME menu.");
+    erase.description = i18n.tr("folder.delete_desc", "Games inside will return to HOME.");
     erase.type = ItemType::Action;
     erase.onChange = [this](SettingItem&) { if (m_deleteCb) m_deleteCb(); };
     management.items.push_back(std::move(erase));

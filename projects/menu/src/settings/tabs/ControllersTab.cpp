@@ -71,7 +71,7 @@ SettingsScreen::Tab settings::tabs::ControllersTab::build(SettingsScreen& screen
 
     {
         SettingItem it; it.label = i18n.tr("settings.controllers.usb_wired", "USB Wired Communication"); it.type = ItemType::Toggle;
-        it.description = i18n.tr("settings.controllers.usb_wired_desc", "Use USB wired mode to reduce latency on compatible controllers.");
+        it.description = i18n.tr("settings.controllers.usb_wired_desc", "Use USB wired mode to reduce latency.");
         bool val = false;
         setsysGetUsbFullKeyEnableFlag(&val);
         it.boolVal = val;
