@@ -148,7 +148,7 @@ SettingsScreen::Tab settings::tabs::SleepTab::build(SettingsScreen& screen) {
 
     {
         SettingItem it; it.label = i18n.tr("settings.sleep.wake_power", "Wake at Power State Change"); it.type = ItemType::Toggle;
-        it.description = i18n.tr("settings.sleep.wake_power_desc", "Wake the console when the AC adapter is connected or disconnected.");
+        it.description = i18n.tr("settings.sleep.wake_power_desc", "Wake the console on AC connect or disconnect.");
         bool val = (sleep.flags & (1u << 1)) != 0;
         it.boolVal = val;
         it.anim01 = val ? 1.f : 0.f;

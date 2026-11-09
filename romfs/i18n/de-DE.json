@@ -39,7 +39,7 @@
       "serial_number": "Seriennummer",
       "timezone": "Zeitzone",
       "usb30": "USB 3.0",
-      "usb30_desc": "USB 3.0 für schnellere Übertragungsraten aktivieren.",
+      "usb30_desc": "Schnelleres USB",
       "battery_lot": "Akku-Charge",
       "ui_language": "Menüsprache",
       "console_language": "Konsolensprache",
@@ -113,7 +113,7 @@
     "controllers": {
       "vibration": "Vibration",
       "usb_wired": "Kabelgebundene Verbindung für Pro Controller",
-      "usb_wired_desc": "Kabelgebundenen Modus nutzen, um die Latenz bei kompatiblen Controllern zu verringern.",
+      "usb_wired_desc": "USB-Kabelmodus nutzen, um die Latenz zu verringern.",
       "nfc": "NFC (amiibo)"
     },
     "bluetooth": {
@@ -154,7 +154,7 @@
       "media_sleep": "Standby-Modus während Medienwiedergabe",
       "media_sleep_desc": "Erlaubt den automatischen Standby-Modus auch bei der Medienwiedergabe.",
       "wake_power": "Aufwachen bei Stromzufuhr",
-      "wake_power_desc": "Konsole aufwecken, wenn das Netzteil an- oder abgesteckt wird."
+      "wake_power_desc": "Konsole bei An- oder Abstecken des Netzteils aufwecken."
     },
     "theme": {
       "preset": "Voreinstellung",

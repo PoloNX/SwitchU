@@ -111,7 +111,7 @@ SettingsScreen::Tab settings::tabs::SteamGridDbTab::build(SettingsScreen& screen
     quality.type = ItemType::Selector;
     quality.label = i18n.tr("settings.steamgriddb.hero_quality", "Hero backdrop quality");
     quality.description = i18n.tr("settings.steamgriddb.hero_quality_desc",
-        "Fullscreen hero only. Off skips new hero downloads.");
+        "Adjust hero backdrop for quality/performance.");
     quality.options = {
         i18n.tr("settings.steamgriddb.hero_quality_off", "Off (don't store files)"),
         i18n.tr("settings.steamgriddb.hero_quality_low", "Low (320, 4×)"),
@@ -134,7 +134,7 @@ SettingsScreen::Tab settings::tabs::SteamGridDbTab::build(SettingsScreen& screen
     blur.type = ItemType::Slider;
     blur.label = i18n.tr("settings.steamgriddb.hero_blur", "Hero backdrop blur");
     blur.description = i18n.tr("settings.steamgriddb.hero_blur_desc",
-        "0 is off. 100 matches the music-player frost.");
+        "Adjust Hero blur (hides low quality well).");
     blur.sliderSteps = 10;
     blur.floatVal = std::clamp(screen.m_steamGridDbHeroBlur, 0, 10) / 10.f;
     blur.anim01 = blur.floatVal;

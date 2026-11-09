@@ -2473,7 +2473,7 @@ void WiiUMenuApp::showFolderContextMenu(std::uint32_t folderId) {
         auto& local = nxui::I18n::instance();
         m_dialogReturnFocus = m_folderOptions.get();
         m_dialog->show(local.tr("folder.delete", "Delete folder"),
-                       local.tr("folder.delete_desc", "Games inside will return to the HOME menu."),
+                       local.tr("folder.delete_desc", "Games inside will return to HOME."),
                        {
                            {local.tr("button.cancel", "Cancel"), {}, true},
                            {local.tr("button.delete", "Delete"), [this, folderId]() {
