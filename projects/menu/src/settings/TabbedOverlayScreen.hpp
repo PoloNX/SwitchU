@@ -327,6 +327,23 @@ protected:
     void openDropdown(int rawIdx);
     void closeDropdown(bool animated);
 
+    struct DropdownGeom {
+        float ctrlX = 0.f;
+        float ctrlW = 0.f;
+        float dy = 0.f;
+        float listH = 0.f;
+        int visible = 0;
+        float optH = 46.f;
+        bool valid = false;
+    };
+    DropdownGeom layoutDropdown(const nxui::Rect& cr) const;
+    int dropdownVisibleCount(int optionCount) const;
+
+    // Language refresh rebuilds tabs asynchronously; restore focus/scroll after load.
+    void stashFocusForLanguageRestore();
+    bool applyStashedFocusRestore();
+    virtual bool canApplyStashedFocusRestore() const { return true; }
+
     std::vector<Tab> m_tabs;
     ScreenMode m_mode = ScreenMode::Settings;
     nxui::Font*       m_font      = nullptr;
@@ -356,6 +373,13 @@ protected:
     int  m_dropdownHover = 0;
     float m_dropdownVisualStart = 0.f;
     float m_touchStartDropdownVisualStart = 0.f;
+    int  m_dropdownVisible = 6;
+
+    bool m_stashFocusRestore = false;
+    int  m_stashTabIndex = 0;
+    int  m_stashContentIdx = 0;
+    float m_stashScrollY = 0.f;
+    FocusArea m_stashFocusArea = FocusArea::Content;
 
     VoidCb  m_navSfxCb;
     VoidCb  m_activateSfxCb;

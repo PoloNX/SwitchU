@@ -7,6 +7,7 @@
 #include "themeshop/ThemeHttp.hpp"
 #include <nxui/core/Animation.hpp>
 #include <nxui/core/I18n.hpp>
+#include <nxui/core/SharedFonts.hpp>
 #include "DebugLog.hpp"
 #include "HeapControl.hpp"
 #include "bluetooth/BluetoothManager.hpp"
@@ -1267,14 +1268,27 @@ void WiiUMenuApp::onDestroy() {
 
 void WiiUMenuApp::loadResources() {
     DebugLog::log("[init] loadResources: regular font");
-    std::string fontPath = std::string(SD_ASSETS) + "/fonts/DejaVuSans.ttf";
-    if (m_fontNormal.load(app().gpu(), app().renderer(), fontPath, 24))
-        m_loadedRegularFontPath = fontPath;
+    auto& gpu = app().gpu();
+    auto& ren = app().renderer();
+    const std::string dejavuPath = std::string(SD_ASSETS) + "/fonts/DejaVuSans.ttf";
+    // Prefer Nintendo shared fonts so Japanese / Chinese / Korean titles render.
+    // DejaVu stays as the last-resort Latin face when pl:u fonts are unavailable.
+    if (nxui::shared_fonts::loadUiFont(m_fontNormal, gpu, ren, 24)) {
+        m_loadedRegularFontPath = "pl:shared";
+        DebugLog::log("[init] loadResources: regular font from shared fonts (%zu faces)",
+                      nxui::shared_fonts::faceCount());
+    } else if (m_fontNormal.load(gpu, ren, dejavuPath, 24)) {
+        m_loadedRegularFontPath = dejavuPath;
+        DebugLog::log("[init] loadResources: regular font DejaVu fallback");
+    }
     DebugLog::log("[init] loadResources: small font");
-    if (m_fontSmall.load(app().gpu(), app().renderer(), fontPath, 18))
-        m_loadedSmallFontPath = fontPath;
+    if (nxui::shared_fonts::loadUiFont(m_fontSmall, gpu, ren, 18)) {
+        m_loadedSmallFontPath = "pl:shared";
+    } else if (m_fontSmall.load(gpu, ren, dejavuPath, 18)) {
+        m_loadedSmallFontPath = dejavuPath;
+    }
     DebugLog::log("[init] loadResources: icon font");
-    m_fontIcons.load(app().gpu(), app().renderer(), std::string(SD_ASSETS) + "/fonts/switch_icons.ttf", 24);
+    m_fontIcons.load(gpu, ren, std::string(SD_ASSETS) + "/fonts/switch_icons.ttf", 24);
 
     if (m_fastReturnRequested) {
         m_deferredStaticTextures = true;

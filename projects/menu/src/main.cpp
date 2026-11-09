@@ -210,7 +210,8 @@ extern "C" void __libnx_initheap(void) {
 #ifdef SWITCHU_HOMEBREW
 extern "C" void userAppInit(void) {
     timeInitialize();
-    plInitialize(PlServiceType_System);
+    // pl:u — shared fonts (JP/CN/KO) are unavailable through pl:s on [16.0.0+].
+    plInitialize(PlServiceType_User);
     setInitialize();
     setsysInitialize();
     accountInitialize(AccountServiceType_Application);
@@ -257,7 +258,8 @@ extern "C" void __appInit(void) {
     __libnx_init_time();
     setsysInitialize();
     setInitialize();
-    plInitialize(PlServiceType_System);
+    // pl:u — shared fonts (JP/CN/KO) are unavailable through pl:s on [16.0.0+].
+    plInitialize(PlServiceType_User);
     psmInitialize();
     lblInitialize();
     splInitialize();

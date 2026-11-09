@@ -48,6 +48,7 @@ target("nxui")
     add_files("lib/nxui/src/widgets/*.cpp")
     add_files("lib/nxui/src/focus/*.cpp")
     add_files("lib/nxui/src/core/Font.cpp")
+    add_files("lib/nxui/src/core/SharedFonts.cpp")
 
     if get_config("backend") == "sdl2" then
         add_defines("NXUI_BACKEND_SDL2", {public = true})

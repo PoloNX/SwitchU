@@ -729,29 +729,11 @@ void TabbedOverlayScreen::handleTouch(nxui::Input& input) {
     };
 
     auto dropdownRect = [this, &cr]() {
-        if (!m_dropdownOpen || m_dropdownRawIdx < 0 || m_tabIndex < 0 || m_tabIndex >= (int)m_tabs.size())
+        DropdownGeom geom = layoutDropdown(cr);
+        if (!geom.valid)
             return nxui::Rect{0.f, 0.f, 0.f, 0.f};
-
-        auto& items = m_tabs[m_tabIndex].items;
-        if (m_dropdownRawIdx >= (int)items.size())
-            return nxui::Rect{0.f, 0.f, 0.f, 0.f};
-
-        auto& item = items[m_dropdownRawIdx];
-        int total = (int)item.options.size();
-        int visible = std::min(total, 6);
-        float listH = visible * 46.f + 16.f;
-
-        float y = cr.y + kContentTopPad - m_scrollY;
-        for (int i = 0; i < m_dropdownRawIdx; ++i)
-            y += itemHeight(items[i], cr.width);
-
-        float ctrlX = cr.x + cr.width * 0.40f;
-        float ctrlW = cr.width * 0.60f;
-        float dy = y + itemHeight(items[m_dropdownRawIdx], cr.width) + 6.f;
-        if (dy + listH > cr.bottom() - 4.f)
-            dy = y - listH - 6.f;
-
-        return nxui::Rect{ctrlX, dy, ctrlW, listH};
+        m_dropdownVisible = geom.visible;
+        return nxui::Rect{geom.ctrlX, geom.dy, geom.ctrlW, geom.listH};
     };
 
     auto dropdownIndexAt = [this, &dropdownRect](float tx, float ty) {
@@ -764,11 +746,11 @@ void TabbedOverlayScreen::handleTouch(nxui::Input& input) {
 
         auto& item = items[m_dropdownRawIdx];
         int total = (int)item.options.size();
-        int visible = std::min(total, 6);
+        nxui::Rect dropRect = dropdownRect();
+        int visible = dropdownVisibleCount(total);
         if (total <= 0 || visible <= 0)
             return -1;
 
-        nxui::Rect dropRect = dropdownRect();
         if (!dropRect.expanded(18.f).contains(tx, ty))
             return -1;
 
@@ -951,7 +933,7 @@ void TabbedOverlayScreen::handleTouch(nxui::Input& input) {
                 }
 
                 if (m_touchScrolling) {
-                    int visible = std::min(count, 6);
+                    int visible = dropdownVisibleCount(count);
                     float maxStart = (float)std::max(0, count - visible);
                     m_dropdownVisualStart = std::clamp(
                         m_touchStartDropdownVisualStart - (ty - m_touchStartY) / 46.f,
@@ -1218,7 +1200,10 @@ void TabbedOverlayScreen::onContentUpdate(float dt) {
         && m_dropdownRawIdx < (int)m_tabs[m_tabIndex].items.size()) {
         auto& item = m_tabs[m_tabIndex].items[m_dropdownRawIdx];
         int total = (int)item.options.size();
-        int visible = std::min(total, 6);
+        DropdownGeom geom = layoutDropdown(contentRect());
+        if (geom.valid)
+            m_dropdownVisible = geom.visible;
+        int visible = dropdownVisibleCount(total);
         float targetStart = 0.f;
         if (total > visible)
             targetStart = (float)std::clamp(m_dropdownHover - visible / 2, 0, total - visible);

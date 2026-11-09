@@ -11,6 +11,7 @@
 #endif
 
 #include <nxui/core/I18n.hpp>
+#include <nxui/core/SharedFonts.hpp>
 #include <switchu/control_cache.hpp>
 
 #include <algorithm>
@@ -3622,11 +3623,16 @@ void WiiUMenuApp::applyThemeResources(const ThemePreset& preset) {
     bool settingsLayoutNeedsRebuild = false;
 
     const bool regularFontExists = !regularFontPath.empty() && pathExists(regularFontPath);
-    const std::string desiredRegularFontPath = regularFontExists ? regularFontPath : fallbackFontPath;
-    const bool regularFontNeedsReload = forceResourceReload || m_loadedRegularFontPath != desiredRegularFontPath;
-
     const bool smallFontExists = !smallFontPath.empty() && pathExists(smallFontPath);
-    const std::string desiredSmallFontPath = smallFontExists ? smallFontPath : fallbackFontPath;
+    // When a theme omits fonts, prefer Nintendo shared faces (JP/CN/KO) over DejaVu.
+    const bool sharedFontsReady = nxui::shared_fonts::ensureLoaded();
+    const std::string desiredRegularFontPath = regularFontExists
+        ? regularFontPath
+        : (sharedFontsReady ? std::string("pl:shared") : fallbackFontPath);
+    const std::string desiredSmallFontPath = smallFontExists
+        ? smallFontPath
+        : (sharedFontsReady ? std::string("pl:shared") : fallbackFontPath);
+    const bool regularFontNeedsReload = forceResourceReload || m_loadedRegularFontPath != desiredRegularFontPath;
     const bool smallFontNeedsReload = forceResourceReload || m_loadedSmallFontPath != desiredSmallFontPath;
 
     const std::string defaultGameCardPath = std::string(SD_ASSETS) + "/icons/default/gamecard.png";
@@ -3651,26 +3657,43 @@ void WiiUMenuApp::applyThemeResources(const ThemePreset& preset) {
     }
 
     if (regularFontNeedsReload) {
-        bool regularFontLoaded = regularFontExists && m_fontNormal.load(gpu, ren, regularFontPath, 24);
+        bool regularFontLoaded = false;
+        if (regularFontExists) {
+            regularFontLoaded = m_fontNormal.load(gpu, ren, regularFontPath, 24);
+            if (regularFontLoaded)
+                nxui::shared_fonts::attachFallbacks(m_fontNormal);
+        }
         DebugLog::log("[theme-apply] regular font: path=%s exists=%d reloaded=%d loaded=%d",
                       safeLogPath(regularFontPath),
                       regularFontExists ? 1 : 0,
                       1,
                       regularFontLoaded ? 1 : 0);
         if (!regularFontLoaded) {
-            regularFontLoaded = m_fontNormal.load(gpu, ren, fallbackFontPath, 24);
-            DebugLog::log("[theme-apply] regular font fallback: path=%s loaded=%d",
-                          fallbackFontPath.c_str(),
-                          regularFontLoaded ? 1 : 0);
+            // Prefer shared CJK fonts over Latin-only DejaVu when the theme
+            // does not ship a regular face.
+            regularFontLoaded = nxui::shared_fonts::loadUiFont(m_fontNormal, gpu, ren, 24);
+            if (regularFontLoaded) {
+                m_loadedRegularFontPath = "pl:shared";
+                DebugLog::log("[theme-apply] regular font shared-font fallback faces=%zu",
+                              nxui::shared_fonts::faceCount());
+            } else {
+                regularFontLoaded = m_fontNormal.load(gpu, ren, fallbackFontPath, 24);
+                DebugLog::log("[theme-apply] regular font DejaVu fallback: path=%s loaded=%d",
+                              fallbackFontPath.c_str(),
+                              regularFontLoaded ? 1 : 0);
+                if (regularFontLoaded)
+                    m_loadedRegularFontPath = desiredRegularFontPath;
+            }
+        } else {
+            m_loadedRegularFontPath = desiredRegularFontPath;
         }
         if (regularFontLoaded) {
-            m_loadedRegularFontPath = desiredRegularFontPath;
             settingsLayoutNeedsRebuild = true;
             applyLockScreenClockFont();
             if (m_themeShop) {
                 m_themeShop->setLockClockFontContext(
                     SD_ASSETS,
-                    m_loadedRegularFontPath.empty()
+                    m_loadedRegularFontPath.empty() || m_loadedRegularFontPath == "pl:shared"
                         ? std::string(SD_ASSETS) + "/fonts/DejaVuSans.ttf"
                         : m_loadedRegularFontPath);
             }
@@ -3684,22 +3707,36 @@ void WiiUMenuApp::applyThemeResources(const ThemePreset& preset) {
     }
 
     if (smallFontNeedsReload) {
-        bool smallFontLoaded = smallFontExists && m_fontSmall.load(gpu, ren, smallFontPath, 18);
+        bool smallFontLoaded = false;
+        if (smallFontExists) {
+            smallFontLoaded = m_fontSmall.load(gpu, ren, smallFontPath, 18);
+            if (smallFontLoaded)
+                nxui::shared_fonts::attachFallbacks(m_fontSmall);
+        }
         DebugLog::log("[theme-apply] small font: path=%s exists=%d reloaded=%d loaded=%d",
                       safeLogPath(smallFontPath),
                       smallFontExists ? 1 : 0,
                       1,
                       smallFontLoaded ? 1 : 0);
         if (!smallFontLoaded) {
-            smallFontLoaded = m_fontSmall.load(gpu, ren, fallbackFontPath, 18);
-            DebugLog::log("[theme-apply] small font fallback: path=%s loaded=%d",
-                          fallbackFontPath.c_str(),
-                          smallFontLoaded ? 1 : 0);
-        }
-        if (smallFontLoaded) {
+            smallFontLoaded = nxui::shared_fonts::loadUiFont(m_fontSmall, gpu, ren, 18);
+            if (smallFontLoaded) {
+                m_loadedSmallFontPath = "pl:shared";
+                DebugLog::log("[theme-apply] small font shared-font fallback faces=%zu",
+                              nxui::shared_fonts::faceCount());
+            } else {
+                smallFontLoaded = m_fontSmall.load(gpu, ren, fallbackFontPath, 18);
+                DebugLog::log("[theme-apply] small font DejaVu fallback: path=%s loaded=%d",
+                              fallbackFontPath.c_str(),
+                              smallFontLoaded ? 1 : 0);
+                if (smallFontLoaded)
+                    m_loadedSmallFontPath = desiredSmallFontPath;
+            }
+        } else {
             m_loadedSmallFontPath = desiredSmallFontPath;
-            settingsLayoutNeedsRebuild = true;
         }
+        if (smallFontLoaded)
+            settingsLayoutNeedsRebuild = true;
     } else {
         DebugLog::log("[theme-apply] small font: path=%s exists=%d reloaded=%d loaded=%d",
                       safeLogPath(smallFontPath),

@@ -347,6 +347,75 @@ void TabbedOverlayScreen::hide() {
     clearActions();
 }
 
+TabbedOverlayScreen::DropdownGeom TabbedOverlayScreen::layoutDropdown(const nxui::Rect& cr) const {
+    DropdownGeom geom;
+    if (m_tabIndex < 0 || m_tabIndex >= (int)m_tabs.size() || m_dropdownRawIdx < 0)
+        return geom;
+
+    auto& items = m_tabs[m_tabIndex].items;
+    if (m_dropdownRawIdx >= (int)items.size())
+        return geom;
+
+    auto& item = items[m_dropdownRawIdx];
+    if (item.type != ItemType::Selector || item.options.empty())
+        return geom;
+
+    constexpr float kContentTopPad = 16.f;
+    constexpr float kGap = 6.f;
+    constexpr float kListPad = 16.f;
+    constexpr float kEdgePad = 4.f;
+    constexpr int kMaxVisible = 6;
+
+    float rowY = cr.y + kContentTopPad - m_scrollY;
+    for (int i = 0; i < m_dropdownRawIdx; ++i)
+        rowY += itemHeight(items[i], cr.width);
+    float rowH = itemHeight(item, cr.width);
+
+    geom.ctrlX = cr.x + cr.width * 0.40f;
+    geom.ctrlW = cr.width * 0.60f;
+    geom.optH = 46.f;
+
+    int total = (int)item.options.size();
+    float topLimit = cr.y + kEdgePad;
+    float bottomLimit = cr.bottom() - kEdgePad;
+    float spaceBelow = bottomLimit - (rowY + rowH + kGap);
+    float spaceAbove = (rowY - kGap) - topLimit;
+    float avail = std::max(0.f, bottomLimit - topLimit);
+
+    auto heightFor = [&](int vis) {
+        return (float)vis * geom.optH + kListPad;
+    };
+
+    int visible = std::min(total, kMaxVisible);
+    float fitSpace = std::max(spaceBelow, spaceAbove);
+    while (visible > 1 && heightFor(visible) > fitSpace + 0.5f)
+        --visible;
+    if (heightFor(visible) > avail + 0.5f)
+        visible = std::max(1, (int)std::floor((avail - kListPad) / geom.optH));
+    visible = std::clamp(visible, 1, std::min(total, kMaxVisible));
+
+    geom.visible = visible;
+    geom.listH = heightFor(visible);
+
+    bool placeBelow = spaceBelow >= geom.listH || spaceBelow >= spaceAbove;
+    geom.dy = placeBelow ? (rowY + rowH + kGap) : (rowY - geom.listH - kGap);
+    if (geom.dy + geom.listH > bottomLimit)
+        geom.dy = bottomLimit - geom.listH;
+    if (geom.dy < topLimit)
+        geom.dy = topLimit;
+
+    geom.valid = true;
+    return geom;
+}
+
+int TabbedOverlayScreen::dropdownVisibleCount(int optionCount) const {
+    if (!m_dropdownOpen && !m_dropdownClosing)
+        return std::min(optionCount, 6);
+    if (m_dropdownVisible > 0)
+        return std::min(optionCount, m_dropdownVisible);
+    return std::min(optionCount, 6);
+}
+
 void TabbedOverlayScreen::openDropdown(int rawIdx) {
     if (m_tabIndex < 0 || m_tabIndex >= (int)m_tabs.size())
         return;
@@ -363,7 +432,10 @@ void TabbedOverlayScreen::openDropdown(int rawIdx) {
     m_dropdownClosing = false;
     m_dropdownRawIdx = rawIdx;
     m_dropdownHover = std::clamp(item.intVal, 0, std::max(0, (int)item.options.size() - 1));
-    int visible = std::min((int)item.options.size(), 6);
+
+    DropdownGeom geom = layoutDropdown(contentRect());
+    int visible = geom.valid ? geom.visible : std::min((int)item.options.size(), 6);
+    m_dropdownVisible = visible;
     m_dropdownVisualStart = (item.options.size() > (size_t)visible)
         ? (float)std::clamp(m_dropdownHover - visible / 2, 0, (int)item.options.size() - visible)
         : 0.f;
@@ -791,29 +863,23 @@ void TabbedOverlayScreen::drawDropdown(nxui::Renderer& ren, const nxui::Rect& pa
     if (item.type != ItemType::Selector || item.options.empty()) return;
 
     nxui::Rect cr = contentRect(panel);
-
-    float y = cr.y + 16.f - m_scrollY;
-    for (int i = 0; i < m_dropdownRawIdx; ++i)
-        y += itemHeight(items[i], cr.width);
-    float rowH = itemHeight(item, cr.width);
-
-    float ctrlX = cr.x + cr.width * 0.40f;
-    float ctrlW = cr.width * 0.60f;
+    DropdownGeom geom = layoutDropdown(cr);
+    if (!geom.valid) return;
 
     int total = (int)item.options.size();
-    int visible = std::min(total, 6);
-    float optH = 46.f;
-    float listH = visible * optH + 16.f;
+    int visible = geom.visible;
+    float optH = geom.optH;
+    float listH = geom.listH;
+    float ctrlX = geom.ctrlX;
+    float ctrlW = geom.ctrlW;
+    float dy = geom.dy;
+    m_dropdownVisible = visible;
 
     float visualStart = 0.f;
     if (total > visible)
         visualStart = std::clamp(m_dropdownVisualStart, 0.f, (float)(total - visible));
     int start = std::clamp((int)std::floor(visualStart), 0, std::max(0, total - visible));
     float rowOffset = (float)start - visualStart;
-
-    float dy = y + rowH + 6.f;
-    if (dy + listH > cr.bottom() - 4.f)
-        dy = y - listH - 6.f;
 
     float scale = 0.965f + 0.035f * open;
     float w = ctrlW * scale;

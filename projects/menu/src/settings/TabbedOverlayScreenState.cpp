@@ -16,10 +16,44 @@ float easeInCubic(float t) {
 
 } // namespace
 
+void TabbedOverlayScreen::stashFocusForLanguageRestore() {
+    m_stashFocusRestore = true;
+    m_stashTabIndex = m_tabIndex;
+    m_stashContentIdx = m_contentIdx;
+    m_stashScrollY = m_scrollTarget;
+    m_stashFocusArea = m_focusArea;
+}
+
+bool TabbedOverlayScreen::applyStashedFocusRestore() {
+    if (!m_stashFocusRestore || !canApplyStashedFocusRestore())
+        return false;
+
+    // User left the tab that triggered the language refresh — drop the stash
+    // instead of restoring content/scroll onto a different tab.
+    if (m_tabIndex != m_stashTabIndex) {
+        m_stashFocusRestore = false;
+        return false;
+    }
+
+    m_stashFocusRestore = false;
+    m_focusArea = m_stashFocusArea;
+    clampContentIdx();
+    if (focusableCount() > 0)
+        m_contentIdx = std::clamp(m_stashContentIdx, 0, focusableCount() - 1);
+    else
+        m_contentIdx = 0;
+
+    float maxScroll = std::max(0.f, contentTotalHeight() + 16.f - contentRect().height + 20.f);
+    m_scrollTarget = std::clamp(m_stashScrollY, 0.f, maxScroll);
+    scrollToFocused();
+    m_scrollY = m_scrollTarget;
+    return true;
+}
+
 void TabbedOverlayScreen::refreshTranslations() {
     DebugLog::log("[settings] refreshTranslations()");
     int oldTab = m_tabIndex;
-    int oldContent = m_contentIdx;
+    stashFocusForLanguageRestore();
 
     buildTabs();
 
@@ -29,14 +63,16 @@ void TabbedOverlayScreen::refreshTranslations() {
         m_tabIndex = 0;
     }
 
-    clampContentIdx();
-    if (focusableCount() > 0)
-        m_contentIdx = std::clamp(oldContent, 0, focusableCount() - 1);
-    else
-        m_contentIdx = 0;
+    m_focusArea = m_stashFocusArea;
+    m_contentIdx = m_stashContentIdx;
+    m_scrollTarget = m_stashScrollY;
+    m_scrollY = m_stashScrollY;
 
     rebuildTabBar();
     rebuildContentItems();
+
+    // Sync overlays apply immediately; lazy Settings waits for pollTabLoaders.
+    applyStashedFocusRestore();
 }
 
 void TabbedOverlayScreen::rebuildCurrentTab() {
