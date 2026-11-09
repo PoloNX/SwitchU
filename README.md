@@ -75,8 +75,9 @@ Themesshop with community submitted themes and icon packs
 | **SteamGridDB** | Covers, heroes, posters - search missing artwork from Settings |
 | **Lock Screen** | Clock fonts, transitions, resume from suspended game, Lock from Power / Quick Settings |
 | **Music** | Quick Settings player, playlists, fullscreen player - put tracks in `sdmc:/switch/SwitchU/music/` |
+| **Languages** | Full HOME chrome for English + European packs, plus **Japanese / Simplified Chinese / Traditional Chinese / Korean** (shared system fonts for CJK glyphs) |
+| **Frame Tap** | Optional USB HOME capture with [Switch Frame Tap](https://github.com/TomasUribe/switch-frame-tap) (see below) |
 | **Battery Saver** | Dial back visuals to save power (also used when Frame Tap viewer needs headroom) |
-| **Homebrew suspend** | Homebrew titles can suspend again like retail games |
 | **Manager** | Enable / disable SwitchU; in-app updates after you are on 1.4.0+ |
 
 > [!TIP]
@@ -119,19 +120,47 @@ Create themes, download packages, and submit icon packs here:
 3. Copy that folder to:
 
 ```text
-sdmc:/config/SwitchU/themes/<theme-id>/
+sdmc:/switch/SwitchU/themes/<theme-id>/     ← preferred for manual installs
+sdmc:/config/SwitchU/themes/<theme-id>/     ← Theme Shop install root (also still works)
 ```
 
 4. Open **Theme Shop → Installed** and apply it.
 
 > [!NOTE]
-> Zips from the site include an `INSTALL.txt` with the same path. Icon packs are different: they install under `sdmc:/switch/SwitchU/icons/`.
+> Theme Shop installs still write under `config/`. If the same theme id exists in both places, **config wins**. Icon packs install under `sdmc:/switch/SwitchU/icons/`.
 
 Catalog source repo: [PoloNX/SwitchU-Themes](https://github.com/PoloNX/SwitchU-Themes).
+
+## 📹 Frame Tap (optional)
+
+Stream the SwitchU HOME menu to a PC over USB with **[Switch Frame Tap](https://github.com/TomasUribe/switch-frame-tap)** (v0.7.21.1 or later).
+
+1. Install Frame Tap per its release notes.
+2. In **Frame Tap Manager → Beta**, turn **Stream the HOME menu** ON (`home_menu = 1`).
+3. Reboot, then connect the Viewer.
+
+SwitchU enables **Battery Saver** automatically while the Viewer needs headroom so both can share available memory.
+
+<img width="1027" height="730" alt="image" src="https://github.com/user-attachments/assets/701c8f9f-2143-4e2d-9d62-7f6bccde0f66" />
 
 ## 🧰 SwitchU Manager
 
 `SwitchU-Manager.nro` (under `sdmc:/switch/SwitchU/`) lets you **enable or disable** SwitchU without deleting files.
+
+## ⚠️ Known issues
+
+- Some settings are not implemented yet. 
+- While sysmodules modules are now supported - some sysmodules or heavy stacks can still cause memory issues that result in failed boots, black screens or other issues like the clock not working. 
+- To add more head room for sys-modules you can also try [Born to Honk's Atmosphere fork](https://github.com/borntohonk/Atmosphere/releases/tag/1.12.1+) (when setup correctly it can reclaim more memory on Firmware 20+ and doesn't need sys-patch which can be dropped from the stack) 
+- Screenshots in this README may lag the newest UI; see [release notes](https://github.com/PoloNX/SwitchU/releases) for the latest visuals.
+
+## 🤝 Contributing
+
+Bug reports and pull requests are welcome.
+
+- Open an [issue](https://github.com/PoloNX/SwitchU/issues) when something breaks.
+- Open a PR when you have a fix or improvement.
+- Theme / icon creators: use [Theme Studio](https://polonx.github.io/SwitchU-Themes/) to submit packages.
 
 ## 🔨 How to build
 
@@ -168,21 +197,6 @@ xmake clean
 ```
 
 Build outputs are generated under `build/cross/aarch64/<mode>/`.
-
-## ⚠️ Known issues
-
-- Some settings are not implemented yet. 
-- While sysmodules modules are now supported - some sysmodules or heavy stacks can still cause memory issues that result in failed boots, black screens or other issues like the clock not working. 
-- To add more head room for sys-modules you can also try [Born to Honk's Atmosphere fork](https://github.com/borntohonk/Atmosphere/releases/tag/1.12.1+) (when setup correctly it can reclaim more memory on Firmware 20+ and doesn't need sys-patch which can be dropped from the stack) 
-- Screenshots in this README may lag the newest UI; see [release notes](https://github.com/PoloNX/SwitchU/releases) for the latest visuals.
-
-## 🤝 Contributing
-
-Bug reports and pull requests are welcome.
-
-- Open an [issue](https://github.com/PoloNX/SwitchU/issues) when something breaks.
-- Open a PR when you have a fix or improvement.
-- Theme / icon creators: use [Theme Studio](https://polonx.github.io/SwitchU-Themes/) to submit packages.
 
 ## 👾 Credits
 
