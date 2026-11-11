@@ -28,9 +28,10 @@ constexpr float kGridGapY = 16.f;
 constexpr float kFooterHintHeight = 64.f;
 constexpr float kCardCaptionH = 48.f;
 constexpr float kPreviewAspect = 16.f / 9.f;
-constexpr float kSearchButtonWidth = 208.f;
-constexpr float kRefreshButtonWidth = 144.f;
-constexpr float kHeaderButtonGap = 12.f;
+// Refresh / Sort / Search share one chip width; clear is a compact ×.
+constexpr float kHeaderActionWidth = 128.f;
+constexpr float kClearButtonWidth = 46.f;
+constexpr float kHeaderButtonGap = 10.f;
 // Match parent tab pitch (kTabRowHeight) so the Shop pill is the same size.
 constexpr float kShopBranchRow = 58.f;
 constexpr int kEntriesPerPage = themeshop::layout::kEntriesPerPage;
@@ -75,8 +76,10 @@ nxui::Vec2 measureTextCached(nxui::Font* font, const std::string& text) {
 
 struct GridLayout {
     nxui::Rect header;
-    nxui::Rect searchButton;
     nxui::Rect refreshButton;
+    nxui::Rect sortButton;
+    nxui::Rect searchButton;
+    nxui::Rect clearButton;
     nxui::Rect pagePrevButton;
     nxui::Rect pageCounter;
     nxui::Rect pageNextButton;
@@ -85,7 +88,11 @@ struct GridLayout {
     float cardH = 0.f;
 };
 
-GridLayout makeGridLayout(const nxui::Rect& content, bool showRefresh) {
+int headerActionCount(bool showRefresh, bool showClear) {
+    return (showRefresh ? 1 : 0) + 2 + (showClear ? 1 : 0);
+}
+
+GridLayout makeGridLayout(const nxui::Rect& content, bool showRefresh, bool showClear = false) {
     GridLayout layout;
     layout.header = {
         content.x + kContentInsetX,
@@ -93,24 +100,29 @@ GridLayout makeGridLayout(const nxui::Rect& content, bool showRefresh) {
         content.width - kContentInsetX * 2.f,
         kHeaderHeight
     };
-    layout.searchButton = {
-        layout.header.right() - kSearchButtonWidth,
-        layout.header.y + 10.f,
-        kSearchButtonWidth,
-        46.f
-    };
-    float cursorX = layout.searchButton.x;
-    if (showRefresh) {
-        cursorX -= kHeaderButtonGap + kRefreshButtonWidth;
-        layout.refreshButton = {
-            cursorX,
-            layout.header.y + 10.f,
-            kRefreshButtonWidth,
-            46.f
-        };
+
+    const float buttonY = layout.header.y + 10.f;
+    float cursorX = layout.header.right();
+    if (showClear) {
+        cursorX -= kClearButtonWidth;
+        layout.clearButton = {cursorX, buttonY, kClearButtonWidth, 46.f};
+        cursorX -= kHeaderButtonGap;
     } else {
-        layout.refreshButton = {cursorX, layout.header.y + 10.f, 0.f, 46.f};
+        layout.clearButton = {cursorX, buttonY, 0.f, 46.f};
     }
+
+    cursorX -= kHeaderActionWidth;
+    layout.searchButton = {cursorX, buttonY, kHeaderActionWidth, 46.f};
+    cursorX -= kHeaderButtonGap + kHeaderActionWidth;
+    layout.sortButton = {cursorX, buttonY, kHeaderActionWidth, 46.f};
+
+    if (showRefresh) {
+        cursorX -= kHeaderButtonGap + kHeaderActionWidth;
+        layout.refreshButton = {cursorX, buttonY, kHeaderActionWidth, 46.f};
+    } else {
+        layout.refreshButton = {cursorX, buttonY, 0.f, 46.f};
+    }
+
     layout.grid = {
         content.x + kContentInsetX,
         layout.header.bottom() + 12.f,
@@ -181,11 +193,14 @@ std::vector<nxui::Rect> detailButtonRects(const nxui::Rect& dialog, int count) {
     return rects;
 }
 
-std::vector<nxui::Rect> headerButtonRects(const GridLayout& layout, bool showRefresh) {
+std::vector<nxui::Rect> headerButtonRects(const GridLayout& layout, bool showRefresh, bool showClear) {
     std::vector<nxui::Rect> rects;
     if (showRefresh && layout.refreshButton.width > 0.f)
         rects.push_back(layout.refreshButton);
+    rects.push_back(layout.sortButton);
     rects.push_back(layout.searchButton);
+    if (showClear && layout.clearButton.width > 0.f)
+        rects.push_back(layout.clearButton);
     return rects;
 }
 
@@ -1566,7 +1581,8 @@ void ThemeShopScreen::updateCustomContent(float dt) {
         syncFinishedCommunityPreviewLoads();
     }
 
-    const int headerButtonCount = (showsCatalogRefresh() ? 1 : 0) + 1;
+    const bool showClear = !m_searchQuery.empty();
+    const int headerButtonCount = headerActionCount(showsCatalogRefresh(), showClear);
     m_headerButtonIndex = std::clamp(m_headerButtonIndex, 0, std::max(0, headerButtonCount - 1));
 
     if (showsShelfBranch() && m_shopBranchReveal.value() < 0.999f) {
@@ -1663,9 +1679,19 @@ bool ThemeShopScreen::handleCustomPressA() {
 
     if (!m_detailOpen && m_contentFocusArea == ContentFocusArea::Header) {
         const bool hasRefresh = showsCatalogRefresh();
-        if (hasRefresh && m_headerButtonIndex == 0) {
+        const bool showClear = !m_searchQuery.empty();
+        int actionIndex = 0;
+        const int refreshIndex = hasRefresh ? actionIndex++ : -1;
+        const int sortIndex = actionIndex++;
+        const int searchIndex = actionIndex++;
+        const int clearIndex = showClear ? actionIndex++ : -1;
+        if (m_headerButtonIndex == refreshIndex) {
             refreshCommunityCatalog(true);
-        } else {
+        } else if (m_headerButtonIndex == sortIndex) {
+            cycleCatalogSortMode();
+        } else if (m_headerButtonIndex == clearIndex) {
+            clearSearchQuery();
+        } else if (m_headerButtonIndex == searchIndex) {
             promptSearchQuery();
         }
         if (m_activateSfxCb) m_activateSfxCb();
@@ -2012,7 +2038,7 @@ bool ThemeShopScreen::handleCustomNavUp() {
     } else {
         m_contentFocusArea = ContentFocusArea::Header;
         {
-            const int headerButtonCount = (showsCatalogRefresh() ? 1 : 0) + 1;
+            const int headerButtonCount = headerActionCount(showsCatalogRefresh(), !m_searchQuery.empty());
             m_headerButtonIndex = std::clamp(selected % kGridCols, 0, headerButtonCount - 1);
         }
     }
@@ -2295,7 +2321,7 @@ bool ThemeShopScreen::handleCustomNavRight() {
     }
 
     if (m_contentFocusArea == ContentFocusArea::Header) {
-        const int headerButtonCount = (showsCatalogRefresh() ? 1 : 0) + 1;
+        const int headerButtonCount = headerActionCount(showsCatalogRefresh(), !m_searchQuery.empty());
         if (m_headerButtonIndex + 1 < headerButtonCount) {
             ++m_headerButtonIndex;
         } else if (currentEntryCount() > 0) {
@@ -2325,7 +2351,7 @@ bool ThemeShopScreen::handleCustomNavRight() {
 }
 
 int ThemeShopScreen::hitTestGridCard(const nxui::Rect& content, float x, float y) const {
-    GridLayout layout = makeGridLayout(content, showsCatalogRefresh());
+    GridLayout layout = makeGridLayout(content, showsCatalogRefresh(), !m_searchQuery.empty());
     int count = currentEntryCount();
     if (count <= 0 || !layout.grid.contains(x, y))
         return -1;
@@ -2344,24 +2370,30 @@ int ThemeShopScreen::hitTestGridCard(const nxui::Rect& content, float x, float y
 }
 
 bool ThemeShopScreen::handleCustomTouch(nxui::Input& input, const nxui::Rect&, const nxui::Rect& tabs, const nxui::Rect& content) {
+    const bool showClear = !m_searchQuery.empty();
+    auto headerLayout = [&]() {
+        return makeGridLayout(content, showsCatalogRefresh(), showClear);
+    };
     auto searchHit = [&](float x, float y) {
-        return makeGridLayout(content, showsCatalogRefresh())
-            .searchButton.contains(x, y);
+        return headerLayout().searchButton.contains(x, y);
+    };
+    auto sortHit = [&](float x, float y) {
+        return headerLayout().sortButton.contains(x, y);
+    };
+    auto clearHit = [&](float x, float y) {
+        return showClear && headerLayout().clearButton.contains(x, y);
     };
     auto refreshHit = [&](float x, float y) {
         return showsCatalogRefresh()
-            && makeGridLayout(content, showsCatalogRefresh())
-                   .refreshButton.contains(x, y);
+            && headerLayout().refreshButton.contains(x, y);
     };
     auto pagePrevHit = [&](float x, float y) {
         return pageCount() > 1
-            && makeGridLayout(content, showsCatalogRefresh())
-                   .pagePrevButton.contains(x, y);
+            && headerLayout().pagePrevButton.contains(x, y);
     };
     auto pageNextHit = [&](float x, float y) {
         return pageCount() > 1
-            && makeGridLayout(content, showsCatalogRefresh())
-                   .pageNextButton.contains(x, y);
+            && headerLayout().pageNextButton.contains(x, y);
     };
     auto installedHasCover = [&]() {
         const auto* entry = selectedThemeShopEntry();
@@ -2501,6 +2533,16 @@ bool ThemeShopScreen::handleCustomTouch(nxui::Input& input, const nxui::Rect&, c
             return true;
         }
 
+        if (sortHit(x, y)) {
+            m_themeTouchTarget = ThemeTouchTarget::Sort;
+            return true;
+        }
+
+        if (clearHit(x, y)) {
+            m_themeTouchTarget = ThemeTouchTarget::ClearSearch;
+            return true;
+        }
+
         if (refreshHit(x, y)) {
             m_themeTouchTarget = ThemeTouchTarget::Refresh;
             return true;
@@ -2577,6 +2619,18 @@ bool ThemeShopScreen::handleCustomTouch(nxui::Input& input, const nxui::Rect&, c
             case ThemeTouchTarget::Search:
                 if (searchHit(x, y)) {
                     promptSearchQuery();
+                    if (m_activateSfxCb) m_activateSfxCb();
+                }
+                return true;
+            case ThemeTouchTarget::Sort:
+                if (sortHit(x, y)) {
+                    cycleCatalogSortMode();
+                    if (m_activateSfxCb) m_activateSfxCb();
+                }
+                return true;
+            case ThemeTouchTarget::ClearSearch:
+                if (clearHit(x, y)) {
+                    clearSearchQuery();
                     if (m_activateSfxCb) m_activateSfxCb();
                 }
                 return true;
@@ -2735,7 +2789,8 @@ bool ThemeShopScreen::handleCustomTouch(nxui::Input& input, const nxui::Rect&, c
 
 void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, const nxui::Rect& content, float opacity) {
     auto& i18n = nxui::I18n::instance();
-    GridLayout layout = makeGridLayout(content, showsCatalogRefresh());
+    const bool showClear = !m_searchQuery.empty();
+    GridLayout layout = makeGridLayout(content, showsCatalogRefresh(), showClear);
     float slideT = std::clamp(m_contentSlideAnim.value(), 0.f, 1.f);
     float slideOffset = (1.f - slideT) * 24.f * (float)m_tabSwitchDir;
     float contentOpacity = opacity * slideT;
@@ -2764,7 +2819,9 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
 
     layout.header.y += slideOffset;
     layout.refreshButton.y += slideOffset;
+    layout.sortButton.y += slideOffset;
     layout.searchButton.y += slideOffset;
+    layout.clearButton.y += slideOffset;
     layout.pagePrevButton.y += slideOffset;
     layout.pageCounter.y += slideOffset;
     layout.pageNextButton.y += slideOffset;
@@ -2787,18 +2844,42 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
         subtitle = i18n.tr("themeshop.themes.subtitle_installed", "Themes on this console.");
     }
 
+    std::string counterText;
+    if (count > 0) {
+        const int selected = std::max(0, currentSelectedIndex()) + 1;
+        counterText = std::to_string(selected) + "/" + std::to_string(count);
+    } else if ((isCommunityTab() || isIconsShopMode())
+               && m_searchQuery.empty()
+               && !m_communityTransferState.hasFailed()
+               && (m_communityTransferState.isRunning() || m_communityRevision == 0)) {
+        counterText = i18n.tr("themeshop.community.counter_loading", "Loading");
+    } else {
+        counterText = "0/0";
+    }
+    title += " (" + counterText + ")";
+
+    // Keep the title from colliding with header actions.
+    float titleMaxWidth = layout.sortButton.x - layout.header.x - 16.f;
+    if (showsCatalogRefresh() && layout.refreshButton.width > 0.f)
+        titleMaxWidth = layout.refreshButton.x - layout.header.x - 16.f;
+    title = ellipsize(m_font, title, std::max(80.f, titleMaxWidth), 1.16f);
+
     ren.drawText(title, {layout.header.x, layout.header.y + 0.f}, m_font,
                  m_theme->textPrimary.withAlpha(contentOpacity), 1.16f);
     ren.drawText(subtitle, {layout.header.x, layout.header.y + 34.f}, m_smallFont,
                  m_theme->textSecondary.withAlpha(0.78f * contentOpacity), 0.72f);
 
     const bool hasRefresh = showsCatalogRefresh();
-    const int searchHeaderIndex = hasRefresh ? 1 : 0;
-    const int refreshHeaderIndex = 0;
+    int actionIndex = 0;
+    const int refreshHeaderIndex = hasRefresh ? actionIndex++ : -1;
+    const int sortHeaderIndex = actionIndex++;
+    const int searchHeaderIndex = actionIndex++;
+    const int clearHeaderIndex = showClear ? actionIndex++ : -1;
 
     std::string searchLabel = m_searchQuery.empty()
         ? i18n.tr("themeshop.search.button", "Search")
         : m_searchQuery;
+    searchLabel = ellipsize(m_smallFont, searchLabel, layout.searchButton.width - 28.f, 0.78f);
     bool searchSelected = !m_detailOpen && m_focusArea == FocusArea::Content && m_contentFocusArea == ContentFocusArea::Header
         && m_headerButtonIndex == searchHeaderIndex;
     drawActionButtonChip(ren,
@@ -2812,27 +2893,36 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
                          searchSelected ? 1.f : (m_searchQuery.empty() ? 0.f : 0.72f),
                          0.78f);
 
-    std::string counterText;
-    if (count > 0) {
-        int selected = std::max(0, currentSelectedIndex()) + 1;
-        counterText = std::to_string(selected) + " / " + std::to_string(count);
-    } else if ((isCommunityTab() || isIconsShopMode())
-               && m_searchQuery.empty()
-               && !m_communityTransferState.hasFailed()
-               && (m_communityTransferState.isRunning() || m_communityRevision == 0)) {
-        counterText = i18n.tr("themeshop.community.counter_loading", "Loading");
-    } else {
-        counterText = "0 / 0";
+    const std::string sortLabel = (m_catalogSortMode == CatalogSortMode::Newest)
+        ? i18n.tr("themeshop.sort.newest", "Newest")
+        : i18n.tr("themeshop.sort.alpha", "A-Z");
+    bool sortSelected = !m_detailOpen && m_focusArea == FocusArea::Content && m_contentFocusArea == ContentFocusArea::Header
+        && m_headerButtonIndex == sortHeaderIndex;
+    drawActionButtonChip(ren,
+                         m_smallFont,
+                         layout.sortButton,
+                         sortLabel,
+                         m_theme,
+                         m_theme->textPrimary,
+                         contentOpacity,
+                         sortSelected ? 1.f : 0.f,
+                         sortSelected ? 1.f : 0.f,
+                         0.78f);
+
+    if (showClear) {
+        bool clearSelected = !m_detailOpen && m_focusArea == FocusArea::Content && m_contentFocusArea == ContentFocusArea::Header
+            && m_headerButtonIndex == clearHeaderIndex;
+        drawActionButtonChip(ren,
+                             m_smallFont,
+                             layout.clearButton,
+                             i18n.tr("button.clear_x", "×"),
+                             m_theme,
+                             m_theme->textPrimary,
+                             contentOpacity,
+                             clearSelected ? 1.f : 0.f,
+                             clearSelected ? 1.f : 0.72f,
+                             0.90f);
     }
-    nxui::Vec2 countSize = measureTextCached(m_font, counterText);
-    float countRight = layout.searchButton.x - 18.f;
-    if (hasRefresh && layout.refreshButton.width > 0.f)
-        countRight = layout.refreshButton.x - 18.f;
-    ren.drawText(counterText,
-                 {countRight - countSize.x * 0.90f, layout.header.y + 4.f},
-                 m_font,
-                 m_theme->textPrimary.withAlpha(contentOpacity),
-                 0.90f);
 
     if (!m_packageTransferState.label().empty()) {
         nxui::Color statusFill = m_theme->panelBase.withAlpha(0.18f);
@@ -3027,7 +3117,7 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
                      m_theme->textSecondary.withAlpha(0.90f * contentOpacity),
                      0.76f);
         if (!m_detailOpen && m_focusArea == FocusArea::Content && m_contentFocusArea == ContentFocusArea::Header) {
-            auto headerButtons = headerButtonRects(layout, showsCatalogRefresh());
+            auto headerButtons = headerButtonRects(layout, showsCatalogRefresh(), showClear);
             if (!headerButtons.empty()) {
                 int headerIndex = std::clamp(m_headerButtonIndex, 0, (int)headerButtons.size() - 1);
                 m_focusCursor.moveTo(headerButtons[(size_t)headerIndex].expanded(2.f), 20.f, 0.08f);
@@ -3358,7 +3448,7 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
 
     if (gridFocusLive
         && m_focusArea == FocusArea::Content && m_contentFocusArea == ContentFocusArea::Header) {
-        auto headerButtons = headerButtonRects(layout, showsCatalogRefresh());
+        auto headerButtons = headerButtonRects(layout, showsCatalogRefresh(), showClear);
         if (!headerButtons.empty()) {
             int headerIndex = std::clamp(m_headerButtonIndex, 0, (int)headerButtons.size() - 1);
             m_focusCursor.moveTo(headerButtons[(size_t)headerIndex].expanded(2.f), 20.f, 0.08f);

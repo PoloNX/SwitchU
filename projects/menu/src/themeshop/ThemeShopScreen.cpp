@@ -427,6 +427,7 @@ void ThemeShopScreen::stepDetailScreenshot(int delta) {
 
 void ThemeShopScreen::applySearchFilter() {
     const std::string needleLower = asciiLower(trimWhitespace(m_searchQuery));
+    const bool newestFirst = m_catalogSortMode == CatalogSortMode::Newest;
 
     m_themeShopEntries.clear();
     m_themeShopEntries.reserve(m_allThemeShopEntries.size());
@@ -456,6 +457,27 @@ void ThemeShopScreen::applySearchFilter() {
             continue;
         }
         m_iconPackEntries.push_back(entry);
+    }
+
+    auto byName = [](const auto& lhs, const auto& rhs) {
+        if (lhs.name != rhs.name)
+            return lhs.name < rhs.name;
+        return lhs.id < rhs.id;
+    };
+    auto byNewest = [&](const auto& lhs, const auto& rhs) {
+        if (lhs.sortStamp != rhs.sortStamp)
+            return lhs.sortStamp > rhs.sortStamp;
+        return byName(lhs, rhs);
+    };
+
+    if (newestFirst) {
+        std::stable_sort(m_themeShopEntries.begin(), m_themeShopEntries.end(), byNewest);
+        std::stable_sort(m_communityEntries.begin(), m_communityEntries.end(), byNewest);
+        std::stable_sort(m_iconPackEntries.begin(), m_iconPackEntries.end(), byNewest);
+    } else {
+        std::stable_sort(m_themeShopEntries.begin(), m_themeShopEntries.end(), byName);
+        std::stable_sort(m_communityEntries.begin(), m_communityEntries.end(), byName);
+        std::stable_sort(m_iconPackEntries.begin(), m_iconPackEntries.end(), byName);
     }
 
     auto syncSelection = [](const auto& entries, std::string& selectedId) {
@@ -494,6 +516,20 @@ bool ThemeShopScreen::promptSearchQuery() {
 void ThemeShopScreen::setSearchQuery(std::string query) {
     m_searchQuery = trimWhitespace(query);
     closeDetail();
+    applySearchFilter();
+    ensureSelectionVisible();
+}
+
+void ThemeShopScreen::clearSearchQuery() {
+    if (m_searchQuery.empty())
+        return;
+    setSearchQuery({});
+}
+
+void ThemeShopScreen::cycleCatalogSortMode() {
+    m_catalogSortMode = (m_catalogSortMode == CatalogSortMode::Newest)
+        ? CatalogSortMode::NameAsc
+        : CatalogSortMode::Newest;
     applySearchFilter();
     ensureSelectionVisible();
 }

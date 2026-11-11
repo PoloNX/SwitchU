@@ -822,6 +822,10 @@
       "no_results": "No themes match this search.",
       "no_results_hint": "Press X or use Search to change or clear the filter."
     },
+    "sort": {
+      "newest": "Newest",
+      "alpha": "A-Z"
+    },
     "installed": {
       "title": "Themes",
       "subtitle": "Installed on this console.",

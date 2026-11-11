@@ -26,6 +26,10 @@ public:
         bool hasIcons = false;
         bool hasMusic = false;
         bool hasSounds = false;
+        std::string addedAt;
+        std::string updatedAt;
+        // Unix seconds from updatedAt/addedAt for Newest sort (0 if unknown).
+        std::int64_t sortStamp = 0;
     };
 
     // Icon pack published in the same catalog (index.json -> "icons").
@@ -41,6 +45,9 @@ public:
         bool builtin = false;  // also ships inside the console
         bool colour = false;   // colour artwork (spectrum badge + tint UI)
         std::string theme;     // theme folder this pack was extracted from
+        std::string addedAt;
+        std::string updatedAt;
+        std::int64_t sortStamp = 0;
     };
 
     struct Snapshot {

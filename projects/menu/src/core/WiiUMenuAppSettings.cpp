@@ -22,6 +22,7 @@
 #include <fmt/format.h>
 #include <fstream>
 #include <nlohmann/json.hpp>
+#include <sys/stat.h>
 #include <system_error>
 #include <utility>
 #include <unordered_map>
@@ -2917,6 +2918,9 @@ std::vector<ThemeShopScreen::ThemeShopEntry> WiiUMenuApp::buildThemeShopEntries(
             const std::string root = soundBase.empty() ? preset.installPath : soundBase;
             entry.hasMusic = pathExists(root + "/music");
             entry.hasSounds = pathExists(root + "/sfx");
+            struct stat st {};
+            if (::stat(preset.installPath.c_str(), &st) == 0)
+                entry.sortStamp = static_cast<std::int64_t>(st.st_mtime);
         }
         entries.push_back(std::move(entry));
     }
@@ -3036,6 +3040,11 @@ std::vector<ThemeShopScreen::ThemeShopEntry> WiiUMenuApp::buildIconPackEntries()
         entry.installed = true;
         entry.removable = !pack.fromTheme && !entry.builtin;
         entry.colourPack = pack.colourPack;
+        if (!pack.directory.empty()) {
+            struct stat st {};
+            if (::stat(pack.directory.c_str(), &st) == 0)
+                entry.sortStamp = static_cast<std::int64_t>(st.st_mtime);
+        }
         entries.push_back(std::move(entry));
     };
 
@@ -3078,6 +3087,8 @@ std::vector<ThemeShopScreen::ThemeShopEntry> WiiUMenuApp::buildIconPackEntries()
                 // Keep both: Installed shelf uses coverPath (live mosaic + tint);
                 // Icon Shop uses coverUrl (vanilla catalog art).
                 existing->coverUrl = resolveCoverUrl(icon.cover);
+                if (icon.sortStamp != 0)
+                    existing->sortStamp = icon.sortStamp;
                 continue;
             }
             // Catalog row whose theme companion is already installed as another id.
@@ -3110,6 +3121,7 @@ std::vector<ThemeShopScreen::ThemeShopEntry> WiiUMenuApp::buildIconPackEntries()
             entry.colourPack = icon.colour;
             entry.source = "Shop";
             entry.coverUrl = resolveCoverUrl(icon.cover);
+            entry.sortStamp = icon.sortStamp;
             entries.push_back(std::move(entry));
         }
     }
