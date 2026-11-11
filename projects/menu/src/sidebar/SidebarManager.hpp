@@ -34,6 +34,10 @@ public:
 
     void update(float dt, nxui::Widget* focusedWidget);
 
+    // Logical canvas size (1280x720 landscape, 720x1280 portrait). Column
+    // placement uses these instead of hardcoded FB dimensions.
+    void setCanvasSize(float width, float height);
+
     // The dynamic-line HOME layout turns the two side columns into one
     // horizontal control strip between the profile bar and the applications.
     void setDynamicLineLayout(bool enabled);
@@ -109,4 +113,7 @@ private:
     std::string m_loadedCustomIconsBase;
     std::string m_loadedIconPackId;
     bool m_assetsLoaded = false;
+    float m_canvasW = 1280.f;
+    float m_canvasH = 720.f;
+    bool m_dynamicLine = false;
 };

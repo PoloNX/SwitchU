@@ -12,6 +12,7 @@
 #include "widgets/WaraWaraBackground.hpp"
 #include "widgets/DateTimeWidget.hpp"
 #include "widgets/LayoutFlipButton.hpp"
+#include "widgets/OrientationButton.hpp"
 #include "widgets/BatteryWidget.hpp"
 #include "widgets/TitlePillWidget.hpp"
 #include "core/AudioManager.hpp"
@@ -40,6 +41,7 @@
 #include "settings/TextEntryScreen.hpp"
 #include "themeshop/ThemeShopScreen.hpp"
 #include "core/Config.hpp"
+#include "core/HomeLayoutMetrics.hpp"
 #include "core/FolderStore.hpp"
 #include "core/FolderPeekComposite.hpp"
 #include "core/WidgetStore.hpp"
@@ -122,6 +124,10 @@ private:
     GridLayoutMetrics computeGridLayoutMetrics(int columns, int rows) const;
     std::pair<int, int> folderGridDimensions(std::uint32_t folderId) const;
     void reflowHomeGrid();
+    void reflowHomeShell();
+    int activeGridColumns() const;
+    int activeGridRows() const;
+    nxui::Rect homeGridRect() const;
     void buildGrid();
     void loadProfiles(bool loadImmediately = true);
     void loadNextProfile();
@@ -321,6 +327,7 @@ private:
     bool m_touchArrowLeft = false, m_touchArrowRight = false;
     bool m_touchBattery = false;
     bool m_touchLayoutFlip = false;
+    bool m_touchOrientationBtn = false;
 
     nxui::Rect pageArrowRect(bool left);
     nxui::Rect deletePageButtonRect() const;
@@ -411,6 +418,7 @@ private:
         PageNext,          // ZR
         Properties,        // Plus
         ChangeView,        // Minus
+        Orientation,       // L3 — Flip-Grip cycle (chord-grace like shoulders)
         NavLeft,           // D-pad Left
         NavRight,          // D-pad Right
         NavUp,             // D-pad Up
@@ -539,6 +547,13 @@ private:
     void setAppLayoutMode(AppLayoutMode mode);
     // Keeps the Change View button's three-way hint in sync with the view.
     void syncLayoutFlipState();
+    // Apply NWindow transform + Input remap + HOME shell reflow.
+    void applyHomeOrientationState(bool saveConfig = false);
+    void cycleHomeOrientation();
+    void syncOrientationButtonState();
+    void placeOrientationButton();
+    void placeTitlePill();
+    void wireOrientationButtonNavigation();
     // Tall Poster tiles + icon loader preference for single-row only.
     void syncSingleRowPosterPresentation(bool forceReloadIcons = false);
     bool preferPosterForMode(AppLayoutMode mode) const;
@@ -666,6 +681,7 @@ private:
     std::shared_ptr<SelectionCursor>   m_cursor;
     std::shared_ptr<DateTimeWidget>    m_clock;
     std::shared_ptr<LayoutFlipButton>  m_layoutFlip;
+    std::shared_ptr<OrientationButton> m_orientationBtn;
     std::shared_ptr<BatteryWidget>     m_battery;
     std::shared_ptr<TitlePillWidget>   m_titlePill;
     std::shared_ptr<PageIndicator>     m_pageIndicator;
@@ -768,6 +784,7 @@ private:
 
     nxui::ThreadPool m_threadPool{2};
     SidebarManager  m_sidebar;
+    HomeLayoutMetrics m_homeLayout;
     AppletLauncher  m_launcher;
     AppListLoader   m_appLoader;
     IconStreamer    m_iconStreamer;
@@ -1082,7 +1099,7 @@ private:
     // >=0 while an armed HOME shortcut is pending; <0 idle.
     float m_pendingHomeChordSec[static_cast<std::size_t>(HomeChordShortcut::Count)] = {
         -1.f, -1.f, -1.f, -1.f, -1.f, -1.f, -1.f, -1.f,
-        -1.f, -1.f, -1.f, -1.f
+        -1.f, -1.f, -1.f, -1.f, -1.f
     };
     // D-pad: fire once after this grace while held, then Application repeats.
     static constexpr float kHomeChordGraceSec = 0.08f;

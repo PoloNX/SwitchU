@@ -112,6 +112,8 @@ std::string WiiUMenuApp::accessibilityContextFor(nxui::Widget* w) const {
         return i18n.tr("accessibility.context.user_profiles", "User profiles");
     if (m_layoutFlip && m_layoutFlip.get() == w)
         return i18n.tr("accessibility.context.main_menu", "Main menu");
+    if (m_orientationBtn && m_orientationBtn.get() == w)
+        return i18n.tr("accessibility.context.main_menu", "Main menu");
     if (m_battery && m_battery.get() == w)
         return i18n.tr("accessibility.context.main_menu", "Main menu");
     return {};
@@ -1505,6 +1507,12 @@ void WiiUMenuApp::wireFocusCallback() {
                 m_titlePill->setVisible(true);
                 return;
             }
+            if (m_orientationBtn && m_orientationBtn.get() == cur) {
+                m_titlePill->setText(nxui::I18n::instance().tr(
+                    "hint.switch_orientation", "Switch orientation"));
+                m_titlePill->setVisible(true);
+                return;
+            }
             if (m_battery && m_battery.get() == cur) {
                 m_titlePill->setText(nxui::I18n::instance().tr(
                     "quick_settings.title", "Quick Settings"));
@@ -1539,6 +1547,7 @@ bool WiiUMenuApp::isCurrentFocusableWidget(nxui::Widget* w) const {
         if (btn.get() == w) return w->isFocusable();
     if (m_profileLock && m_profileLock.get() == w) return w->isFocusable();
     if (m_layoutFlip && m_layoutFlip.get() == w) return w->isFocusable();
+    if (m_orientationBtn && m_orientationBtn.get() == w) return w->isFocusable();
     if (m_battery && m_battery.get() == w) return w->isFocusable();
     if (m_grid)
         for (const auto& icon : m_grid->allIcons())
@@ -1790,6 +1799,7 @@ void WiiUMenuApp::armHomeChordShortcut(HomeChordShortcut which) {
         case HomeChordShortcut::PageNext:      self = nxui::Button::ZR; break;
         case HomeChordShortcut::Properties:    self = nxui::Button::Plus; break;
         case HomeChordShortcut::ChangeView:    self = nxui::Button::Minus; break;
+        case HomeChordShortcut::Orientation:   self = nxui::Button::LStick; break;
         case HomeChordShortcut::NavLeft:       self = nxui::Button::DLeft; break;
         case HomeChordShortcut::NavRight:      self = nxui::Button::DRight; break;
         case HomeChordShortcut::NavUp:         self = nxui::Button::DUp; break;
@@ -2043,6 +2053,33 @@ void WiiUMenuApp::tickHomeChordShortcutGuards(float dt) {
             return;
         toggleAppLayoutMode();
     });
+    settleTapOnly(HomeChordShortcut::Orientation, nxui::Button::LStick, [this]() {
+        if (m_navigator.route() == switchu::navigation::Route::ControllerTest)
+            return;
+        if (m_quickSettings && m_quickSettings->isActive())
+            return;
+        if (m_navigator.route() == switchu::navigation::Route::Home
+            && focusRoot() == &rootBox()
+            && !m_editMode
+            && !(m_dialog && m_dialog->isActive())
+            && m_config.homeOrientationButton) {
+            const auto cycle = sanitizeHomeOrientationCycle(
+                m_config.homeOrientationCycle,
+                m_config.homeOrientation,
+                true);
+            int enabled = 0;
+            for (std::uint8_t i = 0; i < kHomeOrientationCount; ++i) {
+                if (homeOrientationCycleIncludes(cycle, static_cast<HomeOrientation>(i)))
+                    ++enabled;
+            }
+            if (enabled >= 2) {
+                m_audio.playSfx(Sfx::Navigate);
+                cycleHomeOrientation();
+                return;
+            }
+        }
+        m_accessibility.repeatLastAnnouncement();
+    });
 
     auto fireNav = [this](nxui::FocusDirection dir) {
         if (m_navigator.route() != switchu::navigation::Route::Home ||
@@ -2091,6 +2128,19 @@ void WiiUMenuApp::wireGlobalActions() {
     root.addAction(static_cast<uint64_t>(nxui::Button::LStick), [this]() {
         if (m_navigator.route() == switchu::navigation::Route::ControllerTest)
             return;
+        // Quick Settings owns L3 for repeat/modes while open.
+        if (m_quickSettings && m_quickSettings->isActive())
+            return;
+        // HOME orientation uses chord grace so Ultrahand-style L3 combos do not
+        // spin the shell. Elsewhere L3 still repeats the last a11y announcement.
+        if (m_navigator.route() == switchu::navigation::Route::Home
+            && focusRoot() == &rootBox()
+            && !m_editMode
+            && !(m_dialog && m_dialog->isActive())
+            && m_config.homeOrientationButton) {
+            armHomeChordShortcut(HomeChordShortcut::Orientation);
+            return;
+        }
         m_accessibility.repeatLastAnnouncement();
     });
 
@@ -2574,6 +2624,7 @@ void WiiUMenuApp::handleTouch() {
         m_touchDeletePage = false;
         m_touchBattery = false;
         m_touchLayoutFlip = false;
+        m_touchOrientationBtn = false;
         if (m_arrowAnimLeft.show > 0.5f && pageArrowRect(true).expanded(12.f).contains(tx, ty)) {
             m_touchArrowLeft = true;
             m_touchHitIndex = -1;
@@ -2604,6 +2655,12 @@ void WiiUMenuApp::handleTouch() {
         if (m_layoutFlip && m_layoutFlip->isVisible()
             && m_layoutFlip->hitTest(tx, ty)) {
             m_touchLayoutFlip = true;
+            m_touchHitIndex = -1;
+            return;
+        }
+        if (m_orientationBtn && m_orientationBtn->isVisible()
+            && m_orientationBtn->hitTest(tx, ty)) {
+            m_touchOrientationBtn = true;
             m_touchHitIndex = -1;
             return;
         }
@@ -2647,7 +2704,8 @@ void WiiUMenuApp::handleTouch() {
         && !m_grid->isLayoutMorphing()
         && m_layoutTransition.kind == LayoutTransitionKind::Idle
         && !m_touchArrowLeft && !m_touchArrowRight
-        && !m_touchBattery && !m_touchLayoutFlip && !m_touchProfileLock
+        && !m_touchBattery && !m_touchLayoutFlip && !m_touchOrientationBtn
+        && !m_touchProfileLock
         && !m_touchDeletePage) {
         const float dx = input.touchDeltaX();
         const float dy = input.touchDeltaY();
@@ -2739,6 +2797,10 @@ void WiiUMenuApp::handleTouch() {
             m_touchLayoutFlip = false;
             return;
         }
+        if (m_touchOrientationBtn) {
+            m_touchOrientationBtn = false;
+            return;
+        }
 
         if (m_touchArrowLeft || m_touchArrowRight) {
             const bool left = m_touchArrowLeft;
@@ -2817,11 +2879,14 @@ void WiiUMenuApp::handleTouch() {
         } else if (m_openFolderId != 0
                    && m_touchHitIndex < 0
                    && !m_touchLayoutFlip
+                   && !m_touchOrientationBtn
                    && std::abs(dx) < 20.f && std::abs(dy) < 20.f
                    && m_grid
                    && m_grid->hitTest(input.touchX(), input.touchY()) < 0
                    && !(m_layoutFlip && m_layoutFlip->isVisible()
-                        && m_layoutFlip->hitTest(input.touchX(), input.touchY()))) {
+                        && m_layoutFlip->hitTest(input.touchX(), input.touchY()))
+                   && !(m_orientationBtn && m_orientationBtn->isVisible()
+                        && m_orientationBtn->hitTest(input.touchX(), input.touchY()))) {
             // Tap anywhere that isn't an icon / Change View (dimmed margins,
             // empty gaps) to leave - mirrors B, including edit-mode keep-move.
             closeFolder(m_editMode, true);
@@ -2872,6 +2937,7 @@ void WiiUMenuApp::handleSystemAction(SysAction a) {
             DebugLog::log("[display] OperationModeChanged -> apply layer fit mode=%d",
                           m_lastOperationMode);
             switchu::menu::applyScreenUnderscan(m_lastOperationMode);
+            applyHomeOrientationState(false);
             break;
         }
         case SysAction::HomeButton: {

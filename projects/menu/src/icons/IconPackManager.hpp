@@ -33,6 +33,7 @@ inline constexpr const char* kPackGlyphFiles[] = {
 };
 inline constexpr int kPackGlyphCount = 6;
 inline constexpr const char* kChangeViewFile = "change_view.png";
+inline constexpr const char* kScreenRotateFile = "screen_rotate.png";
 inline constexpr const char* kAtmosPackId = "atmos";
 inline constexpr const char* kMusicGlyphFiles[] = {
     "prev.png",

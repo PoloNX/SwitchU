@@ -1,4 +1,5 @@
 #pragma once
+#include <nxui/core/DisplayOrientation.hpp>
 #include <switch.h>
 #include <cstdint>
 
@@ -37,6 +38,15 @@ public:
     void shutdown();
     void update();
 
+    // Flip-Grip / TATE: remap touch + directionals for the active layout.
+    // Landscape/180 → FB space (nwindow). Portrait 90/270 → logical 720x1280
+    // (Renderer projection; nwindow identity).
+    void setDisplayOrientation(DisplayOrientation orientation);
+    DisplayOrientation displayOrientation() const { return m_orientation; }
+    void setLogicalLayoutSize(float width, float height);
+    float logicalLayoutWidth() const { return m_logicalW; }
+    float logicalLayoutHeight() const { return m_logicalH; }
+
     bool isDown(Button b)     const;   // Pressed this frame
     bool isUp(Button b)       const;   // Released this frame
     bool isHeld(Button b)     const;   // Currently held
@@ -66,6 +76,9 @@ private:
     uint64_t m_kUp   = 0;
     uint64_t m_kHeld = 0;
     uint32_t m_loggedSingleJoyCons = 0;  // bit per npad id, logged once
+    DisplayOrientation m_orientation = DisplayOrientation::Landscape0;
+    float m_logicalW = 1280.f;
+    float m_logicalH = 720.f;
     float m_lx = 0, m_ly = 0;
     float m_rx = 0, m_ry = 0;
     bool  m_touching    = false;

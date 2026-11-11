@@ -506,7 +506,9 @@ nxui::Rect IconGrid::dynamicIconRect(int index, float* outScale,
         // Clear the clock capsule (~y 70) and leave room for the title pill.
         constexpr float kTopPad = 100.f;
         constexpr float kBottomPad = 128.f;
-        const float focusedCenterY = kTopPad + (720.f - kTopPad - kBottomPad) * 0.5f;
+        const float layoutH = m_rect.height > 1.f ? (m_rect.y * 2.f + m_rect.height) : 720.f;
+        const float screenH = std::max(m_rect.bottom(), layoutH);
+        const float focusedCenterY = kTopPad + (screenH - kTopPad - kBottomPad) * 0.5f;
         centerY = lineCenterY + (focusedCenterY - lineCenterY) * focusBlend;
     }
     const float x = centerX + d * lineSpacing - w * 0.5f;
@@ -897,10 +899,10 @@ void IconGrid::renderPageAt(nxui::Renderer& ren, int page, float dx) {
 
 void IconGrid::renderDynamicLine(nxui::Renderer& ren) {
     // Focused Posters rise above the grid band for vertical centering — clip to
-    // the full screen height so their tops (and rounded corners) are not sheared.
+    // the full layout height so their tops (and rounded corners) are not sheared.
     nxui::Rect clip = m_rect;
     clip.y = 0.f;
-    clip.height = 720.f;
+    clip.height = std::max(m_rect.bottom(), 720.f);
     ren.pushClipRect(clip);
 
     // The focused index is a linear scan over every icon. Reading it inside the
@@ -966,7 +968,7 @@ void IconGrid::renderLayoutMorph(nxui::Renderer& ren) {
 
     nxui::Rect clip = m_rect;
     clip.y = 0.f;
-    clip.height = 720.f;
+    clip.height = std::max(m_rect.bottom(), 720.f);
     ren.pushClipRect(clip);
     for (const auto& c : candidates) {
         auto& icon = m_allIcons[c.index];

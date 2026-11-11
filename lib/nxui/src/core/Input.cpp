@@ -7,6 +7,87 @@ namespace nxui {
 
 namespace {
 
+constexpr float kFbWidth = 1280.f;
+constexpr float kFbHeight = 720.f;
+
+void rotateVec2CwQuarters(float& x, float& y, int quarters) {
+    quarters = ((quarters % 4) + 4) % 4;
+    for (int i = 0; i < quarters; ++i) {
+        const float nx = y;
+        const float ny = -x;
+        x = nx;
+        y = ny;
+    }
+}
+
+// Inverse of CW-N*90 presentation: panel/glass coords → framebuffer space.
+// Normalized unit-square rotation keeps corners mapped for the non-square FB.
+void mapTouchToFramebuffer(float& x, float& y, DisplayOrientation orientation) {
+    if (orientation == DisplayOrientation::Landscape0)
+        return;
+    const float u = std::clamp(x / kFbWidth, 0.f, 1.f);
+    const float v = std::clamp(y / kFbHeight, 0.f, 1.f);
+    float iu = u;
+    float iv = v;
+    switch (orientation) {
+        case DisplayOrientation::Rot90:  // inverse CW90 → (1-v, u)
+            iu = 1.f - v;
+            iv = u;
+            break;
+        case DisplayOrientation::Rot180:
+            iu = 1.f - u;
+            iv = 1.f - v;
+            break;
+        case DisplayOrientation::Rot270: // inverse CW270 → (v, 1-u)
+            iu = v;
+            iv = 1.f - u;
+            break;
+        case DisplayOrientation::Landscape0:
+        default:
+            break;
+    }
+    x = iu * kFbWidth;
+    y = iv * kFbHeight;
+}
+
+uint64_t rotateDirectionBits(uint64_t buttons, DisplayOrientation orientation) {
+    if (orientation == DisplayOrientation::Landscape0)
+        return buttons;
+
+    const int quarters = static_cast<int>(orientation);
+    auto rotPad = [quarters](uint64_t left, uint64_t up, uint64_t right, uint64_t down,
+                             uint64_t bits) {
+        const bool l = (bits & left) != 0;
+        const bool u = (bits & up) != 0;
+        const bool r = (bits & right) != 0;
+        const bool d = (bits & down) != 0;
+        // Rotate the pressed direction CW by `quarters` so focus matches the
+        // transformed UI (same sense as stick vector rotation).
+        bool ol = l, ou = u, orr = r, od = d;
+        for (int i = 0; i < quarters; ++i) {
+            const bool nl = od;
+            const bool nu = ol;
+            const bool nr = ou;
+            const bool nd = orr;
+            ol = nl; ou = nu; orr = nr; od = nd;
+        }
+        uint64_t out = bits & ~(left | up | right | down);
+        if (ol) out |= left;
+        if (ou) out |= up;
+        if (orr) out |= right;
+        if (od) out |= down;
+        return out;
+    };
+
+    buttons = rotPad(HidNpadButton_Left, HidNpadButton_Up,
+                     HidNpadButton_Right, HidNpadButton_Down, buttons);
+    buttons = rotPad(HidNpadButton_StickLLeft, HidNpadButton_StickLUp,
+                     HidNpadButton_StickLRight, HidNpadButton_StickLDown, buttons);
+    buttons = rotPad(HidNpadButton_StickRLeft, HidNpadButton_StickRUp,
+                     HidNpadButton_StickRRight, HidNpadButton_StickRDown, buttons);
+    return buttons;
+}
+
 // A single Joy-Con arrives as an upright controller (libnx's pad merges it raw,
 // whatever the hold type). Held sideways - the only way HOME is used with one -
 // its four buttons act as A/B/X/Y by where they sit, SL/SR as L/R, and its
@@ -115,6 +196,42 @@ void Input::initialize() {
 void Input::shutdown() {
 }
 
+void Input::setDisplayOrientation(DisplayOrientation orientation) {
+    m_orientation = orientation;
+}
+
+void Input::setLogicalLayoutSize(float width, float height) {
+    m_logicalW = width > 0.f ? width : kFbWidth;
+    m_logicalH = height > 0.f ? height : kFbHeight;
+}
+
+namespace {
+
+bool isPortraitOrientation(DisplayOrientation orientation) {
+    return orientation == DisplayOrientation::Rot90
+        || orientation == DisplayOrientation::Rot270;
+}
+
+// FB/panel (nwindow identity) → logical portrait. Matches Renderer orthoPortrait.
+void mapFramebufferToLogical(float& x, float& y, DisplayOrientation orientation) {
+    const float fx = x;
+    const float fy = y;
+    switch (orientation) {
+        case DisplayOrientation::Rot90:  // inverse of (ly, H-lx)
+            x = kFbHeight - fy;
+            y = fx;
+            break;
+        case DisplayOrientation::Rot270: // inverse of (W-ly, lx)
+            x = fy;
+            y = kFbWidth - fx;
+            break;
+        default:
+            break;
+    }
+}
+
+} // namespace
+
 void Input::update() {
     // Every controller is read on its own (padUpdate merged them raw, which
     // left a sideways Joy-Con with turned-around buttons and stick).
@@ -157,6 +274,10 @@ void Input::update() {
         takeMoving(ls, state.analog_stick_l);
         takeMoving(rs, state.analog_stick_r);
     }
+    // Landscape/180: remap for nwindow. Portrait: logical upright (projection
+    // owns the rotate; nwindow is identity) — skip CW remaps.
+    if (!isPortraitOrientation(m_orientation))
+        held = rotateDirectionBits(held, m_orientation);
     m_kDown = held & ~m_kHeld;
     m_kUp   = m_kHeld & ~held;
     m_kHeld = held;
@@ -166,11 +287,23 @@ void Input::update() {
     m_ly = ls.y / 32767.f;
     m_rx = rs.x / 32767.f;
     m_ry = rs.y / 32767.f;
+    if (!isPortraitOrientation(m_orientation)) {
+        rotateVec2CwQuarters(m_lx, m_ly, static_cast<int>(m_orientation));
+        rotateVec2CwQuarters(m_rx, m_ry, static_cast<int>(m_orientation));
+    }
 
     HidTouchScreenState tState = {};
     bool hardwareTouching = hidGetTouchScreenStates(&tState, 1) && tState.count > 0;
-    float hardwareTouchX = hardwareTouching ? tState.touches[0].x : m_touchX;
-    float hardwareTouchY = hardwareTouching ? tState.touches[0].y : m_touchY;
+    float hardwareTouchX = hardwareTouching ? static_cast<float>(tState.touches[0].x) : m_touchX;
+    float hardwareTouchY = hardwareTouching ? static_cast<float>(tState.touches[0].y) : m_touchY;
+    if (hardwareTouching) {
+        if (isPortraitOrientation(m_orientation)) {
+            // nwindow identity → panel == FB, then into logical 720x1280.
+            mapFramebufferToLogical(hardwareTouchX, hardwareTouchY, m_orientation);
+        } else {
+            mapTouchToFramebuffer(hardwareTouchX, hardwareTouchY, m_orientation);
+        }
+    }
 
     m_wasTouching = m_touching;
     if (hardwareTouching) {

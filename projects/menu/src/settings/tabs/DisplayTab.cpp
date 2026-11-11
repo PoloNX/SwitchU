@@ -168,5 +168,88 @@ SettingsScreen::Tab settings::tabs::DisplayTab::build(SettingsScreen& screen) {
         t.items.push_back(std::move(it));
     }
 
+    {
+        SettingItem it;
+        it.label = i18n.tr("settings.display.orientation_button", "HOME Orientation Button");
+        it.description = i18n.tr("settings.display.orientation_button_desc",
+            "Cycle orientation button next to Change View on HOME.");
+        it.type = ItemType::Toggle;
+        it.boolVal = screen.m_homeOrientationButton;
+        it.anim01 = it.boolVal ? 1.f : 0.f;
+        it.onChange = [&screen](SettingItem& self) {
+            screen.m_homeOrientationButton = self.boolVal;
+            screen.m_homeOrientationCycle = sanitizeHomeOrientationCycle(
+                screen.m_homeOrientationCycle,
+                screen.m_homeOrientation,
+                screen.m_homeOrientationButton);
+            if (screen.m_homeOrientationButtonCb)
+                screen.m_homeOrientationButtonCb(self.boolVal);
+            // No rebuild: indented cycle rows stay put and onUpdate enables them
+            // (same pattern as SteamGridDB artwork children).
+        };
+        t.items.push_back(std::move(it));
+    }
+
+    auto addCycleToggle = [&](HomeOrientation orient, const char* key,
+                              const char* fallback) {
+        SettingItem it;
+        it.label = i18n.tr(key, fallback);
+        it.type = ItemType::Toggle;
+        it.indentLevel = 1;
+        it.enabled = screen.m_homeOrientationButton;
+        const bool on = homeOrientationCycleIncludes(
+            screen.m_homeOrientationCycle, orient);
+        it.boolVal = on;
+        it.anim01 = on ? 1.f : 0.f;
+        it.onChange = [&screen, orient](SettingItem& self) {
+            if (!screen.m_homeOrientationButton)
+                return;
+            std::uint8_t mask = screen.m_homeOrientationCycle;
+            const std::uint8_t bit = homeOrientationBit(orient);
+            if (self.boolVal)
+                mask |= bit;
+            else
+                mask = static_cast<std::uint8_t>(mask & ~bit);
+            mask = sanitizeHomeOrientationCycle(
+                mask, screen.m_homeOrientation, true);
+            screen.m_homeOrientationCycle = mask;
+            // Reflect sanitize forcing bits back on.
+            self.boolVal = homeOrientationCycleIncludes(mask, orient);
+            self.anim01 = self.boolVal ? 1.f : 0.f;
+            if (screen.m_homeOrientationCycleCb)
+                screen.m_homeOrientationCycleCb(mask);
+        };
+        t.items.push_back(std::move(it));
+    };
+
+    addCycleToggle(HomeOrientation::Landscape0,
+                   "settings.display.cycle_landscape", "Landscape");
+    addCycleToggle(HomeOrientation::Rot90,
+                   "settings.display.cycle_rot90", "Portrait (90°)");
+    addCycleToggle(HomeOrientation::Rot180,
+                   "settings.display.cycle_rot180", "Landscape Flipped (180°)");
+    addCycleToggle(HomeOrientation::Rot270,
+                   "settings.display.cycle_rot270", "Portrait Flipped (270°)");
+
+    // Live-enable indented cycle rows when the parent toggle changes — no tab
+    // rebuild, so scroll/focus stay put (including early exit from Settings).
+    t.onUpdate = [](SettingsScreen::Tab& current, TabbedOverlayScreen& base) {
+        auto& owner = static_cast<SettingsScreen&>(base);
+        // ui_wireframe, orientation button, then 4 cycle toggles.
+        if (current.items.size() < 6)
+            return;
+        for (std::size_t i = current.items.size() - 4; i < current.items.size(); ++i) {
+            current.items[i].enabled = owner.m_homeOrientationButton;
+            current.items[i].indentLevel = 1;
+            const auto orient = static_cast<HomeOrientation>(
+                static_cast<int>(i - (current.items.size() - 4)));
+            const bool on = homeOrientationCycleIncludes(
+                owner.m_homeOrientationCycle, orient);
+            current.items[i].boolVal = on;
+            current.items[i].anim01 = on ? 1.f : 0.f;
+        }
+        (void)base;
+    };
+
     return t;
 }

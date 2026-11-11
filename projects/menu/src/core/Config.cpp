@@ -78,6 +78,21 @@ bool AppConfig::load() {
         else if (modeStr == "grid")
             appLayoutMode = AppLayoutMode::Grid;
     }
+    {
+        std::string orientStr;
+        readJsonOpt(j, "homeOrientation", orientStr);
+        if (!orientStr.empty())
+            homeOrientation = homeOrientationFromString(orientStr);
+    }
+    readJsonOpt(j, "homeOrientationButton", homeOrientationButton);
+    {
+        int cycle = static_cast<int>(kHomeOrientationCycleAll);
+        readJsonOpt(j, "homeOrientationCycle", cycle);
+        homeOrientationCycle = sanitizeHomeOrientationCycle(
+            static_cast<std::uint8_t>(std::clamp(cycle, 0, 15)),
+            homeOrientation,
+            homeOrientationButton);
+    }
     readJsonOpt(j, "actionHintStyle", actionHintStyle);
     readJsonOpt(j, "cursorMotionMode", cursorMotionMode);
     readJsonOpt(j, "pageTransitionMode", pageTransitionMode);
@@ -303,6 +318,10 @@ bool AppConfig::save() const {
     j["gridColumns"] = std::clamp(gridColumns, 1, 8);
     j["gridRows"] = std::clamp(gridRows, 1, 5);
     j["appLayoutMode"] = (appLayoutMode == AppLayoutMode::DynamicLine) ? "dynamic_line" : "grid";
+    j["homeOrientation"] = homeOrientationToString(homeOrientation);
+    j["homeOrientationButton"] = homeOrientationButton;
+    j["homeOrientationCycle"] = static_cast<int>(sanitizeHomeOrientationCycle(
+        homeOrientationCycle, homeOrientation, homeOrientationButton));
     j["actionHintStyle"] = actionHintStyle == "panel" ? "panel" : "capsules";
     j["cursorMotionMode"] = std::clamp(cursorMotionMode, 0, 1);
     j["pageTransitionMode"] = std::clamp(pageTransitionMode, 0, 1);

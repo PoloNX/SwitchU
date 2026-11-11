@@ -19,6 +19,31 @@ static void ortho(float* m, float w, float h) {
     m[15] =  1.f;
 }
 
+// Logical portrait → FB NDC (nwindow identity). Lays 720x1280 into 1280x720
+// with aspect preserved so Flip-Grip / head-tilt sees upright un-squashed UI.
+// Rot90:  (lx,ly) → FB (ly, fbH-lx)
+// Rot270: (lx,ly) → FB (fbW-ly, lx)
+static void orthoPortrait(float* m, float fbW, float fbH, bool rot270) {
+    std::memset(m, 0, 16 * sizeof(float));
+    m[10] = -1.f;
+    m[15] =  1.f;
+    if (!rot270) {
+        // ndc_x = 2*ly/fbW - 1
+        // ndc_y = 1 - 2*(fbH-lx)/fbH = 2*lx/fbH - 1
+        m[ 4] =  2.f / fbW;
+        m[12] = -1.f;
+        m[ 1] =  2.f / fbH;
+        m[13] = -1.f;
+    } else {
+        // ndc_x = 2*(fbW-ly)/fbW - 1 = 1 - 2*ly/fbW
+        // ndc_y = 1 - 2*lx/fbH
+        m[ 4] = -2.f / fbW;
+        m[12] =  1.f;
+        m[ 1] = -2.f / fbH;
+        m[13] =  1.f;
+    }
+}
+
 Renderer::Renderer(GpuDevice& gpu) : m_gpu(gpu) {
     m_clipStack.reserve(8);
     resetLiquidGlassSettings();
@@ -329,11 +354,57 @@ void Renderer::endFrame() {
     flush();
 }
 
+void Renderer::setLayoutOrientation(DisplayOrientation orientation,
+                                    float logicalW, float logicalH) {
+    m_layoutOrientation = orientation;
+    const bool portrait = orientation == DisplayOrientation::Rot90
+        || orientation == DisplayOrientation::Rot270;
+    if (portrait) {
+        m_layoutW = logicalW > 0.f ? logicalW : static_cast<float>(m_gpu.height());
+        m_layoutH = logicalH > 0.f ? logicalH : static_cast<float>(m_gpu.width());
+    } else {
+        m_layoutW = 0.f;
+        m_layoutH = 0.f;
+    }
+}
+
+Rect Renderer::layoutClipToFramebuffer(const Rect& logical) const {
+    const float fbW = static_cast<float>(m_gpu.width());
+    const float fbH = static_cast<float>(m_gpu.height());
+    auto map = [&](float lx, float ly) -> Vec2 {
+        switch (m_layoutOrientation) {
+            case DisplayOrientation::Rot90:  return {ly, fbH - lx};
+            case DisplayOrientation::Rot270: return {fbW - ly, lx};
+            case DisplayOrientation::Rot180: return {fbW - lx, fbH - ly};
+            case DisplayOrientation::Landscape0:
+            default: return {lx, ly};
+        }
+    };
+    if (m_layoutOrientation == DisplayOrientation::Landscape0)
+        return logical;
+    const Vec2 c0 = map(logical.x, logical.y);
+    const Vec2 c1 = map(logical.x + logical.width, logical.y);
+    const Vec2 c2 = map(logical.x, logical.y + logical.height);
+    const Vec2 c3 = map(logical.x + logical.width, logical.y + logical.height);
+    const float minX = std::min(std::min(c0.x, c1.x), std::min(c2.x, c3.x));
+    const float maxX = std::max(std::max(c0.x, c1.x), std::max(c2.x, c3.x));
+    const float minY = std::min(std::min(c0.y, c1.y), std::min(c2.y, c3.y));
+    const float maxY = std::max(std::max(c0.y, c1.y), std::max(c2.y, c3.y));
+    return {minX, minY, maxX - minX, maxY - minY};
+}
+
 void Renderer::updateProjection() {
     int slot = m_gpu.slot();
     auto* ubo = static_cast<uint8_t*>(m_gpu.vsUboCpuAddr(slot));
     VsUniforms vs;
-    ortho(vs.projection, (float)m_gpu.width(), (float)m_gpu.height());
+    const float fbW = static_cast<float>(m_gpu.width());
+    const float fbH = static_cast<float>(m_gpu.height());
+    if (m_layoutOrientation == DisplayOrientation::Rot90)
+        orthoPortrait(vs.projection, fbW, fbH, false);
+    else if (m_layoutOrientation == DisplayOrientation::Rot270)
+        orthoPortrait(vs.projection, fbW, fbH, true);
+    else
+        ortho(vs.projection, fbW, fbH);
     std::memcpy(ubo, &vs, sizeof(vs));
 
     auto cmd = m_gpu.cmdBuf();
@@ -409,9 +480,9 @@ void Renderer::restoreRenderTarget() {
     if (m_clipStack.empty()) {
         cmd.setScissors(0, DkScissor{0, 0, (uint32_t)m_gpu.width(), (uint32_t)m_gpu.height()});
     } else {
-        auto& r = m_clipStack.back();
-        cmd.setScissors(0, DkScissor{(uint32_t)std::max(0.f, r.x), (uint32_t)std::max(0.f, r.y),
-                                     (uint32_t)std::max(0.f, r.width), (uint32_t)std::max(0.f, r.height)});
+        const Rect fb = layoutClipToFramebuffer(m_clipStack.back());
+        cmd.setScissors(0, DkScissor{(uint32_t)std::max(0.f, fb.x), (uint32_t)std::max(0.f, fb.y),
+                                     (uint32_t)std::max(0.f, fb.width), (uint32_t)std::max(0.f, fb.height)});
     }
 
     updateProjection();
@@ -562,6 +633,19 @@ void Renderer::drawLiquidGlass(int target, const Rect& panelRect, float radius,
     fs.extra[25] = static_cast<float>(m_gpu.height());
     fs.extra[26] = std::clamp(shade, 0.f, 1.f);
     fs.extra[27] = std::max(0.f, radius);
+    // layoutInfo.x — must match liquid_glass_fsh.glsl logical→FB map.
+    float layoutOrient = 0.f;
+    switch (m_layoutOrientation) {
+        case DisplayOrientation::Rot90:  layoutOrient = 1.f; break;
+        case DisplayOrientation::Rot270: layoutOrient = 2.f; break;
+        case DisplayOrientation::Rot180: layoutOrient = 3.f; break;
+        case DisplayOrientation::Landscape0:
+        default: break;
+    }
+    fs.extra[28] = layoutOrient;
+    fs.extra[29] = 0.f;
+    fs.extra[30] = 0.f;
+    fs.extra[31] = 0.f;
     pushFsUniforms(fs);
     bindTexture(m_offDescSlot[target]);
     addQuad(panelRect.x, panelRect.y, panelRect.right(), panelRect.bottom(),
@@ -857,6 +941,7 @@ void Renderer::drawText(const std::string& text, const Vec2& pos, Font* font,
 
 void Renderer::pushClipRect(const Rect& r) {
     flush();
+    // Stack stays in layout (logical) space; GPU scissor uses FB AABB.
     Rect clip = r;
     if (!m_clipStack.empty()) {
         auto& prev = m_clipStack.back();
@@ -867,9 +952,10 @@ void Renderer::pushClipRect(const Rect& r) {
         clip = {x0, y0, std::max(0.f, x1 - x0), std::max(0.f, y1 - y0)};
     }
     m_clipStack.push_back(clip);
+    const Rect fb = layoutClipToFramebuffer(clip);
     m_gpu.cmdBuf().setScissors(0, DkScissor{
-        (uint32_t)std::max(0.f, clip.x), (uint32_t)std::max(0.f, clip.y),
-        (uint32_t)std::max(0.f, clip.width), (uint32_t)std::max(0.f, clip.height)});
+        (uint32_t)std::max(0.f, fb.x), (uint32_t)std::max(0.f, fb.y),
+        (uint32_t)std::max(0.f, fb.width), (uint32_t)std::max(0.f, fb.height)});
 }
 
 void Renderer::popClipRect() {
@@ -879,10 +965,10 @@ void Renderer::popClipRect() {
         m_gpu.cmdBuf().setScissors(0, DkScissor{
             0, 0, (uint32_t)m_gpu.width(), (uint32_t)m_gpu.height()});
     } else {
-        auto& r = m_clipStack.back();
+        const Rect fb = layoutClipToFramebuffer(m_clipStack.back());
         m_gpu.cmdBuf().setScissors(0, DkScissor{
-            (uint32_t)std::max(0.f, r.x), (uint32_t)std::max(0.f, r.y),
-            (uint32_t)std::max(0.f, r.width), (uint32_t)std::max(0.f, r.height)});
+            (uint32_t)std::max(0.f, fb.x), (uint32_t)std::max(0.f, fb.y),
+            (uint32_t)std::max(0.f, fb.width), (uint32_t)std::max(0.f, fb.height)});
     }
 }
 

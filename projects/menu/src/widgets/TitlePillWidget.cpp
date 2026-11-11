@@ -39,14 +39,27 @@ void TitlePillWidget::onRender(nxui::Renderer& ren) {
     nxui::GlassWidget::onRender(ren);
 }
 
+void TitlePillWidget::relayoutForCanvas() {
+    if (!m_layoutInitialized || m_sourceText.empty() || !isVisible())
+        return;
+    const std::string text = m_sourceText;
+    m_sourceText.clear();
+    m_layoutInitialized = false;
+    setText(text, m_canvasWidth);
+}
+
 void TitlePillWidget::setText(const std::string& text, float screenWidth) {
+    if (screenWidth < 0.f)
+        screenWidth = m_canvasWidth;
     if (m_sourceText == text && m_layoutInitialized)
         return;
 
     const bool wasVisible = isVisible();
     m_hideOnCollapse = false;
     setVisible(true);
-    const float maxContentWidth = std::max(120.f, std::min(736.f, screenWidth - 420.f));
+    // Portrait 720 canvas: less side chrome inset than landscape 1280.
+    const float sideInset = screenWidth >= 1000.f ? 420.f : 80.f;
+    const float maxContentWidth = std::max(120.f, std::min(736.f, screenWidth - sideInset));
     m_sourceText = text;
     m_text = ellipsize(m_font, text, maxContentWidth);
     sizeToFit();
@@ -75,6 +88,8 @@ void TitlePillWidget::setText(const std::string& text, float screenWidth) {
 }
 
 void TitlePillWidget::hideAnimated(float screenWidth) {
+    if (screenWidth < 0.f)
+        screenWidth = m_canvasWidth;
     if (!isVisible() && !m_hideOnCollapse)
         return;
 

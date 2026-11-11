@@ -1413,11 +1413,243 @@ void WiiUMenuApp::placeLayoutFlipButton() {
     constexpr float kSize = 52.f;
     constexpr float kGap = 12.f;
     const nxui::Rect clock = m_clock->rect();
+    // Change View stays to the right of the clock.
     const float x = clock.x + clock.width + kGap;
     const float y = clock.y + (clock.height - kSize) * 0.5f;
     m_layoutFlip->setRect({x, y, kSize, kSize});
     // Visible on HOME and inside folders (touch + controller Change View).
     m_layoutFlip->setVisible(m_topHud && m_topHud->isVisible());
+    placeOrientationButton();
+}
+
+void WiiUMenuApp::placeOrientationButton() {
+    if (!m_orientationBtn || !m_clock)
+        return;
+    constexpr float kSize = 52.f;
+    constexpr float kGap = 12.f;
+    const nxui::Rect clock = m_clock->rect();
+    // Left of the clock (portrait + landscape); UP from tiles prefers this.
+    const float y = clock.y + (clock.height - kSize) * 0.5f;
+    m_orientationBtn->setRect({clock.x - kGap - kSize, y, kSize, kSize});
+    const bool show = m_config.homeOrientationButton
+        && m_topHud && m_topHud->isVisible()
+        && m_layoutFlip && m_layoutFlip->isVisible();
+    m_orientationBtn->setVisible(show);
+    if (show)
+        syncOrientationButtonState();
+}
+
+void WiiUMenuApp::placeTitlePill() {
+    if (!m_titlePill)
+        return;
+    const float canvasW = m_homeLayout.logicalW();
+    m_titlePill->setCanvasWidth(canvasW);
+    // Landscape keeps classic y=630 (~55px above page dots at 685).
+    // Portrait: same breathing room above the page-dot pill.
+    const float y = m_homeLayout.isPortrait()
+        ? (m_homeLayout.pageIndicator().y - 55.f)
+        : 630.f;
+    m_titlePill->setPosition(m_titlePill->rect().x, y);
+    m_titlePill->relayoutForCanvas();
+}
+
+void WiiUMenuApp::applyHomeOrientationState(bool saveConfig) {
+    m_config.homeOrientationCycle = sanitizeHomeOrientationCycle(
+        m_config.homeOrientationCycle,
+        m_config.homeOrientation,
+        m_config.homeOrientationButton);
+
+    // Remember focus before the logical canvas remaps. Off-page icons keep a
+    // stale landscape rect after 6×N → 3×5 (etc.), and the blue ring would sit
+    // on that ghost under the new portrait projector.
+    nxui::Widget* prevFocus = focusManager().current();
+    int preserveGridIdx = -1;
+    if (m_grid && prevFocus && prevFocus->tag() == "glossy_icon") {
+        const auto& icons = m_grid->allIcons();
+        for (int i = 0; i < static_cast<int>(icons.size()); ++i) {
+            if (icons[static_cast<std::size_t>(i)].get() == prevFocus) {
+                preserveGridIdx = i;
+                break;
+            }
+        }
+    }
+
+    switchu::menu::applyHomeOrientation(m_config.homeOrientation);
+    app().input().setDisplayOrientation(
+        static_cast<nxui::DisplayOrientation>(m_config.homeOrientation));
+    reflowHomeShell();
+    syncOrientationButtonState();
+    placeOrientationButton();
+    placeTitlePill();
+    wireProfileLockNavigation();
+
+    if (preserveGridIdx >= 0 && m_grid) {
+        if (m_grid->focusGlobalIndex(preserveGridIdx, true)) {
+            if (auto* cur = m_grid->focusManager().current())
+                focusManager().setFocus(cur);
+        } else {
+            focusHomeGridFallback();
+        }
+    } else if (prevFocus && m_orientationBtn && prevFocus == m_orientationBtn.get()
+               && m_orientationBtn->isVisible()) {
+        focusManager().setFocus(m_orientationBtn.get());
+    } else if (prevFocus && m_layoutFlip && prevFocus == m_layoutFlip.get()
+               && m_layoutFlip->isVisible()) {
+        focusManager().setFocus(m_layoutFlip.get());
+    } else if (prevFocus && m_profileLock && prevFocus == m_profileLock.get()) {
+        focusManager().setFocus(m_profileLock.get());
+    } else if (prevFocus && m_battery && prevFocus == m_battery.get()
+               && m_battery->isVisible()) {
+        focusManager().setFocus(m_battery.get());
+    } else if (prevFocus && prevFocus->isFocusable() && prevFocus->isVisible()) {
+        focusManager().setFocus(prevFocus);
+    }
+
+    // Tile rects moved with the projection — snap the blue ring (no ease from
+    // the pre-rotate ghost position).
+    m_snapHomeFocus = true;
+    m_forceCursorTeleport = true;
+    updateCursor();
+    m_forceCursorTeleport = false;
+    if (saveConfig)
+        m_config.save();
+}
+
+int WiiUMenuApp::activeGridColumns() const {
+    return m_homeLayout.gridColumns(m_config.gridColumns);
+}
+
+int WiiUMenuApp::activeGridRows() const {
+    return m_homeLayout.gridRows(m_config.gridRows);
+}
+
+nxui::Rect WiiUMenuApp::homeGridRect() const {
+    if (!m_homeLayout.isPortrait()) {
+        if (m_openFolderId != 0)
+            return kFolderGridRect;
+        return {kGridRectX, kGridRectY, kGridRectW, kGridRectH};
+    }
+    return m_homeLayout.gridBand(m_openFolderId != 0);
+}
+
+void WiiUMenuApp::reflowHomeShell() {
+    m_homeLayout.orientation = m_config.homeOrientation;
+    const bool portrait = m_homeLayout.isPortrait();
+    const float lw = m_homeLayout.logicalW();
+    const float lh = m_homeLayout.logicalH();
+    const auto orient =
+        static_cast<nxui::DisplayOrientation>(m_config.homeOrientation);
+
+    // Portrait: logical 720x1280 + Renderer projection (nwindow identity).
+    // Landscape/180: classic 1280x720 + nwindow for 180 only.
+    if (portrait) {
+        app().renderer().setLayoutOrientation(orient, lw, lh);
+        app().input().setLogicalLayoutSize(lw, lh);
+    } else {
+        app().renderer().setLayoutOrientation(
+            nxui::DisplayOrientation::Landscape0, 0.f, 0.f);
+        app().input().setLogicalLayoutSize(1280.f, 720.f);
+    }
+
+    if (!portrait) {
+        if (m_bgLayer)
+            m_bgLayer->setRect({0.f, 0.f, 1280.f, 720.f});
+        if (m_contentLayer)
+            m_contentLayer->setRect({0.f, 0.f, 1280.f, 720.f});
+        if (m_overlayLayer)
+            m_overlayLayer->setRect({0.f, 0.f, 1280.f, 720.f});
+        if (m_folderBackdrop)
+            m_folderBackdrop->setRect({0.f, 0.f, 1280.f, 720.f});
+        if (m_folderZoom)
+            m_folderZoom->setRect({0.f, 0.f, 1280.f, 720.f});
+        if (m_background) {
+            m_background->setRect({0.f, 0.f, 1280.f, 720.f});
+            auto cfg = m_background->config();
+            cfg.imageCover = m_effectivePreset.background.imageCover;
+            m_background->setConfig(cfg);
+        }
+        if (m_topHud) {
+            m_topHud->setRect({0.f, 0.f, 1280.f, 90.f});
+            m_topHud->layout();
+        }
+        if (m_pageIndicator)
+            m_pageIndicator->placeOnCanvas(1280.f, 685.f);
+        m_sidebar.setCanvasSize(1280.f, 720.f);
+    } else {
+        if (m_bgLayer)
+            m_bgLayer->setRect({0.f, 0.f, lw, lh});
+        if (m_contentLayer)
+            m_contentLayer->setRect({0.f, 0.f, lw, lh});
+        // Overlays stay landscape FB — Settings/Theme Shop deferred.
+        if (m_folderBackdrop)
+            m_folderBackdrop->setRect({0.f, 0.f, lw, lh});
+        if (m_folderZoom)
+            m_folderZoom->setRect({0.f, 0.f, lw, lh});
+        if (m_background) {
+            m_background->setRect(m_homeLayout.contentCanvas());
+            auto cfg = m_background->config();
+            // Cover the tall canvas (no letterbox bars); landscape restores preset.
+            cfg.imageCover = true;
+            m_background->setConfig(cfg);
+        }
+        if (m_topHud) {
+            m_topHud->setRect(m_homeLayout.topHud());
+            m_topHud->layout();
+        }
+        if (m_pageIndicator) {
+            const nxui::Rect pi = m_homeLayout.pageIndicator();
+            m_pageIndicator->placeOnCanvas(lw, pi.y);
+        }
+        m_sidebar.setCanvasSize(lw, lh);
+    }
+
+    const bool dynamicLine = m_appLayoutMode == AppLayoutMode::DynamicLine
+        && m_openFolderId == 0;
+    m_sidebar.setDynamicLineLayout(dynamicLine);
+    placeLayoutFlipButton();
+
+    if (m_grid) {
+        m_grid->setRect(homeGridRect());
+        if (m_openFolderId == 0
+            && m_appLayoutMode != AppLayoutMode::DynamicLine) {
+            const int cols = activeGridColumns();
+            const int rows = activeGridRows();
+            const GridLayoutMetrics metrics =
+                computeGridLayoutMetrics(cols, rows);
+            m_grid->reconfigureLayout(cols, rows,
+                                     metrics.cellW, metrics.cellH,
+                                     metrics.padX, metrics.padY);
+        }
+    }
+}
+
+void WiiUMenuApp::cycleHomeOrientation() {
+    m_config.homeOrientationCycle = sanitizeHomeOrientationCycle(
+        m_config.homeOrientationCycle,
+        m_config.homeOrientation,
+        true);
+    m_config.homeOrientation = nextHomeOrientation(
+        m_config.homeOrientation, m_config.homeOrientationCycle);
+    applyHomeOrientationState(true);
+}
+
+void WiiUMenuApp::syncOrientationButtonState() {
+    if (!m_orientationBtn)
+        return;
+    m_orientationBtn->setOrientation(m_config.homeOrientation);
+}
+
+void WiiUMenuApp::wireOrientationButtonNavigation() {
+    if (!m_orientationBtn || !m_orientationBtn->isVisible())
+        return;
+    auto* orient = m_orientationBtn.get();
+    orient->setCustomNavigation(nxui::FocusDirection::UP, orient);
+    orient->removeAction(static_cast<uint64_t>(nxui::Button::DDown));
+    orient->removeAction(static_cast<uint64_t>(nxui::Button::LStickD));
+    orient->removeAction(static_cast<uint64_t>(nxui::Button::RStickD));
+    orient->addDirectionAction(nxui::FocusDirection::DOWN, [this]() {
+        focusHomeGridFallback();
+    });
 }
 
 bool WiiUMenuApp::keepLayoutFlipFocus() const {
@@ -1538,16 +1770,19 @@ void WiiUMenuApp::wireProfileLockNavigation() {
     const auto& leftButtons = m_sidebar.leftButtons();
     const auto& rightButtons = m_sidebar.rightButtons();
     auto* flip = (m_layoutFlip && m_layoutFlip->isVisible()) ? m_layoutFlip.get() : nullptr;
+    auto* orient = (m_orientationBtn && m_orientationBtn->isVisible())
+        ? m_orientationBtn.get() : nullptr;
     auto* battery = (m_battery && m_battery->isVisible()) ? m_battery.get() : nullptr;
     nxui::Widget* firstLeft = leftButtons.empty() ? nullptr : leftButtons.front().get();
     nxui::Widget* lastLeft = leftButtons.empty() ? nullptr : leftButtons.back().get();
     nxui::Widget* firstRight = rightButtons.empty() ? nullptr : rightButtons.front().get();
     nxui::Widget* lastRight = rightButtons.empty() ? nullptr : rightButtons.back().get();
 
-    // Change View is the chrome hub: titles jump here on UP in both layouts.
-    nxui::Widget* chromeUp = flip
-        ? static_cast<nxui::Widget*>(flip)
-        : static_cast<nxui::Widget*>(lock);
+    // UP from tiles: Orientation first when enabled, else Change View, else profile.
+    nxui::Widget* chromeUp = orient
+        ? static_cast<nxui::Widget*>(orient)
+        : (flip ? static_cast<nxui::Widget*>(flip)
+                : static_cast<nxui::Widget*>(lock));
 
     lock->setCustomNavigation(nxui::FocusDirection::LEFT, lock);
     lock->setCustomNavigation(nxui::FocusDirection::UP, lock);
@@ -1565,27 +1800,45 @@ void WiiUMenuApp::wireProfileLockNavigation() {
     }
 
     wireLayoutFlipNavigation();
+    wireOrientationButtonNavigation();
 
     if (dynamicLine) {
-        // Strip: [profile] → [left…] → [flip] → [right…] → [battery]
+        // Strip: [profile] → [left…] → [orient?] → [flip] → [right…] → [battery]
         nxui::Widget* lockRight = firstLeft
             ? firstLeft
-            : (flip ? static_cast<nxui::Widget*>(flip)
-                    : (battery ? static_cast<nxui::Widget*>(battery)
-                               : static_cast<nxui::Widget*>(lock)));
+            : (orient ? static_cast<nxui::Widget*>(orient)
+                      : (flip ? static_cast<nxui::Widget*>(flip)
+                              : (battery ? static_cast<nxui::Widget*>(battery)
+                                         : static_cast<nxui::Widget*>(lock))));
         lock->setCustomNavigation(nxui::FocusDirection::RIGHT, lockRight);
         m_sidebar.setDynamicLineProfileTarget(lock);
 
-        nxui::Widget* afterLeft = flip
-            ? static_cast<nxui::Widget*>(flip)
-            : (firstRight ? firstRight
-                          : (battery ? static_cast<nxui::Widget*>(battery) : lastLeft));
+        nxui::Widget* afterLeft = orient
+            ? static_cast<nxui::Widget*>(orient)
+            : (flip ? static_cast<nxui::Widget*>(flip)
+                    : (firstRight ? firstRight
+                                  : (battery ? static_cast<nxui::Widget*>(battery)
+                                             : lastLeft)));
         if (lastLeft && afterLeft)
             lastLeft->setCustomNavigation(nxui::FocusDirection::RIGHT, afterLeft);
 
+        if (orient) {
+            orient->setCustomNavigation(nxui::FocusDirection::LEFT,
+                lastLeft ? lastLeft : static_cast<nxui::Widget*>(lock));
+            nxui::Widget* orientRight = flip
+                ? static_cast<nxui::Widget*>(flip)
+                : (firstRight ? firstRight
+                              : (battery ? static_cast<nxui::Widget*>(battery)
+                                         : static_cast<nxui::Widget*>(orient)));
+            orient->setCustomNavigation(nxui::FocusDirection::RIGHT, orientRight);
+            if (!flip && firstRight)
+                firstRight->setCustomNavigation(nxui::FocusDirection::LEFT, orient);
+        }
+
         if (flip) {
             flip->setCustomNavigation(nxui::FocusDirection::LEFT,
-                                      lastLeft ? lastLeft : static_cast<nxui::Widget*>(lock));
+                orient ? static_cast<nxui::Widget*>(orient)
+                       : (lastLeft ? lastLeft : static_cast<nxui::Widget*>(lock)));
             nxui::Widget* flipRight = firstRight
                 ? firstRight
                 : (battery ? static_cast<nxui::Widget*>(battery)
@@ -1599,7 +1852,8 @@ void WiiUMenuApp::wireProfileLockNavigation() {
             nxui::Widget* batteryLeft = lastRight
                 ? lastRight
                 : (flip ? static_cast<nxui::Widget*>(flip)
-                        : static_cast<nxui::Widget*>(lock));
+                        : (orient ? static_cast<nxui::Widget*>(orient)
+                                  : static_cast<nxui::Widget*>(lock)));
             battery->setCustomNavigation(nxui::FocusDirection::LEFT, batteryLeft);
             if (lastRight)
                 lastRight->setCustomNavigation(nxui::FocusDirection::RIGHT, battery);
@@ -1615,23 +1869,36 @@ void WiiUMenuApp::wireProfileLockNavigation() {
             m_grid->setDynamicLineUpTarget(chromeUp);
         m_sidebar.setDynamicLineUpTarget(nullptr);
     } else {
-        // Grid chrome: [profile] ↔ [flip] ↔ [battery]
+        // Grid chrome: [profile] ↔ [orient?] ↔ [flip] ↔ [battery]
+        // (orient sits left of clock; flip stays right of clock.)
         // DOWN from profile → left column; DOWN from battery → right column.
         m_sidebar.setDynamicLineProfileTarget(nullptr);
         lock->setCustomNavigation(nxui::FocusDirection::RIGHT,
-                                  flip ? static_cast<nxui::Widget*>(flip)
-                                       : (battery ? static_cast<nxui::Widget*>(battery)
-                                                  : nullptr));
+                                  orient ? static_cast<nxui::Widget*>(orient)
+                                         : (flip ? static_cast<nxui::Widget*>(flip)
+                                                 : (battery ? static_cast<nxui::Widget*>(battery)
+                                                            : nullptr)));
+        if (orient) {
+            orient->setCustomNavigation(nxui::FocusDirection::LEFT,
+                                        static_cast<nxui::Widget*>(lock));
+            orient->setCustomNavigation(nxui::FocusDirection::RIGHT,
+                flip ? static_cast<nxui::Widget*>(flip)
+                     : (battery ? static_cast<nxui::Widget*>(battery)
+                                : static_cast<nxui::Widget*>(orient)));
+        }
         if (flip) {
-            flip->setCustomNavigation(nxui::FocusDirection::LEFT, lock);
+            flip->setCustomNavigation(nxui::FocusDirection::LEFT,
+                orient ? static_cast<nxui::Widget*>(orient)
+                       : static_cast<nxui::Widget*>(lock));
             flip->setCustomNavigation(nxui::FocusDirection::RIGHT,
-                                      battery ? static_cast<nxui::Widget*>(battery)
-                                              : static_cast<nxui::Widget*>(flip));
+                battery ? static_cast<nxui::Widget*>(battery)
+                        : static_cast<nxui::Widget*>(flip));
         }
         if (battery) {
             battery->setCustomNavigation(nxui::FocusDirection::LEFT,
                                          flip ? static_cast<nxui::Widget*>(flip)
-                                              : static_cast<nxui::Widget*>(lock));
+                                              : (orient ? static_cast<nxui::Widget*>(orient)
+                                                        : static_cast<nxui::Widget*>(lock)));
             if (firstRight) {
                 battery->setCustomNavigation(nxui::FocusDirection::DOWN, firstRight);
                 firstRight->setCustomNavigation(nxui::FocusDirection::UP, battery);
@@ -1689,9 +1956,7 @@ void WiiUMenuApp::loadNextProfile() {
 }
 
 WiiUMenuApp::GridLayoutMetrics WiiUMenuApp::computeGridLayoutMetrics() const {
-    const int cols = std::clamp(m_config.gridColumns, 1, 8);
-    const int rows = std::clamp(m_config.gridRows, 1, 5);
-    return computeGridLayoutMetrics(cols, rows);
+    return computeGridLayoutMetrics(activeGridColumns(), activeGridRows());
 }
 
 WiiUMenuApp::GridLayoutMetrics WiiUMenuApp::computeGridLayoutMetrics(int cols,
@@ -1702,8 +1967,17 @@ WiiUMenuApp::GridLayoutMetrics WiiUMenuApp::computeGridLayoutMetrics(int cols,
     const float baseGridW = cols * kGridBaseCellW + (cols - 1) * kGridBasePadX;
     const float baseGridH = rows * kGridBaseCellH + (rows - 1) * kGridBasePadY;
 
-    const float safeW = std::max(1.f, kGridRectW - (kGridSafeSideMargin * 2.f));
-    const float safeH = std::max(1.f, kGridRectH - (kGridSafeTopBottomMargin * 2.f));
+    float safeW;
+    float safeH;
+    if (!m_homeLayout.isPortrait()) {
+        safeW = std::max(1.f, kGridRectW - (kGridSafeSideMargin * 2.f));
+        safeH = std::max(1.f, kGridRectH - (kGridSafeTopBottomMargin * 2.f));
+    } else {
+        const nxui::Rect band = homeGridRect();
+        const float side = m_homeLayout.gridSafeSideMargin();
+        safeW = std::max(1.f, band.width - (side * 2.f));
+        safeH = std::max(1.f, band.height - (kGridSafeTopBottomMargin * 2.f));
+    }
 
     const float scaleW = safeW / baseGridW;
     const float scaleH = safeH / baseGridH;
@@ -1848,9 +2122,12 @@ void WiiUMenuApp::reflowHomeGrid() {
         reflowedTitleIds.push_back(m_model.at(i).titleId);
     m_iconStreamer.reconcileTitleIds(reflowedTitleIds);
 
-    GridLayoutMetrics gridMetrics = computeGridLayoutMetrics();
+    // Visual session dims (portrait 3x5); slot math above kept saved landscape size.
+    const int viewCols = activeGridColumns();
+    const int viewRows = activeGridRows();
+    GridLayoutMetrics gridMetrics = computeGridLayoutMetrics(viewCols, viewRows);
     m_grid->setSlideTransition(m_config.pageTransitionMode == 0);
-    m_grid->setup(std::move(icons), cols, rows,
+    m_grid->setup(std::move(icons), viewCols, viewRows,
                   gridMetrics.cellW, gridMetrics.cellH,
                   gridMetrics.padX, gridMetrics.padY);
 
@@ -2650,8 +2927,8 @@ void WiiUMenuApp::completeDisplayModelApply(
         m_folderCoverCache.clear();
         m_folderPeekBorrowed.clear();
     }
-    int columns = std::clamp(m_config.gridColumns, 1, 8);
-    int rows = std::clamp(m_config.gridRows, 1, 5);
+    int columns = activeGridColumns();
+    int rows = activeGridRows();
     if (m_openFolderId != 0)
         std::tie(columns, rows) = folderGridDimensions(m_openFolderId);
     auto metrics = computeGridLayoutMetrics(columns, rows);
@@ -2671,6 +2948,7 @@ void WiiUMenuApp::completeDisplayModelApply(
     m_grid->setEdgePaging(inFolder && m_appLayoutMode == AppLayoutMode::Grid);
     m_grid->setSlideTransition(m_config.pageTransitionMode == 0);
     m_grid->setLayoutMode(m_appLayoutMode, morphLayout);
+    m_grid->setRect(homeGridRect());
     m_grid->setup(std::move(icons), columns, rows, metrics.cellW, metrics.cellH,
                   metrics.padX, metrics.padY);
     // setup() rebuilds line/page geometry but does not touch morph state —
@@ -4213,6 +4491,8 @@ void WiiUMenuApp::configureDynamicLineNavigation() {
         m_sidebar.setDynamicLineDownAction({});
         auto* flip = (m_layoutFlip && m_layoutFlip->isVisible())
             ? m_layoutFlip.get() : nullptr;
+        auto* orient = (m_orientationBtn && m_orientationBtn->isVisible())
+            ? m_orientationBtn.get() : nullptr;
         auto* lock = (m_profileLock && m_profileLock->isVisible())
             ? m_profileLock.get() : nullptr;
         auto* battery = (m_battery && m_battery->isVisible())
@@ -4223,16 +4503,28 @@ void WiiUMenuApp::configureDynamicLineNavigation() {
                                       lock ? static_cast<nxui::Widget*>(lock)
                                            : static_cast<nxui::Widget*>(flip));
             flip->setCustomNavigation(nxui::FocusDirection::RIGHT,
-                                      battery ? static_cast<nxui::Widget*>(battery)
-                                              : static_cast<nxui::Widget*>(flip));
+                                      orient ? static_cast<nxui::Widget*>(orient)
+                                             : (battery ? static_cast<nxui::Widget*>(battery)
+                                                        : static_cast<nxui::Widget*>(flip)));
+        }
+        if (orient) {
+            wireOrientationButtonNavigation();
+            orient->setCustomNavigation(nxui::FocusDirection::LEFT,
+                flip ? static_cast<nxui::Widget*>(flip)
+                     : (lock ? static_cast<nxui::Widget*>(lock)
+                             : static_cast<nxui::Widget*>(orient)));
+            orient->setCustomNavigation(nxui::FocusDirection::RIGHT,
+                battery ? static_cast<nxui::Widget*>(battery)
+                        : static_cast<nxui::Widget*>(orient));
         }
         if (lock) {
             lock->setCustomNavigation(nxui::FocusDirection::LEFT, lock);
             lock->setCustomNavigation(nxui::FocusDirection::UP, lock);
             lock->setCustomNavigation(nxui::FocusDirection::RIGHT,
                                       flip ? static_cast<nxui::Widget*>(flip)
-                                           : (battery ? static_cast<nxui::Widget*>(battery)
-                                                      : static_cast<nxui::Widget*>(lock)));
+                                           : (orient ? static_cast<nxui::Widget*>(orient)
+                                                     : (battery ? static_cast<nxui::Widget*>(battery)
+                                                                : static_cast<nxui::Widget*>(lock))));
             lock->removeAction(static_cast<uint64_t>(nxui::Button::DDown));
             lock->removeAction(static_cast<uint64_t>(nxui::Button::LStickD));
             lock->removeAction(static_cast<uint64_t>(nxui::Button::RStickD));
@@ -4244,9 +4536,10 @@ void WiiUMenuApp::configureDynamicLineNavigation() {
             battery->setCustomNavigation(nxui::FocusDirection::UP, battery);
             battery->setCustomNavigation(nxui::FocusDirection::RIGHT, battery);
             battery->setCustomNavigation(nxui::FocusDirection::LEFT,
-                                         flip ? static_cast<nxui::Widget*>(flip)
-                                              : (lock ? static_cast<nxui::Widget*>(lock)
-                                                      : static_cast<nxui::Widget*>(battery)));
+                                         orient ? static_cast<nxui::Widget*>(orient)
+                                                : (flip ? static_cast<nxui::Widget*>(flip)
+                                                        : (lock ? static_cast<nxui::Widget*>(lock)
+                                                                : static_cast<nxui::Widget*>(battery))));
             battery->removeAction(static_cast<uint64_t>(nxui::Button::DDown));
             battery->removeAction(static_cast<uint64_t>(nxui::Button::LStickD));
             battery->removeAction(static_cast<uint64_t>(nxui::Button::RStickD));
@@ -4550,8 +4843,8 @@ bool WiiUMenuApp::tryCommitInPlaceLayoutMorph(std::uint64_t focused) {
         icon->setPosterFrame(posterTile);
     }
 
-    int columns = std::clamp(m_config.gridColumns, 1, 8);
-    int rows = std::clamp(m_config.gridRows, 1, 5);
+    int columns = activeGridColumns();
+    int rows = activeGridRows();
     if (m_openFolderId != 0)
         std::tie(columns, rows) = folderGridDimensions(m_openFolderId);
     auto metrics = computeGridLayoutMetrics(columns, rows);
@@ -4564,6 +4857,7 @@ bool WiiUMenuApp::tryCommitInPlaceLayoutMorph(std::uint64_t focused) {
 
     m_grid->setEdgePaging(false);
     m_grid->setLayoutMode(AppLayoutMode::DynamicLine, true);
+    m_grid->setRect(homeGridRect());
     m_grid->setup(std::move(icons), columns, rows, metrics.cellW, metrics.cellH,
                   metrics.padX, metrics.padY);
     const long setupMs = morphStepMs();
@@ -5024,7 +5318,7 @@ void WiiUMenuApp::openCapturedFolder() {
     }
     applyFolderDefaultViewOnOpen();
     syncHeroBackdropPresentation();
-    m_grid->setRect(kFolderGridRect);
+    m_grid->setRect(homeGridRect());
     // Don't inherit the root page number into the folder grid.
     m_grid->setPage(0);
     const bool zoom = !refocus && m_folderZoom && m_folderZoomOriginRect.width > 0.f;
@@ -5349,7 +5643,7 @@ void WiiUMenuApp::finishCloseFolder(std::uint32_t oldId, bool preserveEditMode) 
     if (m_rightSidebar) m_rightSidebar->setVisible(true);
     if (m_pageIndicator)
         m_pageIndicator->clearActiveColor();
-    m_grid->setRect({kGridRectX, kGridRectY, kGridRectW, kGridRectH});
+    m_grid->setRect(homeGridRect());
     applyDisplayModel(buildRootFolderModel(), folderTitleId(oldId), false, {}, true);
     configureDynamicLineNavigation();
     syncPageIndicator();
@@ -6397,7 +6691,8 @@ void WiiUMenuApp::buildGrid() {
     m_theme = m_effectivePreset.toTheme();
 
     m_background = std::make_shared<WaraWaraBackground>();
-    m_background->setRect({0, 0, 1280, 720});
+    m_homeLayout.orientation = m_config.homeOrientation;
+    m_background->setRect(m_homeLayout.contentCanvas());
     applyThemeResources(m_effectivePreset);
 
     GridLayoutMetrics gridMetrics = computeGridLayoutMetrics();
@@ -6425,7 +6720,8 @@ void WiiUMenuApp::buildGrid() {
                   static_cast<int>(m_appLayoutMode));
 
     m_grid = std::make_shared<IconGrid>();
-    m_grid->setRect({kGridRectX, kGridRectY, kGridRectW, kGridRectH});
+    m_homeLayout.orientation = m_config.homeOrientation;
+    m_grid->setRect(homeGridRect());
     // Snap to the saved layout immediately — morphing Grid→Line on HOME return
     // briefly showed the grid under/after the leave splash.
     m_grid->setLayoutMode(m_appLayoutMode, false);
@@ -6434,8 +6730,8 @@ void WiiUMenuApp::buildGrid() {
     // boot ignored the Translate setting until a rebuild happened to fix it.
     m_grid->setSlideTransition(m_config.pageTransitionMode == 0);
     m_grid->setup(std::move(icons),
-                  std::clamp(m_config.gridColumns, 1, 8),
-                  std::clamp(m_config.gridRows, 1, 5),
+                  activeGridColumns(),
+                  activeGridRows(),
                   gridMetrics.cellW, gridMetrics.cellH,
                   gridMetrics.padX, gridMetrics.padY);
     m_grid->setLayoutMode(m_appLayoutMode, false);
@@ -6473,6 +6769,23 @@ void WiiUMenuApp::buildGrid() {
         m_audio.playSfx(Sfx::Navigate);
         toggleAppLayoutMode();
     });
+
+    m_orientationBtn = std::make_shared<OrientationButton>();
+    m_orientationBtn->setTheme(&m_theme);
+    syncOrientationButtonState();
+    m_orientationBtn->ensureIcon(app().gpu(), app().renderer(),
+                                 resolveActiveIconGlyphPath(switchu::icons::kScreenRotateFile));
+    m_orientationBtn->setOnActivate([this]() {
+        if (m_editMode || leaveSplashActive())
+            return;
+        if (m_dialog && m_dialog->isActive())
+            return;
+        if (!m_config.homeOrientationButton)
+            return;
+        m_audio.playSfx(Sfx::Navigate);
+        cycleHomeOrientation();
+    });
+    m_orientationBtn->setVisible(false);
 
     m_battery = std::make_shared<BatteryWidget>();
     m_battery->setMarginTop(14.f);
@@ -6516,7 +6829,7 @@ void WiiUMenuApp::buildGrid() {
     m_titlePill->setBlurEnabled(false);
 
     m_pageIndicator = std::make_shared<PageIndicator>();
-    m_pageIndicator->setRect({0, 685.f, 1280.f, 28.f});
+    m_pageIndicator->placeOnCanvas(1280.f, 685.f);
     m_pageIndicator->setTheme(&m_theme);
     m_pageIndicator->setForceLiquidGlass(true);
     m_pageIndicator->setBlurEnabled(false);
@@ -6524,7 +6837,7 @@ void WiiUMenuApp::buildGrid() {
     m_launchAnim = std::make_shared<LaunchAnimation>();
 
     m_folderZoom = std::make_shared<FolderZoom>();
-    m_folderZoom->setRect({0, 0, 1280, 720});
+    m_folderZoom->setRect(m_homeLayout.contentCanvas());
 
     m_userSelect = std::make_shared<OverlayDialog>();
     m_userSelect->cursor().setInstantMotion(m_config.cursorMotionMode == 1);
@@ -6873,7 +7186,7 @@ void WiiUMenuApp::buildGrid() {
     root.clearChildren();
 
     m_bgLayer = std::make_shared<nxui::Box>();
-    m_bgLayer->setRect({0, 0, 1280, 720});
+    m_bgLayer->setRect(m_homeLayout.contentCanvas());
     m_bgLayer->setTag("bgLayer");
     m_bgLayer->setWireframeEnabled(false);
     m_bgLayer->addChild(m_background);
@@ -6885,12 +7198,12 @@ void WiiUMenuApp::buildGrid() {
     syncSteamGridDbLogoArea();
 
     m_contentLayer = std::make_shared<nxui::Box>();
-    m_contentLayer->setRect({0, 0, 1280, 720});
+    m_contentLayer->setRect(m_homeLayout.contentCanvas());
     m_contentLayer->setTag("contentLayer");
     m_contentLayer->setWireframeEnabled(false);
 
     m_folderBackdrop = std::make_shared<FolderBackdrop>();
-    m_folderBackdrop->setRect({0, 0, 1280, 720});
+    m_folderBackdrop->setRect(m_homeLayout.contentCanvas());
     m_folderBackdrop->setVisible(false);
 
     m_folderHeader = std::make_shared<nxui::GlassPanel>();
@@ -6913,7 +7226,7 @@ void WiiUMenuApp::buildGrid() {
     m_folderHeader->addChild(m_folderHeaderLabel);
 
     m_topHud = std::make_shared<nxui::Box>(nxui::Axis::ROW);
-    m_topHud->setRect({0, 0, 1280, 90});
+    m_topHud->setRect(m_homeLayout.topHud());
     m_topHud->setTag("topHud");
     m_topHud->setWireframeEnabled(false);
     m_topHud->setJustifyContent(nxui::JustifyContent::SPACE_BETWEEN);
@@ -6952,6 +7265,8 @@ void WiiUMenuApp::buildGrid() {
     // flip control remains independently focusable / tappable.
     if (m_layoutFlip)
         m_contentLayer->addChild(m_layoutFlip);
+    if (m_orientationBtn)
+        m_contentLayer->addChild(m_orientationBtn);
     m_contentLayer->addChild(m_titlePill);
     m_contentLayer->addChild(m_pageIndicator);
 
@@ -7067,6 +7382,7 @@ void WiiUMenuApp::buildGrid() {
                 icon->forceVisible();
         }
     }
+    applyHomeOrientationState(false);
     updateCursor();
     {
         std::uint64_t focusedTid = 0;
@@ -8269,6 +8585,7 @@ void WiiUMenuApp::tickFrameTapLightPath(float dt) {
         app().gpu().remountDisplayForCaptureMitm();
         // New managed layer id — re-bind underscan to it.
         switchu::menu::initScreenFitLayer(::__nx_vi_layer_id);
+        applyHomeOrientationState(false);
         std::remove("sdmc:/config/switch-frame-tap/need_capture_remount");
         m_ftAsksRemountFile = false;
         m_wakePostSwapchainFrames = std::max(m_wakePostSwapchainFrames, 2);
@@ -8389,6 +8706,7 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
             DebugLog::log("[power] wake step: underscan mode=%d", m_lastOperationMode);
             // Prefer last daemon-forwarded mode; avoid stale local libnx cache.
             switchu::menu::applyScreenUnderscan(m_lastOperationMode);
+            applyHomeOrientationState(false);
         } else if (step == 2) {
             DebugLog::log("[power] wake step: audio");
             if (m_musicWasPlayingBeforeSleep && m_config.musicEnabled)
@@ -9268,6 +9586,7 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
                               mode, m_lastOperationMode);
                 m_lastOperationMode = mode;
                 switchu::menu::applyScreenUnderscan(mode);
+                applyHomeOrientationState(false);
                 break;
             }
             case switchu::smi::MenuMessage::ShowLock:
@@ -9492,7 +9811,14 @@ std::vector<WiiUMenuApp::ActionHint> WiiUMenuApp::buildActionHints() {
     auto addVoiceControls = [&]() {
         if (!m_config.accessibilityEnabled)
             return;
-        add(buttonGlyph(nxui::Button::LStick), i18n.tr("hint.repeat", "Repeat"));
+        // HOME + orientation button: L3 cycles orientation (QS still owns L3
+        // for Repeat while open). Keep L3=Repeat elsewhere.
+        const bool l3IsOrientation =
+            m_navigator.route() == switchu::navigation::Route::Home
+            && m_config.homeOrientationButton
+            && !(m_quickSettings && m_quickSettings->isActive());
+        if (!l3IsOrientation)
+            add(buttonGlyph(nxui::Button::LStick), i18n.tr("hint.repeat", "Repeat"));
         add(buttonGlyph(nxui::Button::Plus) + buttonGlyph(nxui::Button::Minus),
             i18n.tr("hint.voice", "Voice"));
     };
@@ -9707,6 +10033,9 @@ std::vector<WiiUMenuApp::ActionHint> WiiUMenuApp::buildActionHints() {
             add(buttonGlyph(nxui::Button::A), i18n.tr("profilelock.choose", "Change profile"));
         if (m_layoutFlip && m_layoutFlip.get() == cur)
             add(buttonGlyph(nxui::Button::A), i18n.tr("hint.switch_layout", "Switch view"));
+        if (m_orientationBtn && m_orientationBtn.get() == cur)
+            add(buttonGlyph(nxui::Button::A),
+                i18n.tr("hint.switch_orientation", "Switch orientation"));
         if (m_battery && m_battery.get() == cur)
             add(buttonGlyph(nxui::Button::A), i18n.tr("quick_settings.title", "Quick Settings"));
     }
@@ -9718,6 +10047,9 @@ std::vector<WiiUMenuApp::ActionHint> WiiUMenuApp::buildActionHints() {
         else
             add(buttonGlyph(nxui::Button::Minus),
                 i18n.tr("hint.switch_layout", "Switch view"));
+        if (m_config.homeOrientationButton)
+            add(buttonGlyph(nxui::Button::LStick),
+                i18n.tr("hint.switch_orientation", "Switch orientation"));
     }
 
     // Paging lives on the arrows flanking the grid, not in the capsules.

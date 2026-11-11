@@ -298,6 +298,9 @@ void WiiUMenuApp::createSettings() {
     m_settings->setTheme(&m_theme);
     m_settings->setInstantCursorMotion(m_config.cursorMotionMode == 1);
     m_settings->setWireframeState(m_showWireframe);
+    m_settings->setHomeOrientationState(m_config.homeOrientation,
+                                        m_config.homeOrientationButton,
+                                        m_config.homeOrientationCycle);
     m_settings->setGridLayoutState(m_config.gridColumns, m_config.gridRows);
     m_settings->setUiLanguageOverride(m_config.uiLanguageOverride);
     m_settings->setClockUse12HourState(m_config.clockUse12Hour);
@@ -341,6 +344,33 @@ void WiiUMenuApp::createSettings() {
     m_settings->onWireframeChange([this](bool enabled) {
         m_showWireframe = enabled;
         app().renderer().setBoxWireframeEnabled(enabled);
+    });
+    m_settings->onHomeOrientationChange([this](HomeOrientation orientation) {
+        m_config.homeOrientation = orientation;
+        applyHomeOrientationState(true);
+        if (m_settings) {
+            m_settings->setHomeOrientationState(m_config.homeOrientation,
+                                                m_config.homeOrientationButton,
+                                                m_config.homeOrientationCycle);
+        }
+    });
+    m_settings->onHomeOrientationButtonChange([this](bool enabled) {
+        m_config.homeOrientationButton = enabled;
+        applyHomeOrientationState(true);
+        if (m_settings) {
+            m_settings->setHomeOrientationState(m_config.homeOrientation,
+                                                m_config.homeOrientationButton,
+                                                m_config.homeOrientationCycle);
+        }
+    });
+    m_settings->onHomeOrientationCycleChange([this](std::uint8_t mask) {
+        m_config.homeOrientationCycle = mask;
+        applyHomeOrientationState(true);
+        if (m_settings) {
+            m_settings->setHomeOrientationState(m_config.homeOrientation,
+                                                m_config.homeOrientationButton,
+                                                m_config.homeOrientationCycle);
+        }
     });
     m_settings->onGridColumnsChange([this](int cols) {
         cols = std::clamp(cols, 1, 8);
@@ -3140,6 +3170,12 @@ void WiiUMenuApp::reloadSidebarIcons() {
         m_layoutFlip->reloadIcon(app().gpu(), app().renderer(),
                                  resolveActiveIconGlyphPath(switchu::icons::kChangeViewFile));
     }
+    if (m_orientationBtn) {
+        m_orientationBtn->setIconHslAdjust(m_sidebar.iconHslAdjust());
+        m_orientationBtn->setColourIconContrast(m_sidebar.colourIconContrast());
+        m_orientationBtn->reloadIcon(app().gpu(), app().renderer(),
+                                     resolveActiveIconGlyphPath(switchu::icons::kScreenRotateFile));
+    }
 }
 
 void WiiUMenuApp::applyIconPack(const std::string& packId) {
@@ -3245,6 +3281,8 @@ void WiiUMenuApp::applyActivePackHslToSidebar() {
     m_sidebar.setIconHslAdjust(hsl);
     if (m_layoutFlip)
         m_layoutFlip->setIconHslAdjust(hsl);
+    if (m_orientationBtn)
+        m_orientationBtn->setIconHslAdjust(hsl);
 }
 
 void WiiUMenuApp::activateThemePreset(ThemePreset* preset, bool applyBundledSound) {
@@ -3790,8 +3828,14 @@ void WiiUMenuApp::applyThemeResources(const ThemePreset& preset) {
         backgroundConfig.orientationDegrees = preset.background.orientationDegrees;
         backgroundConfig.cornerRoundness = preset.background.cornerRoundness;
         backgroundConfig.imageOpacity = preset.background.imageOpacity;
-        backgroundConfig.imageCover = preset.background.imageCover;
+        // Portrait fills the tall canvas; landscape keeps the preset fit mode.
+        backgroundConfig.imageCover = m_homeLayout.isPortrait()
+            ? true
+            : preset.background.imageCover;
         m_background->setConfig(backgroundConfig);
+        m_background->setRect(m_homeLayout.isPortrait()
+            ? m_homeLayout.contentCanvas()
+            : nxui::Rect{0.f, 0.f, 1280.f, 720.f});
         // Theme config regenerates shapes — re-assert lite suppress if FT/Battery
         // Saver currently holds the light path.
         if (m_frameTapLightActive)
@@ -3931,6 +3975,8 @@ void WiiUMenuApp::applyHomeChrome() {
         m_profileLock->setTheme(&m_homeChrome);
     if (m_layoutFlip)
         m_layoutFlip->setTheme(&m_homeChrome);
+    if (m_orientationBtn)
+        m_orientationBtn->setTheme(&m_homeChrome);
 
     m_sidebar.applyTheme(m_homeChrome);
     syncColourIconContrast();
@@ -4393,9 +4439,13 @@ void WiiUMenuApp::syncColourIconContrast() {
     m_sidebar.setIconHslAdjust(hsl);
     if (m_layoutFlip)
         m_layoutFlip->setIconHslAdjust(hsl);
+    if (m_orientationBtn)
+        m_orientationBtn->setIconHslAdjust(hsl);
     m_sidebar.setColourIconContrast(adaptColour);
     if (m_layoutFlip)
         m_layoutFlip->setColourIconContrast(adaptColour);
+    if (m_orientationBtn)
+        m_orientationBtn->setColourIconContrast(adaptColour);
 
     if (hslChanged) {
         // Rebake colour glyphs (and Change View) with the new HSL adjust.
@@ -4405,5 +4455,7 @@ void WiiUMenuApp::syncColourIconContrast() {
         m_sidebar.setColourIconContrast(adaptColour);
         if (m_layoutFlip)
             m_layoutFlip->setColourIconContrast(adaptColour);
+        if (m_orientationBtn)
+            m_orientationBtn->setColourIconContrast(adaptColour);
     }
 }
