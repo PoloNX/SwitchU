@@ -724,11 +724,42 @@ void GlossyIcon::onRender(nxui::Renderer& ren) {
                         nxui::Color(0.02f, 0.04f, 0.06f,
                                     (m_entryKind == GridEntryKind::Empty ? 0.12f : 0.20f) * m_opacity),
                         cornerRadius() + 1.f);
-    nxui::GlassWidget::onRender(ren);
+
+    // Portrait: empty cells must stay see-through so wara-wara passes behind
+    // the plate. Liquid-glass capture UVs smear under orthoPortrait; skip the
+    // acrylic path and draw a light translucent plate onto the live FB.
+    const bool portraitLayout =
+        ren.layoutOrientation() == nxui::DisplayOrientation::Rot90
+        || ren.layoutOrientation() == nxui::DisplayOrientation::Rot270;
+    const bool emptyPortraitPassThrough =
+        m_entryKind == GridEntryKind::Empty && portraitLayout;
+    const bool savedLg = liquidGlassEnabled();
+    const bool savedLgShader = liquidGlassShaderEnabled();
+    if (emptyPortraitPassThrough) {
+        setLiquidGlassEnabled(false);
+        setLiquidGlassShaderEnabled(false);
+        const nxui::Color plate = baseColor().withAlpha(
+            std::min(0.22f, std::max(0.10f, baseColor().a)) * m_opacity);
+        ren.drawRoundedRect(drawRect, plate, cornerRadius());
+        if (borderColor().a > 0.01f)
+            ren.drawRoundedRectOutline(drawRect,
+                borderColor().withAlpha(borderColor().a * 0.80f * m_opacity),
+                cornerRadius(), std::max(1.f, borderWidth()));
+        if (highlightColor().a > 0.01f)
+            ren.drawRoundedRectOutline(drawRect.shrunk(1.f),
+                highlightColor().withAlpha(highlightColor().a * 0.55f * m_opacity),
+                std::max(0.f, cornerRadius() - 1.f), 1.f);
+    } else {
+        nxui::GlassWidget::onRender(ren);
+    }
 
     m_opacity = savedOp;
     m_rect = savedRect;
     setLiquidGlassShade(savedShade);
+    if (emptyPortraitPassThrough) {
+        setLiquidGlassEnabled(savedLg);
+        setLiquidGlassShaderEnabled(savedLgShader);
+    }
     setScale(externalScale);
 
     nxui::Rect r = drawRect;

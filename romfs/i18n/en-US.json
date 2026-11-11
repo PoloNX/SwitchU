@@ -28,7 +28,8 @@
       "grid": "Grid mode",
       "dynamic_line": "Dynamic line mode",
       "flip_to_line": "Switch to single-row view.",
-      "flip_to_grid": "Switch to grid view."
+      "flip_to_grid": "Switch to grid view.",
+      "cycle_orientation": "Cycle HOME screen orientation."
     },
     "roles": {
       "button": "button",
@@ -165,6 +166,7 @@
     "voice": "Voice",
     "options": "Options",
     "switch_layout": "Switch view",
+    "switch_orientation": "Switch orientation",
     "search": "Search",
     "sort_custom": "My order",
     "sort_alpha": "A-Z",
@@ -312,7 +314,13 @@
       "page_translate": "Translate",
       "page_teleport": "Teleport",
       "ui_wireframe": "UI Wireframe",
-      "ui_wireframe_desc": "Show outlines of all Box widgets for layout debugging."
+      "ui_wireframe_desc": "Show outlines of all Box widgets for layout debugging.",
+      "orientation_button": "HOME Orientation Button",
+      "orientation_button_desc": "Cycle orientation button next to Change View on HOME.",
+      "cycle_landscape": "Landscape",
+      "cycle_rot90": "Portrait (90°)",
+      "cycle_rot180": "Landscape Flipped (180°)",
+      "cycle_rot270": "Portrait Flipped (270°)"
     },
     "internet": {
       "wifi_ssid": "WiFi Network",

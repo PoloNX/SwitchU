@@ -17,6 +17,26 @@ Renderer::Renderer(GpuDevice& gpu) : m_gpu(gpu) {
 
 Renderer::~Renderer() {}
 
+void Renderer::setLayoutOrientation(DisplayOrientation orientation,
+                                    float logicalW, float logicalH) {
+    m_layoutOrientation = orientation;
+    const bool portrait = orientation == DisplayOrientation::Rot90
+        || orientation == DisplayOrientation::Rot270;
+    if (portrait) {
+        m_layoutW = logicalW > 0.f ? logicalW : static_cast<float>(m_gpu.height());
+        m_layoutH = logicalH > 0.f ? logicalH : static_cast<float>(m_gpu.width());
+    } else {
+        m_layoutW = 0.f;
+        m_layoutH = 0.f;
+    }
+}
+
+Rect Renderer::layoutClipToFramebuffer(const Rect& logical) const {
+    // SDL2 host preview keeps logical == FB; portrait mapping is Switch-only.
+    (void)m_layoutOrientation;
+    return logical;
+}
+
 bool Renderer::initialize() {
     std::printf("[Renderer-SDL2] Init complete (no shaders)\n");
     return true;

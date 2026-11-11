@@ -1,6 +1,7 @@
 #pragma once
 
 #include "TabbedOverlayScreen.hpp"
+#include "core/HomeOrientation.hpp"
 #include <cstdint>
 #include <future>
 
@@ -24,6 +25,22 @@ public:
     ~SettingsScreen() override = default;
 
     void onWireframeChange(BoolCb cb)   { m_wireframeCb = std::move(cb); }
+    void onHomeOrientationChange(std::function<void(HomeOrientation)> cb) {
+        m_homeOrientationCb = std::move(cb);
+    }
+    void onHomeOrientationButtonChange(BoolCb cb) {
+        m_homeOrientationButtonCb = std::move(cb);
+    }
+    void onHomeOrientationCycleChange(std::function<void(std::uint8_t)> cb) {
+        m_homeOrientationCycleCb = std::move(cb);
+    }
+    void setHomeOrientationState(HomeOrientation orientation, bool button,
+                                 std::uint8_t cycle) {
+        m_homeOrientation = orientation;
+        m_homeOrientationButton = button;
+        m_homeOrientationCycle = sanitizeHomeOrientationCycle(
+            cycle, orientation, button);
+    }
     void onGridColumnsChange(IntCb cb)  { m_gridColumnsCb = std::move(cb); }
     void onGridRowsChange(IntCb cb)     { m_gridRowsCb = std::move(cb); }
     void onUiLanguageChange(StringCb cb) { m_uiLanguageCb = std::move(cb); }
@@ -151,6 +168,9 @@ private:
     friend class settings::tabs::AboutTab;
 
     BoolCb m_wireframeCb;
+    std::function<void(HomeOrientation)> m_homeOrientationCb;
+    BoolCb m_homeOrientationButtonCb;
+    std::function<void(std::uint8_t)> m_homeOrientationCycleCb;
     IntCb m_gridColumnsCb;
     IntCb m_gridRowsCb;
     StringCb m_uiLanguageCb;
@@ -181,6 +201,9 @@ private:
     VoidCb m_rebootCb;
 
     bool m_wireframeEnabled = false;
+    HomeOrientation m_homeOrientation = HomeOrientation::Landscape0;
+    bool m_homeOrientationButton = false;
+    std::uint8_t m_homeOrientationCycle = kHomeOrientationCycleAll;
     int m_gridColumns = 5;
     int m_gridRows = 3;
     std::string m_uiLanguageOverride = "auto";

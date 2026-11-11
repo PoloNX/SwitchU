@@ -42,15 +42,23 @@ std::string joinPath(const std::string& base, const std::string& name) {
 } // namespace
 
 
+void SidebarManager::setCanvasSize(float width, float height) {
+    m_canvasW = width > 0.f ? width : 1280.f;
+    m_canvasH = height > 0.f ? height : 720.f;
+    // Re-place columns / strip for the new canvas without rebuilding buttons.
+    if (!m_leftButtons.empty() || !m_rightButtons.empty())
+        setDynamicLineLayout(m_dynamicLine);
+}
+
 void SidebarManager::build(nxui::GpuDevice& gpu, nxui::Renderer& ren,
                            const std::string& assetsBase,
                            const Actions& actions) {
     const float btnSize = kSidebarButtonSize;
     const float gap = kSidebarColumnGap;
     const float leftX = kSidebarMarginX;
-    const float rightX = 1280.f - kSidebarMarginX - btnSize;
+    const float rightX = m_canvasW - kSidebarMarginX - btnSize;
     const float totalH = 3 * btnSize + 2.f * gap;
-    float startY = 360.f - totalH * 0.5f;
+    float startY = m_canvasH * 0.5f - totalH * 0.5f;
 
     m_leftButtons.clear();
     m_rightButtons.clear();
@@ -176,6 +184,7 @@ void SidebarManager::updateButtonGlides(float dt) {
 }
 
 void SidebarManager::setDynamicLineLayout(bool enabled) {
+    m_dynamicLine = enabled;
     std::vector<AppletButton*> ordered;
     ordered.reserve(m_leftButtons.size() + m_rightButtons.size());
     for (auto& button : m_leftButtons) ordered.push_back(button.get());
@@ -202,11 +211,15 @@ void SidebarManager::setDynamicLineLayout(bool enabled) {
     };
 
     if (enabled) {
+        // Strip X positions scale with canvas width so portrait still fits.
+        const float scaleX = m_canvasW / 1280.f;
+        const float leftGroupX = kDynamicLeftGroupX * scaleX;
+        const float rightGroupX = kDynamicRightGroupX * scaleX;
         for (std::size_t i = 0; i < ordered.size(); ++i) {
             auto* button = ordered[i];
             const bool rightGroup = i >= m_leftButtons.size();
             const std::size_t groupIndex = rightGroup ? i - m_leftButtons.size() : i;
-            const float groupX = rightGroup ? kDynamicRightGroupX : kDynamicLeftGroupX;
+            const float groupX = rightGroup ? rightGroupX : leftGroupX;
             place(button,
                   {groupX + static_cast<float>(groupIndex) *
                                 (kDynamicStripButtonSize + kDynamicStripGap),
@@ -223,8 +236,8 @@ void SidebarManager::setDynamicLineLayout(bool enabled) {
     }
 
     const float totalH = 3.f * kSidebarButtonSize + 2.f * kSidebarColumnGap;
-    const float startY = 360.f - totalH * 0.5f;
-    const float rightX = 1280.f - kSidebarMarginX - kSidebarButtonSize;
+    const float startY = m_canvasH * 0.5f - totalH * 0.5f;
+    const float rightX = m_canvasW - kSidebarMarginX - kSidebarButtonSize;
     for (std::size_t i = 0; i < m_leftButtons.size(); ++i) {
         place(m_leftButtons[i].get(),
               {kSidebarMarginX,
