@@ -18,9 +18,73 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdio>
+#include <cstdint>
 #include <stdexcept>
 
 namespace {
+
+// Civil-date → days since Unix epoch (Howard Hinnant). Avoids timegm on Switch.
+std::int64_t daysFromCivil(int y, unsigned m, unsigned d) {
+    y -= m <= 2;
+    const int era = (y >= 0 ? y : y - 399) / 400;
+    const unsigned yoe = static_cast<unsigned>(y - era * 400);
+    const unsigned doy = (153u * (m + (m > 2 ? -3 : 9)) + 2u) / 5u + d - 1u;
+    const unsigned doe = yoe * 365u + yoe / 4u - yoe / 100u + doy;
+    return static_cast<std::int64_t>(era) * 146097 + static_cast<std::int64_t>(doe) - 719468;
+}
+
+std::int64_t parseCatalogTimestamp(const std::string& text) {
+    if (text.size() < 19)
+        return 0;
+
+    int year = 0;
+    int month = 0;
+    int day = 0;
+    int hour = 0;
+    int minute = 0;
+    int second = 0;
+    if (std::sscanf(text.c_str(), "%d-%d-%dT%d:%d:%d",
+                    &year, &month, &day, &hour, &minute, &second) < 6) {
+        return 0;
+    }
+    if (month < 1 || month > 12 || day < 1 || day > 31)
+        return 0;
+
+    std::int64_t unixSeconds = daysFromCivil(year, static_cast<unsigned>(month), static_cast<unsigned>(day))
+        * 86400LL
+        + hour * 3600LL
+        + minute * 60LL
+        + second;
+
+    // Optional timezone: Z, +HH:MM, -HH:MM
+    std::size_t zonePos = 19;
+    while (zonePos < text.size() && (text[zonePos] == '.' || (text[zonePos] >= '0' && text[zonePos] <= '9')))
+        ++zonePos;
+    if (zonePos < text.size()) {
+        if (text[zonePos] == 'Z' || text[zonePos] == 'z') {
+            // already UTC
+        } else if (text[zonePos] == '+' || text[zonePos] == '-') {
+            int tzh = 0;
+            int tzm = 0;
+            if (std::sscanf(text.c_str() + zonePos, "%d:%d", &tzh, &tzm) >= 1) {
+                // "+05:30" parses tzh=5; "-05:00" parses tzh=-5
+                if (tzh < 0)
+                    tzm = -tzm;
+                unixSeconds -= static_cast<std::int64_t>(tzh) * 3600LL
+                    + static_cast<std::int64_t>(tzm) * 60LL;
+            }
+        }
+    }
+    return unixSeconds;
+}
+
+std::int64_t catalogSortStamp(const std::string& updatedAt, const std::string& addedAt) {
+    const std::int64_t updated = parseCatalogTimestamp(updatedAt);
+    if (updated != 0)
+        return updated;
+    return parseCatalogTimestamp(addedAt);
+}
 
 void readStringOpt(const nlohmann::json& j, const char* key, std::string& out) {
     auto it = j.find(key);
@@ -464,6 +528,9 @@ ThemeCatalogClient::Snapshot ThemeCatalogClient::loadCatalog(const std::string& 
             readStringOpt(item, "manifest", icon.manifest);
             readStringOpt(item, "cover", icon.cover);
             readStringOpt(item, "theme", icon.theme);
+            readStringOpt(item, "addedAt", icon.addedAt);
+            readStringOpt(item, "updatedAt", icon.updatedAt);
+            icon.sortStamp = catalogSortStamp(icon.updatedAt, icon.addedAt);
             if (item.contains("builtin") && item["builtin"].is_boolean())
                 icon.builtin = item["builtin"].get<bool>();
             if (item.contains("colour") && item["colour"].is_boolean())
@@ -483,10 +550,9 @@ ThemeCatalogClient::Snapshot ThemeCatalogClient::loadCatalog(const std::string& 
             snapshot.icons.push_back(std::move(icon));
         }
 
+        // Keep a stable A–Z base order; Theme Shop re-sorts for Newest/A–Z UI.
         std::sort(snapshot.icons.begin(), snapshot.icons.end(),
                   [](const IconEntry& lhs, const IconEntry& rhs) {
-            if (lhs.builtin != rhs.builtin)
-                return lhs.builtin; // built-ins first, like the console list
             if (lhs.name != rhs.name)
                 return lhs.name < rhs.name;
             return lhs.id < rhs.id;
@@ -510,6 +576,9 @@ ThemeCatalogClient::Snapshot ThemeCatalogClient::loadCatalog(const std::string& 
         readStringOpt(item, "path", entry.path);
         readStringOpt(item, "manifest", entry.manifest);
         readStringOpt(item, "cover", entry.cover);
+        readStringOpt(item, "addedAt", entry.addedAt);
+        readStringOpt(item, "updatedAt", entry.updatedAt);
+        entry.sortStamp = catalogSortStamp(entry.updatedAt, entry.addedAt);
         readStringArrayOpt(item, "screenshots", entry.screenshots);
 
         std::string screenshot;

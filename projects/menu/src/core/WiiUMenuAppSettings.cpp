@@ -1,6 +1,7 @@
 #include "WiiUMenuApp.hpp"
 #include "icons/IconPackInstaller.hpp"
 #include "icons/IconPackManager.hpp"
+#include "themeshop/InstallStamp.hpp"
 #include "themeshop/ThemePackageInstaller.hpp"
 #include "themeshop/ThemeHttp.hpp"
 #include "widgets/AdaptiveIconLoad.hpp"
@@ -2917,6 +2918,8 @@ std::vector<ThemeShopScreen::ThemeShopEntry> WiiUMenuApp::buildThemeShopEntries(
             const std::string root = soundBase.empty() ? preset.installPath : soundBase;
             entry.hasMusic = pathExists(root + "/music");
             entry.hasSounds = pathExists(root + "/sfx");
+            // Sidecar from Theme Shop install, else theme.json / folder mtime.
+            entry.sortStamp = themeshop::resolveSortStamp(preset.installPath, "theme.json");
         }
         entries.push_back(std::move(entry));
     }
@@ -3036,6 +3039,9 @@ std::vector<ThemeShopScreen::ThemeShopEntry> WiiUMenuApp::buildIconPackEntries()
         entry.installed = true;
         entry.removable = !pack.fromTheme && !entry.builtin;
         entry.colourPack = pack.colourPack;
+        if (!pack.directory.empty()) {
+            entry.sortStamp = themeshop::resolveSortStamp(pack.directory, "pack.json");
+        }
         entries.push_back(std::move(entry));
     };
 
@@ -3078,6 +3084,8 @@ std::vector<ThemeShopScreen::ThemeShopEntry> WiiUMenuApp::buildIconPackEntries()
                 // Keep both: Installed shelf uses coverPath (live mosaic + tint);
                 // Icon Shop uses coverUrl (vanilla catalog art).
                 existing->coverUrl = resolveCoverUrl(icon.cover);
+                // Keep local install/mtime stamp for installed packs; catalog
+                // dates are only for packs not yet on the console.
                 continue;
             }
             // Catalog row whose theme companion is already installed as another id.
@@ -3110,6 +3118,7 @@ std::vector<ThemeShopScreen::ThemeShopEntry> WiiUMenuApp::buildIconPackEntries()
             entry.colourPack = icon.colour;
             entry.source = "Shop";
             entry.coverUrl = resolveCoverUrl(icon.cover);
+            entry.sortStamp = icon.sortStamp;
             entries.push_back(std::move(entry));
         }
     }

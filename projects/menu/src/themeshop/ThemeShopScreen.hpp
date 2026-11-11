@@ -58,6 +58,13 @@ public:
         // Remote preview for catalog packs that are not installed yet.
         std::string coverUrl;
         std::string description;
+        // Unix seconds for Newest sort (catalog stamps or local mtime).
+        std::int64_t sortStamp = 0;
+    };
+
+    enum class CatalogSortMode : int {
+        Newest = 0,
+        NameAsc = 1,
     };
 
     ThemeShopScreen();
@@ -122,6 +129,9 @@ public:
     void onNetConnectRequest(VoidCb cb)  { m_netConnectCb = std::move(cb); }
     void onSearchRequest(StringCb cb) { m_searchRequestCb = std::move(cb); }
     void setSearchQuery(std::string query);
+    void clearSearchQuery();
+    CatalogSortMode catalogSortMode() const { return m_catalogSortMode; }
+    void cycleCatalogSortMode();
 
     void setMusicState(bool enabled, float musicVol, float sfxVol) {
         m_musicEnabled = enabled;
@@ -299,6 +309,8 @@ private:
     enum class ThemeTouchTarget {
         None,
         Search,
+        Sort,
+        ClearSearch,
         Refresh,
         PagePrev,
         PageNext,
@@ -525,6 +537,7 @@ private:
     int m_cursorMotionMode = 0;
     int m_pageTransitionMode = 0;
     std::string m_searchQuery;
+    CatalogSortMode m_catalogSortMode = CatalogSortMode::Newest;
     std::vector<ThemeShopEntry> m_allThemeShopEntries;
     std::vector<ThemeShopEntry> m_themeShopEntries;
     std::string m_themeShopSelectedId;
