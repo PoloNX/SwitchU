@@ -1,6 +1,7 @@
 #include "ThemePackageInstaller.hpp"
 #include "../core/ThemePreset.hpp"
 
+#include "InstallStamp.hpp"
 #include "ThemeHttp.hpp"
 
 #include "core/DebugLog.hpp"
@@ -739,6 +740,8 @@ ThemePackageInstaller::Result ThemePackageInstaller::run(const std::string& cata
                        : i18n.tr("themeshop.transfer.finalize_install", "Finalizing installation..."),
                    1.f);
     }
+
+    (void)themeshop::writeInstallStamp(result.destinationPath);
 
     result.success = true;
     auto& i18n = nxui::I18n::instance();
