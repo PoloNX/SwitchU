@@ -670,7 +670,8 @@
     "search": "Rechercher",
     "manage": "Gérer",
     "stop": "Arrêter",
-    "pair": "Associer"
+    "pair": "Associer",
+    "remove": "Remove"
   },
   "themeshop": {
     "source": {
@@ -848,5 +849,14 @@
     "hint_adjust": "Ajuster",
     "hint_shortcut": "Paramètres rapides",
     "music_idle": "Aucune lecture"
+  },
+  "homebrew": {
+    "add": "Add homebrew app",
+    "none_title": "No homebrew found",
+    "none_desc": "No .nro files were found under sdmc:/switch.",
+    "choose": "Choose homebrew",
+    "remove_title": "Remove shortcut",
+    "remove_desc": "Remove this homebrew shortcut from HOME?",
+    "launch_failed_title": "Cannot launch homebrew"
   }
 }

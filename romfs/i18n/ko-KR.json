@@ -727,7 +727,8 @@
     "search": "검색",
     "manage": "관리",
     "stop": "중지",
-    "pair": "페어링"
+    "pair": "페어링",
+    "remove": "Remove"
   },
   "themeshop": {
     "source": {
@@ -1005,5 +1006,14 @@
       "11": "11월",
       "12": "12월"
     }
+  },
+  "homebrew": {
+    "add": "Add homebrew app",
+    "none_title": "No homebrew found",
+    "none_desc": "No .nro files were found under sdmc:/switch.",
+    "choose": "Choose homebrew",
+    "remove_title": "Remove shortcut",
+    "remove_desc": "Remove this homebrew shortcut from HOME?",
+    "launch_failed_title": "Cannot launch homebrew"
   }
 }

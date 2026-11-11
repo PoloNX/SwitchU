@@ -1831,6 +1831,31 @@ void WiiUMenuApp::cancelHomeChordShortcuts() {
 }
 
 void WiiUMenuApp::openFocusedSelectionProperties() {
+#ifdef SWITCHU_HOMEBREW
+    if (m_navigator.route() != switchu::navigation::Route::Home ||
+        m_editMode ||
+        (m_contextMenu && m_contextMenu->isActive()) ||
+        (m_dialog && m_dialog->isActive()))
+        return;
+    auto* current = focusManager().current();
+    if (!current || current->tag() != "glossy_icon" || !m_grid)
+        return;
+    auto* icon = static_cast<GlossyIcon*>(current);
+    const auto& icons = m_grid->allIcons();
+    const auto found = std::find_if(
+        icons.begin(), icons.end(),
+        [icon](const auto& candidate) { return candidate.get() == icon; });
+    const int index = found == icons.end()
+        ? -1 : static_cast<int>(std::distance(icons.begin(), found));
+    if (index < 0 || index >= m_model.count())
+        return;
+    if (m_model.at(index).titleId == 0 ||
+        m_model.at(index).kind == GridEntryKind::Empty) {
+        if (m_openFolderId == 0)
+            showAddContextMenu(index, icon->focusRect());
+    }
+    return;
+#endif
 #ifdef SWITCHU_MENU
     if (m_navigator.route() != switchu::navigation::Route::Home ||
         m_editMode ||
@@ -2219,6 +2244,34 @@ void WiiUMenuApp::showGameContextMenu(GlossyIcon* icon) {
         return;
 
     const uint64_t titleId = icon->titleId();
+    if (switchu::homebrew::isHomebrewTitleId(titleId)) {
+        auto& i18n = nxui::I18n::instance();
+        const auto* hb = m_homebrewStore.find(
+            switchu::homebrew::homebrewIdFromTitleId(titleId));
+        const std::string name = hb ? hb->name : icon->title();
+        m_dialogReturnFocus = icon;
+        m_dialog->show(i18n.tr("homebrew.remove_title", "Remove shortcut"),
+            i18n.tr("homebrew.remove_desc", "Remove this homebrew shortcut from HOME?") +
+                std::string("\n") + name,
+            {
+                {i18n.tr("button.cancel", "Cancel"), []() {}, true},
+                {i18n.tr("button.remove", "Remove"), [this, titleId]() {
+                    const auto id = switchu::homebrew::homebrewIdFromTitleId(titleId);
+                    m_homebrewStore.remove(id);
+                    m_homebrewStore.save();
+                    // Remove from layout slots.
+                    for (auto& slot : m_layoutSlots)
+                        if (slot == titleId) slot = 0;
+                    m_layoutDirty = true;
+                    saveMenuLayout();
+#ifdef SWITCHU_MENU
+                    refreshAppList();
+#endif
+                }, true},
+            }, 0, {});
+        focusManager().setFocus(m_dialog.get());
+        return;
+    }
     const std::string title = icon->title();
     auto& i18n = nxui::I18n::instance();
     switchu::control_cache::Meta meta{};

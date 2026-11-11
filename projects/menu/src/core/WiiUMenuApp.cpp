@@ -14,6 +14,7 @@
 #include "LeaveFrameCache.hpp"
 #include "screen_fit.hpp"
 #include <switch.h>
+#include <switch/runtime/env.h>
 #ifdef SWITCHU_MENU
 #include "smi_commands.hpp"
 #endif
@@ -1025,6 +1026,8 @@ bool WiiUMenuApp::onCreate() {
     loadMenuLayout();
     if (!m_folderStore.load())
         DebugLog::log("[folders] store unavailable; continuing with an empty folder list");
+    if (!m_homebrewStore.load())
+        DebugLog::log("[homebrew] store unavailable; continuing with an empty homebrew list");
     if (!m_widgetStore.load())
         DebugLog::log("[widgets] store unavailable; continuing with an empty widget list");
     normalizeWidgetPlacements();
@@ -1034,6 +1037,20 @@ bool WiiUMenuApp::onCreate() {
             DebugLog::log("[widgets] recent activity duration could not be saved");
     }
     m_appLoader.setPendingTransform([this](std::vector<PendingApp>& apps) {
+        for (const auto& hb : m_homebrewStore.all()) {
+            PendingApp item;
+            item.id = "homebrew:" + std::to_string(hb.id);
+            item.title = hb.name;
+            item.englishTitle = hb.name;
+            item.titleId = switchu::homebrew::homebrewTitleId(hb.id);
+            item.kind = GridEntryKind::Application;
+            item.userRequired = false;
+            item.startupUserKnown = true;
+            item.startupUserAccount = 1;
+            item.startupUserAccountOption = 0;
+            item.iconData = switchu::homebrew::readHomebrewIcon(hb.path);
+            apps.push_back(std::move(item));
+        }
         applyMenuLayoutToPending(apps);
     });
 
@@ -3849,6 +3866,101 @@ std::string WiiUMenuApp::randomScreenshotPath(std::uint32_t widgetId) const {
     return resolveWidgetAssetRef(assets[index].second);
 }
 
+void WiiUMenuApp::showHomebrewPicker(int targetSlot, const nxui::Rect& anchor) {
+    auto& i18n = nxui::I18n::instance();
+    std::vector<std::pair<std::string, std::string>> found; // path, name
+    std::error_code ec;
+    if (std::filesystem::exists("sdmc:/switch", ec)) {
+        for (auto it = std::filesystem::recursive_directory_iterator(
+                 "sdmc:/switch", std::filesystem::directory_options::skip_permission_denied, ec);
+             it != std::filesystem::recursive_directory_iterator(); ++it) {
+            if (ec) { ec.clear(); continue; }
+            if (!it->is_regular_file(ec)) continue;
+            if (it->path().extension() != ".nro") continue;
+            // Skip SwitchU's own binaries.
+            const std::string pathStr = it->path().string();
+            if (pathStr.find("/SwitchU/") != std::string::npos) continue;
+            if (pathStr.find("\\SwitchU\\") != std::string::npos) continue;
+            std::string hbName = switchu::homebrew::readHomebrewName(pathStr);
+            if (hbName.empty()) hbName = it->path().stem().string();
+            found.emplace_back(pathStr, hbName);
+        }
+    }
+    std::sort(found.begin(), found.end(),
+              [](const auto& a, const auto& b) { return a.second < b.second; });
+
+    // Filter out already added.
+    std::vector<std::pair<std::string, std::string>> available;
+    for (auto& candidate : found) {
+        bool exists = false;
+        for (const auto& hb : m_homebrewStore.all())
+            if (hb.path == candidate.first) { exists = true; break; }
+        if (!exists) available.push_back(std::move(candidate));
+    }
+
+    if (available.empty()) {
+        m_contextMenu->hide();
+        m_dialogReturnFocus = m_contextMenuReturnFocus;
+        m_dialog->show(i18n.tr("homebrew.none_title", "No homebrew found"),
+            i18n.tr("homebrew.none_desc", "No .nro files were found under sdmc:/switch."),
+            {{i18n.tr("button.ok", "OK"), {}, true}});
+        focusManager().setFocus(m_dialog.get());
+        return;
+    }
+
+    std::vector<ContextMenu::Item> items;
+    for (auto& [path, name] : available) {
+        items.push_back({name, [this, targetSlot, path, name]() {
+            m_contextMenu->hide();
+            const std::uint32_t id = m_homebrewStore.create(name, path);
+            if (id == 0 || !m_homebrewStore.save()) {
+                DebugLog::log("[homebrew] create failed");
+                return;
+            }
+            const std::uint64_t titleId = switchu::homebrew::homebrewTitleId(id);
+            if (targetSlot >= 0 && targetSlot < static_cast<int>(m_layoutSlots.size()) &&
+                m_layoutSlots[static_cast<std::size_t>(targetSlot)] == 0) {
+                m_layoutSlots[static_cast<std::size_t>(targetSlot)] = titleId;
+                m_layoutDirty = true;
+                saveMenuLayout();
+            }
+            m_audio.playSfx(Sfx::ConfirmPositive);
+#ifdef SWITCHU_MENU
+            refreshAppList();
+#endif
+        }});
+    }
+
+    if (!m_contextMenu->isActive())
+        m_contextMenuReturnFocus = focusManager().current();
+    m_contextMenu->show(anchor, i18n.tr("homebrew.choose", "Choose homebrew"), std::move(items));
+    focusManager().setFocus(m_contextMenu.get());
+}
+
+#ifdef SWITCHU_MENU
+void WiiUMenuApp::launchHomebrew(const std::string& path) {
+    m_audio.playSfx(Sfx::Activate);
+    DebugLog::log("[homebrew] launching %s", path.c_str());
+    const bool hasNext = envHasNextLoad();
+    DebugLog::log("[homebrew] envHasNextLoad=%d", hasNext ? 1 : 0);
+    const Result rc = envSetNextLoad(path.c_str(), "");
+    DebugLog::log("[homebrew] envSetNextLoad rc=0x%X", rc);
+    if (R_SUCCEEDED(rc)) {
+        app().requestExit();
+        return;
+    }
+    auto& i18n = nxui::I18n::instance();
+    m_dialogReturnFocus = focusManager().current();
+    char msg[128];
+    std::snprintf(msg, sizeof(msg), "envHasNextLoad=%d, envSetNextLoad=0x%08X",
+                  hasNext ? 1 : 0, static_cast<unsigned>(rc));
+    m_dialog->show(i18n.tr("homebrew.launch_failed_title", "Cannot launch homebrew"),
+        msg,
+        {{i18n.tr("button.ok", "OK"), [this]() {}, true}});
+    focusManager().setFocus(m_dialog.get());
+}
+#endif
+
 void WiiUMenuApp::showAddContextMenu(int targetSlot, const nxui::Rect& anchor) {
     if (!m_contextMenu || m_openFolderId != 0) return;
     auto& i18n = nxui::I18n::instance();
@@ -3862,6 +3974,8 @@ void WiiUMenuApp::showAddContextMenu(int targetSlot, const nxui::Rect& anchor) {
          }},
         {i18n.tr("widget.create", "Create new widget"),
          [this, targetSlot, anchor]() { showWidgetTypeMenu(targetSlot, anchor); }},
+        {i18n.tr("homebrew.add", "Add homebrew app"),
+         [this, targetSlot, anchor]() { showHomebrewPicker(targetSlot, anchor); }},
     });
     m_audio.playSfx(Sfx::ModalShow);
     focusManager().setFocus(m_contextMenu.get());
@@ -5418,6 +5532,12 @@ void WiiUMenuApp::activateApplication(GlossyIcon* source, AppEntry* entry,
                                       std::uint64_t titleId,
                                       const std::string& launchTitle) {
     if (!source || titleId == 0) return;
+    if (switchu::homebrew::isHomebrewTitleId(titleId)) {
+        const auto hbId = switchu::homebrew::homebrewIdFromTitleId(titleId);
+        const auto* hb = m_homebrewStore.find(hbId);
+        if (hb) launchHomebrew(hb->path);
+        return;
+    }
     if (m_launcher.isAppSuspended(titleId)) {
         resumeSuspendedApplication(titleId, launchTitle);
         return;

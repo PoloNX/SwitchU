@@ -416,7 +416,8 @@
     "search": "Buscar",
     "manage": "Gestionar",
     "stop": "Detener",
-    "pair": "Vincular"
+    "pair": "Vincular",
+    "remove": "Quitar"
   },
   "themeshop": {
     "source": {
@@ -930,5 +931,14 @@
       "off": "Desactivado"
     },
     "title": "Tema automático"
+  },
+  "homebrew": {
+    "add": "Add homebrew app",
+    "none_title": "No homebrew found",
+    "none_desc": "No .nro files were found under sdmc:/switch.",
+    "choose": "Choose homebrew",
+    "remove_title": "Remove shortcut",
+    "remove_desc": "Remove this homebrew shortcut from HOME?",
+    "launch_failed_title": "Cannot launch homebrew"
   }
 }

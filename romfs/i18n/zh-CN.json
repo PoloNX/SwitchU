@@ -727,7 +727,8 @@
     "search": "搜索",
     "manage": "管理",
     "stop": "停止",
-    "pair": "配对"
+    "pair": "配对",
+    "remove": "Remove"
   },
   "themeshop": {
     "source": {
@@ -1005,5 +1006,14 @@
       "11": "11月",
       "12": "12月"
     }
+  },
+  "homebrew": {
+    "add": "Add homebrew app",
+    "none_title": "No homebrew found",
+    "none_desc": "No .nro files were found under sdmc:/switch.",
+    "choose": "Choose homebrew",
+    "remove_title": "Remove shortcut",
+    "remove_desc": "Remove this homebrew shortcut from HOME?",
+    "launch_failed_title": "Cannot launch homebrew"
   }
 }

@@ -42,6 +42,7 @@
 #include "core/Config.hpp"
 #include "core/FolderStore.hpp"
 #include "core/FolderPeekComposite.hpp"
+#include "core/HomebrewStore.hpp"
 #include "core/WidgetStore.hpp"
 #include "core/ThemePreset.hpp"
 #include "widgets/LockClockFonts.hpp"
@@ -173,6 +174,7 @@ private:
     void syncFolderHeader();
     void createFolder(int targetSlot = -1);
     void showAddContextMenu(int targetSlot, const nxui::Rect& anchor);
+    void showHomebrewPicker(int targetSlot, const nxui::Rect& anchor);
     void showWidgetTypeMenu(int targetSlot, const nxui::Rect& anchor);
     void showWidgetSizeMenu(int targetSlot, const nxui::Rect& anchor,
                             switchu::widgets::WidgetType type);
@@ -225,6 +227,7 @@ private:
     void activateApplication(GlossyIcon* source, AppEntry* entry,
                              std::uint64_t titleId,
                              const std::string& launchTitle);
+    void launchHomebrew(const std::string& path);
     void resumeSuspendedApplication(std::uint64_t titleId,
                                     const std::string& launchTitle);
 #endif
@@ -845,6 +848,7 @@ private:
     // (not owned by m_folderPeekCache). Must be promoted before art swaps.
     std::unordered_set<std::uint64_t> m_folderPeekBorrowed;
     switchu::folders::FolderStore m_folderStore;
+    switchu::homebrew::HomebrewStore m_homebrewStore;
     switchu::widgets::WidgetStore m_widgetStore;
     std::uint64_t m_recentWidgetAssetTitleId = 0;
     std::uint64_t m_recentWidgetLoadedTitleId = 0;

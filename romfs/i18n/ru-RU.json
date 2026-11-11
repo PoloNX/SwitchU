@@ -285,7 +285,8 @@
     "cancel": "Отмена",
     "delete": "Удалить",
     "close": "Close",
-    "replace": "Replace"
+    "replace": "Replace",
+    "remove": "Remove"
   },
   "themeshop": {
     "source": {
@@ -555,5 +556,14 @@
     "power_off": "Выключить",
     "hint_adjust": "Настроить",
     "hint_shortcut": "Быстрые настройки"
+  },
+  "homebrew": {
+    "add": "Add homebrew app",
+    "none_title": "No homebrew found",
+    "none_desc": "No .nro files were found under sdmc:/switch.",
+    "choose": "Choose homebrew",
+    "remove_title": "Remove shortcut",
+    "remove_desc": "Remove this homebrew shortcut from HOME?",
+    "launch_failed_title": "Cannot launch homebrew"
   }
 }
