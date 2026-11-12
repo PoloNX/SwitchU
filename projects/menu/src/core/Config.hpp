@@ -133,6 +133,9 @@ struct AppConfig {
     }
     std::vector<std::pair<std::uint64_t, std::uint64_t>> lastOpened;
     std::uint64_t lastOpenedSequence = 0;
+    // Installed application used as the donor for full-RAM homebrew launches.
+    // 0 means "pick one from the application list".
+    std::uint64_t homebrewDonorTitleId = 0;
 
     std::uint64_t lastOpenedAt(std::uint64_t titleId) const {
         for (const auto& entry : lastOpened)

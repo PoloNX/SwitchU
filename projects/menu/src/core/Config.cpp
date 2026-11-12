@@ -195,6 +195,15 @@ bool AppConfig::load() {
         }
     }
     readJsonOpt(j, "lastOpenedSequence", lastOpenedSequence);
+    {
+        std::string donor;
+        readJsonOpt(j, "homebrewDonorTitleId", donor);
+        if (!donor.empty())
+            homebrewDonorTitleId = std::strtoull(donor.c_str(), nullptr, 16);
+        if (homebrewDonorTitleId < 0x0100000000010000ULL
+            || homebrewDonorTitleId > 0x01FFFFFFFFFFFFFFULL)
+            homebrewDonorTitleId = 0;
+    }
     lastOpened.clear();
     if (auto it = j.find("lastOpened"); it != j.end() && it->is_object()) {
         for (auto& [key, value] : it->items()) {
@@ -362,6 +371,12 @@ bool AppConfig::save() const {
         j["iconPackTints"] = std::move(tints);
     }
     j["lastOpenedSequence"] = lastOpenedSequence;
+    {
+        char donor[17];
+        std::snprintf(donor, sizeof(donor), "%016llX",
+                      static_cast<unsigned long long>(homebrewDonorTitleId));
+        j["homebrewDonorTitleId"] = donor;
+    }
     {
         nlohmann::json opened = nlohmann::json::object();
         char key[17];

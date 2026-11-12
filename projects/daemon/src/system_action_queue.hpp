@@ -1,6 +1,7 @@
 #pragma once
 
 #include <switch.h>
+#include <switchu/smi_protocol.hpp>
 
 #include <cstddef>
 #include <cstdint>
@@ -11,6 +12,7 @@ namespace switchu::daemon {
 enum class SystemActionType : std::uint32_t {
     LaunchApplication,
     ResumeApplication,
+    LaunchHomebrew,
     OpenAlbum,
     OpenMiiEditor,
     OpenControllers,
@@ -25,6 +27,9 @@ struct SystemAction {
     std::uint64_t requestId = 0;
     std::uint64_t titleId = 0;
     AccountUid uid{};
+    // LaunchHomebrew only.
+    smi::TargetInput homebrewTarget{};
+    std::uint64_t donorTitleId = 0;
 };
 
 // The menu is an all-foreground applet: accepting multiple navigation actions

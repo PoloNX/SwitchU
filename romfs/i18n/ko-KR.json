@@ -1014,6 +1014,10 @@
     "choose": "Choose homebrew",
     "remove_title": "Remove shortcut",
     "remove_desc": "Remove this homebrew shortcut from HOME?",
-    "launch_failed_title": "Cannot launch homebrew"
+    "launch_failed_title": "Cannot launch homebrew",
+    "loader_missing_title": "홈브루 로더가 없습니다",
+    "loader_missing_desc": "sdmc:/switch/SwitchU/bin/uLoader/application이 없습니다. SwitchU를 다시 설치하세요.",
+    "no_donor_title": "도너 앱이 없습니다",
+    "no_donor_desc": "풀 RAM 홈브루는 그 위에 실행할 설치된 앱이 필요합니다. 먼저 게임을 설치하세요."
   }
 }

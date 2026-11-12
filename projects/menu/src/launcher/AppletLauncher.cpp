@@ -140,6 +140,19 @@ void AppletLauncher::launchApplication(uint64_t titleId, AccountUid uid) {
     if (m_cb.requestExit) m_cb.requestExit();
 }
 
+void AppletLauncher::launchHomebrew(const std::string& nroPath,
+                                    uint64_t donorTitleId, AccountUid uid) {
+    DebugLog::log("[launcher] homebrew donor=%016lX path=%s",
+                  donorTitleId, nroPath.c_str());
+    Result rc = switchu::menu::smi_cmd::launchHomebrew(nroPath, donorTitleId, uid);
+    if (R_FAILED(rc)) {
+        DebugLog::log("[launcher] homebrew FAIL: 0x%X", rc);
+        return;
+    }
+    DebugLog::log("[launcher] homebrew command sent, closing menu");
+    if (m_cb.requestExit) m_cb.requestExit();
+}
+
 void AppletLauncher::resumeApplication() {
     if (m_suspendedTitleId == 0) {
         DebugLog::log("[launcher] no app suspended!");
@@ -187,6 +200,7 @@ void AppletLauncher::enterSleep()              {}
 void AppletLauncher::shutdown()                {}
 void AppletLauncher::reboot()                  {}
 void AppletLauncher::launchApplication(uint64_t, AccountUid) {}
+void AppletLauncher::launchHomebrew(const std::string&, uint64_t, AccountUid) {}
 void AppletLauncher::resumeApplication()       {}
 void AppletLauncher::terminateApplication()    {}
 void AppletLauncher::checkRunningApplication() {}

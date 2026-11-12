@@ -1,5 +1,7 @@
 #include "app_manager.hpp"
 
+#include "ecs.hpp"
+
 #include <switchu/control_cache.hpp>
 #include <switchu/file_log.hpp>
 
@@ -8,6 +10,8 @@ namespace {
 
 constexpr std::uint64_t kGracefulExitTimeoutNs = 15'000'000'000ULL;
 constexpr std::uint64_t kShutdownExitTimeoutNs = 5'000'000'000ULL;
+constexpr const char* kULoaderApplicationExefsPath =
+    "/switch/SwitchU/bin/uLoader/application";
 
 bool startupUserRequiresInteractiveSelection(std::uint8_t account, std::uint8_t option) {
     return account == 2 || (account == 1 && option == 0);
@@ -55,13 +59,15 @@ void ensureSaveData(std::uint64_t applicationId,
 }
 
 struct LaunchMetadata {
+    bool valid = false;
     bool acceptsUser = true;
     bool needsUser = true;
     std::uint8_t startupUserAccount = 1;
     std::uint8_t startupUserAccountOption = 0;
+    switchu::control_cache::Meta meta{};
 };
 
-LaunchMetadata ensureApplicationSaveData(std::uint64_t titleId, AccountUid uid) {
+LaunchMetadata readLaunchMetadata(std::uint64_t titleId) {
     LaunchMetadata launch{};
     switchu::control_cache::Meta meta{};
     if (!switchu::control_cache::readMeta(titleId, meta)) {
@@ -71,12 +77,21 @@ LaunchMetadata ensureApplicationSaveData(std::uint64_t titleId, AccountUid uid) 
         return launch;
     }
 
+    launch.valid = true;
+    launch.meta = meta;
     launch.startupUserAccount = meta.startup_user_account;
     launch.startupUserAccountOption = meta.startup_user_account_option;
     launch.acceptsUser = launch.startupUserAccount != 0;
     launch.needsUser = startupUserRequiresInteractiveSelection(
         launch.startupUserAccount, launch.startupUserAccountOption);
+    return launch;
+}
 
+void ensureApplicationSaveData(std::uint64_t titleId, const LaunchMetadata& launch, AccountUid uid) {
+    if (!launch.valid)
+        return;
+
+    const auto& meta = launch.meta;
     ensureSaveData(titleId, meta.save_data_owner_id, uid,
                    FsSaveDataType_Account, FsSaveDataSpaceId_User,
                    meta.user_account_save_data_size,
@@ -97,7 +112,6 @@ LaunchMetadata ensureApplicationSaveData(std::uint64_t titleId, AccountUid uid) 
     ensureSaveData(titleId, 0x010000000000000C, emptyUid,
                    FsSaveDataType_Bcat, FsSaveDataSpaceId_User,
                    meta.bcat_delivery_cache_storage_size, 0x200000);
-    return launch;
 }
 
 ApplicationSession g_session;
@@ -145,8 +159,22 @@ void ApplicationSession::closeAccessor() {
     m_application = {};
 }
 
+void ApplicationSession::releaseExternalContent() {
+    if (m_externalContentProgramId == 0)
+        return;
+
+    const Result rc = switchu::daemon::unregisterExternalContent(
+        m_externalContentProgramId);
+    if (R_FAILED(rc)) {
+        switchu::FileLog::log("[app] unregister external content 0x%016lX FAIL: 0x%X",
+                              m_externalContentProgramId, rc);
+    }
+    m_externalContentProgramId = 0;
+}
+
 void ApplicationSession::resetToIdle() {
     closeAccessor();
+    releaseExternalContent();
     m_state = SessionState::Idle;
     m_titleId = 0;
 }
@@ -168,6 +196,7 @@ Result ApplicationSession::failTransition(Result rc,
     }
 
     closeAccessor();
+    releaseExternalContent();
     m_state = SessionState::Error;
     m_lastResult = rc;
     return rc;
@@ -216,6 +245,25 @@ Result ApplicationSession::stopCurrent(std::uint64_t gracefulTimeoutNs,
 }
 
 Result ApplicationSession::launch(std::uint64_t titleId, AccountUid uid) {
+    return launchInternal(titleId, uid, nullptr);
+}
+
+Result ApplicationSession::launchHomebrew(const smi::TargetInput& target,
+                                          std::uint64_t donorTitleId,
+                                          AccountUid uid) {
+    if (donorTitleId < smi::kApplicationTitleIdMin
+        || donorTitleId > smi::kApplicationTitleIdMax) {
+        switchu::FileLog::log(
+            "[app] homebrew launch rejected: donor 0x%016lX is not an application",
+            donorTitleId);
+        return MAKERESULT(Module_Libnx, 0xFB);
+    }
+
+    return launchInternal(donorTitleId, uid, &target);
+}
+
+Result ApplicationSession::launchInternal(std::uint64_t titleId, AccountUid uid,
+                                          const smi::TargetInput* targetInput) {
     if (appletApplicationActive(&m_application)) {
         const Result stopRc = stopCurrent(kGracefulExitTimeoutNs, "replace-before-launch");
         if (R_FAILED(stopRc))
@@ -224,20 +272,41 @@ Result ApplicationSession::launch(std::uint64_t titleId, AccountUid uid) {
         resetToIdle();
     }
 
+    // External content must be registered for the donor before the application
+    // is created; ldr serves uLoader's ExeFS when AM starts the donor process.
+    if (targetInput != nullptr) {
+        const Result ecsRc = switchu::daemon::registerExternalContent(
+            titleId, kULoaderApplicationExefsPath);
+        if (R_FAILED(ecsRc)) {
+            switchu::FileLog::log(
+                "[app] homebrew external content registration FAIL donor=0x%016lX rc=0x%X",
+                titleId, ecsRc);
+            return ecsRc;
+        }
+        m_externalContentProgramId = titleId;
+        switchu::FileLog::log(
+            "[app] homebrew external content ready donor=0x%016lX target=%s",
+            titleId, targetInput->nro_path);
+    }
+
     ++m_sessionId;
     m_titleId = titleId;
     m_lastResult = 0;
     m_lastExitReason = AppletApplicationExitReason_Normal;
     switchu::FileLog::log(
-        "[app] session=%lu launch title=0x%016lX uid_valid=%d",
+        "[app] session=%lu launch title=0x%016lX uid_valid=%d%s",
         static_cast<unsigned long>(m_sessionId), titleId,
-        accountUidIsValid(&uid) ? 1 : 0);
+        accountUidIsValid(&uid) ? 1 : 0,
+        targetInput != nullptr ? " (homebrew)" : "");
 
-    const Result touchRc = nsTouchApplication(titleId);
-    if (R_FAILED(touchRc))
-        switchu::FileLog::log("[app] nsTouchApplication non-fatal rc=0x%X", touchRc);
+    const LaunchMetadata metadata = readLaunchMetadata(titleId);
+    if (targetInput == nullptr) {
+        const Result touchRc = nsTouchApplication(titleId);
+        if (R_FAILED(touchRc))
+            switchu::FileLog::log("[app] nsTouchApplication non-fatal rc=0x%X", touchRc);
+        ensureApplicationSaveData(titleId, metadata, uid);
+    }
 
-    const LaunchMetadata metadata = ensureApplicationSaveData(titleId, uid);
     switchu::FileLog::log(
         "[app] launch metadata startup_user=%u option=%u accepts_user=%d needs_user=%d",
         static_cast<unsigned>(metadata.startupUserAccount),
@@ -278,6 +347,25 @@ Result ApplicationSession::launch(std::uint64_t titleId, AccountUid uid) {
             switchu::FileLog::log("[app] preselected user ignored rc=0x%X", rc);
             // User preselection is an optimization. The title can still show
             // its own account selector, so this is intentionally non-fatal.
+        }
+    }
+
+    if (targetInput != nullptr) {
+        AppletStorage storage{};
+        rc = appletCreateStorage(&storage, sizeof(*targetInput));
+        if (R_SUCCEEDED(rc)) {
+            rc = appletStorageWrite(&storage, 0, targetInput, sizeof(*targetInput));
+            if (R_SUCCEEDED(rc)) {
+                rc = appletApplicationPushLaunchParameter(
+                    &m_application, AppletLaunchParameterKind_UserChannel, &storage);
+                // PushLaunchParameter consumes the storage on every result.
+            } else {
+                appletStorageClose(&storage);
+            }
+        }
+        if (R_FAILED(rc)) {
+            switchu::FileLog::log("[app] homebrew target push FAIL rc=0x%X", rc);
+            return failTransition(rc, "push-homebrew-target", false);
         }
     }
 
@@ -376,6 +464,9 @@ std::uint64_t suspendedTitleId() { return session().suspendedTitleId(); }
 SessionSnapshot snapshot() { return session().snapshot(); }
 Event* stateChangedEvent() { return session().stateChangedEvent(); }
 Result launch(std::uint64_t titleId, AccountUid uid) { return session().launch(titleId, uid); }
+Result launchHomebrew(const smi::TargetInput& target, std::uint64_t donorTitleId, AccountUid uid) {
+    return session().launchHomebrew(target, donorTitleId, uid);
+}
 Result resume() { return session().resume(); }
 Result terminate() { return session().terminate(); }
 Result areLibraryAppletsLeft(bool* out) { return session().areLibraryAppletsLeft(out); }

@@ -564,6 +564,10 @@
     "choose": "Choose homebrew",
     "remove_title": "Remove shortcut",
     "remove_desc": "Remove this homebrew shortcut from HOME?",
-    "launch_failed_title": "Cannot launch homebrew"
+    "launch_failed_title": "Cannot launch homebrew",
+    "loader_missing_title": "Homebrew-Loader fehlt",
+    "loader_missing_desc": "sdmc:/switch/SwitchU/bin/uLoader/application fehlt. Installiere SwitchU neu.",
+    "no_donor_title": "Kein Donor-Programm",
+    "no_donor_desc": "Homebrew mit vollem RAM benötigt ein installiertes Programm, über das es gestartet wird. Installiere zuerst ein Spiel."
   }
 }

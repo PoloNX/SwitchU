@@ -11,6 +11,16 @@ local version_define = string.format('SWITCHU_VERSION="%s"', version)
 
 set_version(version)
 
+-- Resolve a devkitPro tool by name (mirrors toolchain/switch.lua).
+local function dkp_tool(name)
+    local DEVKITPRO = os.getenv("DEVKITPRO") or "/opt/devkitpro"
+    local full = path.join(DEVKITPRO, "tools", "bin", name)
+    if os.isfile(full) then return full end
+    -- Windows tool binaries carry an .exe suffix; os.isfile needs the real path.
+    if os.isfile(full .. ".exe") then return full .. ".exe" end
+    return name
+end
+
 add_requires("libsdl", "libsdl_mixer", "libsdl_ttf", "zlib", "libwebp", "nlohmann_json", "fmt", "libcurl", "curlpp", {configs = {toolchains = "devkita64"}})
 if get_config("backend") ~= "sdl2" then
     add_requires("deko3d", {configs = {toolchains = "devkita64"}})
@@ -379,6 +389,70 @@ target("switchu-daemon")
     set_values("switch.tid",     "0100000000001000")
     set_values("switch.json",    "projects/daemon/daemon.json")
     set_values("switch.format",  "nsp")
+target_end()
+
+-- uLoader: the full-RAM .nro loader that the daemon registers as external
+-- content over an installed donor application. It is not an NSP of its own;
+-- the two ExeFS variants are installed under switch/SwitchU/bin/uLoader/.
+target("switchu-uloader")
+    set_kind("binary")
+    set_default(not has_config("homebrew"))
+    if not is_plat("cross") then return end
+
+    set_toolchains("devkita64")
+    set_languages("c++23")
+
+    add_files("projects/uloader/source/*.cpp")
+    add_files("projects/uloader/source/*.s")
+    add_includedirs("projects/uloader/include", {public = false})
+    add_cxxflags("-fno-rtti", "-fno-exceptions", "-std=gnu++23", {force = true})
+    add_syslinks("nx")
+
+    if is_mode("release") then
+        add_cxflags("-O2", {force = true})
+    end
+
+    after_build(function(target)
+        local outdir = target:targetdir()
+        local exefsroot = path.join(outdir, "uloader-exefs")
+        local applet_dir = path.join(exefsroot, "applet")
+        local application_dir = path.join(exefsroot, "application")
+        os.mkdir(applet_dir)
+        os.mkdir(application_dir)
+
+        local applet_main = path.join(applet_dir, "main")
+        local application_main = path.join(application_dir, "main")
+
+        cprint("${color.build.target}generating${clear} uLoader (NSO)")
+        os.vrunv(dkp_tool("elf2nso"), {target:targetfile(), applet_main})
+        os.cp(applet_main, application_main)
+
+        cprint("${color.build.target}generating${clear} uLoader NPDMs")
+        os.vrunv(dkp_tool("npdmtool"), {
+            path.join(os.projectdir(), "projects/uloader/uLoader_applet.json"),
+            path.join(applet_dir, "main.npdm")
+        })
+        os.vrunv(dkp_tool("npdmtool"), {
+            path.join(os.projectdir(), "projects/uloader/uLoader_application.json"),
+            path.join(application_dir, "main.npdm")
+        })
+    end)
+
+    on_install(function(target)
+        local installdir = target:installdir()
+        local exefsroot = path.join(target:targetdir(), "uloader-exefs")
+        local dest = path.join(installdir, "switch/SwitchU/bin/uLoader")
+
+        for _, variant in ipairs({"applet", "application"}) do
+            local src = path.join(exefsroot, variant)
+            local dst = path.join(dest, variant)
+            os.mkdir(dst)
+            os.cp(path.join(src, "main"), dst)
+            os.cp(path.join(src, "main.npdm"), dst)
+        end
+
+        cprint("${bright green}installed${clear} uLoader → %s", dest)
+    end)
 target_end()
 
 -- Optional GPLv2 MTP sysmodule (haze). Not a dependency of SwitchU-menu.

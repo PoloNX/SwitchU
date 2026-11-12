@@ -1691,6 +1691,22 @@ static void handleMenuCommand() {
         break;
     }
 
+    case smi::SystemMessage::LaunchHomebrew: {
+        auto args = reader.pop<smi::LaunchHomebrewArgs>();
+        daemon::SystemAction action{};
+        action.type = daemon::SystemActionType::LaunchHomebrew;
+        action.requestId = requestId;
+        action.homebrewTarget = args.target;
+        action.donorTitleId = args.donor_title_id;
+        std::memcpy(&action.uid, args.user_uid, sizeof(action.uid));
+        result = g_actionQueue.enqueue(action);
+        recordOperationResult(requestId, msg, result, args.donor_title_id);
+        switchu::FileLog::log(
+            "[smi] queued homebrew launch donor=0x%016lX path=%s (actions=%zu)",
+            args.donor_title_id, args.target.nro_path, g_actionQueue.size());
+        break;
+    }
+
     case smi::SystemMessage::ResumeApplication:
         {
             daemon::SystemAction action{};
@@ -1924,6 +1940,22 @@ static bool handleAction(daemon::SystemAction& action) {
                                   rc, action.titleId);
             if (R_FAILED(rc)) {
                 switchu::FileLog::log("[action] launch 0x%016lX FAIL: 0x%X", action.titleId, rc);
+                daemon::menu_la::launch(smi::MenuStartMode::MainMenu,
+                                        buildSystemStatus());
+            }
+            return true;
+        }
+
+        case daemon::SystemActionType::LaunchHomebrew: {
+            Result rc = daemon::app::launchHomebrew(
+                action.homebrewTarget, action.donorTitleId, action.uid);
+            recordOperationResult(action.requestId,
+                                  smi::SystemMessage::LaunchHomebrew,
+                                  rc, action.donorTitleId);
+            if (R_FAILED(rc)) {
+                switchu::FileLog::log(
+                    "[action] homebrew launch donor=0x%016lX path=%s FAIL: 0x%X",
+                    action.donorTitleId, action.homebrewTarget.nro_path, rc);
                 daemon::menu_la::launch(smi::MenuStartMode::MainMenu,
                                         buildSystemStatus());
             }

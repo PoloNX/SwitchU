@@ -3938,26 +3938,135 @@ void WiiUMenuApp::showHomebrewPicker(int targetSlot, const nxui::Rect& anchor) {
 }
 
 #ifdef SWITCHU_MENU
+namespace {
+
+constexpr const char* kULoaderApplicationMain =
+    "sdmc:/switch/SwitchU/bin/uLoader/application/main";
+constexpr const char* kULoaderApplicationNpdm =
+    "sdmc:/switch/SwitchU/bin/uLoader/application/main.npdm";
+
+bool isHomebrewDonorCandidate(std::uint64_t titleId, std::uint32_t viewFlags) {
+    if (titleId < switchu::smi::kApplicationTitleIdMin
+        || titleId > switchu::smi::kApplicationTitleIdMax)
+        return false;
+    if (switchu::homebrew::isHomebrewTitleId(titleId))
+        return false;
+    if (isFolderTitleId(titleId))
+        return false;
+    // A game-card title is not a stable donor: it can disappear mid-session.
+    if (switchu::ns::viewHasFlag(viewFlags, switchu::ns::AppViewFlag_IsGameCard))
+        return false;
+    // The donor only serves as a launch vehicle for uLoader, which replaces
+    // its ExeFS entirely. It does not need to be currently launchable or
+    // update-free, so an up-to-date digital install with contents is enough.
+    // When NS did not report flags (viewFlags == 0), do not reject it either.
+    if (viewFlags != 0 &&
+        !switchu::ns::viewHasFlag(viewFlags, switchu::ns::AppViewFlag_HasMainContents))
+        return false;
+    return true;
+}
+
+bool isHomebrewDonorCandidate(const AppEntry& app) {
+    return isHomebrewDonorCandidate(app.titleId, app.viewFlags);
+}
+
+} // namespace
+
+std::uint64_t WiiUMenuApp::selectHomebrewDonorTitleId() {
+    auto scanForBest = [](const std::vector<AppEntry>& apps,
+                          std::uint64_t preferred,
+                          std::uint64_t* outBest) {
+        *outBest = 0;
+        if (preferred != 0) {
+            for (const auto& app : apps) {
+                if (app.titleId == preferred && isHomebrewDonorCandidate(app)) {
+                    *outBest = preferred;
+                    return preferred;
+                }
+            }
+        }
+        for (const auto& app : apps) {
+            if (!isHomebrewDonorCandidate(app))
+                continue;
+            if (*outBest == 0 || app.titleId < *outBest)
+                *outBest = app.titleId;
+        }
+        return *outBest;
+    };
+
+    std::uint64_t best = 0;
+    if (scanForBest(m_allApps, m_config.homebrewDonorTitleId, &best) != 0)
+        return best;
+
+    // The grid only holds titles the user currently sees. Fall back to a fresh
+    // daemon catalog scan so an installed game that is not on a grid page can
+    // still act as the donor.
+    std::vector<switchu::menu::smi_cmd::AppEntry> catalog;
+    if (R_SUCCEEDED(switchu::menu::smi_cmd::getAppList(catalog, false))) {
+        best = 0;
+        for (const auto& ent : catalog) {
+            if (ent.titleId == 0)
+                continue;
+            if (ent.titleId == m_config.homebrewDonorTitleId
+                && isHomebrewDonorCandidate(ent.titleId, ent.viewFlags))
+                return ent.titleId;
+            if (!isHomebrewDonorCandidate(ent.titleId, ent.viewFlags))
+                continue;
+            if (best == 0 || ent.titleId < best)
+                best = ent.titleId;
+        }
+    }
+
+    if (best != 0 && best != m_config.homebrewDonorTitleId) {
+        m_config.homebrewDonorTitleId = best;
+        m_config.save();
+        DebugLog::log("[homebrew] donor selected 0x%016lX", best);
+    }
+    return best;
+}
+
 void WiiUMenuApp::launchHomebrew(const std::string& path) {
     m_audio.playSfx(Sfx::Activate);
     DebugLog::log("[homebrew] launching %s", path.c_str());
-    const bool hasNext = envHasNextLoad();
-    DebugLog::log("[homebrew] envHasNextLoad=%d", hasNext ? 1 : 0);
-    const Result rc = envSetNextLoad(path.c_str(), "");
-    DebugLog::log("[homebrew] envSetNextLoad rc=0x%X", rc);
-    if (R_SUCCEEDED(rc)) {
-        app().requestExit();
+
+    auto& i18n = nxui::I18n::instance();
+    auto showFailure = [this, &i18n](const char* titleKey, const char* titleFallback,
+                                     const char* descKey, const char* descFallback) {
+        m_dialogReturnFocus = focusManager().current();
+        m_dialog->show(i18n.tr(titleKey, titleFallback),
+                       i18n.tr(descKey, descFallback),
+                       {{i18n.tr("button.ok", "OK"), [this]() {}, true}});
+        focusManager().setFocus(m_dialog.get());
+    };
+
+    if (!pathExists(kULoaderApplicationMain) || !pathExists(kULoaderApplicationNpdm)) {
+        showFailure("homebrew.loader_missing_title", "Homebrew loader missing",
+                    "homebrew.loader_missing_desc",
+                    "sdmc:/switch/SwitchU/bin/uLoader/application is missing. Reinstall SwitchU.");
         return;
     }
-    auto& i18n = nxui::I18n::instance();
-    m_dialogReturnFocus = focusManager().current();
-    char msg[128];
-    std::snprintf(msg, sizeof(msg), "envHasNextLoad=%d, envSetNextLoad=0x%08X",
-                  hasNext ? 1 : 0, static_cast<unsigned>(rc));
-    m_dialog->show(i18n.tr("homebrew.launch_failed_title", "Cannot launch homebrew"),
-        msg,
-        {{i18n.tr("button.ok", "OK"), [this]() {}, true}});
-    focusManager().setFocus(m_dialog.get());
+
+    const std::uint64_t donorTitleId = selectHomebrewDonorTitleId();
+    if (donorTitleId == 0) {
+        showFailure("homebrew.no_donor_title", "No donor application",
+                    "homebrew.no_donor_desc",
+                    "Full-RAM homebrew needs an installed application to launch over. Install a game first.");
+        return;
+    }
+
+    AccountUid uid{};
+    if (m_config.defaultProfileEnabled)
+        hexToAccountUid(m_config.defaultProfileUid, uid);
+    if (!accountUidIsValid(&uid)) {
+        AccountUid silent{};
+        if (R_SUCCEEDED(accountTrySelectUserWithoutInteraction(&silent, false))
+            && accountUidIsValid(&silent))
+            uid = silent;
+    }
+
+    DebugLog::log("[homebrew] contender path=%s donor=0x%016lX uid_valid=%d",
+                  path.c_str(), donorTitleId, accountUidIsValid(&uid) ? 1 : 0);
+    m_launcher.launchHomebrew(path, donorTitleId, uid);
 }
 #endif
 

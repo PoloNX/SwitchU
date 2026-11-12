@@ -228,6 +228,7 @@ private:
                              std::uint64_t titleId,
                              const std::string& launchTitle);
     void launchHomebrew(const std::string& path);
+    std::uint64_t selectHomebrewDonorTitleId();
     void resumeSuspendedApplication(std::uint64_t titleId,
                                     const std::string& launchTitle);
 #endif

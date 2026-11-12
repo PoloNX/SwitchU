@@ -1,4 +1,5 @@
 #pragma once
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 
@@ -41,6 +42,8 @@ enum class SystemMessage : uint32_t {
     LaunchUserPage        = 14,
     LaunchControllerRemapping = 15,
     LaunchUserCreator     = 16,
+    // Full-RAM .nro launch: uLoader runs over an installed donor application.
+    LaunchHomebrew        = 17,
 
     EnterSleep            = 20,
     Shutdown              = 21,
@@ -91,6 +94,48 @@ struct LaunchAppArgs {
     uint8_t  user_uid[16];
 };
 static_assert(sizeof(LaunchAppArgs) == 24);
+
+// uLoader's target description, read from the launch parameter storage.
+// Keep this layout byte-for-byte identical to projects/uloader's reader.
+static constexpr uint32_t kTargetInputMagic = 0x49444C55; // "ULDI"
+static constexpr uint32_t kNroPathSize      = 512;
+static constexpr uint32_t kNroArgvSize      = 2048;
+static constexpr uint32_t kMenuCaptionSize  = 1024;
+
+struct TargetInput {
+    static constexpr uint32_t Magic = kTargetInputMagic;
+
+    uint32_t magic = kTargetInputMagic;
+    uint8_t  target_once = 0;
+    uint8_t  is_auto_game_recording = 0;
+    uint8_t  _pad[2] = {};
+    char     nro_path[kNroPathSize] = {};
+    char     nro_argv[kNroArgvSize] = {};
+    char     menu_caption[kMenuCaptionSize] = {};
+};
+static_assert(offsetof(TargetInput, magic) == 0);
+static_assert(offsetof(TargetInput, target_once) == 4);
+static_assert(offsetof(TargetInput, is_auto_game_recording) == 5);
+static_assert(offsetof(TargetInput, nro_path) == 8);
+static_assert(offsetof(TargetInput, nro_argv) == 520);
+static_assert(offsetof(TargetInput, menu_caption) == 2568);
+static_assert(sizeof(TargetInput) == 3592);
+
+// Homebrew is launched by registering uLoader as external content for an
+// installed application title, creating that application, and pushing this
+// storage through AppletLaunchParameterKind_UserChannel.
+struct LaunchHomebrewArgs {
+    TargetInput target;
+    uint64_t    donor_title_id;
+    uint8_t     user_uid[16];
+};
+static_assert(sizeof(LaunchHomebrewArgs) == 3616);
+
+// Program IDs from here up are full applications, which appletCreateApplication
+// accepts. Applet-range titles (0100000000001000-0100000000001FFF) cannot be
+// used as the donor for uLoader's application variant.
+static constexpr uint64_t kApplicationTitleIdMin = 0x0100000000010000ULL;
+static constexpr uint64_t kApplicationTitleIdMax = 0x01FFFFFFFFFFFFFFULL;
 
 struct UserArgs {
     uint8_t user_uid[16];

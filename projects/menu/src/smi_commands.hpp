@@ -65,6 +65,35 @@ inline Result launchApplication(uint64_t titleId, AccountUid uid) {
     return pushOutStorage(buf, sizeof(buf));
 }
 
+inline Result launchHomebrew(const std::string& nroPath, uint64_t donorTitleId,
+                             AccountUid uid) {
+    uint8_t buf[sizeof(smi::CommandHeader) + sizeof(smi::LaunchHomebrewArgs)]{};
+    auto* hdr = reinterpret_cast<smi::CommandHeader*>(buf);
+    auto* args = reinterpret_cast<smi::LaunchHomebrewArgs*>(buf + sizeof(smi::CommandHeader));
+
+    hdr->magic    = smi::kCommandMagic;
+    hdr->message  = static_cast<uint32_t>(smi::SystemMessage::LaunchHomebrew);
+    hdr->request_id = nextRequestId();
+
+    args->target.magic = smi::kTargetInputMagic;
+    args->target.target_once = 0;
+    // uLaunch queries the donor's NACP for its video-capture mode and assumes
+    // auto game recording when it cannot. Reserving the 96 MiB up front is the
+    // safe default: the donor's process may already have that memory set aside,
+    // and asking for it again makes svcSetHeapSize fail.
+    args->target.is_auto_game_recording = 1;
+    const size_t pathLen = std::min(nroPath.size(),
+                                    sizeof(args->target.nro_path) - 1);
+    std::memcpy(args->target.nro_path, nroPath.data(), pathLen);
+    std::memcpy(args->target.nro_argv, nroPath.data(), pathLen);
+    // menu_caption is intentionally left empty.
+
+    args->donor_title_id = donorTitleId;
+    std::memcpy(args->user_uid, &uid, sizeof(uid));
+
+    return pushOutStorage(buf, sizeof(buf));
+}
+
 inline Result launchUserPage(AccountUid uid) {
     uint8_t buf[sizeof(smi::CommandHeader) + sizeof(smi::UserArgs)]{};
     auto* hdr = reinterpret_cast<smi::CommandHeader*>(buf);

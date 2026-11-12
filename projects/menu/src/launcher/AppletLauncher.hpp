@@ -1,6 +1,7 @@
 #pragma once
 #include <functional>
 #include <atomic>
+#include <string>
 #include <switch.h>
 
 class AppletLauncher {
@@ -25,6 +26,8 @@ public:
     void reboot();
 
     void launchApplication(uint64_t titleId, AccountUid uid);
+    void launchHomebrew(const std::string& nroPath, uint64_t donorTitleId,
+                        AccountUid uid);
     void resumeApplication();
     void terminateApplication();
 

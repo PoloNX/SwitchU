@@ -939,6 +939,10 @@
     "choose": "Choose homebrew",
     "remove_title": "Remove shortcut",
     "remove_desc": "Remove this homebrew shortcut from HOME?",
-    "launch_failed_title": "Cannot launch homebrew"
+    "launch_failed_title": "Cannot launch homebrew",
+    "loader_missing_title": "Falta el cargador de homebrew",
+    "loader_missing_desc": "Falta sdmc:/switch/SwitchU/bin/uLoader/application. Vuelve a instalar SwitchU.",
+    "no_donor_title": "Sin aplicación donante",
+    "no_donor_desc": "El homebrew de RAM completa necesita una aplicación instalada sobre la que lanzarse. Instala un juego primero."
   }
 }

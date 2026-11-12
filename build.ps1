@@ -54,6 +54,10 @@ param(
     # Sysmodule only: do not install to sd_out/.
     [switch]$NoInstall,
 
+    # Sysmodule only: delete the destination dir and its install stamp first,
+    # so sd_out/ (or dist/) is recreated from scratch on this run.
+    [switch]$Reinstall,
+
     # Ignore the "nothing changed" shortcut and let xmake check everything.
     [switch]$Force,
 
@@ -189,7 +193,7 @@ function Get-ExpectedOutputs {
     if ($Variant -eq 'homebrew') {
         $names += 'SwitchU.nro'
     } else {
-        $names += 'switchu-menu.nsp', 'switchu-daemon.nsp', 'switchu-mtp.nsp'
+        $names += 'switchu-menu.nsp', 'switchu-daemon.nsp', 'switchu-mtp.nsp', 'switchu-uloader'
     }
     return $names | ForEach-Object { Join-Path $outDir $_ }
 }
@@ -206,7 +210,9 @@ try {
     ) 'Install Git for Windows.'
     $xmake = Find-Tool 'xmake' @(
         (Join-Path $env:ProgramFiles 'xmake\xmake.exe'),
-        (Join-Path $env:LOCALAPPDATA '.xmake\bin\xmake.exe')
+        (Join-Path $env:LOCALAPPDATA '.xmake\bin\xmake.exe'),
+        # Portable copy (used in CI / non-standard setups).
+        (Join-Path $env:TEMP 'opencode\xmakebin\xmake.exe')
     ) 'Install xmake from https://xmake.io.'
 
     if (-not ($env:DEVKITPRO -and (Test-Path $env:DEVKITPRO))) {
@@ -218,6 +224,9 @@ try {
         }
         $env:DEVKITPRO = $devkitPro -replace '\\', '/'
     }
+    # dkp_tool() in xmake.lua resolves the .exe directly, but keep the devkitPro
+    # tools dir on PATH anyway for any external tool invocation.
+    Add-ToolPath (Join-Path $env:DEVKITPRO 'tools\bin')
     $msysBin = @(
         (Join-Path $env:DEVKITPRO 'msys2\usr\bin'),
         'C:\msys64\usr\bin'
@@ -298,6 +307,11 @@ try {
 
     # --- Install ------------------------------------------------------------
     if ($DoInstall) {
+        if ($Reinstall) {
+            Write-Step "Recreating $InstallRelative"
+            if (Test-Path $InstallDir) { Remove-Item -Recurse -Force $InstallDir }
+            if (Test-Path $InstallFingerprintFile) { Remove-Item -Force $InstallFingerprintFile }
+        }
         if ((Test-Path $InstallDir) -and
             (Read-Cache $InstallFingerprintFile) -eq $fingerprint) {
             Write-Cached "install to $InstallRelative"

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <switch.h>
+#include <switchu/smi_protocol.hpp>
 
 #include <cstdint>
 
@@ -36,6 +37,11 @@ public:
     ApplicationSession& operator=(const ApplicationSession&) = delete;
 
     Result launch(std::uint64_t titleId, AccountUid uid);
+    // Launches uLoader over an installed donor application and pushes the
+    // TargetInput through the application's user channel.
+    Result launchHomebrew(const smi::TargetInput& target,
+                          std::uint64_t donorTitleId,
+                          AccountUid uid);
     Result resume();
     Result terminate();
     Result requestExitLibraryAppletOrTerminate(std::uint64_t timeoutNs);
@@ -52,7 +58,10 @@ public:
     Event* stateChangedEvent();
 
 private:
+    Result launchInternal(std::uint64_t titleId, AccountUid uid,
+                          const smi::TargetInput* targetInput);
     Result stopCurrent(std::uint64_t gracefulTimeoutNs, const char* reason);
+    void releaseExternalContent();
     void closeAccessor();
     void resetToIdle();
     Result failTransition(Result rc, const char* stage, bool applicationStarted);
@@ -61,6 +70,7 @@ private:
     SessionState m_state = SessionState::Idle;
     std::uint64_t m_sessionId = 0;
     std::uint64_t m_titleId = 0;
+    std::uint64_t m_externalContentProgramId = 0;
     Result m_lastResult = 0;
     AppletApplicationExitReason m_lastExitReason = AppletApplicationExitReason_Normal;
 };
@@ -75,6 +85,7 @@ std::uint64_t suspendedTitleId();
 SessionSnapshot snapshot();
 Event* stateChangedEvent();
 Result launch(std::uint64_t titleId, AccountUid uid);
+Result launchHomebrew(const smi::TargetInput& target, std::uint64_t donorTitleId, AccountUid uid);
 Result resume();
 Result terminate();
 Result areLibraryAppletsLeft(bool* out);

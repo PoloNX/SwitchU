@@ -1014,6 +1014,10 @@
     "choose": "Choose homebrew",
     "remove_title": "Remove shortcut",
     "remove_desc": "Remove this homebrew shortcut from HOME?",
-    "launch_failed_title": "Cannot launch homebrew"
+    "launch_failed_title": "Cannot launch homebrew",
+    "loader_missing_title": "自製軟體載入器遺失",
+    "loader_missing_desc": "缺少 sdmc:/switch/SwitchU/bin/uLoader/application。請重新安裝 SwitchU。",
+    "no_donor_title": "沒有捐贈應用程式",
+    "no_donor_desc": "全記憶體自製軟體需要一個已安裝的應用程式來在其之上啟動。請先安裝一個遊戲。"
   }
 }
