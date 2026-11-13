@@ -2259,6 +2259,7 @@ void WiiUMenuApp::showGameContextMenu(GlossyIcon* icon) {
                     const auto id = switchu::homebrew::homebrewIdFromTitleId(titleId);
                     m_homebrewStore.remove(id);
                     m_homebrewStore.save();
+                    switchu::homebrew::removeHomebrewIconCache(id);
                     // Remove from layout slots.
                     for (auto& slot : m_layoutSlots)
                         if (slot == titleId) slot = 0;

@@ -1048,7 +1048,7 @@ bool WiiUMenuApp::onCreate() {
             item.startupUserKnown = true;
             item.startupUserAccount = 1;
             item.startupUserAccountOption = 0;
-            item.iconData = switchu::homebrew::readHomebrewIcon(hb.path);
+            item.iconData = switchu::homebrew::readHomebrewIconCached(hb.id, hb.path);
             apps.push_back(std::move(item));
         }
         applyMenuLayoutToPending(apps);
@@ -4070,11 +4070,18 @@ void WiiUMenuApp::launchHomebrew(const std::string& path) {
     // Report the homebrew's synthetic title ID while it runs so the menu marks
     // the homebrew icon as running instead of the donor it launches over.
     std::uint64_t homebrewTitleId = 0;
+    std::uint32_t homebrewId = 0;
     for (const auto& hb : m_homebrewStore.all()) {
         if (hb.path == path) {
+            homebrewId = hb.id;
             homebrewTitleId = switchu::homebrew::homebrewTitleId(hb.id);
             break;
         }
+    }
+    if (homebrewId != 0) {
+        // Fill the icon cache now, while the NRO is known to be readable. The
+        // HOME return then never has to pull the whole NRO on the UI thread.
+        switchu::homebrew::readHomebrewIconCached(homebrewId, path);
     }
 
     m_launcher.launchHomebrew(path, donorTitleId, homebrewTitleId, uid);

@@ -1,12 +1,14 @@
 #include "HomebrewStore.hpp"
 
 #include "DebugLog.hpp"
+#include <switchu/control_cache.hpp>
 #include <switchu/sd_commit.hpp>
 #include <switch.h>
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -252,6 +254,136 @@ std::vector<std::uint8_t> readHomebrewIcon(const std::string& path) {
     if (start + info.iconSize > data.size()) return {};
     return std::vector<std::uint8_t>(data.begin() + start,
                                      data.begin() + start + static_cast<std::size_t>(info.iconSize));
+}
+
+namespace {
+
+constexpr const char* kIconCacheDir = "sdmc:/config/SwitchU/homebrew_icons";
+constexpr std::uint32_t kIconCacheMagic = 0x49434248; // "HBCI"
+constexpr std::uint32_t kIconCacheVersion = 1;
+constexpr std::uint32_t kMaxCachedIconSize = 0x100000;
+
+// NRO identity stamp: a replaced .nro must invalidate the cached icon.
+struct NroStamp {
+    std::uint64_t size = 0;
+    std::int64_t writeTime = 0;
+    bool valid = false;
+};
+
+NroStamp readNroStamp(const std::string& path) {
+    NroStamp stamp;
+    std::error_code ec;
+    const auto size = std::filesystem::file_size(path, ec);
+    if (ec) return stamp;
+    ec.clear();
+    const auto writeTime = std::filesystem::last_write_time(path, ec);
+    if (ec) return stamp;
+    stamp.size = size;
+    stamp.writeTime = static_cast<std::int64_t>(writeTime.time_since_epoch().count());
+    stamp.valid = true;
+    return stamp;
+}
+
+struct IconCacheHeader {
+    std::uint32_t magic = kIconCacheMagic;
+    std::uint32_t version = kIconCacheVersion;
+    std::uint32_t iconSize = 0;
+    std::uint32_t reserved = 0;
+    std::uint64_t nroSize = 0;
+    std::int64_t nroWriteTime = 0;
+};
+static_assert(sizeof(IconCacheHeader) == 32);
+
+std::string iconCachePath(std::uint32_t id) {
+    char name[16] = {};
+    std::snprintf(name, sizeof(name), "%08X.icon", id);
+    return std::string(kIconCacheDir) + "/" + name;
+}
+
+std::vector<std::uint8_t> readCachedIcon(std::uint32_t id, const NroStamp& stamp,
+                                         bool allowStale = false) {
+    std::vector<std::uint8_t> icon;
+    if (!stamp.valid && !allowStale) return icon;
+
+    std::ifstream file(iconCachePath(id), std::ios::binary);
+    if (!file.is_open()) return icon;
+
+    IconCacheHeader header;
+    if (!file.read(reinterpret_cast<char*>(&header), sizeof(header))) return icon;
+    if (header.magic != kIconCacheMagic || header.version != kIconCacheVersion)
+        return icon;
+    if (stamp.valid
+        && (header.nroSize != stamp.size || header.nroWriteTime != stamp.writeTime))
+        return icon;
+    if (header.iconSize == 0 || header.iconSize > kMaxCachedIconSize)
+        return icon;
+
+    icon.resize(header.iconSize);
+    if (!file.read(reinterpret_cast<char*>(icon.data()),
+                   static_cast<std::streamsize>(header.iconSize))) {
+        icon.clear();
+    }
+    return icon;
+}
+
+void writeCachedIcon(std::uint32_t id, const NroStamp& stamp,
+                     const std::vector<std::uint8_t>& icon) {
+    if (!stamp.valid || icon.empty() || icon.size() > kMaxCachedIconSize)
+        return;
+
+    std::error_code ec;
+    std::filesystem::create_directories(kIconCacheDir, ec);
+
+    std::ofstream file(iconCachePath(id), std::ios::binary | std::ios::trunc);
+    if (!file.is_open())
+        return;
+
+    IconCacheHeader header;
+    header.iconSize = static_cast<std::uint32_t>(icon.size());
+    header.nroSize = stamp.size;
+    header.nroWriteTime = stamp.writeTime;
+    file.write(reinterpret_cast<const char*>(&header), sizeof(header));
+    file.write(reinterpret_cast<const char*>(icon.data()),
+               static_cast<std::streamsize>(icon.size()));
+    if (!file)
+        return;
+
+    // Mirror into the per-title control cache so IconStreamer's on-demand
+    // loader (keyed by title id) can also resolve the homebrew's art.
+    if (icon.size() <= 0x40000) {
+        switchu::control_cache::writeIcon(homebrewTitleId(id), icon.data(),
+                                          icon.size());
+    }
+}
+
+} // namespace
+
+std::vector<std::uint8_t> readHomebrewIconCached(std::uint32_t id,
+                                                 const std::string& path) {
+    const NroStamp stamp = readNroStamp(path);
+    std::vector<std::uint8_t> icon = readCachedIcon(id, stamp);
+    if (!icon.empty())
+        return icon;
+
+    if (!stamp.valid) {
+        // NRO could not be stat'ed right now (SD busy / just watched). Prefer
+        // stale art over leaving the tile on its loading placeholder.
+        return readCachedIcon(id, stamp, /*allowStale=*/true);
+    }
+
+    icon = readHomebrewIcon(path);
+    if (!icon.empty()) {
+        DebugLog::log("[homebrew] icon cached id=%u size=%d", id,
+                      static_cast<int>(icon.size()));
+        writeCachedIcon(id, stamp, icon);
+    }
+    return icon;
+}
+
+void removeHomebrewIconCache(std::uint32_t id) {
+    std::error_code ec;
+    std::filesystem::remove(iconCachePath(id), ec);
+    switchu::control_cache::remove(homebrewTitleId(id));
 }
 
 } // namespace switchu::homebrew

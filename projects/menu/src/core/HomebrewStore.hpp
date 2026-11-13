@@ -8,6 +8,12 @@ namespace switchu::homebrew {
 
 std::string readHomebrewName(const std::string& path);
 std::vector<std::uint8_t> readHomebrewIcon(const std::string& path);
+// Persistent icon cache keyed by HomebrewEntry::id (and validated against the
+// NRO's size/mtime). HOME returns must not re-read a whole NRO on the UI
+// thread, which left the tile stuck on its loading placeholder.
+std::vector<std::uint8_t> readHomebrewIconCached(std::uint32_t id,
+                                                 const std::string& path);
+void removeHomebrewIconCache(std::uint32_t id);
 
 inline constexpr std::uint64_t kHomebrewTitleIdPrefix = 0xFB00000000000000ULL;
 
