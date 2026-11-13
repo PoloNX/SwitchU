@@ -141,10 +141,13 @@ void AppletLauncher::launchApplication(uint64_t titleId, AccountUid uid) {
 }
 
 void AppletLauncher::launchHomebrew(const std::string& nroPath,
-                                    uint64_t donorTitleId, AccountUid uid) {
-    DebugLog::log("[launcher] homebrew donor=%016lX path=%s",
-                  donorTitleId, nroPath.c_str());
-    Result rc = switchu::menu::smi_cmd::launchHomebrew(nroPath, donorTitleId, uid);
+                                    uint64_t donorTitleId,
+                                    uint64_t homebrewTitleId,
+                                    AccountUid uid) {
+    DebugLog::log("[launcher] homebrew donor=%016lX id=%016lX path=%s",
+                  donorTitleId, homebrewTitleId, nroPath.c_str());
+    Result rc = switchu::menu::smi_cmd::launchHomebrew(nroPath, donorTitleId,
+                                                       homebrewTitleId, uid);
     if (R_FAILED(rc)) {
         DebugLog::log("[launcher] homebrew FAIL: 0x%X", rc);
         return;
@@ -200,7 +203,7 @@ void AppletLauncher::enterSleep()              {}
 void AppletLauncher::shutdown()                {}
 void AppletLauncher::reboot()                  {}
 void AppletLauncher::launchApplication(uint64_t, AccountUid) {}
-void AppletLauncher::launchHomebrew(const std::string&, uint64_t, AccountUid) {}
+void AppletLauncher::launchHomebrew(const std::string&, uint64_t, uint64_t, AccountUid) {}
 void AppletLauncher::resumeApplication()       {}
 void AppletLauncher::terminateApplication()    {}
 void AppletLauncher::checkRunningApplication() {}

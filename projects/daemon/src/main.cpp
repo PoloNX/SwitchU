@@ -1698,12 +1698,14 @@ static void handleMenuCommand() {
         action.requestId = requestId;
         action.homebrewTarget = args.target;
         action.donorTitleId = args.donor_title_id;
+        action.homebrewTitleId = args.homebrew_title_id;
         std::memcpy(&action.uid, args.user_uid, sizeof(action.uid));
         result = g_actionQueue.enqueue(action);
         recordOperationResult(requestId, msg, result, args.donor_title_id);
         switchu::FileLog::log(
-            "[smi] queued homebrew launch donor=0x%016lX path=%s (actions=%zu)",
-            args.donor_title_id, args.target.nro_path, g_actionQueue.size());
+            "[smi] queued homebrew launch donor=0x%016lX id=0x%016lX path=%s (actions=%zu)",
+            args.donor_title_id, args.homebrew_title_id, args.target.nro_path,
+            g_actionQueue.size());
         break;
     }
 
@@ -1948,7 +1950,8 @@ static bool handleAction(daemon::SystemAction& action) {
 
         case daemon::SystemActionType::LaunchHomebrew: {
             Result rc = daemon::app::launchHomebrew(
-                action.homebrewTarget, action.donorTitleId, action.uid);
+                action.homebrewTarget, action.donorTitleId,
+                action.homebrewTitleId, action.uid);
             recordOperationResult(action.requestId,
                                   smi::SystemMessage::LaunchHomebrew,
                                   rc, action.donorTitleId);

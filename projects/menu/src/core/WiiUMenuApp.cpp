@@ -4066,7 +4066,18 @@ void WiiUMenuApp::launchHomebrew(const std::string& path) {
 
     DebugLog::log("[homebrew] contender path=%s donor=0x%016lX uid_valid=%d",
                   path.c_str(), donorTitleId, accountUidIsValid(&uid) ? 1 : 0);
-    m_launcher.launchHomebrew(path, donorTitleId, uid);
+
+    // Report the homebrew's synthetic title ID while it runs so the menu marks
+    // the homebrew icon as running instead of the donor it launches over.
+    std::uint64_t homebrewTitleId = 0;
+    for (const auto& hb : m_homebrewStore.all()) {
+        if (hb.path == path) {
+            homebrewTitleId = switchu::homebrew::homebrewTitleId(hb.id);
+            break;
+        }
+    }
+
+    m_launcher.launchHomebrew(path, donorTitleId, homebrewTitleId, uid);
 }
 #endif
 
@@ -5641,14 +5652,16 @@ void WiiUMenuApp::activateApplication(GlossyIcon* source, AppEntry* entry,
                                       std::uint64_t titleId,
                                       const std::string& launchTitle) {
     if (!source || titleId == 0) return;
+    // A suspended homebrew (reported under its synthetic ID) must resume like
+    // any other title instead of relaunching the NRO from scratch.
+    if (m_launcher.isAppSuspended(titleId)) {
+        resumeSuspendedApplication(titleId, launchTitle);
+        return;
+    }
     if (switchu::homebrew::isHomebrewTitleId(titleId)) {
         const auto hbId = switchu::homebrew::homebrewIdFromTitleId(titleId);
         const auto* hb = m_homebrewStore.find(hbId);
         if (hb) launchHomebrew(hb->path);
-        return;
-    }
-    if (m_launcher.isAppSuspended(titleId)) {
-        resumeSuspendedApplication(titleId, launchTitle);
         return;
     }
 

@@ -41,6 +41,7 @@ public:
     // TargetInput through the application's user channel.
     Result launchHomebrew(const smi::TargetInput& target,
                           std::uint64_t donorTitleId,
+                          std::uint64_t homebrewTitleId,
                           AccountUid uid);
     Result resume();
     Result terminate();
@@ -59,7 +60,8 @@ public:
 
 private:
     Result launchInternal(std::uint64_t titleId, AccountUid uid,
-                          const smi::TargetInput* targetInput);
+                          const smi::TargetInput* targetInput,
+                          std::uint64_t displayTitleId);
     Result stopCurrent(std::uint64_t gracefulTimeoutNs, const char* reason);
     void releaseExternalContent();
     void closeAccessor();
@@ -70,6 +72,9 @@ private:
     SessionState m_state = SessionState::Idle;
     std::uint64_t m_sessionId = 0;
     std::uint64_t m_titleId = 0;
+    // Reported by suspendedTitleId() while a homebrew runs; m_titleId stays the
+    // donor so AM/ECS operations keep targeting the real process.
+    std::uint64_t m_displayTitleId = 0;
     std::uint64_t m_externalContentProgramId = 0;
     Result m_lastResult = 0;
     AppletApplicationExitReason m_lastExitReason = AppletApplicationExitReason_Normal;
@@ -85,7 +90,8 @@ std::uint64_t suspendedTitleId();
 SessionSnapshot snapshot();
 Event* stateChangedEvent();
 Result launch(std::uint64_t titleId, AccountUid uid);
-Result launchHomebrew(const smi::TargetInput& target, std::uint64_t donorTitleId, AccountUid uid);
+Result launchHomebrew(const smi::TargetInput& target, std::uint64_t donorTitleId,
+                      std::uint64_t homebrewTitleId, AccountUid uid);
 Result resume();
 Result terminate();
 Result areLibraryAppletsLeft(bool* out);

@@ -134,7 +134,11 @@ bool ApplicationSession::hasForeground() const {
 }
 
 std::uint64_t ApplicationSession::suspendedTitleId() const {
-    return isRunning() ? m_titleId : 0;
+    if (!isRunning())
+        return 0;
+    // Homebrew launches report the menu's synthetic ID so the menu highlights
+    // the homebrew icon; the donor stays in m_titleId for AM bookkeeping.
+    return m_displayTitleId != 0 ? m_displayTitleId : m_titleId;
 }
 
 SessionSnapshot ApplicationSession::snapshot() const {
@@ -177,6 +181,7 @@ void ApplicationSession::resetToIdle() {
     releaseExternalContent();
     m_state = SessionState::Idle;
     m_titleId = 0;
+    m_displayTitleId = 0;
 }
 
 Result ApplicationSession::failTransition(Result rc,
@@ -199,6 +204,7 @@ Result ApplicationSession::failTransition(Result rc,
     releaseExternalContent();
     m_state = SessionState::Error;
     m_lastResult = rc;
+    m_displayTitleId = 0;
     return rc;
 }
 
@@ -228,6 +234,7 @@ Result ApplicationSession::stopCurrent(std::uint64_t gracefulTimeoutNs,
             m_state = SessionState::Error;
             m_lastResult = terminateRc;
             m_titleId = 0;
+            m_displayTitleId = 0;
             return terminateRc;
         }
     }
@@ -245,11 +252,12 @@ Result ApplicationSession::stopCurrent(std::uint64_t gracefulTimeoutNs,
 }
 
 Result ApplicationSession::launch(std::uint64_t titleId, AccountUid uid) {
-    return launchInternal(titleId, uid, nullptr);
+    return launchInternal(titleId, uid, nullptr, 0);
 }
 
 Result ApplicationSession::launchHomebrew(const smi::TargetInput& target,
                                           std::uint64_t donorTitleId,
+                                          std::uint64_t homebrewTitleId,
                                           AccountUid uid) {
     if (donorTitleId < smi::kApplicationTitleIdMin
         || donorTitleId > smi::kApplicationTitleIdMax) {
@@ -259,11 +267,12 @@ Result ApplicationSession::launchHomebrew(const smi::TargetInput& target,
         return MAKERESULT(Module_Libnx, 0xFB);
     }
 
-    return launchInternal(donorTitleId, uid, &target);
+    return launchInternal(donorTitleId, uid, &target, homebrewTitleId);
 }
 
 Result ApplicationSession::launchInternal(std::uint64_t titleId, AccountUid uid,
-                                          const smi::TargetInput* targetInput) {
+                                          const smi::TargetInput* targetInput,
+                                          std::uint64_t displayTitleId) {
     if (appletApplicationActive(&m_application)) {
         const Result stopRc = stopCurrent(kGracefulExitTimeoutNs, "replace-before-launch");
         if (R_FAILED(stopRc))
@@ -291,11 +300,12 @@ Result ApplicationSession::launchInternal(std::uint64_t titleId, AccountUid uid,
 
     ++m_sessionId;
     m_titleId = titleId;
+    m_displayTitleId = displayTitleId;
     m_lastResult = 0;
     m_lastExitReason = AppletApplicationExitReason_Normal;
     switchu::FileLog::log(
-        "[app] session=%lu launch title=0x%016lX uid_valid=%d%s",
-        static_cast<unsigned long>(m_sessionId), titleId,
+        "[app] session=%lu launch title=0x%016lX display=0x%016lX uid_valid=%d%s",
+        static_cast<unsigned long>(m_sessionId), titleId, displayTitleId,
         accountUidIsValid(&uid) ? 1 : 0,
         targetInput != nullptr ? " (homebrew)" : "");
 
@@ -464,8 +474,9 @@ std::uint64_t suspendedTitleId() { return session().suspendedTitleId(); }
 SessionSnapshot snapshot() { return session().snapshot(); }
 Event* stateChangedEvent() { return session().stateChangedEvent(); }
 Result launch(std::uint64_t titleId, AccountUid uid) { return session().launch(titleId, uid); }
-Result launchHomebrew(const smi::TargetInput& target, std::uint64_t donorTitleId, AccountUid uid) {
-    return session().launchHomebrew(target, donorTitleId, uid);
+Result launchHomebrew(const smi::TargetInput& target, std::uint64_t donorTitleId,
+                      std::uint64_t homebrewTitleId, AccountUid uid) {
+    return session().launchHomebrew(target, donorTitleId, homebrewTitleId, uid);
 }
 Result resume() { return session().resume(); }
 Result terminate() { return session().terminate(); }

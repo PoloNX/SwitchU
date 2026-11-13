@@ -66,7 +66,7 @@ inline Result launchApplication(uint64_t titleId, AccountUid uid) {
 }
 
 inline Result launchHomebrew(const std::string& nroPath, uint64_t donorTitleId,
-                             AccountUid uid) {
+                             uint64_t homebrewTitleId, AccountUid uid) {
     uint8_t buf[sizeof(smi::CommandHeader) + sizeof(smi::LaunchHomebrewArgs)]{};
     auto* hdr = reinterpret_cast<smi::CommandHeader*>(buf);
     auto* args = reinterpret_cast<smi::LaunchHomebrewArgs*>(buf + sizeof(smi::CommandHeader));
@@ -89,6 +89,7 @@ inline Result launchHomebrew(const std::string& nroPath, uint64_t donorTitleId,
     // menu_caption is intentionally left empty.
 
     args->donor_title_id = donorTitleId;
+    args->homebrew_title_id = homebrewTitleId;
     std::memcpy(args->user_uid, &uid, sizeof(uid));
 
     return pushOutStorage(buf, sizeof(buf));

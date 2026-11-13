@@ -30,6 +30,8 @@ struct SystemAction {
     // LaunchHomebrew only.
     smi::TargetInput homebrewTarget{};
     std::uint64_t donorTitleId = 0;
+    // Synthetic menu title ID reported as the running app (0 = donor).
+    std::uint64_t homebrewTitleId = 0;
 };
 
 // The menu is an all-foreground applet: accepting multiple navigation actions

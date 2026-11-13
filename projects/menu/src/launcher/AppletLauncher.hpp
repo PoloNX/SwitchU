@@ -27,7 +27,7 @@ public:
 
     void launchApplication(uint64_t titleId, AccountUid uid);
     void launchHomebrew(const std::string& nroPath, uint64_t donorTitleId,
-                        AccountUid uid);
+                        uint64_t homebrewTitleId, AccountUid uid);
     void resumeApplication();
     void terminateApplication();
 

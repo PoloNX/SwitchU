@@ -127,9 +127,13 @@ static_assert(sizeof(TargetInput) == 3592);
 struct LaunchHomebrewArgs {
     TargetInput target;
     uint64_t    donor_title_id;
+    // Synthetic menu title ID (0xFB... | homebrew id) so the menu can highlight
+    // the launched homebrew instead of the donor it is running over. 0 means
+    // "unknown; keep reporting the donor".
+    uint64_t    homebrew_title_id;
     uint8_t     user_uid[16];
 };
-static_assert(sizeof(LaunchHomebrewArgs) == 3616);
+static_assert(sizeof(LaunchHomebrewArgs) == 3624);
 
 // Program IDs from here up are full applications, which appletCreateApplication
 // accepts. Applet-range titles (0100000000001000-0100000000001FFF) cannot be
