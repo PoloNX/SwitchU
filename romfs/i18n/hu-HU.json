@@ -157,7 +157,7 @@
     "settings": "Beállítások",
     "controllers": "Kontrollerek",
     "theme_shop": "Témák",
-    "sleep": "Kikapcsolási módok",
+    "sleep": "Alvó mód",
     "music": "Zene"
   },
   "hint": {
@@ -693,7 +693,7 @@
     "right": "Jobbra"
   },
   "power": {
-    "title": "Kikapcsolási lehetőségek",
+    "title": "Energia",
     "choose_action": "Válassz műveletet:",
     "lock": "Zárolás",
     "sleep": "Alvó mód",
@@ -706,7 +706,7 @@
     "en-US": "Amerikai angol",
     "fr-FR": "Francia",
     "de-DE": "Német",
-	"hu-HU": "Magyar",
+    "hu-HU": "Magyar",
     "it-IT": "Olasz",
     "es-ES": "Spanyol",
     "zh-CN": "Egyszerűsített kínai",
