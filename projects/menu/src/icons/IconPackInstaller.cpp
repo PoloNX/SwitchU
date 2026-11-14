@@ -2,6 +2,7 @@
 
 #include "IconPackManager.hpp"
 #include "core/DebugLog.hpp"
+#include "themeshop/InstallStamp.hpp"
 #include "themeshop/ThemeHttp.hpp"
 #include "themeshop/ThemePackageInstaller.hpp"
 
@@ -168,6 +169,8 @@ IconPackInstaller::Result IconPackInstaller::install(
     if (onProgress)
         onProgress(i18n.tr("themeshop.icons.finalize_download", "Finishing icon pack install..."),
                    1.f);
+
+    (void)themeshop::writeInstallStamp(result.destinationPath);
 
     result.success = true;
     result.message = i18n.tr("themeshop.icons.installed", "Icon pack installed.");
