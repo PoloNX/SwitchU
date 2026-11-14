@@ -55,7 +55,7 @@ void SteamGridDbBackdrop::setPortraitBackdrop(bool portrait) {
     if (m_portraitBackdrop == portrait)
         return;
     m_portraitBackdrop = portrait;
-    // Portrait swaps poster-vs-hero and canvas aspect — drop warm caches.
+    // Orientation changed — drop warm caches so the next showTitle reloads.
     invalidateArtworkCaches();
     releaseGpuArtwork();
     m_waitForGpuBeforeUpload = true;
@@ -472,10 +472,7 @@ void SteamGridDbBackdrop::startPendingDecode(std::uint64_t titleId) {
     const int heroW = m_heroW;
     const int heroH = m_heroH;
     const int blur = m_heroBlur;
-    const bool portrait = m_portraitBackdrop;
-    // Slight upper bias when cover-cropping landscape heroes onto a tall canvas.
-    constexpr float kPortraitFocusY = 0.42f;
-    auto work = [state, titleId, heroW, heroH, blur, portrait]() {
+    auto work = [state, titleId, heroW, heroH, blur]() {
         const auto started = std::chrono::steady_clock::now();
         if (titleId != 0 && SteamGridDbManager::hasArtwork(titleId)) {
             // Fixed canvases let both double-buffer slots reuse their existing
@@ -484,13 +481,12 @@ void SteamGridDbBackdrop::startPendingDecode(std::uint64_t titleId) {
             // Medium 640×360 (~0.9 MiB) is the 1.4.0 default. High 1280×720
             // (~3.6 MiB) matches the screen so Hero+Logo no longer upsamples.
             // Off (0×0) skips the hero so logos still load without a backdrop.
-            // Heroes are the backdrop asset (not posters/grids). Portrait uses a
-            // tall canvas + slight upper focus bias when cover-cropping.
+            // Heroes are the backdrop asset (not posters/grids). Flip-Grip keeps
+            // this landscape canvas; the GPU cover-crops onto the tall screen.
             if (heroW > 0 && heroH > 0) {
-                const float focusY = portrait ? kPortraitFocusY : 0.5f;
                 state->artwork.hero = decodeImage(
                     SteamGridDbManager::heroPath(titleId), heroW, heroH, true,
-                    0.5f, focusY);
+                    0.5f, 0.5f);
                 if (blur > 0 && !state->cancelled.load())
                     blurHero(state->artwork.hero, blur);
                 if (!state->cancelled.load())
@@ -551,9 +547,8 @@ void SteamGridDbBackdrop::drawSet(nxui::Renderer& renderer,
     if (set.hasHero && set.hero.valid()) {
         const bool fullHero = useFullHeroOpacity();
         const float heroAlpha = fullHero ? 0.94f : 0.24f;
-        const float focusY = m_portraitBackdrop ? 0.42f : 0.5f;
         renderer.pushClipRect(screen);
-        renderer.drawTexture(&set.hero, fillRect(set.hero, screen, 0.5f, focusY),
+        renderer.drawTexture(&set.hero, fillRect(set.hero, screen, 0.5f, 0.5f),
                              nxui::Color::white().withAlpha(alpha * heroAlpha));
         renderer.popClipRect();
         // Soft bottom scrim so chrome stays legible over bright/dark heroes.

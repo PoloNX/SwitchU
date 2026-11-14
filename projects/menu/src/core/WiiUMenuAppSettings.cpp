@@ -1618,11 +1618,11 @@ void WiiUMenuApp::applySteamGridDbHeroPresentation() {
         case 3: w = 1280; h = 720; break;
         default: break;
     }
-    const bool portrait = m_homeLayout.isPortrait();
-    // Same pixel budget, tall canvas so Flip-Grip posters/heroes decode cleanly.
-    if (portrait && w > 0 && h > 0 && w > h)
-        std::swap(w, h);
-    m_steamGridDbBackdrop->setPortraitBackdrop(portrait);
+    // Keep the landscape hero canvas in Flip-Grip (original look): GPU
+    // cover-crops left/right onto the tall screen. A tall decode canvas was
+    // cropping top/bottom instead. setPortraitBackdrop still tracks orientation
+    // for future per-slot presentation (Customize Hero).
+    m_steamGridDbBackdrop->setPortraitBackdrop(m_homeLayout.isPortrait());
     m_steamGridDbBackdrop->setHeroCanvas(w, h);
     m_steamGridDbBackdrop->setHeroBlur(m_config.steamGridDbHeroBlur);
 }
