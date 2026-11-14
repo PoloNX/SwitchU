@@ -484,23 +484,13 @@ void SteamGridDbBackdrop::startPendingDecode(std::uint64_t titleId) {
             // Medium 640×360 (~0.9 MiB) is the 1.4.0 default. High 1280×720
             // (~3.6 MiB) matches the screen so Hero+Logo no longer upsamples.
             // Off (0×0) skips the hero so logos still load without a backdrop.
-            // Flip-Grip: prefer poster.img when present (tall grids on disk).
+            // Heroes are the backdrop asset (not posters/grids). Portrait uses a
+            // tall canvas + slight upper focus bias when cover-cropping.
             if (heroW > 0 && heroH > 0) {
-                bool usedPoster = false;
-                if (portrait && SteamGridDbManager::hasPoster(titleId)) {
-                    auto poster = decodeImage(
-                        SteamGridDbManager::posterPath(titleId), heroW, heroH, true);
-                    if (!poster.rgba.empty()) {
-                        state->artwork.hero = std::move(poster);
-                        usedPoster = true;
-                    }
-                }
-                if (!usedPoster) {
-                    const float focusY = portrait ? kPortraitFocusY : 0.5f;
-                    state->artwork.hero = decodeImage(
-                        SteamGridDbManager::heroPath(titleId), heroW, heroH, true,
-                        0.5f, focusY);
-                }
+                const float focusY = portrait ? kPortraitFocusY : 0.5f;
+                state->artwork.hero = decodeImage(
+                    SteamGridDbManager::heroPath(titleId), heroW, heroH, true,
+                    0.5f, focusY);
                 if (blur > 0 && !state->cancelled.load())
                     blurHero(state->artwork.hero, blur);
                 if (!state->cancelled.load())
