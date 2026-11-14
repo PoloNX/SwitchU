@@ -17,6 +17,7 @@
 #include <nlohmann/json.hpp>
 #include <set>
 #include <system_error>
+#include <unordered_set>
 
 namespace {
 
@@ -869,10 +870,88 @@ bool SteamGridDbManager::clearArtwork(std::uint64_t titleId, ArtworkKind kind) {
     return removed;
 }
 
+int SteamGridDbManager::clearDecodeCaches() {
+    std::error_code ec;
+    if (!std::filesystem::exists(kCacheRoot, ec))
+        return 0;
+    int removed = 0;
+    for (std::filesystem::recursive_directory_iterator it(kCacheRoot, ec), end;
+         !ec && it != end; it.increment(ec)) {
+        if (ec) break;
+        if (!it->is_regular_file(ec)) {
+            ec.clear();
+            continue;
+        }
+        const std::string name = it->path().filename().string();
+        if (name.find(".rgba-cache") == std::string::npos)
+            continue;
+        if (std::filesystem::remove(it->path(), ec))
+            ++removed;
+        ec.clear();
+    }
+    return removed;
+}
+
+int SteamGridDbManager::clearUnusedArtwork(
+    const std::vector<std::uint64_t>& keepTitleIds) {
+    std::error_code ec;
+    if (!std::filesystem::exists(kCacheRoot, ec))
+        return 0;
+    std::unordered_set<std::string> keep;
+    keep.reserve(keepTitleIds.size());
+    for (std::uint64_t id : keepTitleIds) {
+        if (id == 0) continue;
+        char buf[17];
+        std::snprintf(buf, sizeof(buf), "%016llX",
+                      static_cast<unsigned long long>(id));
+        keep.emplace(buf);
+    }
+    int removed = 0;
+    for (std::filesystem::directory_iterator it(kCacheRoot, ec), end;
+         !ec && it != end; it.increment(ec)) {
+        if (ec) break;
+        if (!it->is_directory(ec)) {
+            ec.clear();
+            continue;
+        }
+        const std::string name = it->path().filename().string();
+        if (keep.count(name))
+            continue;
+        const auto n = std::filesystem::remove_all(it->path(), ec);
+        if (!ec && n > 0)
+            ++removed;
+        ec.clear();
+    }
+    return removed;
+}
+
+int SteamGridDbManager::clearAllArtwork() {
+    std::error_code ec;
+    if (!std::filesystem::exists(kCacheRoot, ec))
+        return 0;
+    int removed = 0;
+    for (std::filesystem::directory_iterator it(kCacheRoot, ec), end;
+         !ec && it != end; it.increment(ec)) {
+        if (ec) break;
+        if (!it->is_directory(ec)) {
+            ec.clear();
+            continue;
+        }
+        const auto n = std::filesystem::remove_all(it->path(), ec);
+        if (!ec && n > 0)
+            ++removed;
+        ec.clear();
+    }
+    return removed;
+}
+
 bool SteamGridDbManager::start(const std::string& apiKey,
                                const std::vector<AppEntry>& apps,
-                               bool fetchHeroes) {
-    if (apiKey.empty() || apps.empty() || m_running.exchange(true)) return false;
+                               ScrapeKinds kinds) {
+    if (apiKey.empty() || apps.empty()) return false;
+    if (!(kinds.heroes || kinds.logos || kinds.posters || kinds.gridWide))
+        return false;
+    if (m_running.exchange(true)) return false;
     if (m_task.valid()) m_task.get();
     m_cancelRequested.store(false);
     {
@@ -886,8 +965,8 @@ bool SteamGridDbManager::start(const std::string& apiKey,
         m_status.revision = nextRevision;
     }
     m_task = std::async(std::launch::async,
-                        [this, apiKey, apps, fetchHeroes]() mutable {
-                            scrape(std::move(apiKey), std::move(apps), fetchHeroes);
+                        [this, apiKey, apps, kinds]() mutable {
+                            scrape(std::move(apiKey), std::move(apps), kinds);
                         });
     return true;
 }
@@ -1022,7 +1101,7 @@ void SteamGridDbManager::updateStatus(const std::function<void(Status&)>& change
 }
 
 void SteamGridDbManager::scrape(std::string apiKey, std::vector<AppEntry> apps,
-                                bool fetchHeroes) {
+                                ScrapeKinds kinds) {
     const std::list<std::string> headers = {
         "Authorization: Bearer " + apiKey,
         "Accept: application/json",
@@ -1054,14 +1133,19 @@ void SteamGridDbManager::scrape(std::string apiKey, std::vector<AppEntry> apps,
         });
 
         bool matched = false;
-        // Incremental: keep trusted hero/logo choices, but still fill a missing
-        // Poster (and landscape grid for 2x1 / 4x2 tiles) from the cached game id.
+        // Incremental: keep trusted matches, fill missing checked kinds from
+        // the cached SteamGridDB game id.
         if (hasArtwork(app.titleId)) {
+            bool heroFilled = std::filesystem::exists(heroPath(app.titleId), ec);
+            ec.clear();
+            bool logoFilled = std::filesystem::exists(logoPath(app.titleId), ec);
+            ec.clear();
             bool posterFilled = hasPoster(app.titleId);
             bool gridWideFilled = hasGridWide(app.titleId);
-            const bool wantsGridWide =
-                (app.widgetColumns == 2 && app.widgetRows == 1)
-                || (app.widgetColumns == 4 && app.widgetRows == 2);
+            const bool wantsGridWide = kinds.gridWide
+                && ((app.widgetColumns == 2 && app.widgetRows == 1)
+                    || (app.widgetColumns == 4 && app.widgetRows == 2));
+            bool wrote = false;
             try {
                 nlohmann::json metadata = readMetadata(app.titleId);
                 const long long gameId = metadata.value("steamGridDbGameId", 0LL);
@@ -1072,7 +1156,9 @@ void SteamGridDbManager::scrape(std::string apiKey, std::vector<AppEntry> apps,
                         const auto info = kindInfo(kind);
                         const std::string url = std::string(kApiBase) + info.endpoint
                             + "/game/" + std::to_string(gameId)
-                            + "?nsfw=false&humor=false&types=static" + info.querySuffix;
+                            + "?nsfw=false&humor=false"
+                            + (info.useStaticTypes ? "&types=static" : "")
+                            + info.querySuffix;
                         const auto images = apiData(url, headers, shouldAbort);
                         const bool ok = fetchImage(images, portrait, destination,
                                                    {}, shouldAbort);
@@ -1082,13 +1168,23 @@ void SteamGridDbManager::scrape(std::string apiKey, std::vector<AppEntry> apps,
                         }
                         return ok;
                     };
-                    if (!posterFilled)
+                    if (kinds.heroes && !heroFilled)
+                        heroFilled = fillKind(ArtworkKind::Hero, false,
+                                              heroPath(app.titleId), "hero");
+                    if (kinds.logos && !logoFilled)
+                        logoFilled = fillKind(ArtworkKind::Logo, false,
+                                              logoPath(app.titleId), "logo");
+                    if (kinds.posters && !posterFilled)
                         posterFilled = fillKind(ArtworkKind::Poster, true,
                                                 posterPath(app.titleId), "poster");
                     if (wantsGridWide && !gridWideFilled)
                         gridWideFilled = fillKind(ArtworkKind::GridWide, false,
                                                   gridWidePath(app.titleId), "gridWide");
-                    if (posterFilled || gridWideFilled) {
+                    wrote = (kinds.heroes && heroFilled)
+                         || (kinds.logos && logoFilled)
+                         || (kinds.posters && posterFilled)
+                         || (wantsGridWide && gridWideFilled);
+                    if (wrote) {
                         std::ofstream meta(titleDirectory(app.titleId) + "/metadata.json",
                                            std::ios::trunc);
                         if (meta.is_open()) meta << metadata.dump(2);
@@ -1103,7 +1199,7 @@ void SteamGridDbManager::scrape(std::string apiKey, std::vector<AppEntry> apps,
             updateStatus([&](Status& s) {
                 ++s.completed;
                 ++s.matched;
-                if (posterFilled || gridWideFilled)
+                if (wrote)
                     s.lastCompletedTitleId = app.titleId;
                 s.progress01 = s.total > 0
                     ? static_cast<float>(s.completed) / static_cast<float>(s.total) : 1.f;
@@ -1201,19 +1297,22 @@ void SteamGridDbManager::scrape(std::string apiKey, std::vector<AppEntry> apps,
                 }
             };
 
-            const bool heroOk = fetchHeroes
+            const bool heroOk = kinds.heroes
                 && fetchArtwork(ArtworkKind::Hero, false,
                                 heroPath(app.titleId), 0.08f, 0.20f);
             if (m_cancelRequested.load()) break;
-            const bool logoOk = fetchArtwork(ArtworkKind::Logo, false,
-                                             logoPath(app.titleId), 0.30f, 0.20f);
+            const bool logoOk = kinds.logos
+                && fetchArtwork(ArtworkKind::Logo, false,
+                                logoPath(app.titleId), 0.30f, 0.20f);
             if (m_cancelRequested.load()) break;
-            const bool posterOk = fetchArtwork(ArtworkKind::Poster, true,
-                                               posterPath(app.titleId), 0.52f, 0.20f);
+            const bool posterOk = kinds.posters
+                && fetchArtwork(ArtworkKind::Poster, true,
+                                posterPath(app.titleId), 0.52f, 0.20f);
             if (m_cancelRequested.load()) break;
             bool gridWideOk = false;
-            if ((app.widgetColumns == 2 && app.widgetRows == 1)
-                || (app.widgetColumns == 4 && app.widgetRows == 2)) {
+            if (kinds.gridWide
+                && ((app.widgetColumns == 2 && app.widgetRows == 1)
+                    || (app.widgetColumns == 4 && app.widgetRows == 2))) {
                 gridWideOk = fetchArtwork(ArtworkKind::GridWide, false,
                                           gridWidePath(app.titleId), 0.74f, 0.20f);
                 if (m_cancelRequested.load()) break;

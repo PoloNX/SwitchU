@@ -252,6 +252,9 @@ private:
                           std::function<void(const std::string&)> onAccept);
     void editSteamGridDbApiKey();
     void startSteamGridDbScrape();
+    void confirmSteamGridDbClearDecodeCaches();
+    void confirmSteamGridDbClearUnused();
+    void confirmSteamGridDbClearAll();
     void cancelSteamGridDbScrape();
     void openSteamGridDbPicker(GameOptionsScreen::ArtworkKind kind,
                                const std::string& query = std::string());

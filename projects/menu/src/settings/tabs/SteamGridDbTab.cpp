@@ -163,12 +163,60 @@ SettingsScreen::Tab settings::tabs::SteamGridDbTab::build(SettingsScreen& screen
     };
     tab.items.push_back(std::move(apiKey));
 
+    SettingItem scanSection;
+    scanSection.type = ItemType::Section;
+    scanSection.label = i18n.tr("settings.steamgriddb.scan_section", "Missing art scan");
+    tab.items.push_back(std::move(scanSection));
+
+    auto notifyScanKinds = [&screen]() {
+        if (screen.m_steamGridDbScanKindsCb) {
+            screen.m_steamGridDbScanKindsCb(screen.m_steamGridDbScanHeroes,
+                                           screen.m_steamGridDbScanLogos,
+                                           screen.m_steamGridDbScanPosters,
+                                           screen.m_steamGridDbScanGridWide);
+        }
+    };
+
+    auto addScanToggle = [&](const char* labelKey, const char* label,
+                             const char* descKey, const char* desc,
+                             bool& flag) {
+        SettingItem item;
+        item.type = ItemType::Toggle;
+        item.label = i18n.tr(labelKey, label);
+        item.description = i18n.tr(descKey, desc);
+        item.boolVal = flag;
+        item.anim01 = item.boolVal ? 1.f : 0.f;
+        item.indentLevel = 1;
+        item.onChange = [&flag, notifyScanKinds](SettingItem& self) {
+            flag = self.boolVal;
+            notifyScanKinds();
+        };
+        tab.items.push_back(std::move(item));
+    };
+
+    addScanToggle("settings.steamgriddb.scan_heroes", "Heroes",
+                  "settings.steamgriddb.scan_heroes_desc",
+                  "Fullscreen backdrops (skipped when Hero quality is Off).",
+                  screen.m_steamGridDbScanHeroes);
+    addScanToggle("settings.steamgriddb.scan_logos", "Logos",
+                  "settings.steamgriddb.scan_logos_desc",
+                  "Transparent logos for single-row view.",
+                  screen.m_steamGridDbScanLogos);
+    addScanToggle("settings.steamgriddb.scan_posters", "Posters",
+                  "settings.steamgriddb.scan_posters_desc",
+                  "Tall covers for tiles and Flip-Grip backdrops.",
+                  screen.m_steamGridDbScanPosters);
+    addScanToggle("settings.steamgriddb.scan_gridwide", "Wide grids",
+                  "settings.steamgriddb.scan_gridwide_desc",
+                  "Landscape grids for 2×1 / 4×2 tiles.",
+                  screen.m_steamGridDbScanGridWide);
+
     SettingItem scan;
     scan.type = ItemType::Action;
     scan.label = i18n.tr("settings.steamgriddb.scan", "Search artwork for missing assets");
     scan.buttonLabel = i18n.tr("button.search", "Search");
     scan.description = i18n.tr("settings.steamgriddb.scan_desc",
-        "Fill missing hero, logo, and poster.");
+        "Fill missing kinds checked above.");
     scan.onChange = [&screen](SettingItem&) {
         if (screen.m_steamGridDbRunning) {
             screen.requestToast(nxui::I18n::instance().tr(
@@ -180,20 +228,71 @@ SettingsScreen::Tab settings::tabs::SteamGridDbTab::build(SettingsScreen& screen
                 "settings.steamgriddb.need_key", "Configure an API key first."));
             return;
         }
+        const bool any = screen.m_steamGridDbScanHeroes
+            || screen.m_steamGridDbScanLogos
+            || screen.m_steamGridDbScanPosters
+            || screen.m_steamGridDbScanGridWide;
+        if (!any) {
+            screen.requestToast(nxui::I18n::instance().tr(
+                "settings.steamgriddb.scan_none", "Enable at least one artwork kind."));
+            return;
+        }
         if (screen.m_steamGridDbScrapeCb) screen.m_steamGridDbScrapeCb();
     };
     tab.items.push_back(std::move(scan));
 
+    SettingItem storageSection;
+    storageSection.type = ItemType::Section;
+    storageSection.label = i18n.tr("settings.steamgriddb.storage_section", "Artwork storage");
+    tab.items.push_back(std::move(storageSection));
+
+    SettingItem clearCaches;
+    clearCaches.type = ItemType::Action;
+    clearCaches.label = i18n.tr("settings.steamgriddb.clear_decode_caches",
+                                "Clear decode caches");
+    clearCaches.buttonLabel = i18n.tr("button.clear", "Clear");
+    clearCaches.description = i18n.tr("settings.steamgriddb.clear_decode_caches_desc",
+        "Delete rebuilt RGBA sidecars; downloaded art is kept.");
+    clearCaches.onChange = [&screen](SettingItem&) {
+        if (screen.m_steamGridDbClearDecodeCachesCb)
+            screen.m_steamGridDbClearDecodeCachesCb();
+    };
+    tab.items.push_back(std::move(clearCaches));
+
+    SettingItem clearUnused;
+    clearUnused.type = ItemType::Action;
+    clearUnused.label = i18n.tr("settings.steamgriddb.clear_unused",
+                                "Remove unused artwork");
+    clearUnused.buttonLabel = i18n.tr("button.remove", "Remove");
+    clearUnused.description = i18n.tr("settings.steamgriddb.clear_unused_desc",
+        "Delete SteamGridDB folders for titles not in your library.");
+    clearUnused.onChange = [&screen](SettingItem&) {
+        if (screen.m_steamGridDbClearUnusedCb)
+            screen.m_steamGridDbClearUnusedCb();
+    };
+    tab.items.push_back(std::move(clearUnused));
+
+    SettingItem clearAll;
+    clearAll.type = ItemType::Action;
+    clearAll.label = i18n.tr("settings.steamgriddb.clear_all", "Clear all artwork");
+    clearAll.buttonLabel = i18n.tr("button.clear", "Clear");
+    clearAll.description = i18n.tr("settings.steamgriddb.clear_all_desc",
+        "Delete every downloaded SteamGridDB title folder.");
+    clearAll.onChange = [&screen](SettingItem&) {
+        if (screen.m_steamGridDbClearAllCb)
+            screen.m_steamGridDbClearAllCb();
+    };
+    tab.items.push_back(std::move(clearAll));
+
     tab.onUpdate = [](SettingsScreen::Tab& current, TabbedOverlayScreen& base) {
         auto& owner = static_cast<SettingsScreen&>(base);
-        // Section, master, 3 view toggles, poster, logo, quality, blur, API key, scan
-        if (current.items.size() < 11) return;
+        // 0 section, 1 master, 2-8 view/quality/blur, 9 API key, then scan/storage.
+        if (current.items.size() < 20) return;
 
         for (int i = 2; i <= 8; ++i) {
             current.items[static_cast<std::size_t>(i)].enabled = owner.m_steamGridDbEnabled;
             current.items[static_cast<std::size_t>(i)].indentLevel = 1;
         }
-        // Blur only applies when a hero canvas is actually decoded.
         current.items[8].enabled = owner.m_steamGridDbEnabled
             && owner.m_steamGridDbHeroQuality != 0;
 
@@ -201,6 +300,9 @@ SettingsScreen::Tab settings::tabs::SteamGridDbTab::build(SettingsScreen& screen
         key.description = owner.m_steamGridDbHasApiKey
             ? nxui::I18n::instance().tr("settings.steamgriddb.api_key_set", "Configured (hidden)")
             : nxui::I18n::instance().tr("settings.steamgriddb.api_key_missing", "Not configured");
+
+        // Scan heroes follows Hero quality Off (still toggleable, but note in desc).
+        current.items[11].enabled = owner.m_steamGridDbHeroQuality != 0;
         (void)base;
     };
 

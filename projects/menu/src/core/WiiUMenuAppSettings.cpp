@@ -317,7 +317,11 @@ void WiiUMenuApp::createSettings() {
                                     m_config.steamGridDbShowPosterInDynamicLine,
                                     m_config.steamGridDbShowLogoInDynamicLine,
                                     m_config.steamGridDbHeroQuality,
-                                    m_config.steamGridDbHeroBlur);
+                                    m_config.steamGridDbHeroBlur,
+                                    m_config.steamGridDbScanHeroes,
+                                    m_config.steamGridDbScanLogos,
+                                    m_config.steamGridDbScanPosters,
+                                    m_config.steamGridDbScanGridWide);
 
     m_settings->onNavigateSfx([this]() { m_audio.playSfx(Sfx::Navigate); });
     m_settings->onActivateSfx([this]() { m_audio.playSfx(Sfx::Activate); });
@@ -582,6 +586,23 @@ void WiiUMenuApp::createSettings() {
     m_settings->onSteamGridDbScrapeRequest([this]() {
         startSteamGridDbScrape();
     });
+    m_settings->onSteamGridDbScanKindsChange([this](bool heroes, bool logos,
+                                                    bool posters, bool gridWide) {
+        m_config.steamGridDbScanHeroes = heroes;
+        m_config.steamGridDbScanLogos = logos;
+        m_config.steamGridDbScanPosters = posters;
+        m_config.steamGridDbScanGridWide = gridWide;
+        m_config.save();
+    });
+    m_settings->onSteamGridDbClearDecodeCaches([this]() {
+        confirmSteamGridDbClearDecodeCaches();
+    });
+    m_settings->onSteamGridDbClearUnused([this]() {
+        confirmSteamGridDbClearUnused();
+    });
+    m_settings->onSteamGridDbClearAll([this]() {
+        confirmSteamGridDbClearAll();
+    });
     m_settings->onControllerPairing([this]() {
         if (m_settings) m_settings->hide();
         m_navigator.resetToHome();
@@ -726,7 +747,11 @@ void WiiUMenuApp::editSteamGridDbApiKey() {
                                              m_config.steamGridDbShowPosterInDynamicLine,
                                              m_config.steamGridDbShowLogoInDynamicLine,
                                              m_config.steamGridDbHeroQuality,
-                                             m_config.steamGridDbHeroBlur);
+                                             m_config.steamGridDbHeroBlur,
+                                             m_config.steamGridDbScanHeroes,
+                                             m_config.steamGridDbScanLogos,
+                                             m_config.steamGridDbScanPosters,
+                                             m_config.steamGridDbScanGridWide);
             m_settings->refreshCurrentTabWidgets();
             m_settings->requestToast(value.empty()
                 ? nxui::I18n::instance().tr("settings.steamgriddb.key_cleared", "API key cleared.")
@@ -981,8 +1006,13 @@ void WiiUMenuApp::startSteamGridDbScrape() {
         app.widgetColumns = size.columns;
         app.widgetRows = size.rows;
     }
-    if (!m_steamGridDb.start(m_config.steamGridDbApiKey, scrapeApps,
-                             m_config.steamGridDbHeroQuality != 0)) {
+    SteamGridDbManager::ScrapeKinds kinds;
+    kinds.heroes = m_config.steamGridDbScanHeroes
+        && m_config.steamGridDbHeroQuality != 0;
+    kinds.logos = m_config.steamGridDbScanLogos;
+    kinds.posters = m_config.steamGridDbScanPosters;
+    kinds.gridWide = m_config.steamGridDbScanGridWide;
+    if (!m_steamGridDb.start(m_config.steamGridDbApiKey, scrapeApps, kinds)) {
         if (m_settings)
             m_settings->requestToast(nxui::I18n::instance().tr(
                 "settings.steamgriddb.start_failed", "The artwork scan could not be started."));
@@ -1013,6 +1043,100 @@ void WiiUMenuApp::cancelSteamGridDbScrape() {
     if (m_progressDialog)
         m_progressDialog->updateState(nxui::I18n::instance().tr(
             "settings.steamgriddb.cancelling", "Cancelling..."), -1.f);
+}
+
+namespace {
+std::string formatSteamGridDbCountToast(const std::string& pattern, int count) {
+    const std::string marker = "%d";
+    const auto pos = pattern.find(marker);
+    if (pos == std::string::npos)
+        return pattern + " (" + std::to_string(count) + ")";
+    return pattern.substr(0, pos) + std::to_string(count) + pattern.substr(pos + marker.size());
+}
+} // namespace
+
+void WiiUMenuApp::confirmSteamGridDbClearDecodeCaches() {
+    if (!m_dialog) return;
+    auto& i18n = nxui::I18n::instance();
+    m_dialogReturnFocus = m_settings.get();
+    m_dialog->show(
+        i18n.tr("settings.steamgriddb.clear_decode_caches", "Clear decode caches"),
+        i18n.tr("settings.steamgriddb.clear_decode_caches_confirm",
+                "Clear all SteamGridDB decode caches?"),
+        {{i18n.tr("button.cancel", "Cancel"), []() {}, true},
+         {i18n.tr("button.clear", "Clear"), [this]() {
+              const int n = SteamGridDbManager::clearDecodeCaches();
+              if (m_steamGridDbBackdrop)
+                  m_steamGridDbBackdrop->invalidateArtworkCaches();
+              if (m_settings) {
+                  m_settings->requestToast(formatSteamGridDbCountToast(
+                      nxui::I18n::instance().tr(
+                          "settings.steamgriddb.clear_decode_caches_done",
+                          "Cleared %d decode cache files."),
+                      n));
+              }
+          }, true}}, 1, {});
+    focusManager().setFocus(m_dialog.get());
+}
+
+void WiiUMenuApp::confirmSteamGridDbClearUnused() {
+    if (!m_dialog) return;
+    auto& i18n = nxui::I18n::instance();
+    m_dialogReturnFocus = m_settings.get();
+    m_dialog->show(
+        i18n.tr("settings.steamgriddb.clear_unused", "Remove unused artwork"),
+        i18n.tr("settings.steamgriddb.clear_unused_confirm",
+                "Remove artwork for titles that are no longer installed?"),
+        {{i18n.tr("button.cancel", "Cancel"), []() {}, true},
+         {i18n.tr("button.remove", "Remove"), [this]() {
+              std::vector<std::uint64_t> keep;
+              keep.reserve(m_allApps.size());
+              for (const auto& app : m_allApps) {
+                  if (app.isApplication() && app.titleId != 0)
+                      keep.push_back(app.titleId);
+              }
+              const int n = SteamGridDbManager::clearUnusedArtwork(keep);
+              if (m_steamGridDbBackdrop) {
+                  m_steamGridDbBackdrop->invalidateArtworkCaches();
+                  m_steamGridDbBackdrop->releaseGpuArtwork();
+              }
+              showFocusedSteamGridDbArtwork(true);
+              if (m_settings) {
+                  m_settings->requestToast(formatSteamGridDbCountToast(
+                      nxui::I18n::instance().tr(
+                          "settings.steamgriddb.clear_unused_done",
+                          "Removed %d unused artwork folders."),
+                      n));
+              }
+          }, true}}, 1, {});
+    focusManager().setFocus(m_dialog.get());
+}
+
+void WiiUMenuApp::confirmSteamGridDbClearAll() {
+    if (!m_dialog) return;
+    auto& i18n = nxui::I18n::instance();
+    m_dialogReturnFocus = m_settings.get();
+    m_dialog->show(
+        i18n.tr("settings.steamgriddb.clear_all", "Clear all artwork"),
+        i18n.tr("settings.steamgriddb.clear_all_confirm",
+                "Delete all SteamGridDB artwork on this console?"),
+        {{i18n.tr("button.cancel", "Cancel"), []() {}, true},
+         {i18n.tr("button.clear", "Clear"), [this]() {
+              const int n = SteamGridDbManager::clearAllArtwork();
+              if (m_steamGridDbBackdrop) {
+                  m_steamGridDbBackdrop->invalidateArtworkCaches();
+                  m_steamGridDbBackdrop->releaseGpuArtwork();
+              }
+              showFocusedSteamGridDbArtwork(true);
+              if (m_settings) {
+                  m_settings->requestToast(formatSteamGridDbCountToast(
+                      nxui::I18n::instance().tr(
+                          "settings.steamgriddb.clear_all_done",
+                          "Removed %d artwork folders."),
+                      n));
+              }
+          }, true}}, 1, {});
+    focusManager().setFocus(m_dialog.get());
 }
 
 void WiiUMenuApp::raiseProgressDialogAboveOverlays() {

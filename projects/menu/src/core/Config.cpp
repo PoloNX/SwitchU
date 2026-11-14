@@ -127,6 +127,10 @@ bool AppConfig::load() {
         }
         steamGridDbHeroBlur = std::clamp(steamGridDbHeroBlur, 0, 10);
     }
+    readJsonOpt(j, "steamGridDbScanHeroes", steamGridDbScanHeroes);
+    readJsonOpt(j, "steamGridDbScanLogos", steamGridDbScanLogos);
+    readJsonOpt(j, "steamGridDbScanPosters", steamGridDbScanPosters);
+    readJsonOpt(j, "steamGridDbScanGridWide", steamGridDbScanGridWide);
     readJsonOpt(j, "steamGridDbApiKey", steamGridDbApiKey);
     readJsonOpt(j, "sortMode", sortMode);
     readJsonOpt(j, "sortLargeTiles", sortLargeTiles);
@@ -328,6 +332,10 @@ bool AppConfig::save() const {
     j["steamGridDbHeroQualityScale"] = 4;
     j["steamGridDbHeroBlur"] = std::clamp(steamGridDbHeroBlur, 0, 10);
     j["steamGridDbHeroBlurSteps"] = 10;
+    j["steamGridDbScanHeroes"] = steamGridDbScanHeroes;
+    j["steamGridDbScanLogos"] = steamGridDbScanLogos;
+    j["steamGridDbScanPosters"] = steamGridDbScanPosters;
+    j["steamGridDbScanGridWide"] = steamGridDbScanGridWide;
     j["steamGridDbApiKey"] = steamGridDbApiKey;
     j["sortMode"] = std::clamp(sortMode, 0, 2);
     j["sortLargeTiles"] = sortLargeTiles;
