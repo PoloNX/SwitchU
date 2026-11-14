@@ -46,8 +46,13 @@ enum class ThemeBackgroundSymmetry {
 
 struct ThemeBackgroundConfig {
     std::string imagePath;
+    // Optional Flip-Grip / Rot90–270 wallpaper; falls back to imagePath.
+    std::string imagePortraitPath;
     float imageOpacity = 0.f;
     bool imageCover = true;
+    // Cover-crop anchor when imageCover is true (0.5 = center).
+    float imageFocusX = 0.5f;
+    float imageFocusY = 0.5f;
     ThemeBackgroundLayout layout = ThemeBackgroundLayout::Floating;
     ThemeBackgroundShapeSet shapeSet = ThemeBackgroundShapeSet::Mixed;
     ThemeBackgroundSymmetry symmetry = ThemeBackgroundSymmetry::None;

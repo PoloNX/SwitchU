@@ -35,6 +35,9 @@ public:
     // alone keeps GPU textures alive for crossfade reuse.
     void releaseGpuArtwork();
     void setLayoutMode(AppLayoutMode mode) { m_layoutMode = mode; }
+    // Flip-Grip / Rot90/270: prefer poster backdrops and portrait decode canvases.
+    void setPortraitBackdrop(bool portrait);
+    bool portraitBackdrop() const { return m_portraitBackdrop; }
     // True when a hero texture is on-screen at meaningful opacity.
     bool hasDisplayedHero() const;
     // Average relative luminance of the current hero [0..1], or <0 if none.
@@ -90,10 +93,12 @@ private:
     };
 
     static DecodedImage decodeImage(const std::string& path, int outputWidth,
-                                    int outputHeight, bool fill);
+                                    int outputHeight, bool fill,
+                                    float focusX = 0.5f, float focusY = 0.5f);
     static void blurHero(DecodedImage& image, int amount);
     static float sampleLuminance(const DecodedImage& image);
-    static nxui::Rect fillRect(const nxui::Texture& texture, const nxui::Rect& area);
+    static nxui::Rect fillRect(const nxui::Texture& texture, const nxui::Rect& area,
+                               float focusX = 0.5f, float focusY = 0.5f);
     static nxui::Rect containRect(const nxui::Texture& texture, const nxui::Rect& area);
     bool useFullHeroOpacity() const;
     void drawSet(nxui::Renderer& renderer, const ArtworkSet& set, float alpha) const;
@@ -124,6 +129,7 @@ private:
     float m_preloadGapSec = 0.f;
     bool m_preloadPaused = false;
     AppLayoutMode m_layoutMode = AppLayoutMode::Grid;
+    bool m_portraitBackdrop = false;
     // Band the logo is centred in while single-row mode is active. The app
     // raises it above the folder title bubble when a folder is open.
     nxui::Rect m_logoArea{370.f, 149.f, 540.f, 150.f};

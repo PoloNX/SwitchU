@@ -1585,10 +1585,14 @@ void WiiUMenuApp::reflowHomeShell() {
             m_background->setRect({0.f, 0.f, 1280.f, 720.f});
             auto cfg = m_background->config();
             cfg.imageCover = m_effectivePreset.background.imageCover;
+            cfg.imageFocusX = m_effectivePreset.background.imageFocusX;
+            cfg.imageFocusY = m_effectivePreset.background.imageFocusY;
             m_background->setConfig(cfg);
         }
-        if (m_steamGridDbBackdrop)
+        if (m_steamGridDbBackdrop) {
             m_steamGridDbBackdrop->setRect({0.f, 0.f, 1280.f, 720.f});
+            applySteamGridDbHeroPresentation();
+        }
         if (m_topHud) {
             m_topHud->setRect({0.f, 0.f, 1280.f, 90.f});
             m_topHud->layout();
@@ -1615,8 +1619,10 @@ void WiiUMenuApp::reflowHomeShell() {
             m_background->setConfig(cfg);
         }
         // Heroes use the same full logical canvas + cover fill as wallpaper.
-        if (m_steamGridDbBackdrop)
+        if (m_steamGridDbBackdrop) {
             m_steamGridDbBackdrop->setRect(m_homeLayout.contentCanvas());
+            applySteamGridDbHeroPresentation();
+        }
         if (m_topHud) {
             m_topHud->setRect(m_homeLayout.topHud());
             m_topHud->layout();
@@ -1627,6 +1633,10 @@ void WiiUMenuApp::reflowHomeShell() {
         }
         m_sidebar.setCanvasSize(lw, lh);
     }
+
+    // Swap landscape ↔ portrait theme wallpaper when Flip-Grip toggles.
+    if (m_background)
+        applyThemeResources(m_effectivePreset);
 
     // Dialogs / lock / launch / context menus use logical canvas bounds.
     const float canvasW = portrait ? lw : 1280.f;

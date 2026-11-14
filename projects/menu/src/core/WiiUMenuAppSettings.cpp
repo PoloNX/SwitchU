@@ -1618,6 +1618,11 @@ void WiiUMenuApp::applySteamGridDbHeroPresentation() {
         case 3: w = 1280; h = 720; break;
         default: break;
     }
+    const bool portrait = m_homeLayout.isPortrait();
+    // Same pixel budget, tall canvas so Flip-Grip posters/heroes decode cleanly.
+    if (portrait && w > 0 && h > 0 && w > h)
+        std::swap(w, h);
+    m_steamGridDbBackdrop->setPortraitBackdrop(portrait);
     m_steamGridDbBackdrop->setHeroCanvas(w, h);
     m_steamGridDbBackdrop->setHeroBlur(m_config.steamGridDbHeroBlur);
 }
@@ -3663,7 +3668,16 @@ void WiiUMenuApp::applyThemeResources(const ThemePreset& preset) {
         preset,
         !preset.fonts.smallPath.empty() ? preset.fonts.smallPath : preset.fonts.regularPath);
     const std::string themeIconsBase = resolveThemeAssetPath(preset, preset.icons.basePath);
-    const std::string backgroundImagePath = resolveThemeAssetPath(preset, preset.background.imagePath);
+    const std::string landscapeBackgroundPath =
+        resolveThemeAssetPath(preset, preset.background.imagePath);
+    const std::string portraitBackgroundPath =
+        resolveThemeAssetPath(preset, preset.background.imagePortraitPath);
+    const bool preferPortraitWallpaper = m_homeLayout.isPortrait()
+        && !portraitBackgroundPath.empty()
+        && pathExists(portraitBackgroundPath);
+    const std::string backgroundImagePath = preferPortraitWallpaper
+        ? portraitBackgroundPath
+        : landscapeBackgroundPath;
 
     // This application supersedes any retry left by the previous theme.
     m_pendingBackgroundImagePath.clear();
@@ -3671,12 +3685,13 @@ void WiiUMenuApp::applyThemeResources(const ThemePreset& preset) {
     m_backgroundImageRetryAttempts = 0;
 
     const std::string presetRef = preset.id.empty() ? preset.name : preset.id;
-    DebugLog::log("[theme-apply] resources start: preset=%s regularFont=%s smallFont=%s iconsBase=%s bgImage=%s",
+    DebugLog::log("[theme-apply] resources start: preset=%s regularFont=%s smallFont=%s iconsBase=%s bgImage=%s portraitBg=%d",
                   presetRef.c_str(),
                   safeLogPath(regularFontPath),
                   safeLogPath(smallFontPath),
                   safeLogPath(themeIconsBase),
-                  safeLogPath(backgroundImagePath));
+                  safeLogPath(backgroundImagePath),
+                  preferPortraitWallpaper ? 1 : 0);
 
     bool settingsLayoutNeedsRebuild = false;
 
@@ -3852,6 +3867,13 @@ void WiiUMenuApp::applyThemeResources(const ThemePreset& preset) {
         backgroundConfig.imageCover = m_homeLayout.isPortrait()
             ? true
             : preset.background.imageCover;
+        backgroundConfig.imageFocusX = preset.background.imageFocusX;
+        // Landscape wallpaper on Flip-Grip: slight upper bias. Dedicated portrait
+        // art keeps the author focus (default center).
+        if (m_homeLayout.isPortrait() && !preferPortraitWallpaper)
+            backgroundConfig.imageFocusY = 0.42f;
+        else
+            backgroundConfig.imageFocusY = preset.background.imageFocusY;
         m_background->setConfig(backgroundConfig);
         m_background->setRect(m_homeLayout.isPortrait()
             ? m_homeLayout.contentCanvas()
