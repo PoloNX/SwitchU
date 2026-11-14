@@ -789,7 +789,16 @@ void LockScreen::render(nxui::Renderer& ren) {
                      m_font, ink, zoom);
         drawCentered(ren, m_unlockText, unlockHintY(), small, inkSoft, 1.0f, dx, dy, zoom);
     } else {
-        drawCentered(ren, m_unlockText, 348.f, m_font, inkSoft, 1.05f, dx, dy, zoom);
+        // No suspended tile: vertically center on the canvas (348 was landscape-only).
+        constexpr float kEnterScale = 1.05f;
+        float enterY = 348.f;
+        if (m_font && !m_unlockText.empty()) {
+            const nxui::Vec2 sz = m_font->measure(m_unlockText);
+            enterY = (g_lockH - sz.y * kEnterScale) * 0.5f;
+        } else {
+            enterY = g_lockH * 0.5f;
+        }
+        drawCentered(ren, m_unlockText, enterY, m_font, inkSoft, kEnterScale, dx, dy, zoom);
     }
 
     if (clipped)
