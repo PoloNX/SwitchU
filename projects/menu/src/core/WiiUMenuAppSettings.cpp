@@ -1649,11 +1649,14 @@ void WiiUMenuApp::applySteamGridDbHeroPresentation() {
         case 3: w = 1280; h = 720; break;
         default: break;
     }
-    // Keep the landscape hero canvas in Flip-Grip (original look): GPU
-    // cover-crops left/right onto the tall screen. A tall decode canvas was
-    // cropping top/bottom instead. setPortraitBackdrop still tracks orientation
-    // for future per-slot presentation (Customize Hero).
-    m_steamGridDbBackdrop->setPortraitBackdrop(m_homeLayout.isPortrait());
+    const bool portrait = m_homeLayout.isPortrait();
+    // Match Customize Hero: landscape slot ↔ wide canvas, portrait slot ↔ tall
+    // canvas. Baking the crop onto the same aspect as the preview keeps HOME
+    // 1:1 with what you framed (a wide canvas + second cover-fill on Flip-Grip
+    // was shifting the subject off-centre).
+    if (portrait && w > 0 && h > 0 && w > h)
+        std::swap(w, h);
+    m_steamGridDbBackdrop->setPortraitBackdrop(portrait);
     m_steamGridDbBackdrop->setHeroCanvas(w, h);
     m_steamGridDbBackdrop->setHeroBlur(m_config.steamGridDbHeroBlur);
 }
