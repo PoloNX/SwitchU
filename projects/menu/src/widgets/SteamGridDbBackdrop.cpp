@@ -12,6 +12,19 @@
 #include <cstring>
 #include <string>
 
+namespace {
+
+bool presentationEqual(const SteamGridDbManager::HeroPresentation& a,
+                       const SteamGridDbManager::HeroPresentation& b) {
+    constexpr float kEps = 0.0005f;
+    return a.fill == b.fill
+        && std::abs(a.focusX - b.focusX) <= kEps
+        && std::abs(a.focusY - b.focusY) <= kEps
+        && std::abs(a.activeZoom() - b.activeZoom()) <= kEps;
+}
+
+} // namespace
+
 SteamGridDbBackdrop::SteamGridDbBackdrop(nxui::GpuDevice& gpu,
                                          nxui::Renderer& renderer,
                                          nxui::ThreadPool* threadPool)
@@ -35,12 +48,27 @@ void SteamGridDbBackdrop::setHeroCanvas(int width, int height) {
     const int h = (width > 0 && height > 0) ? std::max(1, height) : 0;
     if (w == m_heroW && h == m_heroH)
         return;
+    const bool hadDisplay = hasDisplayedHero() || m_sets[m_current].hasLogo;
     m_heroW = w;
     m_heroH = h;
-    // Slot MemBlocks were allocated for the previous canvas. Releasing here
-    // avoids a mid-upload free+waitIdle when quality changes.
-    releaseGpuArtwork();
+    if (w == 0 || h == 0) {
+        // Off: drop heroes entirely.
+        releaseGpuArtwork();
+        m_waitForGpuBeforeUpload = true;
+        return;
+    }
+    // Aspect / quality change: cancel the wrong-size job and forget warm CPU
+    // caches, but keep the last GPU hero on screen until the new decode
+    // uploads (Flip-Grip used to flash the theme background here).
+    if (m_pendingDecode && m_pendingDecode->state)
+        m_pendingDecode->state->cancelled.store(true);
+    m_pendingDecode.reset();
+    m_readyArtwork.reset();
+    m_uploadStage = 0;
+    invalidateArtworkCaches();
+    m_requestedTitleId = 0;
     m_waitForGpuBeforeUpload = true;
+    m_holdDisplayedHero = hadDisplay;
 }
 
 void SteamGridDbBackdrop::setHeroBlur(int amount) {
@@ -54,11 +82,37 @@ void SteamGridDbBackdrop::setHeroBlur(int amount) {
 void SteamGridDbBackdrop::setPortraitBackdrop(bool portrait) {
     if (m_portraitBackdrop == portrait)
         return;
+    const std::uint64_t titleId = m_requestedTitleId;
+    const bool prevPortrait = m_portraitBackdrop;
     m_portraitBackdrop = portrait;
-    // Orientation changed — drop warm caches so the next showTitle reloads.
-    invalidateArtworkCaches();
-    releaseGpuArtwork();
-    m_waitForGpuBeforeUpload = true;
+
+    // Cancel work baked for the previous slot; keep GPU/CPU warms so a
+    // prefetched opposite crop can swap in on the same frame as the rotate.
+    if (m_pendingDecode && m_pendingDecode->state)
+        m_pendingDecode->state->cancelled.store(true);
+    m_pendingDecode.reset();
+    m_readyArtwork.reset();
+    m_uploadStage = 0;
+
+    if (titleId != 0
+        && presentationEqual(SteamGridDbManager::heroPresentation(titleId, prevPortrait),
+                             SteamGridDbManager::heroPresentation(titleId, portrait))) {
+        // Same crop in both Customize Hero slots — retag and keep drawing.
+        for (auto& set : m_sets) {
+            if (set.titleId == titleId)
+                set.portrait = portrait;
+        }
+        m_holdDisplayedHero = false;
+        return;
+    }
+
+    if (titleId != 0 && tryApplyOrientationCaches(titleId))
+        return;
+
+    // Miss: hold the previous hero until showTitle reloads the new slot.
+    m_holdDisplayedHero = hasDisplayedHero() || m_sets[m_current].hasLogo;
+    m_requestedTitleId = 0;
+    m_waitForGpuBeforeUpload = false;
 }
 
 void SteamGridDbBackdrop::invalidateArtworkCaches() {
@@ -92,12 +146,76 @@ void SteamGridDbBackdrop::releaseGpuArtwork() {
     }
     m_uploadStage = 0;
     m_waitForGpuBeforeUpload = false;
+    m_holdDisplayedHero = false;
+    m_showPreviousDuringCrossfade = false;
 }
 
 bool SteamGridDbBackdrop::hasGpuArtwork(std::uint64_t titleId) const {
-    return std::any_of(m_sets.begin(), m_sets.end(), [titleId](const ArtworkSet& set) {
-        return set.titleId == titleId && (set.hasHero || set.hasLogo);
+    return hasGpuArtwork(titleId, m_portraitBackdrop);
+}
+
+bool SteamGridDbBackdrop::hasGpuArtwork(std::uint64_t titleId, bool portrait) const {
+    return std::any_of(m_sets.begin(), m_sets.end(),
+                       [titleId, portrait](const ArtworkSet& set) {
+        return set.titleId == titleId && set.portrait == portrait
+            && (set.hasHero || set.hasLogo);
     });
+}
+
+bool SteamGridDbBackdrop::hasDecodedArtwork(std::uint64_t titleId, bool portrait) const {
+    return std::any_of(m_decodedCache.begin(), m_decodedCache.end(),
+                       [titleId, portrait](const DecodedArtwork& artwork) {
+        return artwork.titleId == titleId && artwork.portrait == portrait;
+    });
+}
+
+bool SteamGridDbBackdrop::tryApplyOrientationCaches(std::uint64_t titleId) {
+    if (titleId == 0)
+        return false;
+
+    for (int i = 0; i < static_cast<int>(m_sets.size()); ++i) {
+        const auto& cached = m_sets[static_cast<std::size_t>(i)];
+        if (cached.titleId != titleId || cached.portrait != m_portraitBackdrop
+            || (!cached.hasHero && !cached.hasLogo))
+            continue;
+        m_requestedTitleId = titleId;
+        ++m_requestGeneration;
+        m_appliedGeneration = m_requestGeneration;
+        m_holdDisplayedHero = false;
+        if (i != m_current) {
+            m_showPreviousDuringCrossfade = true;
+            beginCrossfade(i, titleId);
+        } else {
+            m_fade.setImmediate(1.f);
+            m_artworkOpacity.setImmediate(1.f);
+        }
+        DebugLog::log("[steamgriddb-ui] orientation gpu hit title=%016llX portrait=%d",
+                      static_cast<unsigned long long>(titleId),
+                      m_portraitBackdrop ? 1 : 0);
+        return true;
+    }
+
+    auto decoded = std::find_if(m_decodedCache.begin(), m_decodedCache.end(),
+        [titleId, portrait = m_portraitBackdrop](const DecodedArtwork& artwork) {
+            return artwork.titleId == titleId && artwork.portrait == portrait;
+        });
+    if (decoded == m_decodedCache.end())
+        return false;
+
+    m_requestedTitleId = titleId;
+    ++m_requestGeneration;
+    decoded->generation = m_requestGeneration;
+    m_showPreviousDuringCrossfade =
+        hasDisplayedHero() || m_sets[m_current].hasLogo;
+    m_holdDisplayedHero = false;
+    m_readyArtwork = std::move(*decoded);
+    m_decodedCache.erase(decoded);
+    m_uploadStage = 0;
+    m_waitForGpuBeforeUpload = false;
+    DebugLog::log("[steamgriddb-ui] orientation decoded hit title=%016llX portrait=%d",
+                  static_cast<unsigned long long>(titleId),
+                  m_portraitBackdrop ? 1 : 0);
+    return true;
 }
 
 void SteamGridDbBackdrop::setPreloadTitles(std::vector<std::uint64_t> titleIds) {
@@ -139,10 +257,13 @@ void SteamGridDbBackdrop::showTitle(std::uint64_t titleId, bool forceReload) {
     // A direct artwork-to-artwork change may crossfade from the current set.
     // Once focus has visited a title without artwork, the old set is stale and
     // must never be exposed again while the next image is decoded/uploaded.
+    // Orientation hold: title ids were cleared but textures are still valid —
+    // keep drawing them until the new-aspect upload crossfades in.
     m_showPreviousDuringCrossfade = titleId != 0
-        && m_sets[m_current].titleId == m_requestedTitleId
         && (m_sets[m_current].hasHero || m_sets[m_current].hasLogo)
-        && m_artworkOpacity.value() > 0.002f;
+        && m_artworkOpacity.value() > 0.002f
+        && (m_holdDisplayedHero
+            || m_sets[m_current].titleId == m_requestedTitleId);
 
     if (titleId == 0) {
         if (m_pendingDecode && m_pendingDecode->state)
@@ -240,6 +361,7 @@ void SteamGridDbBackdrop::showTitle(std::uint64_t titleId, bool forceReload) {
         for (int i = 0; i < static_cast<int>(m_sets.size()); ++i) {
             const auto& cached = m_sets[i];
             if (cached.titleId != titleId
+                || cached.portrait != m_portraitBackdrop
                 || (!cached.hasHero && !cached.hasLogo))
                 continue;
 
@@ -250,19 +372,23 @@ void SteamGridDbBackdrop::showTitle(std::uint64_t titleId, bool forceReload) {
             m_requestedTitleId = titleId;
             ++m_requestGeneration;
             m_appliedGeneration = m_requestGeneration;
+            m_holdDisplayedHero = false;
             if (i != m_current)
                 beginCrossfade(i, titleId);
             else {
                 m_fade.setImmediate(1.f);
                 m_artworkOpacity.set(1.f, 0.18f, nxui::Easing::outCubic);
             }
-            DebugLog::log("[steamgriddb-ui] gpu cache hit title=%016llX",
-                          static_cast<unsigned long long>(titleId));
+            DebugLog::log("[steamgriddb-ui] gpu cache hit title=%016llX portrait=%d",
+                          static_cast<unsigned long long>(titleId),
+                          m_portraitBackdrop ? 1 : 0);
             return;
         }
 
         auto decoded = std::find_if(m_decodedCache.begin(), m_decodedCache.end(),
-            [titleId](const auto& artwork) { return artwork.titleId == titleId; });
+            [titleId, portrait = m_portraitBackdrop](const auto& artwork) {
+                return artwork.titleId == titleId && artwork.portrait == portrait;
+            });
         if (decoded != m_decodedCache.end()) {
             if (m_pendingDecode && m_pendingDecode->state)
                 m_pendingDecode->state->cancelled.store(true);
@@ -272,8 +398,10 @@ void SteamGridDbBackdrop::showTitle(std::uint64_t titleId, bool forceReload) {
             m_readyArtwork = std::move(*decoded);
             m_decodedCache.erase(decoded);
             m_uploadStage = 0;
-            DebugLog::log("[steamgriddb-ui] decoded cache hit title=%016llX",
-                          static_cast<unsigned long long>(titleId));
+            m_holdDisplayedHero = false;
+            DebugLog::log("[steamgriddb-ui] decoded cache hit title=%016llX portrait=%d",
+                          static_cast<unsigned long long>(titleId),
+                          m_portraitBackdrop ? 1 : 0);
             return;
         }
     }
@@ -294,9 +422,9 @@ void SteamGridDbBackdrop::showTitle(std::uint64_t titleId, bool forceReload) {
 
 SteamGridDbBackdrop::DecodedImage SteamGridDbBackdrop::decodeImage(
     const std::string& path, int outputWidth, int outputHeight, bool fill,
-    float focusX, float focusY) {
+    float focusX, float focusY, float zoom) {
     auto decoded = steamgriddb::artwork::decode(
-        path, outputWidth, outputHeight, fill, focusX, focusY);
+        path, outputWidth, outputHeight, fill, focusX, focusY, zoom);
     DecodedImage out;
     out.rgba = std::move(decoded.rgba);
     out.width = decoded.width;
@@ -464,15 +592,22 @@ float SteamGridDbBackdrop::displayedHeroLuminance() const {
     return m_sets[m_current].heroLuminance;
 }
 
-void SteamGridDbBackdrop::startPendingDecode(std::uint64_t titleId) {
+void SteamGridDbBackdrop::startPendingDecode(std::uint64_t titleId, bool portrait) {
     auto state = std::make_shared<DecodeState>();
     state->artwork.titleId = titleId;
-    state->artwork.generation = titleId == m_requestedTitleId ? m_requestGeneration : 0;
+    state->artwork.portrait = portrait;
+    // Focused current-orientation jobs carry the request generation; opposite
+    // warm / neighbour prefetch stay generation 0 so they land in the cache.
+    state->artwork.generation =
+        (titleId == m_requestedTitleId && portrait == m_portraitBackdrop)
+            ? m_requestGeneration
+            : 0;
 
     const int heroW = m_heroW;
     const int heroH = m_heroH;
     const int blur = m_heroBlur;
-    auto work = [state, titleId, heroW, heroH, blur]() {
+    const auto presentation = SteamGridDbManager::heroPresentation(titleId, portrait);
+    auto work = [state, titleId, heroW, heroH, blur, presentation]() {
         const auto started = std::chrono::steady_clock::now();
         if (titleId != 0 && SteamGridDbManager::hasArtwork(titleId)) {
             // Fixed canvases let both double-buffer slots reuse their existing
@@ -481,12 +616,13 @@ void SteamGridDbBackdrop::startPendingDecode(std::uint64_t titleId) {
             // Medium 640×360 (~0.9 MiB) is the 1.4.0 default. High 1280×720
             // (~3.6 MiB) matches the screen so Hero+Logo no longer upsamples.
             // Off (0×0) skips the hero so logos still load without a backdrop.
-            // Heroes are the backdrop asset (not posters/grids). Flip-Grip keeps
-            // this landscape canvas; the GPU cover-crops onto the tall screen.
+            // Heroes are the backdrop asset. Per-title fill/focus come from
+            // metadata.json (Customize Hero); default is center fill.
             if (heroW > 0 && heroH > 0) {
                 state->artwork.hero = decodeImage(
-                    SteamGridDbManager::heroPath(titleId), heroW, heroH, true,
-                    0.5f, 0.5f);
+                    SteamGridDbManager::heroPath(titleId), heroW, heroH,
+                    presentation.fill, presentation.focusX, presentation.focusY,
+                    presentation.activeZoom());
                 if (blur > 0 && !state->cancelled.load())
                     blurHero(state->artwork.hero, blur);
                 if (!state->cancelled.load())
@@ -512,6 +648,7 @@ void SteamGridDbBackdrop::startPendingDecode(std::uint64_t titleId) {
 void SteamGridDbBackdrop::beginCrossfade(int nextSet, std::uint64_t titleId) {
     m_sets[nextSet].titleId = titleId;
     m_current = nextSet;
+    m_holdDisplayedHero = false;
     m_fade.setImmediate(0.f);
     m_fade.set(1.f, 0.52f, nxui::Easing::outCubic);
     m_artworkOpacity.set(1.f, 0.18f, nxui::Easing::outCubic);
@@ -547,6 +684,8 @@ void SteamGridDbBackdrop::drawSet(nxui::Renderer& renderer,
     if (set.hasHero && set.hero.valid()) {
         const bool fullHero = useFullHeroOpacity();
         const float heroAlpha = fullHero ? 0.94f : 0.24f;
+        // Decode already applied per-title crop onto the hero canvas — stretch
+        // to the screen rect (center) so we do not double-bias the focus.
         renderer.pushClipRect(screen);
         renderer.drawTexture(&set.hero, fillRect(set.hero, screen, 0.5f, 0.5f),
                              nxui::Color::white().withAlpha(alpha * heroAlpha));
@@ -585,14 +724,16 @@ void SteamGridDbBackdrop::onUpdate(float dt) {
         m_pendingDecode.reset();
         if (state && !state->cancelled.load()
             && state->artwork.titleId == m_requestedTitleId
+            && state->artwork.portrait == m_portraitBackdrop
             && state->artwork.generation == m_requestGeneration) {
-            DebugLog::log("[steamgriddb-ui] decoded title=%016llX in %ldms hero=%d %dx%d blur=%d logo=%d",
+            DebugLog::log("[steamgriddb-ui] decoded title=%016llX in %ldms hero=%d %dx%d blur=%d logo=%d portrait=%d",
                           static_cast<unsigned long long>(state->artwork.titleId),
                           state->artwork.decodeMilliseconds,
                           state->artwork.hero.rgba.empty() ? 0 : 1,
                           state->artwork.hero.width, state->artwork.hero.height,
                           m_heroBlur,
-                          state->artwork.logo.rgba.empty() ? 0 : 1);
+                          state->artwork.logo.rgba.empty() ? 0 : 1,
+                          state->artwork.portrait ? 1 : 0);
             const bool hasArtwork = !state->artwork.hero.rgba.empty()
                                  || !state->artwork.logo.rgba.empty();
             if (hasArtwork) {
@@ -606,30 +747,39 @@ void SteamGridDbBackdrop::onUpdate(float dt) {
                 m_artworkOpacity.set(0.f, 0.22f, nxui::Easing::outCubic);
             }
         } else if (state && !state->cancelled.load()
-                   && std::find(m_preloadTitleIds.begin(), m_preloadTitleIds.end(),
-                                state->artwork.titleId) != m_preloadTitleIds.end()) {
-            DebugLog::log("[steamgriddb-ui] prefetched title=%016llX in %ldms hero=%d %dx%d blur=%d logo=%d",
+                   && (!state->artwork.hero.rgba.empty()
+                       || !state->artwork.logo.rgba.empty())
+                   && (std::find(m_preloadTitleIds.begin(), m_preloadTitleIds.end(),
+                                 state->artwork.titleId) != m_preloadTitleIds.end()
+                       // Opposite-orientation warm for the focused title.
+                       || (state->artwork.titleId == m_requestedTitleId
+                           && state->artwork.portrait != m_portraitBackdrop))) {
+            DebugLog::log("[steamgriddb-ui] prefetched title=%016llX in %ldms hero=%d %dx%d blur=%d logo=%d portrait=%d",
                           static_cast<unsigned long long>(state->artwork.titleId),
                           state->artwork.decodeMilliseconds,
                           state->artwork.hero.rgba.empty() ? 0 : 1,
                           state->artwork.hero.width, state->artwork.hero.height,
                           m_heroBlur,
-                          state->artwork.logo.rgba.empty() ? 0 : 1);
+                          state->artwork.logo.rgba.empty() ? 0 : 1,
+                          state->artwork.portrait ? 1 : 0);
             m_decodedCache.erase(
                 std::remove_if(m_decodedCache.begin(), m_decodedCache.end(),
                     [&state](const auto& artwork) {
-                        return artwork.titleId == state->artwork.titleId;
+                        return artwork.titleId == state->artwork.titleId
+                            && artwork.portrait == state->artwork.portrait;
                     }),
                 m_decodedCache.end());
-            const bool hasArtwork = !state->artwork.hero.rgba.empty()
-                                 || !state->artwork.logo.rgba.empty();
-            if (hasArtwork) {
-                m_decodedCache.push_back(std::move(state->artwork));
-                if (m_decodedCache.size() > kDecodedCacheLimit)
-                    m_decodedCache.erase(m_decodedCache.begin());
-            } else if (std::find(m_missingArtworkTitleIds.begin(),
-                                 m_missingArtworkTitleIds.end(), state->artwork.titleId)
-                       == m_missingArtworkTitleIds.end()) {
+            m_decodedCache.push_back(std::move(state->artwork));
+            if (m_decodedCache.size() > kDecodedCacheLimit)
+                m_decodedCache.erase(m_decodedCache.begin());
+        } else if (state && !state->cancelled.load()
+                   && std::find(m_preloadTitleIds.begin(), m_preloadTitleIds.end(),
+                                state->artwork.titleId) != m_preloadTitleIds.end()
+                   && state->artwork.hero.rgba.empty()
+                   && state->artwork.logo.rgba.empty()) {
+            if (std::find(m_missingArtworkTitleIds.begin(),
+                          m_missingArtworkTitleIds.end(), state->artwork.titleId)
+                == m_missingArtworkTitleIds.end()) {
                 m_missingArtworkTitleIds.push_back(state->artwork.titleId);
                 if (m_missingArtworkTitleIds.size() > kMissingCacheLimit)
                     m_missingArtworkTitleIds.erase(m_missingArtworkTitleIds.begin());
@@ -658,6 +808,7 @@ void SteamGridDbBackdrop::onUpdate(float dt) {
 #endif
                 m_waitForGpuBeforeUpload = false;
             }
+            target.portrait = decoded.portrait;
             target.hasHero = !decoded.hero.rgba.empty()
                 && target.hero.loadFromPixels(m_gpu, m_renderer, decoded.hero.rgba.data(),
                                               decoded.hero.width, decoded.hero.height);
@@ -684,20 +835,38 @@ void SteamGridDbBackdrop::onUpdate(float dt) {
     if (!m_pendingDecode && m_appliedGeneration != m_requestGeneration) {
         m_decodeDebounce = std::max(0.f, m_decodeDebounce - dt);
         if (m_decodeDebounce <= 0.f)
-            startPendingDecode(m_requestedTitleId);
+            startPendingDecode(m_requestedTitleId, m_portraitBackdrop);
     } else if (!m_pendingDecode && !m_readyArtwork
                && !m_preloadPaused && m_preloadGapSec <= 0.f) {
+        // Warm the opposite Customize Hero slot for the focused title so Flip-
+        // Grip / landscape rotates can swap crops without a post-flip hitch.
+        if (m_requestedTitleId != 0
+            && m_appliedGeneration == m_requestGeneration) {
+            const bool opposite = !m_portraitBackdrop;
+            const auto cur = SteamGridDbManager::heroPresentation(
+                m_requestedTitleId, m_portraitBackdrop);
+            const auto other = SteamGridDbManager::heroPresentation(
+                m_requestedTitleId, opposite);
+            if (!presentationEqual(cur, other)
+                && !hasGpuArtwork(m_requestedTitleId, opposite)
+                && !hasDecodedArtwork(m_requestedTitleId, opposite)) {
+                DebugLog::log("[steamgriddb-ui] orientation warm title=%016llX portrait=%d",
+                              static_cast<unsigned long long>(m_requestedTitleId),
+                              opposite ? 1 : 0);
+                startPendingDecode(m_requestedTitleId, opposite);
+                m_preloadGapSec = m_preloadMinInterval;
+                return;
+            }
+        }
         for (std::uint64_t titleId : m_preloadTitleIds) {
-            const bool decoded = std::any_of(
-                m_decodedCache.begin(), m_decodedCache.end(),
-                [titleId](const auto& artwork) { return artwork.titleId == titleId; });
+            const bool decoded = hasDecodedArtwork(titleId, m_portraitBackdrop);
             const bool missing = std::find(m_missingArtworkTitleIds.begin(),
                                            m_missingArtworkTitleIds.end(), titleId)
                 != m_missingArtworkTitleIds.end();
-            if (!decoded && !missing && !hasGpuArtwork(titleId)) {
+            if (!decoded && !missing && !hasGpuArtwork(titleId, m_portraitBackdrop)) {
                 DebugLog::log("[steamgriddb-ui] prefetch scheduled title=%016llX",
                               static_cast<unsigned long long>(titleId));
-                startPendingDecode(titleId);
+                startPendingDecode(titleId, m_portraitBackdrop);
                 m_preloadGapSec = m_preloadMinInterval;
                 break;
             }

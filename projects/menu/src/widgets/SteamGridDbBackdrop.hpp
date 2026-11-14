@@ -35,7 +35,7 @@ public:
     // alone keeps GPU textures alive for crossfade reuse.
     void releaseGpuArtwork();
     void setLayoutMode(AppLayoutMode mode) { m_layoutMode = mode; }
-    // Flip-Grip / Rot90/270: prefer poster backdrops and portrait decode canvases.
+    // Flip-Grip / Rot90/270: decode heroes onto a tall canvas.
     void setPortraitBackdrop(bool portrait);
     bool portraitBackdrop() const { return m_portraitBackdrop; }
     // True when a hero texture is on-screen at meaningful opacity.
@@ -62,6 +62,7 @@ private:
         nxui::Texture hero;
         nxui::Texture logo;
         std::uint64_t titleId = 0;
+        bool portrait = false; // which Customize Hero slot this texture was baked for
         bool hasHero = false;
         bool hasLogo = false;
         float heroLuminance = -1.f;
@@ -80,6 +81,7 @@ private:
         std::uint64_t generation = 0;
         long decodeMilliseconds = 0;
         float heroLuminance = -1.f;
+        bool portrait = false;
     };
 
     struct DecodeState {
@@ -94,7 +96,8 @@ private:
 
     static DecodedImage decodeImage(const std::string& path, int outputWidth,
                                     int outputHeight, bool fill,
-                                    float focusX = 0.5f, float focusY = 0.5f);
+                                    float focusX = 0.5f, float focusY = 0.5f,
+                                    float zoom = 1.f);
     static void blurHero(DecodedImage& image, int amount);
     static float sampleLuminance(const DecodedImage& image);
     static nxui::Rect fillRect(const nxui::Texture& texture, const nxui::Rect& area,
@@ -102,9 +105,15 @@ private:
     static nxui::Rect containRect(const nxui::Texture& texture, const nxui::Rect& area);
     bool useFullHeroOpacity() const;
     void drawSet(nxui::Renderer& renderer, const ArtworkSet& set, float alpha) const;
-    void startPendingDecode(std::uint64_t titleId);
+    void startPendingDecode(std::uint64_t titleId, bool portrait);
     void beginCrossfade(int nextSet, std::uint64_t titleId);
     bool hasGpuArtwork(std::uint64_t titleId) const;
+    bool hasGpuArtwork(std::uint64_t titleId, bool portrait) const;
+    bool hasDecodedArtwork(std::uint64_t titleId, bool portrait) const;
+    // Try to apply the new orientation from warm GPU/CPU caches. Returns true
+    // when the visible hero already matches (or is uploading) so the caller
+    // does not need a forced showTitle reload.
+    bool tryApplyOrientationCaches(std::uint64_t titleId);
 
     nxui::GpuDevice& m_gpu;
     nxui::Renderer& m_renderer;
@@ -135,11 +144,15 @@ private:
     nxui::Rect m_logoArea{370.f, 149.f, 540.f, 150.f};
     bool m_showLogo = true;
     bool m_showPreviousDuringCrossfade = false;
+    // After Flip-Grip / canvas aspect change: keep the last hero on screen
+    // until the new-size decode uploads (avoids a theme-background hole).
+    bool m_holdDisplayedHero = false;
     int m_heroW = 640;
     int m_heroH = 360;
     int m_heroBlur = 0;
     nxui::AnimatedFloat m_fade{1.f};
     nxui::AnimatedFloat m_artworkOpacity{1.f};
-    static constexpr std::size_t kDecodedCacheLimit = 2;
+    // Room for opposite-orientation warm of the focused title + a neighbour.
+    static constexpr std::size_t kDecodedCacheLimit = 3;
     static constexpr std::size_t kMissingCacheLimit = 64;
 };

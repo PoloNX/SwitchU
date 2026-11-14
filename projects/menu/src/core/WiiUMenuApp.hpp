@@ -34,6 +34,7 @@
 #include "steamgriddb/ArtworkCache.hpp"
 #include "settings/SettingsScreen.hpp"
 #include "settings/GameOptionsScreen.hpp"
+#include "settings/HeroCustomizeScreen.hpp"
 #include "settings/SteamGridDbPickerScreen.hpp"
 #include "settings/FolderOptionsScreen.hpp"
 #include "settings/AutoThemeScreen.hpp"
@@ -269,6 +270,7 @@ private:
                                        const std::string& query = std::string());
     void clearSteamGridDbArtwork(std::uint64_t titleId,
                                  GameOptionsScreen::ArtworkKind kind);
+    void openHeroCustomize();
     void editSteamGridDbPickerQuery();
     void applySteamGridDbCandidate(const SteamGridDbManager::BrowseResult& browse,
                                    const SteamGridDbManager::Candidate& candidate);
@@ -696,6 +698,7 @@ private:
     std::shared_ptr<SettingsScreen>    m_settings;
     std::shared_ptr<ThemeShopScreen>   m_themeShop;
     std::shared_ptr<GameOptionsScreen> m_gameOptions;
+    std::shared_ptr<HeroCustomizeScreen> m_heroCustomize;
     std::shared_ptr<SteamGridDbPickerScreen> m_steamGridDbPicker;
     std::shared_ptr<FolderOptionsScreen> m_folderOptions;
     std::shared_ptr<AutoThemeScreen>   m_autoThemeScreen;

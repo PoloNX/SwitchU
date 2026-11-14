@@ -646,7 +646,8 @@ bool WiiUMenuApp::hasActiveLeaveCaptureOverlay() const {
         || (m_folderOptions && m_folderOptions->isActive())
         || (m_controllerTest && m_controllerTest->isActive())
         || (m_profileCarousel && m_profileCarousel->isActive())
-        || (m_steamGridDbPicker && m_steamGridDbPicker->isActive());
+        || (m_steamGridDbPicker && m_steamGridDbPicker->isActive())
+        || (m_heroCustomize && m_heroCustomize->isActive());
 }
 
 void WiiUMenuApp::pollDeferredLeaveCapture() {
@@ -1496,10 +1497,6 @@ void WiiUMenuApp::applyHomeOrientationState(bool saveConfig) {
         refreshOpenFolderChrome();
         configureDynamicLineNavigation();
         syncPageIndicator();
-        if (m_steamGridDbBackdrop) {
-            m_steamGridDbBackdrop->setLayoutMode(m_appLayoutMode);
-            showFocusedSteamGridDbArtwork(false);
-        }
     } else if (preserveGridIdx >= 0 && m_grid) {
         if (m_grid->focusGlobalIndex(preserveGridIdx, true)) {
             if (auto* cur = m_grid->focusManager().current())
@@ -1520,6 +1517,13 @@ void WiiUMenuApp::applyHomeOrientationState(bool saveConfig) {
         focusManager().setFocus(m_battery.get());
     } else if (prevFocus && prevFocus->isFocusable() && prevFocus->isVisible()) {
         focusManager().setFocus(prevFocus);
+    }
+
+    // Prefer a warm opposite-orientation crop on rotate (Customize Hero).
+    if (m_steamGridDbBackdrop) {
+        m_steamGridDbBackdrop->setLayoutMode(m_appLayoutMode);
+        m_backdropSyncValid = false;
+        showFocusedSteamGridDbArtwork(false);
     }
 
     // Tile rects moved with the projection — snap the blue ring (no ease from
@@ -1654,6 +1658,7 @@ void WiiUMenuApp::reflowHomeShell() {
     if (m_settings) m_settings->setCanvasSize(canvasW, canvasH);
     if (m_themeShop) m_themeShop->setCanvasSize(canvasW, canvasH);
     if (m_steamGridDbPicker) m_steamGridDbPicker->setCanvasSize(canvasW, canvasH);
+    if (m_heroCustomize) m_heroCustomize->setCanvasSize(canvasW, canvasH);
     if (m_controllerTest) m_controllerTest->setCanvasSize(canvasW, canvasH);
     if (m_profileCarousel) m_profileCarousel->setCanvasSize(canvasW, canvasH);
     if (m_textEntry) m_textEntry->setCanvasSize(canvasW, canvasH);
@@ -7450,6 +7455,39 @@ void WiiUMenuApp::buildGrid() {
         else if (m_settings && m_settings->isActive())
             focusManager().setFocus(m_settings.get());
     });
+    m_heroCustomize = std::make_shared<HeroCustomizeScreen>(
+        app().gpu(), app().renderer());
+    m_heroCustomize->setFont(&m_fontNormal);
+    m_heroCustomize->setSmallFont(&m_fontSmall);
+    m_heroCustomize->setTheme(&m_theme);
+    m_heroCustomize->setCanvasSize(m_homeLayout.logicalW(), m_homeLayout.logicalH());
+    m_heroCustomize->onClosed([this]() {
+        if (m_gameOptions && m_gameOptions->isActive())
+            focusManager().setFocus(m_gameOptions.get());
+    });
+    m_heroCustomize->onSaved([this](std::uint64_t titleId) {
+        if (m_steamGridDbBackdrop)
+            m_steamGridDbBackdrop->invalidateArtworkCaches();
+        showFocusedSteamGridDbArtwork(true);
+        if (m_gameOptions && m_gameOptions->isActive()
+            && m_gameOptionsTitleId == titleId) {
+            std::error_code ec;
+            const bool hasHero = std::filesystem::exists(
+                SteamGridDbManager::heroPath(titleId), ec);
+            ec.clear();
+            const bool hasLogo = std::filesystem::exists(
+                SteamGridDbManager::logoPath(titleId), ec);
+            m_gameOptions->refreshArtworkPresence(
+                hasHero, hasLogo, SteamGridDbManager::hasIcon(titleId),
+                SteamGridDbManager::hasPoster(titleId),
+                SteamGridDbManager::hasGridWide(titleId),
+                SteamGridDbManager::hasHeroPresentation(titleId));
+            m_gameOptions->requestToast(nxui::I18n::instance().tr(
+                "game.steamgriddb.hero_saved", "Hero crop saved."));
+        }
+    });
+    if (m_overlayLayer)
+        m_overlayLayer->addChild(m_heroCustomize);
     m_steamGridDbPicker->onSearch([this]() { editSteamGridDbPickerQuery(); });
     m_steamGridDbPicker->onApply(
         [this](const SteamGridDbManager::BrowseResult& browse,
@@ -9858,8 +9896,13 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
     }
 
     if (!debugTouchBlocked && !textEntryActive && m_gameOptions && m_gameOptions->isActive()
-        && !(m_steamGridDbPicker && m_steamGridDbPicker->isActive()))
+        && !(m_steamGridDbPicker && m_steamGridDbPicker->isActive())
+        && !(m_heroCustomize && m_heroCustomize->isActive()))
         m_gameOptions->handleTouch(app().input());
+
+    if (!debugTouchBlocked && !textEntryActive &&
+        m_heroCustomize && m_heroCustomize->isActive())
+        m_heroCustomize->handleFrame(app().input());
 
     if (!debugTouchBlocked && !textEntryActive &&
         m_steamGridDbPicker && m_steamGridDbPicker->isActive())

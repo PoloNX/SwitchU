@@ -31,12 +31,14 @@ void GameOptionsScreen::setGame(const GameInfo& info) {
 }
 
 void GameOptionsScreen::refreshArtworkPresence(bool hasHero, bool hasLogo, bool hasIcon,
-                                               bool hasPoster, bool hasPosterWide) {
+                                               bool hasPoster, bool hasPosterWide,
+                                               bool hasHeroPresentation) {
     m_game.hasHeroArt = hasHero;
     m_game.hasLogoArt = hasLogo;
     m_game.hasIconArt = hasIcon;
     m_game.hasPosterArt = hasPoster;
     m_game.hasPosterWideArt = hasPosterWide;
+    m_game.hasHeroPresentation = hasHeroPresentation;
     if (!m_active && !m_animating)
         return;
     const int tab = m_tabIndex;
@@ -157,6 +159,26 @@ void GameOptionsScreen::buildTabs() {
                       "game.steamgriddb.hero_desc",
                       "Choose a hero image.",
                       ArtworkKind::Hero, m_game.hasHeroArt);
+    {
+        SettingItem customize;
+        customize.type = ItemType::Action;
+        customize.label = i18n.tr("game.steamgriddb.customize_hero", "Customize Hero");
+        customize.buttonLabel = i18n.tr("button.open", "Open");
+        if (m_game.hasHeroPresentation) {
+            customize.secondaryButtonLabel = i18n.tr("button.clear_x", "×");
+            customize.onSecondary = [this](SettingItem&) {
+                if (m_clearHeroPresentationCb) m_clearHeroPresentationCb();
+            };
+        }
+        customize.description = i18n.tr("game.steamgriddb.customize_hero_desc",
+            "Crop and pan this title's hero for landscape and Flip-Grip.");
+        customize.indentLevel = 1;
+        customize.enabled = m_game.hasHeroArt;
+        customize.onChange = [this](SettingItem&) {
+            if (m_customizeHeroCb) m_customizeHeroCb();
+        };
+        artwork.items.push_back(std::move(customize));
+    }
     addArtworkActions("game.steamgriddb.logo", "Logo",
                       "game.steamgriddb.logo_desc",
                       "Choose a logo.",

@@ -1077,6 +1077,35 @@ void WiiUMenuApp::cancelSteamGridDbApply() {
             "settings.steamgriddb.cancelling", "Cancelling..."), -1.f);
 }
 
+void WiiUMenuApp::openHeroCustomize() {
+    if (!m_heroCustomize || m_gameOptionsTitleId == 0) return;
+    if (!std::filesystem::exists(SteamGridDbManager::heroPath(m_gameOptionsTitleId))) {
+        if (m_gameOptions && m_gameOptions->isActive()) {
+            m_gameOptions->requestToast(nxui::I18n::instance().tr(
+                "game.steamgriddb.hero_missing", "No hero image"));
+        }
+        return;
+    }
+    std::string title;
+    for (const auto& appEntry : m_allApps) {
+        if (appEntry.titleId == m_gameOptionsTitleId) {
+            title = appEntry.title;
+            break;
+        }
+    }
+    if (m_overlayLayer) {
+        m_overlayLayer->removeChild(m_heroCustomize.get());
+        m_overlayLayer->addChild(m_heroCustomize);
+        if (m_lockScreen) {
+            m_overlayLayer->removeChild(m_lockScreen.get());
+            m_overlayLayer->addChild(m_lockScreen);
+        }
+    }
+    m_heroCustomize->setCanvasSize(m_homeLayout.logicalW(), m_homeLayout.logicalH());
+    m_heroCustomize->show(m_gameOptionsTitleId, title);
+    focusManager().setFocus(m_heroCustomize.get());
+}
+
 void WiiUMenuApp::openSteamGridDbPicker(GameOptionsScreen::ArtworkKind kind,
                                         const std::string& requestedQuery) {
     if (!m_gameOptions || m_gameOptionsTitleId == 0) return;
@@ -1240,7 +1269,8 @@ void WiiUMenuApp::clearSteamGridDbArtwork(std::uint64_t titleId,
         m_gameOptions->refreshArtworkPresence(
             hasHero, hasLogo, SteamGridDbManager::hasIcon(titleId),
             SteamGridDbManager::hasPoster(titleId),
-            SteamGridDbManager::hasGridWide(titleId));
+            SteamGridDbManager::hasGridWide(titleId),
+            SteamGridDbManager::hasHeroPresentation(titleId));
         m_gameOptions->requestToast(msg, 2.6f);
     } else if (m_folderOptions && m_folderOptions->isActive())
         m_folderOptions->requestToast(msg, 2.6f);
@@ -1471,7 +1501,8 @@ void WiiUMenuApp::syncSteamGridDb() {
                 m_gameOptions->refreshArtworkPresence(
                     hasHero, hasLogo, SteamGridDbManager::hasIcon(result.titleId),
                     SteamGridDbManager::hasPoster(result.titleId),
-                    SteamGridDbManager::hasGridWide(result.titleId));
+                    SteamGridDbManager::hasGridWide(result.titleId),
+                    SteamGridDbManager::hasHeroPresentation(result.titleId));
                 if (result.kind == SteamGridDbManager::ArtworkKind::Icon
                     && result.titleId < kFolderTitleIdPrefix) {
                     // Load from disk immediately - grid reloadTitle is async and
@@ -4132,6 +4163,8 @@ void WiiUMenuApp::applyTheme() {
         m_themeShop->setTheme(&m_theme);
     if (m_gameOptions)
         m_gameOptions->setTheme(&m_theme);
+    if (m_heroCustomize)
+        m_heroCustomize->setTheme(&m_theme);
     if (m_steamGridDbPicker)
         m_steamGridDbPicker->setTheme(&m_theme);
     if (m_folderOptions)

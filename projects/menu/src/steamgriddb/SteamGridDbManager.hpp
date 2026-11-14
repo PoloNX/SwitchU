@@ -70,6 +70,24 @@ public:
         std::uint64_t revision = 0;
     };
 
+    /// Per-title hero crop for one orientation (HOME landscape vs Flip-Grip).
+    struct HeroPresentation {
+        bool fill = true; // true = cover, false = contain / letterbox
+        float focusX = 0.5f;
+        float focusY = 0.5f;
+        /// Zoom remembered per crop mode (1 = normal, up to ~2.5).
+        float zoomFill = 1.f;
+        float zoomFit = 1.f;
+
+        float activeZoom() const { return fill ? zoomFill : zoomFit; }
+        void setActiveZoom(float z) {
+            if (z < 1.f) z = 1.f;
+            if (z > 2.5f) z = 2.5f;
+            if (fill) zoomFill = z;
+            else zoomFit = z;
+        }
+    };
+
     SteamGridDbManager() = default;
     ~SteamGridDbManager();
 
@@ -108,6 +126,15 @@ public:
     /// Per-title SteamGridDB search string shared by Hero/Logo/Icon/Poster/GridWide.
     static std::string savedSearchQuery(std::uint64_t titleId);
     static void saveSearchQuery(std::uint64_t titleId, const std::string& query);
+
+    /// Hero crop/pan for landscape (false) or portrait Flip-Grip (true).
+    static HeroPresentation heroPresentation(std::uint64_t titleId, bool portrait);
+    static void saveHeroPresentation(std::uint64_t titleId, bool portrait,
+                                     const HeroPresentation& presentation);
+    static bool hasHeroPresentation(std::uint64_t titleId);
+    static void clearHeroPresentation(std::uint64_t titleId);
+    /// Drop hero *.rgba-cache sidecars for this title (source hero.img kept).
+    static int clearHeroDecodeCaches(std::uint64_t titleId);
 
     static constexpr const char* kCacheRoot = "sdmc:/config/SwitchU/steamgriddb";
     static std::string heroPath(std::uint64_t titleId);

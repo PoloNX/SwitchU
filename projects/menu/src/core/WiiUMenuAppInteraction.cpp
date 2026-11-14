@@ -1644,6 +1644,8 @@ void WiiUMenuApp::closeActiveOverlays(bool closeFolders) {
         m_profileCarousel->hide();
     if (m_steamGridDbPicker && m_steamGridDbPicker->isActive())
         m_steamGridDbPicker->hide();
+    if (m_heroCustomize && m_heroCustomize->isActive())
+        m_heroCustomize->hide();
     // Returning from a suspended title must keep the open folder — closing then
     // focusTitle(game) reopens it and re-captures a dimmed frosted backdrop.
     if (closeFolders && m_openFolderId != 0)
@@ -1702,6 +1704,8 @@ nxui::Widget* WiiUMenuApp::focusRoot() {
     if (m_userSelect && m_userSelect->isActive()) return m_userSelect.get();
     if (m_steamGridDbPicker && m_steamGridDbPicker->isActive())
         return m_steamGridDbPicker.get();
+    if (m_heroCustomize && m_heroCustomize->isActive())
+        return m_heroCustomize.get();
     switch (m_navigator.route()) {
         case switchu::navigation::Route::Settings:
             return m_settings ? m_settings.get() : &rootBox();
@@ -2310,6 +2314,7 @@ void WiiUMenuApp::showGameContextMenu(GlossyIcon* icon) {
         game.hasIconArt = SteamGridDbManager::hasIcon(titleId);
         game.hasPosterArt = SteamGridDbManager::hasPoster(titleId);
         game.hasPosterWideArt = SteamGridDbManager::hasGridWide(titleId);
+        game.hasHeroPresentation = SteamGridDbManager::hasHeroPresentation(titleId);
     }
     m_gameOptions->setGame(game);
     m_gameOptions->onMove([this]() {
@@ -2375,6 +2380,31 @@ void WiiUMenuApp::showGameContextMenu(GlossyIcon* icon) {
     });
     m_gameOptions->onClearArtwork([this, titleId](GameOptionsScreen::ArtworkKind kind) {
         clearSteamGridDbArtwork(titleId, kind);
+    });
+    m_gameOptions->onCustomizeHero([this]() { openHeroCustomize(); });
+    m_gameOptions->onClearHeroPresentation([this, titleId]() {
+        SteamGridDbManager::clearHeroPresentation(titleId);
+        SteamGridDbManager::clearHeroDecodeCaches(titleId);
+        if (m_steamGridDbBackdrop)
+            m_steamGridDbBackdrop->invalidateArtworkCaches();
+        showFocusedSteamGridDbArtwork(true);
+        m_audio.playSfx(Sfx::ConfirmPositive);
+        if (m_gameOptions && m_gameOptions->isActive()) {
+            std::error_code ec;
+            const bool hasHero = std::filesystem::exists(
+                SteamGridDbManager::heroPath(titleId), ec);
+            ec.clear();
+            const bool hasLogo = std::filesystem::exists(
+                SteamGridDbManager::logoPath(titleId), ec);
+            m_gameOptions->refreshArtworkPresence(
+                hasHero, hasLogo, SteamGridDbManager::hasIcon(titleId),
+                SteamGridDbManager::hasPoster(titleId),
+                SteamGridDbManager::hasGridWide(titleId),
+                false);
+            m_gameOptions->requestToast(nxui::I18n::instance().tr(
+                "game.steamgriddb.hero_presentation_cleared",
+                "Hero crop reset to default."), 2.6f);
+        }
     });
     m_audio.playSfx(Sfx::ModalShow);
     m_gameOptionsTitleId = titleId;

@@ -293,25 +293,33 @@ void Input::update() {
     }
 
     HidTouchScreenState tState = {};
-    bool hardwareTouching = hidGetTouchScreenStates(&tState, 1) && tState.count > 0;
-    float hardwareTouchX = hardwareTouching ? static_cast<float>(tState.touches[0].x) : m_touchX;
-    float hardwareTouchY = hardwareTouching ? static_cast<float>(tState.touches[0].y) : m_touchY;
-    if (hardwareTouching) {
+    const bool gotTouch = hidGetTouchScreenStates(&tState, 1) > 0;
+    const int rawCount = gotTouch ? static_cast<int>(tState.count) : 0;
+    const int mappedCount = std::clamp(rawCount, 0, kMaxTouchPoints);
+    for (int i = 0; i < mappedCount; ++i) {
+        float hx = static_cast<float>(tState.touches[i].x);
+        float hy = static_cast<float>(tState.touches[i].y);
         if (isPortraitOrientation(m_orientation)) {
             // nwindow identity → panel == FB, then into logical 720x1280.
-            mapFramebufferToLogical(hardwareTouchX, hardwareTouchY, m_orientation);
+            mapFramebufferToLogical(hx, hy, m_orientation);
         } else {
-            mapTouchToFramebuffer(hardwareTouchX, hardwareTouchY, m_orientation);
+            mapTouchToFramebuffer(hx, hy, m_orientation);
         }
+        m_touchPointsX[i] = hx;
+        m_touchPointsY[i] = hy;
+    }
+    for (int i = mappedCount; i < kMaxTouchPoints; ++i) {
+        m_touchPointsX[i] = 0.f;
+        m_touchPointsY[i] = 0.f;
     }
 
     m_wasTouching = m_touching;
-    if (hardwareTouching) {
-        m_touchX = hardwareTouchX;
-        m_touchY = hardwareTouchY;
+    m_touchCount = mappedCount;
+    m_touching = mappedCount > 0;
+    if (m_touching) {
+        m_touchX = m_touchPointsX[0];
+        m_touchY = m_touchPointsY[0];
     }
-
-    m_touching = hardwareTouching;
 
     m_touchDown = (m_touching && !m_wasTouching);
     m_touchUp   = (!m_touching && m_wasTouching);
@@ -321,6 +329,18 @@ void Input::update() {
         m_touchStartY = m_touchY;
         m_touchStartTick = armGetSystemTick();
     }
+}
+
+float Input::touchPointX(int index) const {
+    if (index < 0 || index >= m_touchCount)
+        return m_touchX;
+    return m_touchPointsX[index];
+}
+
+float Input::touchPointY(int index) const {
+    if (index < 0 || index >= m_touchCount)
+        return m_touchY;
+    return m_touchPointsY[index];
 }
 
 float Input::touchDuration() const {

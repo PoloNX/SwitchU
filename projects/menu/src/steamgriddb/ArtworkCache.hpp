@@ -14,10 +14,12 @@ struct DecodedImage {
 
 // focusX/focusY: cover-crop anchor in [0,1] (0.5 = center). Values <0.5 bias
 // toward the left/top of the source when the fill crop has leftover on that axis.
+// zoom >= 1 multiplies the fill/fit scale (1 = normal).
 DecodedImage decode(const std::string& source, int outputWidth, int outputHeight,
-                    bool fill, float focusX = 0.5f, float focusY = 0.5f);
+                    bool fill, float focusX = 0.5f, float focusY = 0.5f,
+                    float zoom = 1.f);
 bool prepare(const std::string& source, int outputWidth, int outputHeight, bool fill,
-             float focusX = 0.5f, float focusY = 0.5f);
+             float focusX = 0.5f, float focusY = 0.5f, float zoom = 1.f);
 void remove(const std::string& source, int outputWidth, int outputHeight);
 
 // Scale to fit inside maxWidth×maxHeight (no letterbox). Cache key is

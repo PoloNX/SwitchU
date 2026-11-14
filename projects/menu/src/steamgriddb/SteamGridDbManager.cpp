@@ -779,6 +779,94 @@ void SteamGridDbManager::saveSearchQuery(std::uint64_t titleId, const std::strin
     writeMetadata(titleId, metadata);
 }
 
+SteamGridDbManager::HeroPresentation SteamGridDbManager::heroPresentation(
+    std::uint64_t titleId, bool portrait) {
+    HeroPresentation out;
+    if (titleId == 0) return out;
+    const nlohmann::json metadata = readMetadata(titleId);
+    const auto rootIt = metadata.find("heroPresentation");
+    if (rootIt == metadata.end() || !rootIt->is_object())
+        return out;
+    const char* key = portrait ? "portrait" : "landscape";
+    const auto slotIt = rootIt->find(key);
+    if (slotIt == rootIt->end() || !slotIt->is_object())
+        return out;
+    const std::string fit = slotIt->value("fit", std::string("fill"));
+    out.fill = fit != "fit" && fit != "contain";
+    out.focusX = std::clamp(slotIt->value("focusX", 0.5f), 0.f, 1.f);
+    out.focusY = std::clamp(slotIt->value("focusY", 0.5f), 0.f, 1.f);
+    const float legacyZoom = std::clamp(slotIt->value("zoom", 1.f), 1.f, 2.5f);
+    out.zoomFill = std::clamp(slotIt->value("zoomFill", legacyZoom), 1.f, 2.5f);
+    out.zoomFit = std::clamp(slotIt->value("zoomFit", 1.f), 1.f, 2.5f);
+    return out;
+}
+
+void SteamGridDbManager::saveHeroPresentation(std::uint64_t titleId, bool portrait,
+                                              const HeroPresentation& presentation) {
+    if (titleId == 0) return;
+    nlohmann::json metadata = readMetadata(titleId);
+    metadata["titleId"] = titleId;
+    nlohmann::json& root = metadata["heroPresentation"];
+    if (!root.is_object())
+        root = nlohmann::json::object();
+    nlohmann::json slot;
+    slot["fit"] = presentation.fill ? "fill" : "fit";
+    slot["focusX"] = std::clamp(presentation.focusX, 0.f, 1.f);
+    slot["focusY"] = std::clamp(presentation.focusY, 0.f, 1.f);
+    slot["zoomFill"] = std::clamp(presentation.zoomFill, 1.f, 2.5f);
+    slot["zoomFit"] = std::clamp(presentation.zoomFit, 1.f, 2.5f);
+    root[portrait ? "portrait" : "landscape"] = std::move(slot);
+    writeMetadata(titleId, metadata);
+}
+
+bool SteamGridDbManager::hasHeroPresentation(std::uint64_t titleId) {
+    if (titleId == 0) return false;
+    const nlohmann::json metadata = readMetadata(titleId);
+    const auto rootIt = metadata.find("heroPresentation");
+    return rootIt != metadata.end() && rootIt->is_object() && !rootIt->empty();
+}
+
+void SteamGridDbManager::clearHeroPresentation(std::uint64_t titleId) {
+    if (titleId == 0) return;
+    nlohmann::json metadata = readMetadata(titleId);
+    if (!metadata.contains("heroPresentation"))
+        return;
+    metadata.erase("heroPresentation");
+    writeMetadata(titleId, metadata);
+}
+
+int SteamGridDbManager::clearHeroDecodeCaches(std::uint64_t titleId) {
+    if (titleId == 0) return 0;
+    std::error_code ec;
+    const std::string dir = titleDirectory(titleId);
+    if (!std::filesystem::exists(dir, ec))
+        return 0;
+    const std::string hero = heroPath(titleId);
+    const std::string heroName = std::filesystem::path(hero).filename().string();
+    int removed = 0;
+    for (std::filesystem::directory_iterator it(dir, ec), end; !ec && it != end;
+         it.increment(ec)) {
+        if (ec) break;
+        if (!it->is_regular_file(ec)) {
+            ec.clear();
+            continue;
+        }
+        const std::string name = it->path().filename().string();
+        if (name.find(".rgba-cache") == std::string::npos) {
+            ec.clear();
+            continue;
+        }
+        if (name.rfind(heroName, 0) != 0) {
+            ec.clear();
+            continue;
+        }
+        if (std::filesystem::remove(it->path(), ec))
+            ++removed;
+        ec.clear();
+    }
+    return removed;
+}
+
 bool SteamGridDbManager::clearArtwork(std::uint64_t titleId, ArtworkKind kind) {
     if (titleId == 0)
         return false;
