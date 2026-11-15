@@ -91,8 +91,14 @@ void GlassPanel::onRender(Renderer& ren) {
         ren.drawRoundedRect(r, m_backingColor.withAlpha(op), m_radius);
     }
 
+    // Portrait projects logical→FB; liquid-glass backdrop UVs assume logical==FB
+    // and smear (stretched stripes). Frosted inset stays correct without capture.
+    const bool portraitLayout =
+        ren.layoutOrientation() == DisplayOrientation::Rot90
+        || ren.layoutOrientation() == DisplayOrientation::Rot270;
     const bool useShaderGlass = m_liquidGlassEnabled
         && m_liquidGlassShaderEnabled
+        && !portraitLayout
         && ren.gpu().offscreenReady();
     const bool needsBackdrop = (m_blurEnabled || useShaderGlass) && op > 0.01f;
     if (needsBackdrop) {

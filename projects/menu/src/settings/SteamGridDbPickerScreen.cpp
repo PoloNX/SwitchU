@@ -15,10 +15,9 @@
 #include <vector>
 
 namespace {
-// Panel ends at y=682; footer hints sit near 651 — six rows fit without overflow.
+// Landscape game list: six rows fit without overflowing the panel footer.
 constexpr int kGameListVisible = 6;
-constexpr float kContentTop = 236.f;
-constexpr float kGameListClipBottom = 640.f;
+constexpr int kPortraitGameListVisible = 10;
 
 std::vector<std::string> wrapLines(nxui::Font* font, const std::string& text,
                                    float maxWidth, float scale) {
@@ -77,7 +76,7 @@ SteamGridDbPickerScreen::SteamGridDbPickerScreen(nxui::GpuDevice& gpu,
                                                  nxui::Renderer& renderer,
                                                  nxui::ThreadPool& threadPool)
     : m_gpu(gpu), m_renderer(renderer), m_threadPool(threadPool) {
-    setRect({0.f, 0.f, 1280.f, 720.f});
+    setRect({0.f, 0.f, m_canvasW, m_canvasH});
     setVisible(false);
     setFocusable(true);
     setFrameworkTouchEnabled(false);
@@ -114,13 +113,35 @@ void SteamGridDbPickerScreen::adjustZoom(int delta) {
     schedulePreviews();
 }
 
+void SteamGridDbPickerScreen::setCanvasSize(float width, float height) {
+    m_canvasW = width > 1.f ? width : 1280.f;
+    m_canvasH = height > 1.f ? height : 720.f;
+    setRect({0.f, 0.f, m_canvasW, m_canvasH});
+}
+
+nxui::Rect SteamGridDbPickerScreen::panelRect() const {
+    if (isPortraitCanvas()) {
+        constexpr float kMarginX = 16.f;
+        constexpr float kMarginY = 28.f;
+        return {kMarginX, kMarginY,
+                m_canvasW - kMarginX * 2.f,
+                m_canvasH - kMarginY * 2.f};
+    }
+    return {70.f, 38.f, 1140.f, 644.f};
+}
+
+float SteamGridDbPickerScreen::contentTop() const {
+    // Portrait stacks Search + "X Change name" — leave room under the header.
+    return isPortraitCanvas() ? panelRect().y + 248.f : 220.f;
+}
+
+float SteamGridDbPickerScreen::footerY() const {
+    const nxui::Rect panel = panelRect();
+    return panel.bottom() - (isPortraitCanvas() ? 42.f : 31.f);
+}
+
 namespace {
-constexpr float kPickerPanelX = 70.f;
-constexpr float kPickerPanelY = 38.f;
-constexpr float kPickerPanelW = 1140.f;
-constexpr float kPickerPanelH = 644.f;
 constexpr float kPickerGridPadX = 28.f;
-constexpr float kPickerGridTop = 220.f;
 constexpr float kPickerGridBottomPad = 58.f; // leave room for footer hints
 
 float zoomScale(int level) {
@@ -140,7 +161,8 @@ void SteamGridDbPickerScreen::previewCanvasSize(int& outW, int& outH) const {
     if (m_result.kind == Kind::Poster) {
         outW = std::max(96, (int)(180.f * zoom));
         outH = std::max(144, (int)(270.f * zoom));
-    } else if (m_result.kind == Kind::Icon) {
+    } else if (m_result.kind == Kind::Icon
+               || m_result.kind == Kind::GridSquare) {
         outW = outH = std::max(96, (int)(180.f * zoom));
     } else if (m_result.kind == Kind::Logo) {
         outW = std::max(160, (int)(280.f * zoom));
@@ -158,30 +180,50 @@ void SteamGridDbPickerScreen::cardMetrics(float& outW, float& outH, float& outGa
     using Kind = SteamGridDbManager::ArtworkKind;
     outGapX = 14.f;
     outGapY = 12.f;
+    const bool portrait = isPortraitCanvas();
     if (m_result.kind == Kind::Poster) {
-        outColumns = m_zoomLevel >= 4 ? 2 : (m_zoomLevel >= 3 ? 3 : 4);
-        outRows = m_zoomLevel >= 3 ? 1 : 2;
+        outColumns = portrait
+            ? (m_zoomLevel >= 3 ? 2 : 3)
+            : (m_zoomLevel >= 4 ? 2 : (m_zoomLevel >= 3 ? 3 : 4));
+        outRows = portrait
+            ? (m_zoomLevel >= 3 ? 2 : 3)
+            : (m_zoomLevel >= 3 ? 1 : 2);
         outW = 168.f * zoom;
         outH = 252.f * zoom;
-    } else if (m_result.kind == Kind::Icon) {
-        outColumns = m_zoomLevel >= 4 ? 2 : (m_zoomLevel >= 3 ? 3 : 4);
-        outRows = m_zoomLevel >= 3 ? 2 : 3;
+    } else if (m_result.kind == Kind::Icon
+               || m_result.kind == Kind::GridSquare) {
+        outColumns = portrait
+            ? (m_zoomLevel >= 3 ? 2 : 3)
+            : (m_zoomLevel >= 4 ? 2 : (m_zoomLevel >= 3 ? 3 : 4));
+        outRows = portrait
+            ? (m_zoomLevel >= 3 ? 3 : 4)
+            : (m_zoomLevel >= 3 ? 2 : 3);
         outW = outH = 168.f * zoom;
     } else if (m_result.kind == Kind::Logo) {
-        outColumns = m_zoomLevel >= 4 ? 2 : (m_zoomLevel >= 3 ? 3 : 4);
-        outRows = m_zoomLevel >= 3 ? 2 : 3;
+        outColumns = portrait
+            ? (m_zoomLevel >= 3 ? 1 : 2)
+            : (m_zoomLevel >= 4 ? 2 : (m_zoomLevel >= 3 ? 3 : 4));
+        outRows = portrait
+            ? (m_zoomLevel >= 3 ? 3 : 4)
+            : (m_zoomLevel >= 3 ? 2 : 3);
         outW = 250.f * zoom;
         outH = 110.f * zoom;
     } else {
-        outColumns = m_zoomLevel >= 4 ? 2 : (m_zoomLevel >= 3 ? 3 : 4);
-        outRows = m_zoomLevel >= 3 ? 2 : 3;
+        outColumns = portrait
+            ? (m_zoomLevel >= 3 ? 1 : 2)
+            : (m_zoomLevel >= 4 ? 2 : (m_zoomLevel >= 3 ? 3 : 4));
+        outRows = portrait
+            ? (m_zoomLevel >= 3 ? 3 : 4)
+            : (m_zoomLevel >= 3 ? 2 : 3);
         outW = 250.f * zoom;
         outH = 130.f * zoom;
     }
 
     // Fit inside the panel so zoom never spills past the rounded window.
-    const float availW = kPickerPanelW - kPickerGridPadX * 2.f;
-    const float availH = (kPickerPanelY + kPickerPanelH - kPickerGridBottomPad) - kPickerGridTop;
+    const nxui::Rect panel = panelRect();
+    const float gridTop = contentTop();
+    const float availW = panel.width - kPickerGridPadX * 2.f;
+    const float availH = (panel.bottom() - kPickerGridBottomPad) - gridTop;
     if (outColumns > 1)
         outW = std::min(outW, (availW - outGapX * (outColumns - 1)) / outColumns);
     else
@@ -222,10 +264,10 @@ void SteamGridDbPickerScreen::showLoading(std::uint64_t titleId,
         slot.failed = false;
     }
     // Keep title/query/kind for the loading header; clear candidates so we do
-    // not flash stale artwork while a new search runs.
+    // not flash stale artwork while a new search runs. Always replace the
+    // search string (even when empty) so a prior title's query cannot leak.
     const auto keptMatches = m_gameMatches;
-    if (!query.empty())
-        m_searchQuery = query;
+    m_searchQuery = query;
     m_result = {};
     m_result.titleId = titleId;
     m_result.title = title;
@@ -484,6 +526,7 @@ std::string SteamGridDbPickerScreen::kindLabel() const {
          : m_result.kind == SteamGridDbManager::ArtworkKind::Logo ? "Logo"
          : m_result.kind == SteamGridDbManager::ArtworkKind::Poster ? "Poster"
          : m_result.kind == SteamGridDbManager::ArtworkKind::GridWide ? "Poster wide"
+         : m_result.kind == SteamGridDbManager::ArtworkKind::GridSquare ? "Square cover"
          : "Icon";
 }
 
@@ -498,49 +541,67 @@ int SteamGridDbPickerScreen::artworkCount() const {
 void SteamGridDbPickerScreen::onRender(nxui::Renderer& renderer) {
     if (!m_active || !m_theme) return;
     renderer.drawRect(rect(), nxui::Color(0.f, 0.f, 0.f, 0.62f));
-    const nxui::Rect panel{70.f, 38.f, 1140.f, 644.f};
+    const nxui::Rect panel = panelRect();
+    const float textX = panel.x + 38.f;
+    const float titleY = panel.y + 24.f;
+    const float gridTop = contentTop();
+    const float footY = footerY();
     renderer.drawRoundedRect(panel, m_theme->panelBase.withAlpha(0.98f), 28.f);
     renderer.drawRoundedRectOutline(panel, m_theme->panelBorder.withAlpha(0.45f), 28.f, 1.5f);
 
     nxui::Font* titleFont = m_font ? m_font : m_smallFont;
     nxui::Font* bodyFont = m_smallFont ? m_smallFont : m_font;
     if (titleFont) {
-        renderer.drawText("SteamGridDB - " + kindLabel(), {108.f, 62.f}, titleFont,
-                          m_theme->textPrimary, 1.f);
+        renderer.drawText("SteamGridDB - " + kindLabel(), {textX, titleY}, titleFont,
+                          m_theme->textPrimary, isPortraitCanvas() ? 0.92f : 1.f);
         if (!m_result.title.empty())
-            renderer.drawText(m_result.title, {108.f, 104.f}, titleFont,
+            renderer.drawText(m_result.title, {textX, titleY + 42.f}, titleFont,
                               m_theme->textSecondary, 0.82f);
     }
     if (bodyFont) {
         // Keep search controls at near-native small-font size (old 0.72 scale
         // made the query / Change name row almost unreadable on TV).
         const std::string searchLine = "Search  " + m_searchQuery;
-        renderer.drawText(searchLine, {108.f, 148.f}, bodyFont,
+        const float searchY = titleY + 86.f;
+        renderer.drawText(searchLine, {textX, searchY}, bodyFont,
                           m_theme->textPrimary, 1.f);
         const float searchW = bodyFont->measure(searchLine).x;
-        renderer.drawText("X  Change name", {108.f + searchW + 28.f, 148.f}, bodyFont,
-                          m_theme->cursorNormal, 1.f);
+        // Portrait is too narrow for "Search <long title>" + "X Change name"
+        // on one row — always stack the hint under the query.
+        if (isPortraitCanvas()) {
+            renderer.drawText("X  Change name", {textX, searchY + 36.f}, bodyFont,
+                              m_theme->cursorNormal, 1.f);
+        } else {
+            renderer.drawText("X  Change name", {textX + searchW + 28.f, searchY}, bodyFont,
+                              m_theme->cursorNormal, 1.f);
+        }
     }
 
     const bool showStatusPanel = !m_loading && !m_pickingGame && !m_result.success
         && m_result.candidates.empty() && m_gameMatches.empty() && !m_message.empty();
+    const float messageY = titleY + (isPortraitCanvas() ? 162.f : 126.f);
     if (!showStatusPanel && bodyFont && !m_message.empty() && !m_loading) {
-        renderer.drawText(m_message, {108.f, 188.f}, bodyFont,
+        renderer.drawText(m_message, {textX, messageY}, bodyFont,
                           m_theme->textSecondary, 0.95f);
     }
 
     if (m_loading) {
         const float pulse = 0.45f + 0.35f * std::sin(m_spinner * 5.f);
-        renderer.drawRoundedRect({570.f, 340.f, 140.f, 12.f},
+        renderer.drawRoundedRect({panel.x + (panel.width - 140.f) * 0.5f,
+                                  panel.y + panel.height * 0.45f, 140.f, 12.f},
                                  m_theme->cursorNormal.withAlpha(pulse), 6.f);
         if (bodyFont && !m_message.empty())
-            renderer.drawText(m_message, {108.f, 188.f}, bodyFont,
+            renderer.drawText(m_message, {textX, messageY}, bodyFont,
                               m_theme->textSecondary, 0.95f);
         return;
     }
 
     if (showStatusPanel) {
-        const nxui::Rect status{170.f, 250.f, 940.f, 300.f};
+        const nxui::Rect status{
+            panel.x + (isPortraitCanvas() ? 24.f : 100.f),
+            panel.y + (isPortraitCanvas() ? 240.f : 212.f),
+            panel.width - (isPortraitCanvas() ? 48.f : 200.f),
+            isPortraitCanvas() ? 360.f : 300.f};
         const bool transport = looksLikeTransportError(m_message);
         const nxui::Color fill = transport
             ? nxui::Color(0.42f, 0.18f, 0.14f, 0.55f)
@@ -577,20 +638,25 @@ void SteamGridDbPickerScreen::onRender(nxui::Renderer& renderer) {
 
     if (m_pickingGame) {
         const int count = gameListCount();
-        const int windowStart = std::max(0, std::min(m_selected - kGameListVisible / 2,
-                                                     std::max(0, count - kGameListVisible)));
+        const int visible = isPortraitCanvas() ? kPortraitGameListVisible : kGameListVisible;
+        const int windowStart = std::max(0, std::min(m_selected - visible / 2,
+                                                     std::max(0, count - visible)));
         constexpr float rowH = 52.f;
         constexpr float rowGap = 8.f;
+        const float listTop = gridTop;
+        const float listBottom = footY - 16.f;
         const nxui::Rect listClip{
-            kPickerPanelX + 12.f,
-            kContentTop - 4.f,
-            kPickerPanelW - 24.f,
-            std::max(0.f, kGameListClipBottom - (kContentTop - 4.f))};
+            panel.x + 12.f,
+            listTop - 4.f,
+            panel.width - 24.f,
+            std::max(0.f, listBottom - (listTop - 4.f))};
         renderer.pushClipRect(listClip);
-        for (int local = 0; local < kGameListVisible; ++local) {
+        for (int local = 0; local < visible; ++local) {
             const int index = windowStart + local;
-            const nxui::Rect row{105.f, kContentTop + local * (rowH + rowGap), 1070.f, rowH};
-            m_visibleRects[(size_t)local] = row;
+            const nxui::Rect row{panel.x + 35.f, listTop + local * (rowH + rowGap),
+                                 panel.width - 70.f, rowH};
+            if (local < (int)m_visibleRects.size())
+                m_visibleRects[(size_t)local] = row;
             if (index >= count) continue;
             const bool focused = index == m_selected;
             renderer.drawRoundedRect(row,
@@ -600,14 +666,14 @@ void SteamGridDbPickerScreen::onRender(nxui::Renderer& renderer) {
                                                 16.f, 3.5f);
             if (bodyFont) {
                 const auto& match = m_gameMatches[(size_t)index];
-                renderer.drawText(match.name, {128.f, row.y + 14.f}, bodyFont,
+                renderer.drawText(match.name, {row.x + 23.f, row.y + 14.f}, bodyFont,
                                   m_theme->textPrimary, 1.f);
             }
         }
         renderer.popClipRect();
         if (bodyFont && count > 0) {
             renderer.drawText("A Choose game   B Back   X Search",
-                              {108.f, 651.f}, bodyFont, m_theme->textSecondary, 0.95f);
+                              {textX, footY}, bodyFont, m_theme->textSecondary, 0.95f);
         }
         return;
     }
@@ -621,16 +687,16 @@ void SteamGridDbPickerScreen::onRender(nxui::Renderer& renderer) {
     const int start = page * pageSize;
     const float gridW = columns * cardW + (columns - 1) * gapX;
     const float gridH = rows * cardH + (rows - 1) * gapY;
-    const float gridLeft = kPickerPanelX + kPickerGridPadX;
-    const float gridAvailW = kPickerPanelW - kPickerGridPadX * 2.f;
+    const float gridLeft = panel.x + kPickerGridPadX;
+    const float gridAvailW = panel.width - kPickerGridPadX * 2.f;
     const float originX = gridLeft + std::max(0.f, (gridAvailW - gridW) * 0.5f);
-    const float originY = kPickerGridTop;
+    const float originY = gridTop;
     // Mask the gallery to the panel interior (focus ring included).
     const nxui::Rect clip{
-        kPickerPanelX + 12.f,
-        kPickerGridTop - 8.f,
-        kPickerPanelW - 24.f,
-        (kPickerPanelY + kPickerPanelH - kPickerGridBottomPad) - (kPickerGridTop - 8.f)};
+        panel.x + 12.f,
+        gridTop - 8.f,
+        panel.width - 24.f,
+        (panel.bottom() - kPickerGridBottomPad) - (gridTop - 8.f)};
     renderer.pushClipRect(clip);
     for (int local = 0; local < pageSize; ++local) {
         const int index = start + local;
@@ -662,7 +728,8 @@ void SteamGridDbPickerScreen::onRender(nxui::Renderer& renderer) {
                           + "   X Search   ZL/ZR Zoom "
                           + std::to_string(m_zoomLevel + 1) + "/5   Page "
                           + std::to_string(page + 1) + "/" + std::to_string(pages),
-                          {108.f, 651.f}, bodyFont, m_theme->textSecondary, 0.95f);
+                          {textX, footY}, bodyFont, m_theme->textSecondary,
+                          isPortraitCanvas() ? 0.82f : 0.95f);
     }
 }
 

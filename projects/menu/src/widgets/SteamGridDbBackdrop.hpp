@@ -35,6 +35,9 @@ public:
     // alone keeps GPU textures alive for crossfade reuse.
     void releaseGpuArtwork();
     void setLayoutMode(AppLayoutMode mode) { m_layoutMode = mode; }
+    // Flip-Grip / Rot90/270: decode heroes onto a tall canvas.
+    void setPortraitBackdrop(bool portrait);
+    bool portraitBackdrop() const { return m_portraitBackdrop; }
     // True when a hero texture is on-screen at meaningful opacity.
     bool hasDisplayedHero() const;
     // Average relative luminance of the current hero [0..1], or <0 if none.
@@ -48,7 +51,11 @@ public:
     void setPreloadMinInterval(float seconds);
     void setPreloadPaused(bool paused);
     bool isArtworkBusy() const;
+    // Hero + logo from the same title (normal title focus).
     void showTitle(std::uint64_t titleId, bool forceReload = false);
+    // Folder override/fallback: hero from one id, logo from another (0 = none).
+    void showArtwork(std::uint64_t heroTitleId, std::uint64_t logoTitleId,
+                     bool forceReload = false);
 
 protected:
     void onUpdate(float dt) override;
@@ -58,7 +65,9 @@ private:
     struct ArtworkSet {
         nxui::Texture hero;
         nxui::Texture logo;
-        std::uint64_t titleId = 0;
+        std::uint64_t titleId = 0; // hero source id (cache / presentation key)
+        std::uint64_t logoTitleId = 0;
+        bool portrait = false; // which Customize Hero slot this texture was baked for
         bool hasHero = false;
         bool hasLogo = false;
         float heroLuminance = -1.f;
@@ -73,10 +82,13 @@ private:
     struct DecodedArtwork {
         DecodedImage hero;
         DecodedImage logo;
-        std::uint64_t titleId = 0;
+        std::uint64_t titleId = 0; // hero source id
+        std::uint64_t logoTitleId = 0;
         std::uint64_t generation = 0;
         long decodeMilliseconds = 0;
         float heroLuminance = -1.f;
+        bool portrait = false;
+        bool logoOnly = false; // keep on-screen hero; replace logo only
     };
 
     struct DecodeState {
@@ -90,16 +102,26 @@ private:
     };
 
     static DecodedImage decodeImage(const std::string& path, int outputWidth,
-                                    int outputHeight, bool fill);
+                                    int outputHeight, bool fill,
+                                    float focusX = 0.5f, float focusY = 0.5f,
+                                    float zoom = 1.f);
     static void blurHero(DecodedImage& image, int amount);
     static float sampleLuminance(const DecodedImage& image);
-    static nxui::Rect fillRect(const nxui::Texture& texture, const nxui::Rect& area);
+    static nxui::Rect fillRect(const nxui::Texture& texture, const nxui::Rect& area,
+                               float focusX = 0.5f, float focusY = 0.5f);
     static nxui::Rect containRect(const nxui::Texture& texture, const nxui::Rect& area);
     bool useFullHeroOpacity() const;
     void drawSet(nxui::Renderer& renderer, const ArtworkSet& set, float alpha) const;
-    void startPendingDecode(std::uint64_t titleId);
+    void startPendingDecode(std::uint64_t heroTitleId, std::uint64_t logoTitleId,
+                            bool portrait, bool logoOnly = false);
     void beginCrossfade(int nextSet, std::uint64_t titleId);
     bool hasGpuArtwork(std::uint64_t titleId) const;
+    bool hasGpuArtwork(std::uint64_t titleId, bool portrait) const;
+    bool hasDecodedArtwork(std::uint64_t titleId, bool portrait) const;
+    // Try to apply the new orientation from warm GPU/CPU caches. Returns true
+    // when the visible hero already matches (or is uploading) so the caller
+    // does not need a forced showTitle reload.
+    bool tryApplyOrientationCaches(std::uint64_t titleId);
 
     nxui::GpuDevice& m_gpu;
     nxui::Renderer& m_renderer;
@@ -107,7 +129,8 @@ private:
     std::array<ArtworkSet, 2> m_sets;
     int m_current = 0;
     bool m_enabled = true;
-    std::uint64_t m_requestedTitleId = 0;
+    std::uint64_t m_requestedTitleId = 0; // hero source
+    std::uint64_t m_requestedLogoTitleId = 0;
     std::uint64_t m_requestGeneration = 0;
     std::uint64_t m_appliedGeneration = 0;
     float m_decodeDebounce = 0.f;
@@ -124,16 +147,21 @@ private:
     float m_preloadGapSec = 0.f;
     bool m_preloadPaused = false;
     AppLayoutMode m_layoutMode = AppLayoutMode::Grid;
+    bool m_portraitBackdrop = false;
     // Band the logo is centred in while single-row mode is active. The app
     // raises it above the folder title bubble when a folder is open.
     nxui::Rect m_logoArea{370.f, 149.f, 540.f, 150.f};
     bool m_showLogo = true;
     bool m_showPreviousDuringCrossfade = false;
+    // After Flip-Grip / canvas aspect change: keep the last hero on screen
+    // until the new-size decode uploads (avoids a theme-background hole).
+    bool m_holdDisplayedHero = false;
     int m_heroW = 640;
     int m_heroH = 360;
     int m_heroBlur = 0;
     nxui::AnimatedFloat m_fade{1.f};
     nxui::AnimatedFloat m_artworkOpacity{1.f};
-    static constexpr std::size_t kDecodedCacheLimit = 2;
+    // Room for opposite-orientation warm of the focused title + a neighbour.
+    static constexpr std::size_t kDecodedCacheLimit = 3;
     static constexpr std::size_t kMissingCacheLimit = 64;
 };

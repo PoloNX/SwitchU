@@ -6,6 +6,7 @@
 #include <nxui/core/Animation.hpp>
 #include <nxui/widgets/GlassWidget.hpp>
 #include "widgets/SelectionCursor.hpp"
+#include <cstdint>
 #include <string>
 #include <vector>
 #include <functional>
@@ -44,6 +45,33 @@ public:
     void setSmallFont(nxui::Font* f)  { m_smallFont = f; }
     void setTheme(const nxui::Theme* t);
     void setInstantCursorMotion(bool instant) { m_focusCursor.setInstantMotion(instant); }
+    // Logical canvas (1280×720 landscape, 720×1280 portrait). Settings /
+    // Game/Folder options use a top tab rail + full-width pages when portrait.
+    void setCanvasSize(float width, float height);
+
+    // Compact glyphs for portrait Settings (icon-only top rail).
+    enum class TabGlyph : std::uint8_t {
+        None = 0,
+        System,
+        Accessibility,
+        Storage,
+        Audio,
+        Display,
+        Internet,
+        SteamGridDb,
+        Controllers,
+        Bluetooth,
+        Sleep,
+        About,
+        // Theme Shop portrait rail (peer icons, including inset shops).
+        Themes,
+        ThemeShop,
+        ThemeIcons,
+        IconShop,
+        Sounds,
+        Interface,
+        LockScreen,
+    };
 
     virtual void show();
     void hide();
@@ -200,6 +228,7 @@ public:
 
     struct Tab {
         std::string              name;
+        TabGlyph                 glyph = TabGlyph::None;
         std::vector<SettingItem> items;
         std::function<void(Tab&, TabbedOverlayScreen&)> onUpdate;
     };
@@ -224,16 +253,41 @@ protected:
 
     // Optional nested row under a tab (e.g. Theme Shop "Shop" under Themes/Icons).
     virtual float tabBranchExtraHeight(int tabIndex) const { (void)tabIndex; return 0.f; }
+    // Portrait top rail: extra strip under the parent row for inset shop children.
+    virtual float topTabRailBranchStripHeight() const { return 0.f; }
     virtual void drawTabBranch(nxui::Renderer&, int tabIndex, const nxui::Rect& branchRect, float opacity) {
         (void)tabIndex; (void)branchRect; (void)opacity;
     }
     virtual bool tabBranchConsumesFocus() const { return false; }
+    virtual bool tabBranchHitTest(float x, float y, int& outTabIndex) const {
+        (void)x; (void)y; (void)outTabIndex;
+        return false;
+    }
     virtual bool tabFocusCursorRect(nxui::Rect& outRect) const { (void)outRect; return false; }
     virtual void onTabRailParentActivated(int tabIndex) { (void)tabIndex; }
     virtual bool onTabRailBranchActivated(int parentTabIndex) {
         (void)parentTabIndex;
         return false;
     }
+    // Portrait icon rails may expose more slots than m_tabs (Theme Shop + Icon Shop).
+    virtual int topRailSlotCount() const {
+        return std::max(1, (int)m_tabs.size());
+    }
+    virtual TabGlyph topRailSlotGlyph(int slot) const {
+        if (slot < 0 || slot >= (int)m_tabs.size())
+            return TabGlyph::None;
+        return m_tabs[(size_t)slot].glyph;
+    }
+    virtual std::string topRailSlotTitle(int slot) const {
+        if (slot < 0 || slot >= (int)m_tabs.size())
+            return {};
+        return m_tabs[(size_t)slot].name;
+    }
+    virtual int topRailFocusIndex() const { return m_tabIndex; }
+    virtual std::string selectedOverlayTabTitle() const {
+        return topRailSlotTitle(topRailFocusIndex());
+    }
+    virtual void activateTopRailSlot(int slot);
     float tabRailContentHeight() const;
 
     void onRender(nxui::Renderer& ren) override;
@@ -302,6 +356,7 @@ protected:
     static constexpr float kRowHeight     = 68.f;
     static constexpr float kSectionHeight = 48.f;
     static constexpr float kTabRowHeight  = 58.f;
+    static constexpr float kTabRailInset  = 14.f;
     static constexpr float kPanelRadius   = 26.f;
     static constexpr float kInnerPad      = 30.f;
 
@@ -317,6 +372,37 @@ protected:
     nxui::Rect contentRect() const;
     nxui::Rect contentRect(const nxui::Rect& panel) const;
     float      contentTotalHeight() const;
+    bool isPortraitCanvas() const {
+        return m_canvasH > m_canvasW + 0.5f;
+    }
+    // Portrait Settings / Game / Folder / Theme Shop: horizontal tabs under the header.
+    bool useTopTabRail() const {
+        return isPortraitCanvas()
+            && (m_mode == ScreenMode::Settings
+                || m_mode == ScreenMode::ThemeShop
+                || m_mode == ScreenMode::GameOptions
+                || m_mode == ScreenMode::FolderOptions);
+    }
+    // Portrait Settings / Theme Shop: icon glyphs + title pill under the rail.
+    bool useIconOnlyTopTabs() const {
+        return useTopTabRail()
+            && (m_mode == ScreenMode::Settings || m_mode == ScreenMode::ThemeShop);
+    }
+    // L/R cycle tabs in portrait and landscape. Theme Shop keeps ZL/ZR for pages.
+    bool shoulderCyclesTopTabs() const {
+        return m_mode == ScreenMode::Settings
+            || m_mode == ScreenMode::ThemeShop
+            || m_mode == ScreenMode::GameOptions
+            || m_mode == ScreenMode::FolderOptions;
+    }
+    float selectedTabTitleHeight() const {
+        // Glass title chip + padding above the settings page.
+        return useIconOnlyTopTabs() ? 62.f : 0.f;
+    }
+    void layoutTabChildren(const nxui::Rect& tr);
+    void applyCanvasChrome();
+    float m_canvasW = 1280.f;
+    float m_canvasH = 720.f;
 
     void drawBackground(nxui::Renderer& ren, const nxui::Rect& panel, float opacity);
     void drawTabs(nxui::Renderer& ren, const nxui::Rect& panel, float opacity);

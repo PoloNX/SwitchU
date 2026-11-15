@@ -15,6 +15,7 @@ public:
     void setFont(nxui::Font* font) { m_font = font; }
     void setSmallFont(nxui::Font* font) { m_smallFont = font; }
     void setTheme(const nxui::Theme* theme) { m_theme = theme; }
+    void setCanvasSize(float width, float height);
 
     /// When true, B / A / on-screen Cancel invokes onCancel.
     void setCancellable(bool cancellable, std::function<void()> onCancel = {});
@@ -54,6 +55,8 @@ private:
     nxui::AnimatedFloat m_panelScale{0.92f};
     nxui::AnimatedFloat m_progressAnim{0.f};
     float m_spinnerT = 0.f;
+    float m_canvasW = 1280.f;
+    float m_canvasH = 720.f;
 
     static constexpr float kPanelW = 620.f;
     static constexpr float kPanelH = 300.f;

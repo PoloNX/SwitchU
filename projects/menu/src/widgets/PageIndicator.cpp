@@ -23,6 +23,15 @@ void PageIndicator::setCurrentPage(int page) {
     m_popT = 0.f;
 }
 
+void PageIndicator::placeOnCanvas(float canvasWidth, float y) {
+    m_layoutWidth = std::max(1.f, canvasWidth);
+    m_rect.y = y;
+    // Width/height come from sizeToFit; force a re-fit even when page count
+    // is unchanged (orientation cycling used to leave a full-strip pill).
+    m_geometryReady = false;
+    updateGeometryFromContent();
+}
+
 void PageIndicator::onUpdate(float dt) {
     if (m_popT < kDotPopDuration)
         m_popT = std::min(kDotPopDuration, m_popT + dt);

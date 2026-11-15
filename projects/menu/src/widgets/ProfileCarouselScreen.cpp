@@ -8,23 +8,20 @@
 #include <cmath>
 
 namespace {
-constexpr float kScreenW = 1280.f;
-constexpr float kScreenH = 720.f;
-
 // Tile row.
 constexpr float kTileSize = 136.f;
 constexpr float kTileGap = 36.f;
 constexpr float kTileStep = kTileSize + kTileGap;
 constexpr float kTileRadius = 18.f;
-constexpr float kRowY = 250.f;
 constexpr float kRowMarginX = 70.f;
+constexpr float kPortraitRowMarginX = 28.f;
 constexpr float kSelectedGrow = 14.f;
 
-// Details panel (replaces the Wii U Mii with the account picture).
+// Details panel (landscape defaults; portrait recenters in drawDetails).
 constexpr float kDetailAvatarSize = 190.f;
 constexpr float kDetailAvatarX = 90.f;
-constexpr float kDetailY = 430.f;
 constexpr float kDetailColumnX = 340.f;
+constexpr float kPortraitDetailAvatarSize = 160.f;
 
 constexpr float kSwipeThreshold = 60.f;
 constexpr float kTapThreshold = 20.f;
@@ -41,7 +38,14 @@ ProfileCarouselScreen::ProfileCarouselScreen() {
     setFocusable(true);
     setLiquidGlassEnabled(false);
     setBlurEnabled(false);
-    setRect({0.f, 0.f, kScreenW, kScreenH});
+    setRect({0.f, 0.f, m_canvasW, m_canvasH});
+}
+
+void ProfileCarouselScreen::setCanvasSize(float width, float height) {
+    m_canvasW = width > 1.f ? width : 1280.f;
+    m_canvasH = height > 1.f ? height : 720.f;
+    setRect({0.f, 0.f, m_canvasW, m_canvasH});
+    m_rowScroll.setImmediate(rowScrollTarget(m_selected));
 }
 
 void ProfileCarouselScreen::setProfiles(std::vector<HomeProfile> profiles, bool addUserAvailable) {
@@ -96,7 +100,8 @@ float ProfileCarouselScreen::rowContentWidth() const {
 }
 
 float ProfileCarouselScreen::rowScrollTarget(int index) const {
-    const float viewW = kScreenW - kRowMarginX * 2.f;
+    const float margin = isPortraitCanvas() ? kPortraitRowMarginX : kRowMarginX;
+    const float viewW = screenW() - margin * 2.f;
     const float contentW = rowContentWidth();
     if (contentW <= viewW)
         return 0.f;
@@ -105,12 +110,13 @@ float ProfileCarouselScreen::rowScrollTarget(int index) const {
 }
 
 nxui::Rect ProfileCarouselScreen::tileRect(int index) const {
-    const float viewW = kScreenW - kRowMarginX * 2.f;
+    const float margin = isPortraitCanvas() ? kPortraitRowMarginX : kRowMarginX;
+    const float viewW = screenW() - margin * 2.f;
     const float contentW = rowContentWidth();
     const float startX = contentW <= viewW
-        ? (kScreenW - contentW) * 0.5f
-        : kRowMarginX - m_rowScroll.value();
-    return {startX + index * kTileStep, kRowY, kTileSize, kTileSize};
+        ? (screenW() - contentW) * 0.5f
+        : margin - m_rowScroll.value();
+    return {startX + index * kTileStep, rowY(), kTileSize, kTileSize};
 }
 
 void ProfileCarouselScreen::show() {
@@ -275,11 +281,11 @@ void ProfileCarouselScreen::render(nxui::Renderer& ren) {
         return;
     const float alpha = m_alpha.value();
 
-    ren.drawGradientRect({0.f, 0.f, kScreenW, kScreenH},
+    ren.drawGradientRect({0.f, 0.f, screenW(), screenH()},
                          m_theme->background.withAlpha(0.97f * alpha),
                          m_theme->backgroundAccent.withAlpha(0.98f * alpha));
 
-    ren.pushClipRect({0.f, kRowY - 40.f, kScreenW, kTileSize + 80.f});
+    ren.pushClipRect({0.f, rowY() - 40.f, screenW(), kTileSize + 80.f});
     for (int i = 0; i < tileCount(); ++i)
         if (i != m_selected)
             drawTile(ren, i, alpha);
@@ -306,7 +312,7 @@ void ProfileCarouselScreen::drawAvatar(nxui::Renderer& ren, int index, const nxu
 
 void ProfileCarouselScreen::drawTile(nxui::Renderer& ren, int index, float alpha) {
     nxui::Rect tile = tileRect(index);
-    if (tile.x + tile.width < -kSelectedGrow || tile.x > kScreenW + kSelectedGrow)
+    if (tile.x + tile.width < -kSelectedGrow || tile.x > screenW() + kSelectedGrow)
         return;
     const bool selected = index == m_selected;
     if (selected)
@@ -358,7 +364,7 @@ void ProfileCarouselScreen::drawBubble(nxui::Renderer& ren, float alpha) {
     const float h = size.y * textScale + padY * 2.f;
     const float tailH = 12.f;
     const float centerX = tile.x + tile.width * 0.5f;
-    const float x = std::clamp(centerX - w * 0.5f, 16.f, kScreenW - 16.f - w);
+    const float x = std::clamp(centerX - w * 0.5f, 16.f, screenW() - 16.f - w);
     const float y = tile.y - 16.f - tailH - h;
     const float bubbleAlpha = alpha * m_focusPop.value();
     const nxui::Color fill = m_theme->panelBase.withAlpha(
@@ -379,14 +385,25 @@ void ProfileCarouselScreen::drawDetails(nxui::Renderer& ren, float alpha) {
     if (!profile)
         return;
 
-    // The account picture stands where the Wii U showed the full-body Mii.
-    const nxui::Rect avatar{kDetailAvatarX, kDetailY, kDetailAvatarSize, kDetailAvatarSize};
+    // Landscape: avatar left + name column. Portrait: centered stack under the row.
+    const float dy = detailY();
+    const float avatarSize = isPortraitCanvas() ? kPortraitDetailAvatarSize : kDetailAvatarSize;
+    const float avatarX = isPortraitCanvas()
+        ? (screenW() - avatarSize) * 0.5f
+        : kDetailAvatarX;
+    const nxui::Rect avatar{avatarX, dy, avatarSize, avatarSize};
     ren.drawRoundedRect(avatar.expanded(6.f), m_theme->panelBase.withAlpha(0.70f * alpha), 30.f);
     drawAvatar(ren, m_selected, avatar, 26.f, alpha);
 
-    const float nameScale = 1.4f;
-    const float nameY = kDetailY + 40.f;
-    ren.drawText(profile->nickname, {kDetailColumnX, nameY}, m_font,
+    const float nameScale = isPortraitCanvas() ? 1.15f : 1.4f;
+    const nxui::Vec2 nameSize = m_font->measure(profile->nickname);
+    const float nameX = isPortraitCanvas()
+        ? (screenW() - nameSize.x * nameScale) * 0.5f
+        : kDetailColumnX;
+    const float nameY = isPortraitCanvas()
+        ? avatar.bottom() + 28.f
+        : dy + 40.f;
+    ren.drawText(profile->nickname, {nameX, nameY}, m_font,
                  m_theme->textPrimary.withAlpha(alpha), nameScale);
 
     if (!isLockedTile(m_selected))
@@ -396,8 +413,12 @@ void ProfileCarouselScreen::drawDetails(nxui::Renderer& ren, float alpha) {
     const nxui::Vec2 tagSize = small->measure(tag);
     const float padX = 16.f;
     const float padY = 6.f;
-    const nxui::Rect pill{kDetailColumnX, nameY + m_font->measure(profile->nickname).y * nameScale + 18.f,
-                          tagSize.x + padX * 2.f, tagSize.y + padY * 2.f};
+    const float pillW = tagSize.x + padX * 2.f;
+    const float pillX = isPortraitCanvas()
+        ? (screenW() - pillW) * 0.5f
+        : kDetailColumnX;
+    const nxui::Rect pill{pillX, nameY + nameSize.y * nameScale + 18.f,
+                          pillW, tagSize.y + padY * 2.f};
     ren.drawRoundedRect(pill, m_theme->cursorNormal.withAlpha(alpha), pill.height * 0.5f);
     ren.drawText(tag, {pill.x + padX, pill.y + padY}, small, nxui::Color::white().withAlpha(alpha));
 }

@@ -55,6 +55,8 @@ public:
     void hide();
     bool isActive() const { return m_active || m_animatingOut; }
     bool isOpen() const { return m_active && !m_animatingOut; }
+    // Logical canvas (1280×720 landscape, 720×1280 portrait).
+    void setCanvasSize(float width, float height);
     CardKind selectedKind() const { return tileKind(m_selected); }
     bool selectedIsLocked() const {
         return tileKind(m_selected) == CardKind::Profile && isLockedTile(m_selected);
@@ -80,6 +82,23 @@ private:
     int lockedTileIndex() const;
     std::string tileName(int index) const;
 
+    bool isPortraitCanvas() const { return m_canvasH > m_canvasW + 0.5f; }
+    float screenW() const { return m_canvasW; }
+    float screenH() const { return m_canvasH; }
+    // Portrait: vertically center the tile row + details stack as one block.
+    float rowY() const {
+        if (!isPortraitCanvas())
+            return 250.f;
+        constexpr float kTileH = 136.f;
+        constexpr float kGap = 100.f;
+        constexpr float kDetailStack = 160.f + 100.f; // avatar + name/badge
+        const float blockH = kTileH + kGap + kDetailStack;
+        const float centered = (m_canvasH - blockH) * 0.5f;
+        return centered > 80.f ? centered : 80.f;
+    }
+    float detailY() const {
+        return isPortraitCanvas() ? (rowY() + 136.f + 100.f) : 430.f;
+    }
     float rowContentWidth() const;
     float rowScrollTarget(int index) const;
     nxui::Rect tileRect(int index) const;
@@ -120,4 +139,6 @@ private:
     VoidCb m_lockSfxCb;
     VoidCb m_closeSfxCb;
     StringCb m_accessibilityCb;
+    float m_canvasW = 1280.f;
+    float m_canvasH = 720.f;
 };

@@ -17,9 +17,7 @@
 namespace {
 
 // eShop-inspired shelf: wider store row, cover-first (art owns the card).
-// Column/row counts live in ThemeShopLayout.hpp (shared with preview prefetch).
-constexpr int kGridCols = themeshop::layout::kGridCols;
-constexpr int kVisibleRows = themeshop::layout::kVisibleRows;
+// Landscape 3×2 / portrait 2×3 — page size stays 6 (ThemeShopLayout.hpp).
 constexpr float kContentInsetX = 22.f;
 constexpr float kContentInsetY = 12.f;
 constexpr float kHeaderHeight = 58.f;
@@ -28,12 +26,16 @@ constexpr float kGridGapY = 16.f;
 constexpr float kFooterHintHeight = 64.f;
 constexpr float kCardCaptionH = 48.f;
 constexpr float kPreviewAspect = 16.f / 9.f;
-constexpr float kSearchButtonWidth = 208.f;
-constexpr float kRefreshButtonWidth = 144.f;
-constexpr float kHeaderButtonGap = 12.f;
+// Landscape: Refresh / Sort / Search share one chip width; clear is a compact ×.
+// Portrait: icon Refresh + narrower Sort/Search so shelf titles fit.
+constexpr float kHeaderActionWidth = 128.f;
+constexpr float kCompactSortWidth = 96.f;   // fits "Newest" / "A-Z"
+constexpr float kCompactSearchWidth = 104.f;
+constexpr float kCompactRefreshWidth = 46.f;
+constexpr float kClearButtonWidth = 46.f;
+constexpr float kHeaderButtonGap = 10.f;
 // Match parent tab pitch (kTabRowHeight) so the Shop pill is the same size.
 constexpr float kShopBranchRow = 58.f;
-constexpr int kEntriesPerPage = themeshop::layout::kEntriesPerPage;
 constexpr float kPageButtonWidth = 124.f;
 constexpr float kPageCounterWidth = 96.f;
 constexpr float kActionButtonRadius = 16.f;
@@ -75,42 +77,66 @@ nxui::Vec2 measureTextCached(nxui::Font* font, const std::string& text) {
 
 struct GridLayout {
     nxui::Rect header;
-    nxui::Rect searchButton;
     nxui::Rect refreshButton;
+    nxui::Rect sortButton;
+    nxui::Rect searchButton;
+    nxui::Rect clearButton;
     nxui::Rect pagePrevButton;
     nxui::Rect pageCounter;
     nxui::Rect pageNextButton;
     nxui::Rect grid;
     float cardW = 0.f;
     float cardH = 0.f;
+    int cols = themeshop::layout::kGridCols;
+    int rows = themeshop::layout::kVisibleRows;
 };
 
-GridLayout makeGridLayout(const nxui::Rect& content, bool showRefresh) {
+int headerActionCount(bool showRefresh, bool showClear) {
+    return (showRefresh ? 1 : 0) + 2 + (showClear ? 1 : 0);
+}
+
+GridLayout makeGridLayout(const nxui::Rect& content,
+                          bool showRefresh,
+                          bool showClear,
+                          int cols,
+                          int rows,
+                          bool compactHeader = false) {
     GridLayout layout;
+    layout.cols = std::max(1, cols);
+    layout.rows = std::max(1, rows);
     layout.header = {
         content.x + kContentInsetX,
         content.y + kContentInsetY,
         content.width - kContentInsetX * 2.f,
         kHeaderHeight
     };
-    layout.searchButton = {
-        layout.header.right() - kSearchButtonWidth,
-        layout.header.y + 10.f,
-        kSearchButtonWidth,
-        46.f
-    };
-    float cursorX = layout.searchButton.x;
-    if (showRefresh) {
-        cursorX -= kHeaderButtonGap + kRefreshButtonWidth;
-        layout.refreshButton = {
-            cursorX,
-            layout.header.y + 10.f,
-            kRefreshButtonWidth,
-            46.f
-        };
+
+    const float sortW = compactHeader ? kCompactSortWidth : kHeaderActionWidth;
+    const float searchW = compactHeader ? kCompactSearchWidth : kHeaderActionWidth;
+    const float refreshW = compactHeader ? kCompactRefreshWidth : kHeaderActionWidth;
+
+    const float buttonY = layout.header.y + 10.f;
+    float cursorX = layout.header.right();
+    if (showClear) {
+        cursorX -= kClearButtonWidth;
+        layout.clearButton = {cursorX, buttonY, kClearButtonWidth, 46.f};
+        cursorX -= kHeaderButtonGap;
     } else {
-        layout.refreshButton = {cursorX, layout.header.y + 10.f, 0.f, 46.f};
+        layout.clearButton = {cursorX, buttonY, 0.f, 46.f};
     }
+
+    cursorX -= searchW;
+    layout.searchButton = {cursorX, buttonY, searchW, 46.f};
+    cursorX -= kHeaderButtonGap + sortW;
+    layout.sortButton = {cursorX, buttonY, sortW, 46.f};
+
+    if (showRefresh) {
+        cursorX -= kHeaderButtonGap + refreshW;
+        layout.refreshButton = {cursorX, buttonY, refreshW, 46.f};
+    } else {
+        layout.refreshButton = {cursorX, buttonY, 0.f, 46.f};
+    }
+
     layout.grid = {
         content.x + kContentInsetX,
         layout.header.bottom() + 12.f,
@@ -138,14 +164,14 @@ GridLayout makeGridLayout(const nxui::Rect& content, bool showRefresh) {
         kPageButtonWidth,
         46.f
     };
-    layout.cardW = (layout.grid.width - kGridGapX * (kGridCols - 1)) / (float)kGridCols;
-    layout.cardH = (layout.grid.height - kGridGapY * (kVisibleRows - 1)) / (float)kVisibleRows;
+    layout.cardW = (layout.grid.width - kGridGapX * (layout.cols - 1)) / (float)layout.cols;
+    layout.cardH = (layout.grid.height - kGridGapY * (layout.rows - 1)) / (float)layout.rows;
     return layout;
 }
 
 nxui::Rect gridCardRect(const GridLayout& layout, int localIndex) {
-    int col = localIndex % kGridCols;
-    int row = localIndex / kGridCols;
+    int col = localIndex % layout.cols;
+    int row = localIndex / layout.cols;
     return {
         layout.grid.x + col * (layout.cardW + kGridGapX),
         layout.grid.y + row * (layout.cardH + kGridGapY),
@@ -181,11 +207,14 @@ std::vector<nxui::Rect> detailButtonRects(const nxui::Rect& dialog, int count) {
     return rects;
 }
 
-std::vector<nxui::Rect> headerButtonRects(const GridLayout& layout, bool showRefresh) {
+std::vector<nxui::Rect> headerButtonRects(const GridLayout& layout, bool showRefresh, bool showClear) {
     std::vector<nxui::Rect> rects;
     if (showRefresh && layout.refreshButton.width > 0.f)
         rects.push_back(layout.refreshButton);
+    rects.push_back(layout.sortButton);
     rects.push_back(layout.searchButton);
+    if (showClear && layout.clearButton.width > 0.f)
+        rects.push_back(layout.clearButton);
     return rects;
 }
 
@@ -716,7 +745,7 @@ void drawActionButtonChip(nxui::Renderer& ren,
 
     switchu::ui::drawActionButtonChrome(ren, rect, radius, style);
 
-    if (font) {
+    if (font && !text.empty()) {
         float textScale = scale * style.scale;
         std::string fitted = ellipsize(font, text, buttonRect.width - 24.f, textScale);
         nxui::Vec2 size = measureTextCached(font, fitted);
@@ -727,6 +756,34 @@ void drawActionButtonChip(nxui::Renderer& ren,
                      textColor.withAlpha(textColor.a * opacity),
                      textScale);
     }
+}
+
+void drawRefreshIcon(nxui::Renderer& ren,
+                     const nxui::Vec2& center,
+                     const nxui::Color& color,
+                     float scale) {
+    const float s = scale;
+    const float t = 1.7f * s;
+    const float r = 7.2f * s;
+    constexpr float kPi = 3.14159265f;
+    // Open arc (refresh loop) with a small arrow tip.
+    nxui::Vec2 prev;
+    constexpr int steps = 14;
+    for (int i = 0; i <= steps; ++i) {
+        const float a = (-0.55f * kPi) + (1.55f * kPi) * ((float)i / (float)steps);
+        const nxui::Vec2 pt = {center.x + r * std::cos(a), center.y + r * std::sin(a)};
+        if (i > 0)
+            ren.drawLine(prev, pt, color, t);
+        prev = pt;
+    }
+    const float tipA = -0.55f * kPi;
+    const nxui::Vec2 tip = {center.x + r * std::cos(tipA), center.y + r * std::sin(tipA)};
+    ren.drawLine(tip,
+                 {tip.x - 4.2f * s, tip.y - 1.2f * s},
+                 color, t);
+    ren.drawLine(tip,
+                 {tip.x - 1.0f * s, tip.y + 4.0f * s},
+                 color, t);
 }
 
 void drawFrostedInsetPanel(nxui::Renderer& ren,
@@ -939,22 +996,46 @@ IconTintLayout makeIconTintLayout(const nxui::Rect& band, bool showSliders, bool
     return layout;
 }
 
-// Large left preview + tint column. Icon studio is a glyph collage (not a 16:9
-// screenshot) — fill the body box so HSL+toggles have a tall partner to center on.
-nxui::Rect colourIconPreviewBounds(const nxui::Rect& dialog) {
+// Landscape: large left preview + tint column. Portrait: stack preview above
+// HSL/toggles so the tall canvas is not wasted on a skinny side-by-side split.
+nxui::Rect colourIconPreviewBounds(const nxui::Rect& dialog, bool stackPortrait) {
     constexpr float kBodyTopInset = 78.f; // room for title above the studio preview
     constexpr float kBodyBottomInset = 92.f;
+    const float bodyTop = dialog.y + kBodyTopInset;
+    const float bodyH = dialog.height - kBodyTopInset - kBodyBottomInset;
+    if (stackPortrait) {
+        // Full-width collage; leave the lower ~55% for sliders + toggles.
+        const float previewH = std::clamp(bodyH * 0.40f, 220.f, 360.f);
+        return {
+            dialog.x + 28.f,
+            bodyTop,
+            dialog.width - 56.f,
+            previewH
+        };
+    }
     return {
         dialog.x + 28.f,
-        dialog.y + kBodyTopInset,
+        bodyTop,
         dialog.width * 0.48f,
-        dialog.height - kBodyTopInset - kBodyBottomInset
+        bodyH
     };
 }
 
-nxui::Rect colourIconTintBand(const nxui::Rect& dialog, const nxui::Rect& preview, bool tintExpanded) {
+nxui::Rect colourIconTintBand(const nxui::Rect& dialog, const nxui::Rect& preview,
+                              bool tintExpanded, bool stackPortrait) {
     (void)tintExpanded;
-    (void)dialog;
+    constexpr float kBodyBottomInset = 92.f;
+    if (stackPortrait) {
+        constexpr float kGap = 14.f;
+        const float y = preview.bottom() + kGap;
+        const float bottom = dialog.bottom() - kBodyBottomInset;
+        return {
+            dialog.x + 28.f,
+            y,
+            dialog.width - 56.f,
+            std::max(80.f, bottom - y)
+        };
+    }
     // Same vertical span as the preview art — controls center against that tile
     // (Apply stays in the dialog footer and is not part of this band).
     return {
@@ -1136,17 +1217,195 @@ void ThemeShopScreen::setActiveShelfMode(ShelfMode mode) {
 }
 
 float ThemeShopScreen::tabBranchExtraHeight(int tabIndex) const {
-    if (tabIndex != m_tabIndex || (tabIndex != 0 && tabIndex != 1))
+    // Portrait icon rail lists shops as peer slots — no inset branch row.
+    if (useTopTabRail())
         return 0.f;
-    return kShopBranchRow * std::clamp(m_shopBranchReveal.value(), 0.f, 1.f);
+    // Landscape: Theme Shop + Icon Shop stay visible under Themes/Icons.
+    if (tabIndex != 0 && tabIndex != 1)
+        return 0.f;
+    return kShopBranchRow;
+}
+
+float ThemeShopScreen::topTabRailBranchStripHeight() const {
+    return 0.f;
+}
+
+int ThemeShopScreen::shelfGridCols() const {
+    return useTopTabRail() ? themeshop::layout::kPortraitGridCols
+                           : themeshop::layout::kGridCols;
+}
+
+int ThemeShopScreen::shelfVisibleRows() const {
+    return useTopTabRail() ? themeshop::layout::kPortraitVisibleRows
+                           : themeshop::layout::kVisibleRows;
+}
+
+int ThemeShopScreen::shelfEntriesPerPage() const {
+    return shelfGridCols() * shelfVisibleRows();
+}
+
+int ThemeShopScreen::topRailSlotCount() const {
+    // Portrait peers + landscape L/R: Themes, Theme Shop, Icons, Icon Shop, …
+    return std::max(1, (int)m_tabs.size()) + 2;
+}
+
+TabbedOverlayScreen::TabGlyph ThemeShopScreen::topRailSlotGlyph(int slot) const {
+    switch (slot) {
+    case 0: return TabGlyph::Themes;
+    case 1: return TabGlyph::ThemeShop;
+    case 2: return TabGlyph::ThemeIcons;
+    case 3: return TabGlyph::IconShop;
+    case 4: return TabGlyph::Sounds;
+    case 5: return TabGlyph::Interface;
+    case 6: return TabGlyph::LockScreen;
+    default: return TabGlyph::None;
+    }
+}
+
+std::string ThemeShopScreen::topRailSlotTitle(int slot) const {
+    auto& i18n = nxui::I18n::instance();
+    switch (slot) {
+    case 0:
+        return (m_tabs.size() > 0) ? m_tabs[0].name
+            : i18n.tr("themeshop.tabs.themes", "Themes");
+    case 1:
+        return i18n.tr("themeshop.themes.shop_item", "Theme Shop");
+    case 2:
+        return (m_tabs.size() > 1) ? m_tabs[1].name
+            : i18n.tr("themeshop.tabs.icons", "Icons");
+    case 3:
+        return i18n.tr("themeshop.icons.shop_item", "Icon Shop");
+    case 4:
+        return (m_tabs.size() > 2) ? m_tabs[2].name
+            : i18n.tr("themeshop.tabs.sounds", "Sounds");
+    case 5:
+        return (m_tabs.size() > 3) ? m_tabs[3].name
+            : i18n.tr("themeshop.tabs.interface", "Interface");
+    case 6:
+        return (m_tabs.size() > 4) ? m_tabs[4].name
+            : i18n.tr("themeshop.tabs.lock_screen", "Lock Screen");
+    default:
+        return {};
+    }
+}
+
+int ThemeShopScreen::topRailFocusIndex() const {
+    return currentRailFocusIndex();
+}
+
+void ThemeShopScreen::activateTopRailSlot(int slot) {
+    // Always walk shop peers (portrait icons + landscape L/R). Do not fall
+    // through to plain tab indices — that skips Theme Shop / Icon Shop.
+    if (slot < 0 || slot >= topRailSlotCount())
+        return;
+    int tabIndex = 0;
+    bool shopBranch = false;
+    if (slot <= 1) {
+        tabIndex = 0;
+        shopBranch = (slot == 1);
+    } else if (slot <= 3) {
+        tabIndex = 1;
+        shopBranch = (slot == 3);
+    } else {
+        tabIndex = slot - 2;
+        shopBranch = false;
+    }
+    focusRailSlot(tabIndex, shopBranch);
+}
+
+void ThemeShopScreen::focusRailSlot(int tabIndex, bool shopBranch) {
+    tabIndex = std::clamp(tabIndex, 0, std::max(0, (int)m_tabs.size() - 1));
+    const bool tabChanged = (tabIndex != m_tabIndex);
+    if (tabChanged) {
+        m_tabSwitchDir = (tabIndex > m_tabIndex) ? 1 : -1;
+        m_tabIndex = tabIndex;
+        m_contentIdx = 0;
+        m_scrollY = 0.f;
+        m_scrollTarget = 0.f;
+        m_contentSlideAnim.setImmediate(0.f);
+        m_contentSlideAnim.set(1.f, 0.28f, nxui::Easing::outCubic);
+        m_contentStaggerT = 0.f;
+        m_tabAccentW.setImmediate(1.f);
+        m_tabAccentW.set(3.f, 0.32f, nxui::Easing::outExpo);
+        closeDropdown(false);
+        m_lastCustomTabIndex = tabIndex;
+        m_contentFocusArea = ContentFocusArea::Grid;
+        closeDetail();
+    }
+    m_focusArea = FocusArea::Tabs;
+    m_shopBranchFocused = shopBranch && (tabIndex == 0 || tabIndex == 1);
+    if (tabIndex == 0 || tabIndex == 1) {
+        setActiveShelfMode(m_shopBranchFocused ? ShelfMode::Shop : ShelfMode::Installed);
+        // setActiveShelfMode no-ops when that shelf was already in mode — still
+        // rebuild when the parent tab itself changed (Themes ↔ Icons).
+        if (tabChanged)
+            rebuildCurrentTab();
+    } else if (tabChanged) {
+        rebuildCurrentTab();
+    }
+}
+
+int ThemeShopScreen::currentRailFocusIndex() const {
+    // Visual order: Themes, Theme Shop, Icons, Icon Shop, Sounds, Interface, Lock…
+    // Shelf mode counts even when focus is in content so L/R steps from the shop
+    // you are viewing (not back onto the same shop again).
+    const bool onShop = (m_shopBranchFocused
+        || (showsShelfBranch() && activeShelfMode() == ShelfMode::Shop));
+    if (m_tabIndex <= 0)
+        return onShop ? 1 : 0;
+    if (m_tabIndex == 1)
+        return onShop ? 3 : 2;
+    // After the two shop insets, remaining tabs are plain one-to-one.
+    return m_tabIndex + 2;
+}
+
+bool ThemeShopScreen::stepRailFocus(int delta) {
+    if (delta == 0 || m_tabs.empty())
+        return false;
+    const int railCount = (int)m_tabs.size() + 2; // + Theme Shop + Icon Shop
+    const int next = currentRailFocusIndex() + delta;
+    if (next < 0 || next >= railCount)
+        return false;
+
+    int tabIndex = 0;
+    bool shopBranch = false;
+    if (next <= 1) {
+        tabIndex = 0;
+        shopBranch = (next == 1);
+    } else if (next <= 3) {
+        tabIndex = 1;
+        shopBranch = (next == 3);
+    } else {
+        tabIndex = next - 2;
+        shopBranch = false;
+    }
+    focusRailSlot(tabIndex, shopBranch);
+    return true;
 }
 
 bool ThemeShopScreen::tabBranchConsumesFocus() const {
+    // Portrait: shops are peer icon slots — parent tab keeps normal selection chrome.
+    if (useTopTabRail())
+        return false;
     return showsShelfBranch() && m_shopBranchFocused && m_focusArea == FocusArea::Tabs;
 }
 
+bool ThemeShopScreen::tabBranchHitTest(float x, float y, int& outTabIndex) const {
+    if (useTopTabRail())
+        return false;
+    if (m_themeShopBranchRect.width > 1.f && m_themeShopBranchRect.contains(x, y)) {
+        outTabIndex = 0;
+        return true;
+    }
+    if (m_iconShopBranchRect.width > 1.f && m_iconShopBranchRect.contains(x, y)) {
+        outTabIndex = 1;
+        return true;
+    }
+    return false;
+}
+
 bool ThemeShopScreen::tabFocusCursorRect(nxui::Rect& outRect) const {
-    if (!tabBranchConsumesFocus() || m_shopBranchRect.width <= 1.f)
+    if (useTopTabRail() || !tabBranchConsumesFocus() || m_shopBranchRect.width <= 1.f)
         return false;
     outRect = m_shopBranchRect.expanded(1.f);
     return true;
@@ -1162,9 +1421,7 @@ void ThemeShopScreen::onTabRailParentActivated(int tabIndex) {
 bool ThemeShopScreen::onTabRailBranchActivated(int parentTabIndex) {
     if (parentTabIndex != 0 && parentTabIndex != 1)
         return false;
-    m_focusArea = FocusArea::Tabs;
-    m_shopBranchFocused = true;
-    setActiveShelfMode(ShelfMode::Shop);
+    focusRailSlot(parentTabIndex, true);
     return true;
 }
 
@@ -1174,43 +1431,47 @@ void ThemeShopScreen::drawTabBranch(nxui::Renderer& ren,
                                     float opacity) {
     if (!m_theme || !m_font || (tabIndex != 0 && tabIndex != 1))
         return;
-    const float reveal = std::clamp(m_shopBranchReveal.value(), 0.f, 1.f);
-    if (reveal < 0.02f || branchRect.width <= 1.f || branchRect.height <= 1.f)
+    if (branchRect.width <= 1.f || branchRect.height <= 1.f)
         return;
 
     auto& i18n = nxui::I18n::instance();
-    const float slide = (1.f - reveal) * 12.f;
-    nxui::Rect r = {
-        branchRect.x,
-        branchRect.y + slide,
-        branchRect.width,
-        branchRect.height
-    };
-    m_shopBranchRect = r;
+    nxui::Rect r = branchRect;
+    if (tabIndex == 0)
+        m_themeShopBranchRect = r;
+    else if (tabIndex == 1)
+        m_iconShopBranchRect = r;
+    // Focus cursor uses the active parent's shop child rect.
+    if (tabIndex == m_tabIndex)
+        m_shopBranchRect = r;
 
-    const bool shopActive = activeShelfMode() == ShelfMode::Shop;
-    const bool focused = tabBranchConsumesFocus();
-    const float alpha = opacity * reveal;
+    const bool shopActive = (tabIndex == m_tabIndex)
+        && activeShelfMode() == ShelfMode::Shop;
+    const bool focused = (tabIndex == m_tabIndex) && tabBranchConsumesFocus();
+    const float alpha = opacity;
 
-    // Elbow: gray at rest, theme accent while the Shop child is focused.
-    const float elbowX = r.x - 12.f;
-    const float elbowMidY = r.y + r.height * 0.5f;
+    // Landscape side rail: elbow stem. Portrait top rail: short stub from parent.
     const nxui::Color stem = focused
         ? m_theme->cursorNormal.withAlpha(0.72f * alpha)
         : m_theme->panelBorder.withAlpha(0.36f * alpha);
-    ren.drawLine({elbowX, r.y - 6.f}, {elbowX, elbowMidY}, stem, focused ? 2.0f : 1.5f);
-    ren.drawLine({elbowX, elbowMidY}, {r.x + 2.f, elbowMidY}, stem, focused ? 2.0f : 1.5f);
+    if (useTopTabRail()) {
+        const float stubX = r.x + 10.f;
+        ren.drawLine({stubX, r.y - 5.f}, {stubX, r.y + 1.f}, stem, focused ? 2.0f : 1.5f);
+    } else {
+        const float elbowX = r.x - 12.f;
+        const float elbowMidY = r.y + r.height * 0.5f;
+        ren.drawLine({elbowX, r.y - 6.f}, {elbowX, elbowMidY}, stem, focused ? 2.0f : 1.5f);
+        ren.drawLine({elbowX, elbowMidY}, {r.x + 2.f, elbowMidY}, stem, focused ? 2.0f : 1.5f);
+    }
 
     // Match parent tab pills: panel fill only. Focus ring comes from SelectionCursor.
     const nxui::Color fill = m_theme->panelBase.withAlpha((shopActive ? 0.94f : 0.88f) * alpha);
-    // Keep the pill itself fill+soft border; the blue focus ring is SelectionCursor only.
     const nxui::Color border = shopActive
         ? m_theme->cursorNormal.withAlpha(0.46f * alpha)
         : m_theme->panelBorder.withAlpha(0.22f * alpha);
     ren.drawRoundedRect(r, fill, 18.f);
     ren.drawRoundedRectOutline(r, border, 18.f, shopActive ? 1.2f : 1.f);
 
-    const std::string label = isIconsTab()
+    const std::string label = (tabIndex == 1)
         ? i18n.tr("themeshop.icons.shop_item", "Icon Shop")
         : i18n.tr("themeshop.themes.shop_item", "Theme Shop");
     float scale = shopActive ? 0.91f : 0.87f;
@@ -1271,7 +1532,7 @@ void ThemeShopScreen::setCurrentSelectedIndex(int idx) {
 
 int ThemeShopScreen::pageCount() const {
     int count = currentEntryCount();
-    return std::max(1, (count + kEntriesPerPage - 1) / kEntriesPerPage);
+    return std::max(1, (count + shelfEntriesPerPage() - 1) / shelfEntriesPerPage());
 }
 
 int ThemeShopScreen::currentPage() const {
@@ -1280,7 +1541,7 @@ int ThemeShopScreen::currentPage() const {
         return 0;
     int scrollRow = isCommunityTab() ? m_communityScrollRow
                   : (isIconsTab() ? m_iconPackScrollRow : m_installedScrollRow);
-    return std::clamp(scrollRow / kVisibleRows, 0, pageCount() - 1);
+    return std::clamp(scrollRow / shelfVisibleRows(), 0, pageCount() - 1);
 }
 
 void ThemeShopScreen::setCurrentPage(int page) {
@@ -1291,9 +1552,9 @@ void ThemeShopScreen::setCurrentPage(int page) {
     }
 
     page = std::clamp(page, 0, pageCount() - 1);
-    int target = std::min(count - 1, page * kEntriesPerPage);
+    int target = std::min(count - 1, page * shelfEntriesPerPage());
     setCurrentSelectedIndex(target);
-    currentScrollRowRef() = page * kVisibleRows;
+    currentScrollRowRef() = page * shelfVisibleRows();
 }
 
 void ThemeShopScreen::stepPage(int delta) {
@@ -1328,12 +1589,12 @@ void ThemeShopScreen::ensureSelectionVisible() {
     }
 
     int& scrollRow = currentScrollRowRef();
-    int maxPageScroll = std::max(0, (pageCount() - 1) * kVisibleRows);
+    int maxPageScroll = std::max(0, (pageCount() - 1) * shelfVisibleRows());
     scrollRow = std::clamp(scrollRow, 0, maxPageScroll);
 
-    int page = std::clamp(scrollRow / kVisibleRows, 0, pageCount() - 1);
-    int pageStart = page * kEntriesPerPage;
-    int pageEnd = std::min(count, pageStart + kEntriesPerPage);
+    int page = std::clamp(scrollRow / shelfVisibleRows(), 0, pageCount() - 1);
+    int pageStart = page * shelfEntriesPerPage();
+    int pageEnd = std::min(count, pageStart + shelfEntriesPerPage());
     int selected = std::max(0, currentSelectedIndex());
     if (selected < pageStart || selected >= pageEnd)
         setCurrentSelectedIndex(std::min(count - 1, pageStart));
@@ -1503,27 +1764,25 @@ void ThemeShopScreen::updateCustomContent(float dt) {
         m_lastCustomTabIndex = m_tabIndex;
         m_contentFocusArea = ContentFocusArea::Grid;
         closeDetail();
+        // Theme Shop / Icon Shop stay pinned under Themes/Icons. Default to the
+        // parent Installed shelf when landing via generic tab cycling.
         if (isThemesTab() || isIconsTab()) {
-            m_shopBranchReveal.setImmediate(0.f);
-            m_shopBranchReveal.set(1.f, 0.22f, nxui::Easing::outCubic);
-            m_shopBranchFocused = false;
-            if (activeShelfMode() != ShelfMode::Installed)
+            if (!m_shopBranchFocused
+                && activeShelfMode() != ShelfMode::Installed)
                 setActiveShelfMode(ShelfMode::Installed);
         } else {
-            m_shopBranchReveal.set(0.f, 0.16f, nxui::Easing::outQuad);
             m_shopBranchFocused = false;
-            m_shopBranchRect = {};
         }
     }
 
     if (!usesCustomContentLayout())
         return;
 
-    // ZL/ZR (and L/R) flip pages like HOME - Installed / Community / Icons.
+    // L/R cycle tabs (shoulderCyclesTopTabs). ZL/ZR page shelves in both orients.
     if (m_input && m_showing && !m_detailOpen && pageCount() > 1) {
-        if (m_input->isDown(nxui::Button::ZL) || m_input->isDown(nxui::Button::L))
+        if (m_input->isDown(nxui::Button::ZL))
             stepPage(-1);
-        else if (m_input->isDown(nxui::Button::ZR) || m_input->isDown(nxui::Button::R))
+        else if (m_input->isDown(nxui::Button::ZR))
             stepPage(1);
     }
 
@@ -1566,14 +1825,9 @@ void ThemeShopScreen::updateCustomContent(float dt) {
         syncFinishedCommunityPreviewLoads();
     }
 
-    const int headerButtonCount = (showsCatalogRefresh() ? 1 : 0) + 1;
+    const bool showClear = !m_searchQuery.empty();
+    const int headerButtonCount = headerActionCount(showsCatalogRefresh(), showClear);
     m_headerButtonIndex = std::clamp(m_headerButtonIndex, 0, std::max(0, headerButtonCount - 1));
-
-    if (showsShelfBranch() && m_shopBranchReveal.value() < 0.999f) {
-        // Keep reveal animating toward open while staying on Themes/Icons.
-        if (m_shopBranchReveal.target() < 0.999f)
-            m_shopBranchReveal.set(1.f, 0.22f, nxui::Easing::outCubic);
-    }
 
     if (currentEntryCount() <= 0) {
         if (m_focusArea == FocusArea::Content)
@@ -1663,9 +1917,19 @@ bool ThemeShopScreen::handleCustomPressA() {
 
     if (!m_detailOpen && m_contentFocusArea == ContentFocusArea::Header) {
         const bool hasRefresh = showsCatalogRefresh();
-        if (hasRefresh && m_headerButtonIndex == 0) {
+        const bool showClear = !m_searchQuery.empty();
+        int actionIndex = 0;
+        const int refreshIndex = hasRefresh ? actionIndex++ : -1;
+        const int sortIndex = actionIndex++;
+        const int searchIndex = actionIndex++;
+        const int clearIndex = showClear ? actionIndex++ : -1;
+        if (m_headerButtonIndex == refreshIndex) {
             refreshCommunityCatalog(true);
-        } else {
+        } else if (m_headerButtonIndex == sortIndex) {
+            cycleCatalogSortMode();
+        } else if (m_headerButtonIndex == clearIndex) {
+            clearSearchQuery();
+        } else if (m_headerButtonIndex == searchIndex) {
             promptSearchQuery();
         }
         if (m_activateSfxCb) m_activateSfxCb();
@@ -1779,13 +2043,10 @@ void ThemeShopScreen::currentAccessibilityParts(std::string& context,
             summary = shopName;
             if (m_accessibilitySpeakHints)
                 summary += ". " + i18n.tr("accessibility.themeshop.shop_branch",
-                    "A or right to enter shop. Up for installed. Down for next tab. B to close.");
+                    "A or right to enter. Up and down to change tab. B to close.");
         } else {
             summary = i18n.tr("accessibility.settings.tab_prefix", "Tab") + " " + tabName;
-            if (showsShelfBranch() && m_accessibilitySpeakHints)
-                summary += ". " + i18n.tr("accessibility.themeshop.shelf_branch",
-                    "A or right to enter. Down for shop. Up and down to change tab. B to close.");
-            else if (m_accessibilitySpeakHints)
+            if (m_accessibilitySpeakHints)
                 summary += ". " + i18n.tr("accessibility.settings.tab_actions",
                     "A or right to enter. Up and down to change tab. B to close.");
         }
@@ -1971,13 +2232,17 @@ bool ThemeShopScreen::handleCustomNavUp() {
         }
         return true;
     }
-    if (m_focusArea == FocusArea::Tabs && showsShelfBranch() && m_shopBranchFocused) {
-        m_shopBranchFocused = false;
-        setActiveShelfMode(ShelfMode::Installed);
+    if (m_focusArea == FocusArea::Tabs) {
+        // Portrait top rail: Left/Right own the chain. Landscape: Up/Down.
+        if (useTopTabRail())
+            return false;
+        if (!stepRailFocus(-1))
+            return false;
         if (m_navSfxCb) m_navSfxCb();
         return true;
     }
-    if (m_focusArea != FocusArea::Content)
+    // Sounds / Interface / Lock use the normal settings list — don't steal D-pad.
+    if (!usesCustomContentLayout() || m_focusArea != FocusArea::Content)
         return false;
 
     if (m_contentFocusArea == ContentFocusArea::Header) {
@@ -1990,9 +2255,9 @@ bool ThemeShopScreen::handleCustomNavUp() {
     if (m_contentFocusArea == ContentFocusArea::Pager) {
         if (currentEntryCount() > 0) {
             m_contentFocusArea = ContentFocusArea::Grid;
-            int pageStart = currentPage() * kEntriesPerPage;
+            int pageStart = currentPage() * shelfEntriesPerPage();
             int target = std::min(currentEntryCount() - 1,
-                                  pageStart + (kVisibleRows - 1) * kGridCols + m_pageButtonIndex);
+                                  pageStart + (shelfVisibleRows() - 1) * shelfGridCols() + m_pageButtonIndex);
             setCurrentSelectedIndex(target);
             ensureSelectionVisible();
         }
@@ -2005,15 +2270,15 @@ bool ThemeShopScreen::handleCustomNavUp() {
         return true;
 
     int selected = std::max(0, currentSelectedIndex());
-    int pageStart = currentPage() * kEntriesPerPage;
-    if (selected - kGridCols >= pageStart) {
-        setCurrentSelectedIndex(selected - kGridCols);
+    int pageStart = currentPage() * shelfEntriesPerPage();
+    if (selected - shelfGridCols() >= pageStart) {
+        setCurrentSelectedIndex(selected - shelfGridCols());
         ensureSelectionVisible();
     } else {
         m_contentFocusArea = ContentFocusArea::Header;
         {
-            const int headerButtonCount = (showsCatalogRefresh() ? 1 : 0) + 1;
-            m_headerButtonIndex = std::clamp(selected % kGridCols, 0, headerButtonCount - 1);
+            const int headerButtonCount = headerActionCount(showsCatalogRefresh(), !m_searchQuery.empty());
+            m_headerButtonIndex = std::clamp(selected % shelfGridCols(), 0, headerButtonCount - 1);
         }
     }
     if (m_navSfxCb) m_navSfxCb();
@@ -2021,16 +2286,26 @@ bool ThemeShopScreen::handleCustomNavUp() {
 }
 
 bool ThemeShopScreen::handleCustomNavDown() {
-    if (m_focusArea == FocusArea::Tabs && showsShelfBranch()) {
-        if (!m_shopBranchFocused) {
-            m_shopBranchFocused = true;
-            setActiveShelfMode(ShelfMode::Shop);
+    if (m_focusArea == FocusArea::Tabs) {
+        // Portrait icon rail: Down enters the page (shops are peer Left/Right slots).
+        if (useTopTabRail()) {
+            if (!usesCustomContentLayout())
+                return false; // Sounds / Interface / Lock use the normal list path.
+            m_focusArea = FocusArea::Content;
+            m_contentFocusArea = (currentEntryCount() > 0)
+                ? ContentFocusArea::Grid : ContentFocusArea::Header;
+            m_headerButtonIndex = 0;
             if (m_navSfxCb) m_navSfxCb();
             return true;
         }
-        m_shopBranchFocused = false;
-        return false; // advance to the next main tab
+        if (!stepRailFocus(+1))
+            return false;
+        if (m_navSfxCb) m_navSfxCb();
+        return true;
     }
+
+    if (!usesCustomContentLayout())
+        return false;
 
     if (m_detailFullscreen)
         return true;
@@ -2096,14 +2371,14 @@ bool ThemeShopScreen::handleCustomNavDown() {
         return true;
 
     int selected = std::max(0, currentSelectedIndex());
-    int pageEnd = std::min(count, (currentPage() + 1) * kEntriesPerPage);
-    if (selected + kGridCols < pageEnd) {
-        setCurrentSelectedIndex(selected + kGridCols);
+    int pageEnd = std::min(count, (currentPage() + 1) * shelfEntriesPerPage());
+    if (selected + shelfGridCols() < pageEnd) {
+        setCurrentSelectedIndex(selected + shelfGridCols());
         ensureSelectionVisible();
         if (m_navSfxCb) m_navSfxCb();
     } else {
         m_contentFocusArea = ContentFocusArea::Pager;
-        m_pageButtonIndex = std::clamp(selected % kGridCols, 0, 1);
+        m_pageButtonIndex = std::clamp(selected % shelfGridCols(), 0, 1);
         if (m_navSfxCb) m_navSfxCb();
     }
     return true;
@@ -2171,13 +2446,22 @@ bool ThemeShopScreen::handleCustomNavLeft() {
         return true;
     }
 
-    if (m_focusArea != FocusArea::Content)
+    if (m_focusArea == FocusArea::Tabs) {
+        if (!useTopTabRail())
+            return false;
+        if (!stepRailFocus(-1))
+            return false;
+        if (m_navSfxCb) m_navSfxCb();
+        return true;
+    }
+
+    if (!usesCustomContentLayout() || m_focusArea != FocusArea::Content)
         return false;
 
     if (m_contentFocusArea == ContentFocusArea::Header) {
         if (m_headerButtonIndex > 0) {
             --m_headerButtonIndex;
-        } else {
+        } else if (!useTopTabRail()) {
             m_focusArea = FocusArea::Tabs;
             m_shopBranchFocused = showsShelfBranch() && activeShelfMode() == ShelfMode::Shop;
         }
@@ -2188,7 +2472,7 @@ bool ThemeShopScreen::handleCustomNavLeft() {
     if (m_contentFocusArea == ContentFocusArea::Pager) {
         if (m_pageButtonIndex > 0)
             --m_pageButtonIndex;
-        else {
+        else if (!useTopTabRail()) {
             m_focusArea = FocusArea::Tabs;
             m_shopBranchFocused = showsShelfBranch() && activeShelfMode() == ShelfMode::Shop;
         }
@@ -2201,9 +2485,9 @@ bool ThemeShopScreen::handleCustomNavLeft() {
         return true;
 
     int selected = std::max(0, currentSelectedIndex());
-    if (selected % kGridCols > 0) {
+    if (selected % shelfGridCols() > 0) {
         setCurrentSelectedIndex(selected - 1);
-    } else {
+    } else if (!useTopTabRail()) {
         m_focusArea = FocusArea::Tabs;
         m_shopBranchFocused = showsShelfBranch() && activeShelfMode() == ShelfMode::Shop;
     }
@@ -2279,23 +2563,31 @@ bool ThemeShopScreen::handleCustomNavRight() {
     }
 
     if (m_focusArea == FocusArea::Tabs) {
+        if (useTopTabRail()) {
+            if (!stepRailFocus(+1))
+                return false;
+            if (m_navSfxCb) m_navSfxCb();
+            return true;
+        }
+        // Landscape side rail: Right enters the page.
         if (currentEntryCount() > 0) {
             m_focusArea = FocusArea::Content;
             m_contentFocusArea = ContentFocusArea::Grid;
             if (m_navSfxCb) m_navSfxCb();
             return true;
         }
-        {
-            m_focusArea = FocusArea::Content;
-            m_contentFocusArea = ContentFocusArea::Header;
-            m_headerButtonIndex = 0;
-            if (m_navSfxCb) m_navSfxCb();
-            return true;
-        }
+        m_focusArea = FocusArea::Content;
+        m_contentFocusArea = ContentFocusArea::Header;
+        m_headerButtonIndex = 0;
+        if (m_navSfxCb) m_navSfxCb();
+        return true;
     }
 
+    if (!usesCustomContentLayout() || m_focusArea != FocusArea::Content)
+        return false;
+
     if (m_contentFocusArea == ContentFocusArea::Header) {
-        const int headerButtonCount = (showsCatalogRefresh() ? 1 : 0) + 1;
+        const int headerButtonCount = headerActionCount(showsCatalogRefresh(), !m_searchQuery.empty());
         if (m_headerButtonIndex + 1 < headerButtonCount) {
             ++m_headerButtonIndex;
         } else if (currentEntryCount() > 0) {
@@ -2317,7 +2609,7 @@ bool ThemeShopScreen::handleCustomNavRight() {
         return true;
 
     int selected = std::max(0, currentSelectedIndex());
-    if (selected + 1 < count && selected % kGridCols < kGridCols - 1) {
+    if (selected + 1 < count && selected % shelfGridCols() < shelfGridCols() - 1) {
         setCurrentSelectedIndex(selected + 1);
         if (m_navSfxCb) m_navSfxCb();
     }
@@ -2325,15 +2617,16 @@ bool ThemeShopScreen::handleCustomNavRight() {
 }
 
 int ThemeShopScreen::hitTestGridCard(const nxui::Rect& content, float x, float y) const {
-    GridLayout layout = makeGridLayout(content, showsCatalogRefresh());
+    GridLayout layout = makeGridLayout(content, showsCatalogRefresh(), !m_searchQuery.empty(),
+                                       shelfGridCols(), shelfVisibleRows(), useTopTabRail());
     int count = currentEntryCount();
     if (count <= 0 || !layout.grid.contains(x, y))
         return -1;
 
     int scrollRow = isCommunityTab() ? m_communityScrollRow
                   : (isIconsTab() ? m_iconPackScrollRow : m_installedScrollRow);
-    int start = scrollRow * kGridCols;
-    int end = std::min(count, start + kGridCols * kVisibleRows);
+    int start = scrollRow * shelfGridCols();
+    int end = std::min(count, start + shelfGridCols() * shelfVisibleRows());
     for (int i = start; i < end; ++i) {
         int local = i - start;
         if (gridCardRect(layout, local).contains(x, y))
@@ -2344,24 +2637,31 @@ int ThemeShopScreen::hitTestGridCard(const nxui::Rect& content, float x, float y
 }
 
 bool ThemeShopScreen::handleCustomTouch(nxui::Input& input, const nxui::Rect&, const nxui::Rect& tabs, const nxui::Rect& content) {
+    const bool showClear = !m_searchQuery.empty();
+    auto headerLayout = [&]() {
+        return makeGridLayout(content, showsCatalogRefresh(), showClear,
+                              shelfGridCols(), shelfVisibleRows(), useTopTabRail());
+    };
     auto searchHit = [&](float x, float y) {
-        return makeGridLayout(content, showsCatalogRefresh())
-            .searchButton.contains(x, y);
+        return headerLayout().searchButton.contains(x, y);
+    };
+    auto sortHit = [&](float x, float y) {
+        return headerLayout().sortButton.contains(x, y);
+    };
+    auto clearHit = [&](float x, float y) {
+        return showClear && headerLayout().clearButton.contains(x, y);
     };
     auto refreshHit = [&](float x, float y) {
         return showsCatalogRefresh()
-            && makeGridLayout(content, showsCatalogRefresh())
-                   .refreshButton.contains(x, y);
+            && headerLayout().refreshButton.contains(x, y);
     };
     auto pagePrevHit = [&](float x, float y) {
         return pageCount() > 1
-            && makeGridLayout(content, showsCatalogRefresh())
-                   .pagePrevButton.contains(x, y);
+            && headerLayout().pagePrevButton.contains(x, y);
     };
     auto pageNextHit = [&](float x, float y) {
         return pageCount() > 1
-            && makeGridLayout(content, showsCatalogRefresh())
-                   .pageNextButton.contains(x, y);
+            && headerLayout().pageNextButton.contains(x, y);
     };
     auto installedHasCover = [&]() {
         const auto* entry = selectedThemeShopEntry();
@@ -2380,8 +2680,9 @@ bool ThemeShopScreen::handleCustomTouch(nxui::Input& input, const nxui::Rect&, c
             return -1;
 
         nxui::Rect dialog = detailDialogRect(content);
+        const bool stackIconTint = isPortraitCanvas();
         nxui::Rect previewRect = isIconsTab() && showSelectedIconTintControls()
-            ? colourIconPreviewBounds(dialog)
+            ? colourIconPreviewBounds(dialog, stackIconTint)
             : detailPreviewRect(dialog);
         DetailPreviewControls controls = detailPreviewControls(previewRect);
         auto rects = detailPreviewControlRects(controls, previewRect, count);
@@ -2436,9 +2737,11 @@ bool ThemeShopScreen::handleCustomTouch(nxui::Input& input, const nxui::Rect&, c
             }
 
             if (showSelectedIconTintControls()) {
-                nxui::Rect previewRect = colourIconPreviewBounds(dialog);
+                const bool stackIconTint = isPortraitCanvas();
+                nxui::Rect previewRect = colourIconPreviewBounds(dialog, stackIconTint);
                 IconTintLayout tintLayout = makeIconTintLayout(
-                    colourIconTintBand(dialog, previewRect, selectedIconCustomTint()),
+                    colourIconTintBand(dialog, previewRect, selectedIconCustomTint(),
+                                       stackIconTint),
                     selectedIconCustomTint(),
                     selectedIconShowsHueSat());
                 if (tintLayout.matchPill.expanded(8.f).contains(x, y)) {
@@ -2501,6 +2804,16 @@ bool ThemeShopScreen::handleCustomTouch(nxui::Input& input, const nxui::Rect&, c
             return true;
         }
 
+        if (sortHit(x, y)) {
+            m_themeTouchTarget = ThemeTouchTarget::Sort;
+            return true;
+        }
+
+        if (clearHit(x, y)) {
+            m_themeTouchTarget = ThemeTouchTarget::ClearSearch;
+            return true;
+        }
+
         if (refreshHit(x, y)) {
             m_themeTouchTarget = ThemeTouchTarget::Refresh;
             return true;
@@ -2532,9 +2845,11 @@ bool ThemeShopScreen::handleCustomTouch(nxui::Input& input, const nxui::Rect&, c
              || m_themeTouchTarget == ThemeTouchTarget::DetailTintLight)
             && showSelectedIconTintControls()) {
             nxui::Rect dialog = detailDialogRect(content);
-            nxui::Rect previewRect = colourIconPreviewBounds(dialog);
+            const bool stackIconTint = isPortraitCanvas();
+            nxui::Rect previewRect = colourIconPreviewBounds(dialog, stackIconTint);
             IconTintLayout tintLayout = makeIconTintLayout(
-                colourIconTintBand(dialog, previewRect, selectedIconCustomTint()),
+                colourIconTintBand(dialog, previewRect, selectedIconCustomTint(),
+                                   stackIconTint),
                 selectedIconCustomTint(),
                 selectedIconShowsHueSat());
             const nxui::Rect* track = &tintLayout.hueTrack;
@@ -2577,6 +2892,18 @@ bool ThemeShopScreen::handleCustomTouch(nxui::Input& input, const nxui::Rect&, c
             case ThemeTouchTarget::Search:
                 if (searchHit(x, y)) {
                     promptSearchQuery();
+                    if (m_activateSfxCb) m_activateSfxCb();
+                }
+                return true;
+            case ThemeTouchTarget::Sort:
+                if (sortHit(x, y)) {
+                    cycleCatalogSortMode();
+                    if (m_activateSfxCb) m_activateSfxCb();
+                }
+                return true;
+            case ThemeTouchTarget::ClearSearch:
+                if (clearHit(x, y)) {
+                    clearSearchQuery();
                     if (m_activateSfxCb) m_activateSfxCb();
                 }
                 return true;
@@ -2735,7 +3062,10 @@ bool ThemeShopScreen::handleCustomTouch(nxui::Input& input, const nxui::Rect&, c
 
 void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, const nxui::Rect& content, float opacity) {
     auto& i18n = nxui::I18n::instance();
-    GridLayout layout = makeGridLayout(content, showsCatalogRefresh());
+    const bool showClear = !m_searchQuery.empty();
+    const bool compactHeader = useTopTabRail();
+    GridLayout layout = makeGridLayout(content, showsCatalogRefresh(), showClear,
+                                       shelfGridCols(), shelfVisibleRows(), compactHeader);
     float slideT = std::clamp(m_contentSlideAnim.value(), 0.f, 1.f);
     float slideOffset = (1.f - slideT) * 24.f * (float)m_tabSwitchDir;
     float contentOpacity = opacity * slideT;
@@ -2764,7 +3094,9 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
 
     layout.header.y += slideOffset;
     layout.refreshButton.y += slideOffset;
+    layout.sortButton.y += slideOffset;
     layout.searchButton.y += slideOffset;
+    layout.clearButton.y += slideOffset;
     layout.pagePrevButton.y += slideOffset;
     layout.pageCounter.y += slideOffset;
     layout.pageNextButton.y += slideOffset;
@@ -2787,18 +3119,42 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
         subtitle = i18n.tr("themeshop.themes.subtitle_installed", "Themes on this console.");
     }
 
+    std::string counterText;
+    if (count > 0) {
+        const int selected = std::max(0, currentSelectedIndex()) + 1;
+        counterText = std::to_string(selected) + "/" + std::to_string(count);
+    } else if ((isCommunityTab() || isIconsShopMode())
+               && m_searchQuery.empty()
+               && !m_communityTransferState.hasFailed()
+               && (m_communityTransferState.isRunning() || m_communityRevision == 0)) {
+        counterText = i18n.tr("themeshop.community.counter_loading", "Loading");
+    } else {
+        counterText = "0/0";
+    }
+    title += " (" + counterText + ")";
+
+    // Keep the title from colliding with header actions.
+    float titleMaxWidth = layout.sortButton.x - layout.header.x - 16.f;
+    if (showsCatalogRefresh() && layout.refreshButton.width > 0.f)
+        titleMaxWidth = layout.refreshButton.x - layout.header.x - 16.f;
+    title = ellipsize(m_font, title, std::max(80.f, titleMaxWidth), 1.16f);
+
     ren.drawText(title, {layout.header.x, layout.header.y + 0.f}, m_font,
                  m_theme->textPrimary.withAlpha(contentOpacity), 1.16f);
     ren.drawText(subtitle, {layout.header.x, layout.header.y + 34.f}, m_smallFont,
                  m_theme->textSecondary.withAlpha(0.78f * contentOpacity), 0.72f);
 
     const bool hasRefresh = showsCatalogRefresh();
-    const int searchHeaderIndex = hasRefresh ? 1 : 0;
-    const int refreshHeaderIndex = 0;
+    int actionIndex = 0;
+    const int refreshHeaderIndex = hasRefresh ? actionIndex++ : -1;
+    const int sortHeaderIndex = actionIndex++;
+    const int searchHeaderIndex = actionIndex++;
+    const int clearHeaderIndex = showClear ? actionIndex++ : -1;
 
     std::string searchLabel = m_searchQuery.empty()
         ? i18n.tr("themeshop.search.button", "Search")
         : m_searchQuery;
+    searchLabel = ellipsize(m_smallFont, searchLabel, layout.searchButton.width - 28.f, 0.78f);
     bool searchSelected = !m_detailOpen && m_focusArea == FocusArea::Content && m_contentFocusArea == ContentFocusArea::Header
         && m_headerButtonIndex == searchHeaderIndex;
     drawActionButtonChip(ren,
@@ -2812,27 +3168,36 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
                          searchSelected ? 1.f : (m_searchQuery.empty() ? 0.f : 0.72f),
                          0.78f);
 
-    std::string counterText;
-    if (count > 0) {
-        int selected = std::max(0, currentSelectedIndex()) + 1;
-        counterText = std::to_string(selected) + " / " + std::to_string(count);
-    } else if ((isCommunityTab() || isIconsShopMode())
-               && m_searchQuery.empty()
-               && !m_communityTransferState.hasFailed()
-               && (m_communityTransferState.isRunning() || m_communityRevision == 0)) {
-        counterText = i18n.tr("themeshop.community.counter_loading", "Loading");
-    } else {
-        counterText = "0 / 0";
+    const std::string sortLabel = (m_catalogSortMode == CatalogSortMode::Newest)
+        ? i18n.tr("themeshop.sort.newest", "Newest")
+        : i18n.tr("themeshop.sort.alpha", "A-Z");
+    bool sortSelected = !m_detailOpen && m_focusArea == FocusArea::Content && m_contentFocusArea == ContentFocusArea::Header
+        && m_headerButtonIndex == sortHeaderIndex;
+    drawActionButtonChip(ren,
+                         m_smallFont,
+                         layout.sortButton,
+                         sortLabel,
+                         m_theme,
+                         m_theme->textPrimary,
+                         contentOpacity,
+                         sortSelected ? 1.f : 0.f,
+                         sortSelected ? 1.f : 0.f,
+                         0.78f);
+
+    if (showClear) {
+        bool clearSelected = !m_detailOpen && m_focusArea == FocusArea::Content && m_contentFocusArea == ContentFocusArea::Header
+            && m_headerButtonIndex == clearHeaderIndex;
+        drawActionButtonChip(ren,
+                             m_smallFont,
+                             layout.clearButton,
+                             i18n.tr("button.clear_x", "×"),
+                             m_theme,
+                             m_theme->textPrimary,
+                             contentOpacity,
+                             clearSelected ? 1.f : 0.f,
+                             clearSelected ? 1.f : 0.72f,
+                             0.90f);
     }
-    nxui::Vec2 countSize = measureTextCached(m_font, counterText);
-    float countRight = layout.searchButton.x - 18.f;
-    if (hasRefresh && layout.refreshButton.width > 0.f)
-        countRight = layout.refreshButton.x - 18.f;
-    ren.drawText(counterText,
-                 {countRight - countSize.x * 0.90f, layout.header.y + 4.f},
-                 m_font,
-                 m_theme->textPrimary.withAlpha(contentOpacity),
-                 0.90f);
 
     if (!m_packageTransferState.label().empty()) {
         nxui::Color statusFill = m_theme->panelBase.withAlpha(0.18f);
@@ -2885,28 +3250,60 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
     }
 
     if (hasRefresh) {
-        std::string refreshLabel = m_communityTransferState.isRunning()
-            ? i18n.tr("themeshop.community.refreshing", "Refreshing")
-            : i18n.tr("themeshop.community.refresh", "Refresh");
         bool refreshSelected = !m_detailOpen && m_focusArea == FocusArea::Content && m_contentFocusArea == ContentFocusArea::Header
             && m_headerButtonIndex == refreshHeaderIndex;
-        drawActionButtonChip(ren,
-                             m_smallFont,
-                             layout.refreshButton,
-                             refreshLabel,
-                             m_theme,
-                             m_theme->textPrimary,
-                             contentOpacity,
-                             refreshSelected ? 1.f : 0.f,
-                             refreshSelected ? 1.f : 0.68f,
-                             0.78f);
-        if (m_communityTransferState.isRunning()) {
-            drawSpinner(ren,
-                        {layout.refreshButton.x + 18.f, layout.refreshButton.y + layout.refreshButton.height * 0.5f},
-                        8.f,
-                        m_uiTime,
-                        m_theme->cursorNormal,
-                        contentOpacity);
+        if (compactHeader) {
+            // Portrait: icon-only refresh so shelf titles keep room.
+            drawActionButtonChip(ren,
+                                 m_smallFont,
+                                 layout.refreshButton,
+                                 {},
+                                 m_theme,
+                                 m_theme->textPrimary,
+                                 contentOpacity,
+                                 refreshSelected ? 1.f : 0.f,
+                                 refreshSelected ? 1.f : 0.68f,
+                                 0.78f);
+            const nxui::Vec2 refreshCenter = {
+                layout.refreshButton.x + layout.refreshButton.width * 0.5f,
+                layout.refreshButton.y + layout.refreshButton.height * 0.5f
+            };
+            if (m_communityTransferState.isRunning()) {
+                drawSpinner(ren,
+                            refreshCenter,
+                            8.f,
+                            m_uiTime,
+                            m_theme->cursorNormal,
+                            contentOpacity);
+            } else {
+                drawRefreshIcon(ren,
+                                refreshCenter,
+                                m_theme->textPrimary.withAlpha(0.96f * contentOpacity),
+                                1.05f);
+            }
+        } else {
+            std::string refreshLabel = m_communityTransferState.isRunning()
+                ? i18n.tr("themeshop.community.refreshing", "Refreshing")
+                : i18n.tr("themeshop.community.refresh", "Refresh");
+            drawActionButtonChip(ren,
+                                 m_smallFont,
+                                 layout.refreshButton,
+                                 refreshLabel,
+                                 m_theme,
+                                 m_theme->textPrimary,
+                                 contentOpacity,
+                                 refreshSelected ? 1.f : 0.f,
+                                 refreshSelected ? 1.f : 0.68f,
+                                 0.78f);
+            if (m_communityTransferState.isRunning()) {
+                drawSpinner(ren,
+                            {layout.refreshButton.x + 18.f,
+                             layout.refreshButton.y + layout.refreshButton.height * 0.5f},
+                            8.f,
+                            m_uiTime,
+                            m_theme->cursorNormal,
+                            contentOpacity);
+            }
         }
     }
 
@@ -3027,7 +3424,7 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
                      m_theme->textSecondary.withAlpha(0.90f * contentOpacity),
                      0.76f);
         if (!m_detailOpen && m_focusArea == FocusArea::Content && m_contentFocusArea == ContentFocusArea::Header) {
-            auto headerButtons = headerButtonRects(layout, showsCatalogRefresh());
+            auto headerButtons = headerButtonRects(layout, showsCatalogRefresh(), showClear);
             if (!headerButtons.empty()) {
                 int headerIndex = std::clamp(m_headerButtonIndex, 0, (int)headerButtons.size() - 1);
                 m_focusCursor.moveTo(headerButtons[(size_t)headerIndex].expanded(2.f), 20.f, 0.08f);
@@ -3037,8 +3434,8 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
     }
 
     int scrollRow = currentScrollRowRef();
-    int start = scrollRow * kGridCols;
-    int end = std::min(count, start + kGridCols * kVisibleRows);
+    int start = scrollRow * shelfGridCols();
+    int end = std::min(count, start + shelfGridCols() * shelfVisibleRows());
     int selected = std::max(0, currentSelectedIndex());
     float reveal = std::clamp(m_tabReveal.value(), 0.f, 1.f);
     const float gridDetailT = std::clamp(m_detailSheetAnim.value(), 0.f, 1.f);
@@ -3358,7 +3755,7 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
 
     if (gridFocusLive
         && m_focusArea == FocusArea::Content && m_contentFocusArea == ContentFocusArea::Header) {
-        auto headerButtons = headerButtonRects(layout, showsCatalogRefresh());
+        auto headerButtons = headerButtonRects(layout, showsCatalogRefresh(), showClear);
         if (!headerButtons.empty()) {
             int headerIndex = std::clamp(m_headerButtonIndex, 0, (int)headerButtons.size() - 1);
             m_focusCursor.moveTo(headerButtons[(size_t)headerIndex].expanded(2.f), 20.f, 0.08f);
@@ -3391,8 +3788,9 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
     const auto* tintEntry = isIconsTab() ? selectedThemeShopEntry() : nullptr;
     const bool showIconTintControls = isIconsTab() && showSelectedIconTintControls()
         && tintEntry && tintEntry->installed;
+    const bool stackIconTint = isPortraitCanvas();
     nxui::Rect preview = showIconTintControls
-        ? colourIconPreviewBounds(dialog)
+        ? colourIconPreviewBounds(dialog, stackIconTint)
         : detailPreviewRect(dialog);
     std::string detailTitle;
     std::string detailSubtitle;
@@ -3658,7 +4056,7 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
                      0.78f);
 
         IconTintLayout tintLayout = makeIconTintLayout(
-            colourIconTintBand(dialog, preview, selectedIconCustomTint()),
+            colourIconTintBand(dialog, preview, selectedIconCustomTint(), stackIconTint),
             selectedIconCustomTint(),
             selectedIconShowsHueSat());
         auto drawToggleRow = [&](const nxui::Rect& labelRow, const nxui::Rect& pill,

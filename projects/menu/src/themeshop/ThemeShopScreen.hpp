@@ -58,6 +58,13 @@ public:
         // Remote preview for catalog packs that are not installed yet.
         std::string coverUrl;
         std::string description;
+        // Unix seconds for Newest sort (catalog stamps or local mtime).
+        std::int64_t sortStamp = 0;
+    };
+
+    enum class CatalogSortMode : int {
+        Newest = 0,
+        NameAsc = 1,
     };
 
     ThemeShopScreen();
@@ -122,6 +129,9 @@ public:
     void onNetConnectRequest(VoidCb cb)  { m_netConnectCb = std::move(cb); }
     void onSearchRequest(StringCb cb) { m_searchRequestCb = std::move(cb); }
     void setSearchQuery(std::string query);
+    void clearSearchQuery();
+    CatalogSortMode catalogSortMode() const { return m_catalogSortMode; }
+    void cycleCatalogSortMode();
 
     void setMusicState(bool enabled, float musicVol, float sfxVol) {
         m_musicEnabled = enabled;
@@ -216,6 +226,11 @@ public:
     bool showsShelfBranch() const;
     ShelfMode activeShelfMode() const;
     void setActiveShelfMode(ShelfMode mode);
+    // Themes / Theme Shop / Icons / Icon Shop as always-visible rail slots.
+    void focusRailSlot(int tabIndex, bool shopBranch);
+    // Linear focus order including inset shop rows, then Sounds/Interface/Lock.
+    int currentRailFocusIndex() const;
+    bool stepRailFocus(int delta);
 
     void setThemeShopState(const std::vector<ThemeShopEntry>& entries,
                            const std::string& activeId);
@@ -248,11 +263,21 @@ protected:
     bool handleCustomNavRight() override;
     bool handleCustomTouch(nxui::Input& input, const nxui::Rect& panel, const nxui::Rect& tabs, const nxui::Rect& content) override;
     float tabBranchExtraHeight(int tabIndex) const override;
+    float topTabRailBranchStripHeight() const override;
     void drawTabBranch(nxui::Renderer& ren, int tabIndex, const nxui::Rect& branchRect, float opacity) override;
     bool tabBranchConsumesFocus() const override;
+    bool tabBranchHitTest(float x, float y, int& outTabIndex) const override;
     bool tabFocusCursorRect(nxui::Rect& outRect) const override;
     void onTabRailParentActivated(int tabIndex) override;
     bool onTabRailBranchActivated(int parentTabIndex) override;
+    int topRailSlotCount() const override;
+    TabGlyph topRailSlotGlyph(int slot) const override;
+    std::string topRailSlotTitle(int slot) const override;
+    int topRailFocusIndex() const override;
+    void activateTopRailSlot(int slot) override;
+    int shelfGridCols() const;
+    int shelfVisibleRows() const;
+    int shelfEntriesPerPage() const;
     void currentAccessibilityParts(std::string& context,
                                    std::string& position,
                                    std::string& summary,
@@ -299,6 +324,8 @@ private:
     enum class ThemeTouchTarget {
         None,
         Search,
+        Sort,
+        ClearSearch,
         Refresh,
         PagePrev,
         PageNext,
@@ -525,6 +552,7 @@ private:
     int m_cursorMotionMode = 0;
     int m_pageTransitionMode = 0;
     std::string m_searchQuery;
+    CatalogSortMode m_catalogSortMode = CatalogSortMode::Newest;
     std::vector<ThemeShopEntry> m_allThemeShopEntries;
     std::vector<ThemeShopEntry> m_themeShopEntries;
     std::string m_themeShopSelectedId;
@@ -576,7 +604,8 @@ private:
     ShelfMode m_iconsShelfMode = ShelfMode::Installed;
     bool m_shopBranchFocused = false;
     nxui::Rect m_shopBranchRect{};
-    nxui::AnimatedFloat m_shopBranchReveal{0.f};
+    nxui::Rect m_themeShopBranchRect{};
+    nxui::Rect m_iconShopBranchRect{};
     int m_lastCustomTabIndex = -1;
     std::string m_lastPreviewPrimeKey;
     ThemeTouchTarget m_themeTouchTarget = ThemeTouchTarget::None;

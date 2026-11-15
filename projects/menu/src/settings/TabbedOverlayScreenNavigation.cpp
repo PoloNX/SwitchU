@@ -212,6 +212,27 @@ void TabbedOverlayScreen::setupActions() {
     addDirectionAction(nxui::FocusDirection::DOWN,  [this]() { onNavDown(); });
     addDirectionAction(nxui::FocusDirection::LEFT,  [this]() { onNavLeft(); });
     addDirectionAction(nxui::FocusDirection::RIGHT, [this]() { onNavRight(); });
+    // Settings / Theme Shop / Game / Folder: L/R jump tabs (portrait + landscape).
+    addAction(static_cast<uint64_t>(nxui::Button::L), [this]() {
+        if (!shoulderCyclesTopTabs())
+            return;
+        const int focus = topRailFocusIndex();
+        if (focus <= 0)
+            return;
+        activateTopRailSlot(focus - 1);
+        if (m_navSfxCb) m_navSfxCb();
+        announceCurrentFocus();
+    });
+    addAction(static_cast<uint64_t>(nxui::Button::R), [this]() {
+        if (!shoulderCyclesTopTabs())
+            return;
+        const int focus = topRailFocusIndex();
+        if (focus + 1 >= topRailSlotCount())
+            return;
+        activateTopRailSlot(focus + 1);
+        if (m_navSfxCb) m_navSfxCb();
+        announceCurrentFocus();
+    });
 }
 
 void TabbedOverlayScreen::onPressB() {
@@ -322,7 +343,9 @@ void TabbedOverlayScreen::onPressX() {
 
 void TabbedOverlayScreen::onNavUp() {
     if (!m_active || m_animating) return;
-    if (usesCustomContentLayout() && handleCustomNavUp()) {
+    // Always offer custom nav first (Theme Shop Icon Shop sits between Icons and
+    // Sounds even when the Sounds page itself is not custom-laid-out).
+    if (handleCustomNavUp()) {
         announceCurrentFocus();
         return;
     }
@@ -330,6 +353,9 @@ void TabbedOverlayScreen::onNavUp() {
         return;
 
     if (m_focusArea == FocusArea::Tabs) {
+        // Portrait top rail: Left/Right cycle tabs. Landscape: Up/Down.
+        if (useTopTabRail())
+            return;
         if (m_tabIndex > 0) {
             m_tabSwitchDir = -1;
             --m_tabIndex;
@@ -387,12 +413,16 @@ void TabbedOverlayScreen::onNavUp() {
         // first control. At the focus boundary, keep D-pad repeat useful by
         // scrolling the remaining content instead of swallowing the input.
         m_scrollTarget = std::max(0.f, m_scrollTarget - kRowHeight);
+    } else if (useTopTabRail()) {
+        m_focusArea = FocusArea::Tabs;
+        if (m_navSfxCb) m_navSfxCb();
+        announceCurrentFocus();
     }
 }
 
 void TabbedOverlayScreen::onNavDown() {
     if (!m_active || m_animating) return;
-    if (usesCustomContentLayout() && handleCustomNavDown()) {
+    if (handleCustomNavDown()) {
         announceCurrentFocus();
         return;
     }
@@ -400,6 +430,17 @@ void TabbedOverlayScreen::onNavDown() {
         return;
 
     if (m_focusArea == FocusArea::Tabs) {
+        if (useTopTabRail()) {
+            // Custom pages (Theme Shop shelves) have no SettingItem focusables.
+            if (usesCustomContentLayout() || focusableCount() > 0) {
+                m_focusArea = FocusArea::Content;
+                m_contentIdx = 0;
+                scrollToFocused();
+                if (m_navSfxCb) m_navSfxCb();
+                announceCurrentFocus();
+            }
+            return;
+        }
         if (m_tabIndex < (int)m_tabs.size() - 1) {
             m_tabSwitchDir = 1;
             ++m_tabIndex;
@@ -464,7 +505,9 @@ void TabbedOverlayScreen::onNavDown() {
 
 void TabbedOverlayScreen::onNavLeft() {
     if (!m_active || m_animating) return;
-    if (usesCustomContentLayout() && handleCustomNavLeft()) {
+    // Always offer custom first (Theme Shop rail includes inset shops on
+    // Sounds/Interface/Lock pages that are not custom-laid-out).
+    if (handleCustomNavLeft()) {
         announceCurrentFocus();
         return;
     }
@@ -477,7 +520,25 @@ void TabbedOverlayScreen::onNavLeft() {
         return;
     }
 
-    if (m_focusArea == FocusArea::Tabs) return;
+    if (m_focusArea == FocusArea::Tabs) {
+        if (useTopTabRail() && m_tabIndex > 0) {
+            m_tabSwitchDir = -1;
+            --m_tabIndex;
+            m_contentIdx = 0;
+            m_scrollY = 0;
+            m_scrollTarget = 0;
+            m_contentSlideAnim.setImmediate(0.f);
+            m_contentSlideAnim.set(1.f, 0.28f, nxui::Easing::outCubic);
+            m_contentStaggerT = 0.f;
+            m_tabAccentW.setImmediate(1.f);
+            m_tabAccentW.set(3.f, 0.32f, nxui::Easing::outExpo);
+            closeDropdown(false);
+            rebuildContentItems();
+            if (m_navSfxCb) m_navSfxCb();
+            announceCurrentFocus();
+        }
+        return;
+    }
 
     auto& items = m_tabs[m_tabIndex].items;
     int rawIdx = rawIndexFromFocusable(m_contentIdx);
@@ -494,7 +555,7 @@ void TabbedOverlayScreen::onNavLeft() {
         item.actionButtonFocus = 0;
         if (m_navSfxCb) m_navSfxCb();
         announceCurrentFocus();
-    } else {
+    } else if (!useTopTabRail()) {
         m_focusArea = FocusArea::Tabs;
         if (m_navSfxCb) m_navSfxCb();
         announceCurrentFocus();
@@ -503,7 +564,7 @@ void TabbedOverlayScreen::onNavLeft() {
 
 void TabbedOverlayScreen::onNavRight() {
     if (!m_active || m_animating) return;
-    if (usesCustomContentLayout() && handleCustomNavRight()) {
+    if (handleCustomNavRight()) {
         announceCurrentFocus();
         return;
     }
@@ -517,6 +578,25 @@ void TabbedOverlayScreen::onNavRight() {
     }
 
     if (m_focusArea == FocusArea::Tabs) {
+        if (useTopTabRail()) {
+            if (m_tabIndex < (int)m_tabs.size() - 1) {
+                m_tabSwitchDir = 1;
+                ++m_tabIndex;
+                m_contentIdx = 0;
+                m_scrollY = 0;
+                m_scrollTarget = 0;
+                m_contentSlideAnim.setImmediate(0.f);
+                m_contentSlideAnim.set(1.f, 0.28f, nxui::Easing::outCubic);
+                m_contentStaggerT = 0.f;
+                m_tabAccentW.setImmediate(1.f);
+                m_tabAccentW.set(3.f, 0.32f, nxui::Easing::outExpo);
+                closeDropdown(false);
+                rebuildContentItems();
+                if (m_navSfxCb) m_navSfxCb();
+                announceCurrentFocus();
+            }
+            return;
+        }
         if (focusableCount() > 0) {
             m_focusArea = FocusArea::Content;
             m_contentIdx = 0;
@@ -806,31 +886,60 @@ void TabbedOverlayScreen::handleTouch(nxui::Input& input) {
             m_touchStartScroll = m_tabScrollY;
             m_touchTabBranch = false;
             int idx = -1;
-            float cursorY = tr.y + 14.f - m_tabScrollY;
-            float tabH = kTabRowHeight - 10.f;
-            for (int i = 0; i < (int)m_tabs.size(); ++i) {
-                if (ty >= cursorY && ty < cursorY + tabH) {
-                    idx = i;
-                    break;
+            if (useTopTabRail() && m_tabBar) {
+                if (tabBranchHitTest(tx, ty, idx)) {
+                    m_touchTabBranch = true;
+                } else {
+                    const int slotCount = topRailSlotCount();
+                    const auto& tabChildren = m_tabBar->children();
+                    for (int i = 0; i < (int)tabChildren.size() && i < slotCount; ++i) {
+                        if (tabChildren[i]->rect().contains(tx, ty)) {
+                            idx = i;
+                            break;
+                        }
+                    }
+                    if (idx < 0 && slotCount > 0) {
+                        const float gap = useIconOnlyTopTabs() ? 4.f : 8.f;
+                        const float inset = 14.f;
+                        const float avail = std::max(0.f, tr.width - inset * 2.f
+                            - gap * static_cast<float>(std::max(0, slotCount - 1)));
+                        const float tabW = avail / static_cast<float>(std::max(1, slotCount));
+                        idx = (int)((tx - tr.x - inset) / std::max(1.f, tabW + gap));
+                        idx = std::clamp(idx, 0, slotCount - 1);
+                    }
                 }
-                cursorY += tabH + 10.f;
-                const float extra = tabBranchExtraHeight(i);
-                if (extra > 0.5f) {
-                    if (ty >= cursorY && ty < cursorY + extra) {
+            } else {
+                float cursorY = tr.y + 14.f - m_tabScrollY;
+                float tabH = kTabRowHeight - 10.f;
+                for (int i = 0; i < (int)m_tabs.size(); ++i) {
+                    if (ty >= cursorY && ty < cursorY + tabH) {
                         idx = i;
-                        m_touchTabBranch = true;
                         break;
                     }
-                    cursorY += extra;
+                    cursorY += tabH + 10.f;
+                    const float extra = tabBranchExtraHeight(i);
+                    if (extra > 0.5f) {
+                        if (ty >= cursorY && ty < cursorY + extra) {
+                            idx = i;
+                            m_touchTabBranch = true;
+                            break;
+                        }
+                        cursorY += extra;
+                    }
+                }
+                if (idx < 0) {
+                    idx = (int)((ty - tr.y + m_tabScrollY - 14.f) / kTabRowHeight);
+                    idx = std::clamp(idx, 0, (int)m_tabs.size() - 1);
                 }
             }
-            if (idx < 0) {
-                idx = (int)((ty - tr.y + m_tabScrollY - 14.f) / kTabRowHeight);
-                idx = std::clamp(idx, 0, (int)m_tabs.size() - 1);
-            }
             m_touchHitIndex = idx;
-            m_touchOnSelected = (idx == m_tabIndex && m_focusArea == FocusArea::Tabs
-                && m_touchTabBranch == tabBranchConsumesFocus());
+            if (useTopTabRail()) {
+                m_touchOnSelected = (idx == topRailFocusIndex()
+                    && m_focusArea == FocusArea::Tabs);
+            } else {
+                m_touchOnSelected = (idx == m_tabIndex && m_focusArea == FocusArea::Tabs
+                    && m_touchTabBranch == tabBranchConsumesFocus());
+            }
             return;
         }
 
@@ -884,18 +993,20 @@ void TabbedOverlayScreen::handleTouch(nxui::Input& input) {
         }
 
         if (m_touchTarget == TouchTarget::Tab) {
-            if (!m_touchScrolling && dy > kPanThreshold && dy > dx) {
-                m_touchScrolling = true;
-                m_touchStartY = ty;
-                m_touchStartScroll = m_tabScrollY;
-            }
-            if (m_touchScrolling) {
-                const float totalHeight = tabRailContentHeight();
-                const float maxScroll = std::max(0.f, totalHeight - tr.height);
-                const float next = std::clamp(
-                    m_touchStartScroll - (ty - m_touchStartY), 0.f, maxScroll);
-                m_tabScrollTarget = next;
-                m_tabScrollY = next;
+            if (!useTopTabRail()) {
+                if (!m_touchScrolling && dy > kPanThreshold && dy > dx) {
+                    m_touchScrolling = true;
+                    m_touchStartY = ty;
+                    m_touchStartScroll = m_tabScrollY;
+                }
+                if (m_touchScrolling) {
+                    const float totalHeight = tabRailContentHeight();
+                    const float maxScroll = std::max(0.f, totalHeight - tr.height);
+                    const float next = std::clamp(
+                        m_touchStartScroll - (ty - m_touchStartY), 0.f, maxScroll);
+                    m_tabScrollTarget = next;
+                    m_tabScrollY = next;
+                }
             }
         } else if (m_touchTarget == TouchTarget::Content) {
             if (m_touchDraggingSlider && m_touchHitIndex >= 0) {
@@ -980,7 +1091,20 @@ void TabbedOverlayScreen::handleTouch(nxui::Input& input) {
         if (!dragged) {
             switch (m_touchTarget) {
             case TouchTarget::Tab:
-                if (m_touchHitIndex >= 0 && m_touchHitIndex < (int)m_tabs.size()) {
+                if (useTopTabRail() && m_touchHitIndex >= 0
+                    && m_touchHitIndex < topRailSlotCount()) {
+                    if (m_touchOnSelected) {
+                        if (usesCustomContentLayout() || focusableCount() > 0) {
+                            m_focusArea = FocusArea::Content;
+                            m_contentIdx = 0;
+                            scrollToFocused();
+                            if (m_navSfxCb) m_navSfxCb();
+                        }
+                    } else {
+                        activateTopRailSlot(m_touchHitIndex);
+                        if (m_navSfxCb) m_navSfxCb();
+                    }
+                } else if (m_touchHitIndex >= 0 && m_touchHitIndex < (int)m_tabs.size()) {
                     if (m_touchTabBranch) {
                         m_focusArea = FocusArea::Tabs;
                         if (m_tabIndex != m_touchHitIndex) {
@@ -1154,7 +1278,7 @@ void TabbedOverlayScreen::onContentUpdate(float dt) {
     syncPanelState(visibilityProgress());
 
     m_scrollY += (m_scrollTarget - m_scrollY) * std::min(1.f, dt * 14.f);
-    if (!m_tabs.empty()) {
+    if (!m_tabs.empty() && !useTopTabRail()) {
         const nxui::Rect tr = tabsRect();
         const float totalHeight = tabRailContentHeight();
         const float maxTabScroll = std::max(0.f, totalHeight - tr.height);
@@ -1172,6 +1296,9 @@ void TabbedOverlayScreen::onContentUpdate(float dt) {
             m_tabScrollTarget = rowBottom - tr.height + 10.f;
         m_tabScrollTarget = std::clamp(m_tabScrollTarget, 0.f, maxTabScroll);
         m_tabScrollY += (m_tabScrollTarget - m_tabScrollY) * std::min(1.f, dt * 16.f);
+    } else {
+        m_tabScrollY = 0.f;
+        m_tabScrollTarget = 0.f;
     }
     m_uiTime += dt;
 

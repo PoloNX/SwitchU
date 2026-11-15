@@ -40,6 +40,11 @@ public:
     void setFont(nxui::Font* f)         { m_font = f; }
     void setSmallFont(nxui::Font* f)    { m_smallFont = f; }
     void setTheme(const nxui::Theme* t) { m_theme = t; }
+    /// Logical canvas (1280×720 landscape, 720×1280 portrait). Centers the panel.
+    void setCanvasSize(float width, float height) {
+        m_canvasW = width > 1.f ? width : 1280.f;
+        m_canvasH = height > 1.f ? height : 720.f;
+    }
     void setAccessibilitySpeechPreferences(bool speakHints, bool speakPosition) {
         m_accessibilitySpeakHints = speakHints;
         m_accessibilitySpeakPosition = speakPosition;
@@ -211,6 +216,8 @@ private:
     bool m_ignoreInitialTouchRelease = false;
 
     float m_panelW = 560.f;
+    float m_canvasW = 1280.f;
+    float m_canvasH = 720.f;
 
     static constexpr float kPanelW       = 560.f;
     static constexpr float kPanelPadX    = 40.f;

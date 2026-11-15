@@ -16,6 +16,9 @@ layout (std140, binding = 1) uniform FsUniforms {
     vec4 tintColor;
     vec4 panelRect;
     vec4 screenSize;
+    // x: layout orient — 0 landscape, 1 Rot90, 2 Rot270, 3 Rot180
+    // Logical panelRect → FB UV must match Renderer::orthoPortrait mapping.
+    vec4 layoutInfo;
 };
 
 layout (location = 0) out vec4 outColor;
@@ -66,7 +69,20 @@ void main() {
     vec2 lensUv = vec2(0.5) + (fragUV - vec2(0.5))
                 * (1.0 - refractionIntensity * 0.030 * dome);
     vec2 displaced = lensUv - normal * edge * refractionIntensity * 0.060;
-    vec2 screenUv = (panelRect.xy + displaced * sizePx) / screenSize.xy;
+    vec2 logicalPos = panelRect.xy + displaced * sizePx;
+    float orient = layoutInfo.x;
+    vec2 fbPos = logicalPos;
+    if (orient > 2.5) {
+        // Rot180
+        fbPos = vec2(screenSize.x - logicalPos.x, screenSize.y - logicalPos.y);
+    } else if (orient > 1.5) {
+        // Rot270: (lx,ly) → (fbW-ly, lx)
+        fbPos = vec2(screenSize.x - logicalPos.y, logicalPos.x);
+    } else if (orient > 0.5) {
+        // Rot90: (lx,ly) → (ly, fbH-lx)
+        fbPos = vec2(logicalPos.y, screenSize.y - logicalPos.x);
+    }
+    vec2 screenUv = fbPos / max(screenSize.xy, vec2(1.0));
     screenUv = clamp(screenUv, vec2(0.0), vec2(1.0));
 
     vec4 color = texture(tex, screenUv);

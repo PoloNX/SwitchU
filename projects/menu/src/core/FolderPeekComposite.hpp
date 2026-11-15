@@ -22,8 +22,8 @@ struct BakedImage {
     int height = 0;
 };
 
-/// Ordered first 6 non-zero title ids (same as applyFolderCovers peek walk).
-std::array<std::uint64_t, kFolderPeekMax> memberTitleIds(const Folder& folder);
+/// Ordered first 6 non-zero title ids (single-row 2×3 baked mosaic).
+std::array<std::uint64_t, kFolderPeekCompositeSlots> memberTitleIds(const Folder& folder);
 
 /// CPU bake of the 2×3 peek mosaic into a 2:3 RGBA canvas.
 BakedImage bake(const Folder& folder);

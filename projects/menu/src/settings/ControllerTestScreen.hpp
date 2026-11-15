@@ -27,6 +27,8 @@ public:
     void hide();
     bool isActive() const { return m_active || m_animatingOut; }
     void handleTouch(nxui::Input& input);
+    // Logical canvas (1280×720 landscape, 720×1280 portrait).
+    void setCanvasSize(float width, float height);
 
     void update(float dt) override;
     void render(nxui::Renderer& ren) override;
@@ -35,7 +37,10 @@ private:
     enum class ActiveStick { None, Left, Right };
     struct ButtonVisual { nxui::Button button; const char* label; };
 
+    bool isPortraitCanvas() const { return m_canvasH > m_canvasW + 0.5f; }
+    nxui::Rect screenRect() const { return {0.f, 0.f, m_canvasW, m_canvasH}; }
     nxui::Rect panelRect(float scale = 1.f) const;
+    void contentPanelRects(float scale, nxui::Rect& stick, nxui::Rect& buttons, nxui::Rect& touch) const;
     nxui::Rect touchPanelRect(float scale = 1.f) const;
     void setupActions();
     void drawStickPanel(nxui::Renderer& ren, const nxui::Rect& rect, float alpha);
@@ -69,4 +74,6 @@ private:
     VoidCb m_closedCb;
     VoidCb m_closeSfxCb;
     StringCb m_accessibilityCb;
+    float m_canvasW = 1280.f;
+    float m_canvasH = 720.f;
 };

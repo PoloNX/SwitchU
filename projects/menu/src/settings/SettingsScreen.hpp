@@ -1,6 +1,7 @@
 #pragma once
 
 #include "TabbedOverlayScreen.hpp"
+#include "core/HomeOrientation.hpp"
 #include <cstdint>
 #include <future>
 
@@ -24,6 +25,22 @@ public:
     ~SettingsScreen() override = default;
 
     void onWireframeChange(BoolCb cb)   { m_wireframeCb = std::move(cb); }
+    void onHomeOrientationChange(std::function<void(HomeOrientation)> cb) {
+        m_homeOrientationCb = std::move(cb);
+    }
+    void onHomeOrientationButtonChange(BoolCb cb) {
+        m_homeOrientationButtonCb = std::move(cb);
+    }
+    void onHomeOrientationCycleChange(std::function<void(std::uint8_t)> cb) {
+        m_homeOrientationCycleCb = std::move(cb);
+    }
+    void setHomeOrientationState(HomeOrientation orientation, bool button,
+                                 std::uint8_t cycle) {
+        m_homeOrientation = orientation;
+        m_homeOrientationButton = button;
+        m_homeOrientationCycle = sanitizeHomeOrientationCycle(
+            cycle, orientation, button);
+    }
     void onGridColumnsChange(IntCb cb)  { m_gridColumnsCb = std::move(cb); }
     void onGridRowsChange(IntCb cb)     { m_gridRowsCb = std::move(cb); }
     void onUiLanguageChange(StringCb cb) { m_uiLanguageCb = std::move(cb); }
@@ -64,6 +81,14 @@ public:
     }
     void onSteamGridDbApiKeyRequest(VoidCb cb) { m_steamGridDbApiKeyCb = std::move(cb); }
     void onSteamGridDbScrapeRequest(VoidCb cb) { m_steamGridDbScrapeCb = std::move(cb); }
+    void onSteamGridDbScanKindsChange(std::function<void(bool, bool, bool, bool)> cb) {
+        m_steamGridDbScanKindsCb = std::move(cb);
+    }
+    void onSteamGridDbClearDecodeCaches(VoidCb cb) {
+        m_steamGridDbClearDecodeCachesCb = std::move(cb);
+    }
+    void onSteamGridDbClearUnused(VoidCb cb) { m_steamGridDbClearUnusedCb = std::move(cb); }
+    void onSteamGridDbClearAll(VoidCb cb) { m_steamGridDbClearAllCb = std::move(cb); }
     void onControllerPairing(VoidCb cb) { m_controllerPairingCb = std::move(cb); }
     void onControllerRemapping(VoidCb cb) { m_controllerRemappingCb = std::move(cb); }
     void onControllerTest(VoidCb cb) { m_controllerTestCb = std::move(cb); }
@@ -107,7 +132,11 @@ public:
                              bool showPosterInDynamicLine = true,
                              bool showLogoInDynamicLine = true,
                              int heroQuality = 2,
-                             int heroBlur = 0) {
+                             int heroBlur = 0,
+                             bool scanHeroes = true,
+                             bool scanLogos = true,
+                             bool scanPosters = true,
+                             bool scanGridWide = true) {
         m_steamGridDbEnabled = enabled;
         m_steamGridDbHasApiKey = hasApiKey;
         m_steamGridDbShowInGrid = showInGrid;
@@ -117,6 +146,10 @@ public:
         m_steamGridDbShowLogoInDynamicLine = showLogoInDynamicLine;
         m_steamGridDbHeroQuality = std::clamp(heroQuality, 0, 3);
         m_steamGridDbHeroBlur = std::clamp(heroBlur, 0, 10);
+        m_steamGridDbScanHeroes = scanHeroes;
+        m_steamGridDbScanLogos = scanLogos;
+        m_steamGridDbScanPosters = scanPosters;
+        m_steamGridDbScanGridWide = scanGridWide;
     }
     void setSteamGridDbProgress(bool running, bool finished, int completed, int total,
                                 int matched, int failed, const std::string& current,
@@ -151,6 +184,9 @@ private:
     friend class settings::tabs::AboutTab;
 
     BoolCb m_wireframeCb;
+    std::function<void(HomeOrientation)> m_homeOrientationCb;
+    BoolCb m_homeOrientationButtonCb;
+    std::function<void(std::uint8_t)> m_homeOrientationCycleCb;
     IntCb m_gridColumnsCb;
     IntCb m_gridRowsCb;
     StringCb m_uiLanguageCb;
@@ -172,6 +208,10 @@ private:
     IntCb m_steamGridDbHeroBlurCb;
     VoidCb m_steamGridDbApiKeyCb;
     VoidCb m_steamGridDbScrapeCb;
+    std::function<void(bool, bool, bool, bool)> m_steamGridDbScanKindsCb;
+    VoidCb m_steamGridDbClearDecodeCachesCb;
+    VoidCb m_steamGridDbClearUnusedCb;
+    VoidCb m_steamGridDbClearAllCb;
     VoidCb m_controllerPairingCb;
     VoidCb m_controllerRemappingCb;
     VoidCb m_controllerTestCb;
@@ -181,6 +221,9 @@ private:
     VoidCb m_rebootCb;
 
     bool m_wireframeEnabled = false;
+    HomeOrientation m_homeOrientation = HomeOrientation::Landscape0;
+    bool m_homeOrientationButton = false;
+    std::uint8_t m_homeOrientationCycle = kHomeOrientationCycleAll;
     int m_gridColumns = 5;
     int m_gridRows = 3;
     std::string m_uiLanguageOverride = "auto";
@@ -200,6 +243,10 @@ private:
     bool m_steamGridDbShowLogoInDynamicLine = true;
     int m_steamGridDbHeroQuality = 2;
     int m_steamGridDbHeroBlur = 0;
+    bool m_steamGridDbScanHeroes = true;
+    bool m_steamGridDbScanLogos = true;
+    bool m_steamGridDbScanPosters = true;
+    bool m_steamGridDbScanGridWide = true;
     bool m_steamGridDbHasApiKey = false;
     bool m_steamGridDbRunning = false;
     bool m_steamGridDbFinished = false;

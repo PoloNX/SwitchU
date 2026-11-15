@@ -107,10 +107,12 @@ bool FolderStore::load() {
                 item.value("color", static_cast<int>(folder.id % 8u)), 0, 7);
             folder.sizeIndex = std::clamp(item.value("size", 1), 0, 2);
             folder.pageCount = std::clamp(item.value("pages", 1), 1, kMaxFolderPages);
+            folder.overrideTitleHeroes = item.value("overrideTitleHeroes", false);
         } catch (...) {
             folder.colorIndex = static_cast<int>(folder.id % 8u);
             folder.sizeIndex = 1;
             folder.pageCount = 1;
+            folder.overrideTitleHeroes = false;
         }
         usedIds.insert(folder.id);
         m_nextId = std::max(m_nextId, folder.id + 1);
@@ -147,6 +149,8 @@ bool FolderStore::save() const {
         item["color"] = folder.colorIndex;
         item["size"] = folder.sizeIndex;
         item["pages"] = folder.pageCount;
+        if (folder.overrideTitleHeroes)
+            item["overrideTitleHeroes"] = true;
         item["titles"] = nlohmann::json::array();
         for (std::uint64_t titleId : folder.titleIds)
             item["titles"].push_back(titleIdString(titleId));
@@ -418,6 +422,14 @@ bool FolderStore::setPageCount(std::uint32_t folderId, int pages) {
     if (clamped == folder->pageCount)
         return false;
     folder->pageCount = clamped;
+    return true;
+}
+
+bool FolderStore::setOverrideTitleHeroes(std::uint32_t folderId, bool overrideTitleHeroes) {
+    Folder* folder = find(folderId);
+    if (!folder)
+        return false;
+    folder->overrideTitleHeroes = overrideTitleHeroes;
     return true;
 }
 

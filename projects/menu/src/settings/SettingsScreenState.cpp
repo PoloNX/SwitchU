@@ -24,17 +24,17 @@ bool isRetriableClockSyncError(const std::string& error) {
 void SettingsScreen::buildTabs() {
     auto& i18n = nxui::I18n::instance();
     m_tabs = {
-        {.name = i18n.tr("settings.tabs.system", "System")},
-        {.name = i18n.tr("settings.tabs.accessibility", "Accessibility")},
-        {.name = i18n.tr("settings.tabs.storage", "Storage")},
-        {.name = i18n.tr("settings.tabs.audio", "Audio")},
-        {.name = i18n.tr("settings.tabs.display", "Display")},
-        {.name = i18n.tr("settings.tabs.internet", "Internet")},
-        {.name = i18n.tr("settings.tabs.steamgriddb", "SteamGridDB")},
-        {.name = i18n.tr("settings.tabs.controllers", "Controllers")},
-        {.name = i18n.tr("settings.tabs.bluetooth", "Bluetooth")},
-        {.name = i18n.tr("settings.tabs.sleep", "Sleep")},
-        {.name = i18n.tr("settings.tabs.about", "About")},
+        {.name = i18n.tr("settings.tabs.system", "System"), .glyph = TabGlyph::System},
+        {.name = i18n.tr("settings.tabs.accessibility", "Accessibility"), .glyph = TabGlyph::Accessibility},
+        {.name = i18n.tr("settings.tabs.storage", "Storage"), .glyph = TabGlyph::Storage},
+        {.name = i18n.tr("settings.tabs.audio", "Audio"), .glyph = TabGlyph::Audio},
+        {.name = i18n.tr("settings.tabs.display", "Display"), .glyph = TabGlyph::Display},
+        {.name = i18n.tr("settings.tabs.internet", "Internet"), .glyph = TabGlyph::Internet},
+        {.name = i18n.tr("settings.tabs.steamgriddb", "SteamGridDB"), .glyph = TabGlyph::SteamGridDb},
+        {.name = i18n.tr("settings.tabs.controllers", "Controllers"), .glyph = TabGlyph::Controllers},
+        {.name = i18n.tr("settings.tabs.bluetooth", "Bluetooth"), .glyph = TabGlyph::Bluetooth},
+        {.name = i18n.tr("settings.tabs.sleep", "Sleep"), .glyph = TabGlyph::Sleep},
+        {.name = i18n.tr("settings.tabs.about", "About"), .glyph = TabGlyph::About},
     };
     m_loadedTabs.assign(m_tabs.size(), false);
     m_loadingTabs.assign(m_tabs.size(), false);
@@ -90,12 +90,28 @@ SettingsScreen::Tab SettingsScreen::buildTabNow(int tabIndex) {
     return makeLoadingTab(tabIndex);
 }
 
+namespace {
+TabbedOverlayScreen::TabGlyph settingsGlyphForIndex(int tabIndex) {
+    using G = TabbedOverlayScreen::TabGlyph;
+    static constexpr G kGlyphs[] = {
+        G::System, G::Accessibility, G::Storage, G::Audio, G::Display, G::Internet,
+        G::SteamGridDb, G::Controllers, G::Bluetooth, G::Sleep, G::About,
+    };
+    if (tabIndex < 0 || tabIndex >= (int)(sizeof(kGlyphs) / sizeof(kGlyphs[0])))
+        return G::None;
+    return kGlyphs[tabIndex];
+}
+} // namespace
+
 SettingsScreen::Tab SettingsScreen::makeLoadingTab(int tabIndex) const {
     Tab tab;
-    if (tabIndex >= 0 && tabIndex < static_cast<int>(m_tabs.size()))
+    if (tabIndex >= 0 && tabIndex < static_cast<int>(m_tabs.size())) {
         tab.name = m_tabs[static_cast<std::size_t>(tabIndex)].name;
-    else
+        tab.glyph = m_tabs[static_cast<std::size_t>(tabIndex)].glyph;
+    } else {
         tab.name = nxui::I18n::instance().tr("common.loading", "Loading");
+        tab.glyph = settingsGlyphForIndex(tabIndex);
+    }
 
     SettingItem item;
     item.label = nxui::I18n::instance().tr("common.loading", "Loading...");
@@ -133,6 +149,10 @@ void SettingsScreen::pollTabLoaders() {
             continue;
 
         Tab loaded = m_tabTasks[i].get();
+        // Async builders don't set glyphs — keep the chrome from the shell tab.
+        loaded.glyph = (i < m_tabs.size() && m_tabs[i].glyph != TabGlyph::None)
+            ? m_tabs[i].glyph
+            : settingsGlyphForIndex(static_cast<int>(i));
         m_tabs[i] = std::move(loaded);
         if (i < m_loadedTabs.size())
             m_loadedTabs[i] = true;

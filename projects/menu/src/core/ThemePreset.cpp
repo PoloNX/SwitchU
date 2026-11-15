@@ -327,6 +327,8 @@ void readThemeBackgroundFromObject(const nlohmann::json& j, ThemeBackgroundConfi
                 readJsonAliases(*imageIt, {"path", "file", "src"}, background.imagePath);
                 readJsonAliases(*imageIt, {"opacity", "alpha"}, background.imageOpacity);
                 readJsonAliases(*imageIt, {"cover", "fill"}, background.imageCover);
+                readJsonAliases(*imageIt, {"focusX", "focus_x"}, background.imageFocusX);
+                readJsonAliases(*imageIt, {"focusY", "focus_y"}, background.imageFocusY);
 
                 std::string fit;
                 if (readJsonAliases(*imageIt, {"fit", "mode"}, fit))
@@ -335,6 +337,38 @@ void readThemeBackgroundFromObject(const nlohmann::json& j, ThemeBackgroundConfi
         } catch (...) {
         }
     }
+
+    auto readPortraitImage = [&](const nlohmann::json& node) {
+        try {
+            if (node.is_string()) {
+                background.imagePortraitPath = node.get<std::string>();
+            } else if (node.is_object()) {
+                readJsonAliases(node, {"path", "file", "src"}, background.imagePortraitPath);
+                // Optional overrides; otherwise inherit landscape opacity/fit/focus.
+                float opacity = background.imageOpacity;
+                if (readJsonAliases(node, {"opacity", "alpha"}, opacity))
+                    background.imageOpacity = opacity;
+                bool cover = background.imageCover;
+                if (readJsonAliases(node, {"cover", "fill"}, cover))
+                    background.imageCover = cover;
+                std::string fit;
+                if (readJsonAliases(node, {"fit", "mode"}, fit))
+                    background.imageCover = lowerString(trimString(fit)) != "contain";
+                readJsonAliases(node, {"focusX", "focus_x"}, background.imageFocusX);
+                readJsonAliases(node, {"focusY", "focus_y"}, background.imageFocusY);
+            }
+        } catch (...) {
+        }
+    };
+    auto portraitIt = j.find("imagePortrait");
+    if (portraitIt == j.end())
+        portraitIt = j.find("image_portrait");
+    if (portraitIt == j.end())
+        portraitIt = j.find("backgroundPortrait");
+    if (portraitIt == j.end())
+        portraitIt = j.find("background_portrait");
+    if (portraitIt != j.end() && !portraitIt->is_null())
+        readPortraitImage(*portraitIt);
 
     auto gridIt = findObjectAlias(j, {"grid"});
     if (gridIt) {
@@ -361,6 +395,8 @@ void readThemeBackgroundFromObject(const nlohmann::json& j, ThemeBackgroundConfi
     background.speedMax = std::max(background.speedMin, background.speedMax);
     background.wobble = std::max(0.f, background.wobble);
     background.imageOpacity = std::clamp(background.imageOpacity, 0.f, 1.f);
+    background.imageFocusX = std::clamp(background.imageFocusX, 0.f, 1.f);
+    background.imageFocusY = std::clamp(background.imageFocusY, 0.f, 1.f);
     background.opacity = std::clamp(background.opacity, 0.f, 1.f);
     background.cornerRoundness = std::clamp(background.cornerRoundness, 0.f, 1.f);
 }

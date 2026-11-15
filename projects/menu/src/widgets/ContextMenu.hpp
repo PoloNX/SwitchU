@@ -25,6 +25,10 @@ public:
     void setFont(nxui::Font* font) { m_font = font; }
     void setSmallFont(nxui::Font* font) { m_smallFont = font; }
     void setTheme(const nxui::Theme* theme) { m_theme = theme; }
+    void setCanvasSize(float width, float height) {
+        m_canvasW = width > 1.f ? width : 1280.f;
+        m_canvasH = height > 1.f ? height : 720.f;
+    }
     void onNavigate(VoidCallback callback) { m_onNavigate = std::move(callback); }
     void onActivate(VoidCallback callback) { m_onActivate = std::move(callback); }
     void onClose(VoidCallback callback) { m_onClose = std::move(callback); }
@@ -64,6 +68,8 @@ private:
     VoidCallback m_onActivate;
     VoidCallback m_onClose;
     nxui::AnimatedFloat m_reveal{0.f};
+    float m_canvasW = 1280.f;
+    float m_canvasH = 720.f;
 
     static constexpr float kPanelWidth = 312.f;
     static constexpr float kPanelPadding = 14.f;

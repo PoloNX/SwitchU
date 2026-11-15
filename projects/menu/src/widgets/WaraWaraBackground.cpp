@@ -221,11 +221,23 @@ void WaraWaraBackground::regenerate(int count) {
                                                : (int)(((long long)index * requestedGridCells) / shapeCount));
             int col = cellIndex % m_config.gridColumns;
             int row = cellIndex / m_config.gridColumns;
-            float gridW = (m_config.gridColumns - 1) * m_config.spacingX;
-            float gridH = (m_config.gridRows - 1) * m_config.spacingY;
-            float startX = areaX + (areaW - gridW) * 0.5f;
-            float startY = areaY + (areaH - gridH) * 0.5f;
-            s.pos = {startX + col * m_config.spacingX, startY + row * m_config.spacingY};
+            // Landscape themes use ~14×8 × 88px spacing (~1144×616). On a
+            // 720×1280 portrait canvas that overshoots width and only a
+            // vertical slice of the lattice shows — a bright center band.
+            // Fit spacing to the active canvas so the field fills evenly.
+            float spacingX = m_config.spacingX;
+            float spacingY = m_config.spacingY;
+            const float rawW = std::max(1.f, (m_config.gridColumns - 1) * spacingX);
+            const float rawH = std::max(1.f, (m_config.gridRows - 1) * spacingY);
+            const float fit = std::min(1.f, std::min((areaW * 0.92f) / rawW,
+                                                     (areaH * 0.92f) / rawH));
+            spacingX *= fit;
+            spacingY *= fit;
+            const float gridW = (m_config.gridColumns - 1) * spacingX;
+            const float gridH = (m_config.gridRows - 1) * spacingY;
+            const float startX = areaX + (areaW - gridW) * 0.5f;
+            const float startY = areaY + (areaH - gridH) * 0.5f;
+            s.pos = {startX + col * spacingX, startY + row * spacingY};
         } else {
             s.pos = {areaX + random01() * areaW, areaY + random01() * areaH};
         }
@@ -283,7 +295,11 @@ nxui::Rect WaraWaraBackground::backgroundImageRect() const {
     float scale = m_config.imageCover ? std::max(sx, sy) : std::min(sx, sy);
     float drawW = texW * scale;
     float drawH = texH * scale;
-    return {areaX + (areaW - drawW) * 0.5f, areaY + (areaH - drawH) * 0.5f, drawW, drawH};
+    const float focusX = m_config.imageCover
+        ? std::clamp(m_config.imageFocusX, 0.f, 1.f) : 0.5f;
+    const float focusY = m_config.imageCover
+        ? std::clamp(m_config.imageFocusY, 0.f, 1.f) : 0.5f;
+    return {areaX + (areaW - drawW) * focusX, areaY + (areaH - drawH) * focusY, drawW, drawH};
 }
 
 void WaraWaraBackground::onRender(nxui::Renderer& ren) {

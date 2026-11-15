@@ -12,6 +12,9 @@ struct LeaveFrameSession {
     int page = 0;
     std::uint32_t openFolderId = 0;
     std::uint64_t focusTitleId = 0;
+    // Captured HOME chrome — resume recaptures when these diverge.
+    std::uint32_t appLayoutMode = 0;     // AppLayoutMode
+    std::uint32_t homeOrientation = 0;  // HomeOrientation
 };
 
 struct LeaveFrameImage {

@@ -1,5 +1,6 @@
 #pragma once
 #include "core/AppLayoutMode.hpp"
+#include "core/HomeOrientation.hpp"
 #include <cstdint>
 #include <cmath>
 #include <unordered_map>
@@ -26,6 +27,12 @@ struct AppConfig {
     int   gridColumns  = 5;
     int   gridRows     = 3;
     AppLayoutMode appLayoutMode = AppLayoutMode::Grid;
+    // Flip-Grip / TATE: NWindow transform for HOME (UI stays 1280x720).
+    HomeOrientation homeOrientation = HomeOrientation::Landscape0;
+    // Show a Change-View sibling that cycles homeOrientationCycle.
+    bool homeOrientationButton = false;
+    // Bitmask of HomeOrientation values the HOME button may visit (default all).
+    std::uint8_t homeOrientationCycle = kHomeOrientationCycleAll;
     std::string actionHintStyle = "capsules";
     // 0 = animated translation, 1 = immediate jump.
     int cursorMotionMode = 0;
@@ -62,6 +69,11 @@ struct AppConfig {
     // Decode-time blur on the fullscreen hero, 0–10. 0 = off; 10 matches
     // the music-player / leave-splash frost. Default off.
     int   steamGridDbHeroBlur = 0;
+    // Missing-art scan kind checklist (Settings → SteamGridDB).
+    bool  steamGridDbScanHeroes = true;
+    bool  steamGridDbScanLogos = true;
+    bool  steamGridDbScanPosters = true;
+    bool  steamGridDbScanGridWide = true;
     std::string steamGridDbApiKey;
 
     // 0 keeps the hand-made layout. The other modes are display-only

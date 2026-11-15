@@ -1,4 +1,5 @@
 #pragma once
+#include <nxui/core/DisplayOrientation.hpp>
 #include <switch.h>
 #include <cstdint>
 
@@ -37,6 +38,15 @@ public:
     void shutdown();
     void update();
 
+    // Flip-Grip / TATE: remap touch + directionals for the active layout.
+    // Landscape/180 → FB space (nwindow). Portrait 90/270 → logical 720x1280
+    // (Renderer projection; nwindow identity).
+    void setDisplayOrientation(DisplayOrientation orientation);
+    DisplayOrientation displayOrientation() const { return m_orientation; }
+    void setLogicalLayoutSize(float width, float height);
+    float logicalLayoutWidth() const { return m_logicalW; }
+    float logicalLayoutHeight() const { return m_logicalH; }
+
     bool isDown(Button b)     const;   // Pressed this frame
     bool isUp(Button b)       const;   // Released this frame
     bool isHeld(Button b)     const;   // Currently held
@@ -47,12 +57,16 @@ public:
     float rightStickX() const { return m_rx; }
     float rightStickY() const { return m_ry; }
 
-    // Touch screen (first touch point)
+    // Touch screen (primary = first contact; up to two points for pinch)
+    static constexpr int kMaxTouchPoints = 2;
     bool  isTouching()   const { return m_touching; }
     bool  touchDown()    const { return m_touchDown; }   // Just started touching
     bool  touchUp()      const { return m_touchUp; }     // Just released
+    int   touchCount()   const { return m_touchCount; }
     float touchX()       const { return m_touchX; }
     float touchY()       const { return m_touchY; }
+    float touchPointX(int index) const;
+    float touchPointY(int index) const;
     float touchStartX()  const { return m_touchStartX; } // Where the touch began
     float touchStartY()  const { return m_touchStartY; }
     float touchDeltaX()  const { return m_touchX - m_touchStartX; }
@@ -66,13 +80,19 @@ private:
     uint64_t m_kUp   = 0;
     uint64_t m_kHeld = 0;
     uint32_t m_loggedSingleJoyCons = 0;  // bit per npad id, logged once
+    DisplayOrientation m_orientation = DisplayOrientation::Landscape0;
+    float m_logicalW = 1280.f;
+    float m_logicalH = 720.f;
     float m_lx = 0, m_ly = 0;
     float m_rx = 0, m_ry = 0;
     bool  m_touching    = false;
     bool  m_wasTouching = false;
     bool  m_touchDown   = false;
     bool  m_touchUp     = false;
+    int   m_touchCount  = 0;
     float m_touchX = 0, m_touchY = 0;
+    float m_touchPointsX[kMaxTouchPoints]{};
+    float m_touchPointsY[kMaxTouchPoints]{};
     float m_touchStartX = 0, m_touchStartY = 0;
     uint64_t m_touchStartTick = 0;
 };

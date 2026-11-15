@@ -564,7 +564,7 @@ void QuickSettingsOverlay::drawMusicControlIcon(nxui::Renderer& ren,
 }
 
 QuickSettingsOverlay::QuickSettingsOverlay() {
-    setRect({0.f, 0.f, 1280.f, 720.f});
+    setRect({0.f, 0.f, m_canvasW, m_canvasH});
     setVisible(false);
     setFocusable(true);
     setFrameworkTouchEnabled(false);
@@ -576,6 +576,15 @@ QuickSettingsOverlay::QuickSettingsOverlay() {
 }
 
 QuickSettingsOverlay::~QuickSettingsOverlay() = default;
+
+void QuickSettingsOverlay::setCanvasSize(float width, float height) {
+    m_canvasW = width > 1.f ? width : 1280.f;
+    m_canvasH = height > 1.f ? height : 720.f;
+    // Keep the widget's hit/clip rect covering the full logical canvas so the
+    // slide-in panel and scrim stay on-screen in portrait.
+    if (!m_active)
+        setRect({0.f, 0.f, m_canvasW, m_canvasH});
+}
 
 void QuickSettingsOverlay::setTheme(const nxui::Theme* t) {
     m_theme = t;
@@ -2139,11 +2148,21 @@ void QuickSettingsOverlay::triggerPowerAction(PowerAction action) {
 }
 
 nxui::Rect QuickSettingsOverlay::computePanelRect() const {
-    float openX = 1280.f - kPanelWidth - kPanelMarginRight;
-    float closedX = 1280.f;
-    float eased = nxui::Easing::outCubic(m_animProgress);
-    float curX = closedX + (openX - closedX) * eased;
-    return {curX, kPanelTop, kPanelWidth, kPanelHeight};
+    // Portrait: right-align like landscape, but leave a left gutter wide enough
+    // for the playlist flyout on the 720-wide canvas.
+    const bool portrait = m_canvasH > m_canvasW + 0.5f;
+    const float panelW = portrait
+        ? std::min(kPanelWidth,
+                   std::max(300.f, m_canvasW - kPlaylistWidth - kPanelMarginRight))
+        : kPanelWidth;
+    const float openX = m_canvasW - panelW - kPanelMarginRight;
+    const float closedX = m_canvasW;
+    const float eased = nxui::Easing::outCubic(m_animProgress);
+    const float curX = closedX + (openX - closedX) * eased;
+    const float top = portrait
+        ? std::max(12.f, (m_canvasH - kPanelHeight) * 0.5f)
+        : kPanelTop;
+    return {curX, top, panelW, kPanelHeight};
 }
 
 nxui::Rect QuickSettingsOverlay::computePlaylistRect() const {
@@ -2293,12 +2312,13 @@ nxui::Rect QuickSettingsOverlay::computeProgressTrackRect() const {
 
 nxui::Rect QuickSettingsOverlay::computeCoverFsCardRect() const {
     // Bottom-centered floating player over the fullscreen cover.
-    const float sw = 1280.f;
-    const float sh = 720.f;
+    const bool portrait = m_canvasH > m_canvasW + 0.5f;
+    const float cardW = std::min(kCoverFsCardW, m_canvasW - (portrait ? 24.f : 32.f));
+    const float bottomPad = portrait ? 48.f : kCoverFsCardBottomPad;
     return {
-        (sw - kCoverFsCardW) * 0.5f,
-        sh - kCoverFsCardBottomPad - kCoverFsCardH,
-        kCoverFsCardW,
+        (m_canvasW - cardW) * 0.5f,
+        m_canvasH - bottomPad - kCoverFsCardH,
+        cardW,
         kCoverFsCardH
     };
 }
@@ -2327,9 +2347,13 @@ nxui::Rect QuickSettingsOverlay::computeCoverFsProgressTrackRect() const {
 
 nxui::Rect QuickSettingsOverlay::computeCoverFsPlaylistRect() const {
     nxui::Rect card = computeCoverFsCardRect();
-    // Full-height sheet slides up from under the player card (like the QS side sheet).
+    // Sheet slides up from under the player card (like the QS side sheet).
     const float topPad = kCoverFsCardBottomPad;
-    const float maxH = std::max(80.f, card.y - topPad);
+    float maxH = std::max(80.f, card.y - topPad);
+    // Portrait has a very tall gap above the card — cap the sheet so we don't
+    // drive a ~1000px clip/list every frame (was a multi-hundred-ms render spike).
+    if (m_canvasH > m_canvasW + 0.5f)
+        maxH = std::min(maxH, m_canvasH * 0.55f);
     const float eased = nxui::Easing::outCubic(m_coverFsPlaylistAnim);
     const float overlap = 18.f; // tuck under card so bottom rounding is hidden
     const float y = card.y - maxH * eased;
@@ -2838,7 +2862,10 @@ void QuickSettingsOverlay::render(nxui::Renderer& ren) {
     auto& i18n = nxui::I18n::instance();
     float alpha = m_animProgress;
 
-    nxui::Rect screen = {0.f, 0.f, (float)ren.width(), (float)ren.height()};
+    // Prefer logical layout size so portrait scrim covers 720×1280, not FB.
+    const float scrimW = ren.layoutWidth() > 1.f ? ren.layoutWidth() : m_canvasW;
+    const float scrimH = ren.layoutHeight() > 1.f ? ren.layoutHeight() : m_canvasH;
+    nxui::Rect screen = {0.f, 0.f, scrimW, scrimH};
     nxui::Color scrim = m_theme
         ? nxui::Color::lerp(m_theme->background, nxui::Color::black(),
                             m_theme->mode == nxui::ThemeMode::Dark ? 0.65f : 0.20f)
@@ -3547,12 +3574,14 @@ void QuickSettingsOverlay::render(nxui::Renderer& ren) {
         ren.popClipRect();
 
     if (m_coverFullscreen && m_coverTex.valid()) {
-        const float sw = static_cast<float>(ren.width());
-        const float sh = static_cast<float>(ren.height());
+        // Logical canvas (720×1280 portrait / 1280×720 landscape) — not FB size.
+        const float sw = ren.layoutWidth() > 1.f ? ren.layoutWidth() : m_canvasW;
+        const float sh = ren.layoutHeight() > 1.f ? ren.layoutHeight() : m_canvasH;
         const float tw = static_cast<float>(std::max(1, m_coverTex.width()));
         const float th = static_cast<float>(std::max(1, m_coverTex.height()));
         const bool canBlur = ren.gpu().offscreenReady();
         constexpr int kCoverFsBlurTarget = 2; // shared leave-frame slot; unused while cover FS is up
+        const bool portraitFs = sh > sw + 0.5f;
 
         // Bandcamp-style: blur cover once into offscreen cache, then reuse every frame.
         if (canBlur) {
@@ -3568,8 +3597,15 @@ void QuickSettingsOverlay::render(nxui::Renderer& ren) {
                 ren.copyOffscreen(0, kCoverFsBlurTarget);
                 m_coverFsBlurCached = true;
             }
-            ren.drawOffscreen(kCoverFsBlurTarget, {0.f, 0.f, sw, sh},
-                              nxui::Color(1.f, 1.f, 1.f, alpha));
+            // Portrait: map the FB-sized blur capture through the projection
+            // (same helper leave-splash / folder frost use). Landscape can
+            // stretch the half-res capture across the logical screen directly.
+            if (portraitFs)
+                ren.drawOffscreenFramebufferCover(
+                    kCoverFsBlurTarget, nxui::Color(1.f, 1.f, 1.f, alpha));
+            else
+                ren.drawOffscreen(kCoverFsBlurTarget, {0.f, 0.f, sw, sh},
+                                  nxui::Color(1.f, 1.f, 1.f, alpha));
             ren.drawRect({0.f, 0.f, sw, sh},
                          nxui::Color(0.f, 0.f, 0.f, 0.22f * alpha));
         } else {
@@ -3582,14 +3618,19 @@ void QuickSettingsOverlay::render(nxui::Renderer& ren) {
         if (m_callbacks.onRenderMenuBackground)
             m_callbacks.onRenderMenuBackground(ren, alpha);
 
-        // Sharp cover: fit to screen (square/portrait = side letterbox).
+        // Sharp cover: landscape fits (letterbox); portrait covers the tall
+        // canvas so album art fills the Flip-Grip view.
         {
-            const float fitScale = std::min(sw / tw, sh / th);
+            const float fitScale = portraitFs
+                ? std::max(sw / tw, sh / th)
+                : std::min(sw / tw, sh / th);
             const float dw = tw * fitScale;
             const float dh = th * fitScale;
+            ren.pushClipRect({0.f, 0.f, sw, sh});
             ren.drawTexture(&m_coverTex,
                             {(sw - dw) * 0.5f, (sh - dh) * 0.5f, dw, dh},
                             nxui::Color(1.f, 1.f, 1.f, alpha));
+            ren.popClipRect();
         }
 
         // Fullscreen playlist sheet — solid slide (no per-frame blur; that was the hitch).

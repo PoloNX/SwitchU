@@ -108,6 +108,9 @@ public:
     void setSmallFont(nxui::Font* f) { m_smallFont = f; }
     void setIconFont(nxui::Font* f)  { m_iconFont = f; }
     void setTheme(const nxui::Theme* t);
+    // Logical canvas (1280×720 landscape, 720×1280 portrait). Panel slide
+    // and cover-fs chrome key off these instead of FB dimensions.
+    void setCanvasSize(float width, float height);
     void setInstantCursorMotion(bool instant) { m_cursor.setInstantMotion(instant); }
     void setInput(nxui::Input* input) { m_input = input; }
     void setCallbacks(const Callbacks& cb) { m_callbacks = cb; }
@@ -238,6 +241,8 @@ private:
     bool  m_active = false;
     bool  m_animating = false;
     float m_animProgress = 0.f;
+    float m_canvasW = 1280.f;
+    float m_canvasH = 720.f;
 
     ItemIndex   m_selectedItem = ItemIndex::MusicTransport;
     MusicControl m_selectedMusicControl = MusicControl::PlayPause;

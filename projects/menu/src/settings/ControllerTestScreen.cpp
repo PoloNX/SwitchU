@@ -25,6 +25,11 @@ ControllerTestScreen::ControllerTestScreen() {
     setBlurEnabled(false);
 }
 
+void ControllerTestScreen::setCanvasSize(float width, float height) {
+    m_canvasW = width > 1.f ? width : 1280.f;
+    m_canvasH = height > 1.f ? height : 720.f;
+}
+
 void ControllerTestScreen::show() {
     if (m_active)
         return;
@@ -68,7 +73,10 @@ void ControllerTestScreen::setupActions() {
 }
 
 nxui::Rect ControllerTestScreen::panelRect(float scale) const {
-    nxui::Rect rect{32.f, 32.f, 1216.f, 656.f};
+    const float margin = isPortraitCanvas() ? 16.f : 32.f;
+    nxui::Rect rect{margin, margin,
+                    m_canvasW - margin * 2.f,
+                    m_canvasH - margin * 2.f};
     float w = rect.width * scale;
     float h = rect.height * scale;
     rect.x += (rect.width - w) * 0.5f;
@@ -78,16 +86,43 @@ nxui::Rect ControllerTestScreen::panelRect(float scale) const {
     return rect;
 }
 
-nxui::Rect ControllerTestScreen::touchPanelRect(float scale) const {
+void ControllerTestScreen::contentPanelRects(float scale,
+                                             nxui::Rect& stick,
+                                             nxui::Rect& buttons,
+                                             nxui::Rect& touch) const {
     nxui::Rect p = panelRect(scale);
-    return {p.x + 516.f * scale, p.y + 360.f * scale, 668.f * scale, 264.f * scale};
+    if (isPortraitCanvas()) {
+        // Stack: joysticks → buttons → touch.
+        const float pad = 20.f * scale;
+        const float gap = 14.f * scale;
+        const float top = p.y + 78.f * scale;
+        const float bottom = p.bottom() - pad;
+        const float innerW = p.width - pad * 2.f;
+        const float availH = std::max(120.f, bottom - top - gap * 2.f);
+        const float stickH = availH * 0.36f;
+        const float buttonsH = availH * 0.30f;
+        const float touchH = availH - stickH - buttonsH;
+        stick = {p.x + pad, top, innerW, stickH};
+        buttons = {p.x + pad, stick.bottom() + gap, innerW, buttonsH};
+        touch = {p.x + pad, buttons.bottom() + gap, innerW, touchH};
+        return;
+    }
+    stick = {p.x + 30.f * scale, p.y + 82.f * scale, 456.f * scale, 542.f * scale};
+    buttons = {p.x + 516.f * scale, p.y + 82.f * scale, 668.f * scale, 254.f * scale};
+    touch = {p.x + 516.f * scale, p.y + 360.f * scale, 668.f * scale, 264.f * scale};
+}
+
+nxui::Rect ControllerTestScreen::touchPanelRect(float scale) const {
+    nxui::Rect stick, buttons, touch;
+    contentPanelRects(scale, stick, buttons, touch);
+    return touch;
 }
 
 void ControllerTestScreen::handleTouch(nxui::Input& input) {
     if (!m_active || m_animatingOut)
         return;
 
-    nxui::Rect zone{0.f, 0.f, 1280.f, 720.f};
+    nxui::Rect zone = screenRect();
     if (!m_touchFullscreen) {
         zone = touchPanelRect(m_scale.value()).shrunk(18.f * m_scale.value());
         zone.y += 42.f * m_scale.value();
@@ -97,7 +132,7 @@ void ControllerTestScreen::handleTouch(nxui::Input& input) {
     if (input.touchDown() && zone.contains(input.touchX(), input.touchY())) {
         if (!m_touchFullscreen) {
             enterTouchFullscreen();
-            zone = {0.f, 0.f, 1280.f, 720.f};
+            zone = screenRect();
         }
         m_touchTrace.clear();
         recordTouchPoint(input.touchX(), input.touchY(), zone);
@@ -244,8 +279,9 @@ void ControllerTestScreen::drawStickPanel(nxui::Renderer& ren, const nxui::Rect&
     ren.drawText(active, {r.x + 24.f, r.y + 62.f}, m_smallFont,
                  m_theme->textSecondary.withAlpha(alpha), 0.76f);
 
-    nxui::Vec2 center{r.x + r.width * 0.5f, r.y + 214.f};
-    const float outer = 91.f;
+    const float outer = std::min(91.f, std::max(48.f, r.height * 0.28f));
+    nxui::Vec2 center{r.x + r.width * 0.5f,
+                      r.y + std::min(214.f, r.height * 0.48f)};
     ren.drawCircle(center, outer, m_theme->panelBorder.withAlpha(0.24f * alpha), 48);
     ren.drawCircle(center, outer * kDeadzone, m_theme->cursorNormal.withAlpha(0.13f * alpha), 32);
     ren.drawCircle({center.x + m_stickX * (outer - 19.f), center.y - m_stickY * (outer - 19.f)},
@@ -272,20 +308,29 @@ void ControllerTestScreen::drawButtonsPanel(nxui::Renderer& ren, const nxui::Rec
     };
     constexpr float gapX = 10.f;
     constexpr float gapY = 8.f;
-    constexpr float cellH = 34.f;
+    const float gridTop = 58.f;
+    const float cellH = std::max(28.f,
+        (r.height - gridTop - 20.f - 3.f * gapY) / 4.f);
     const float cellW = (r.width - 48.f - 3.f * gapX) / 4.f;
     for (int i = 0; i < 16; ++i) {
         int row = i / 4, col = i % 4;
         nxui::Rect cell{r.x + 24.f + col * (cellW + gapX),
-                        r.y + 64.f + row * (cellH + gapY), cellW, cellH};
+                        r.y + gridTop + row * (cellH + gapY), cellW, cellH};
         const bool held = m_input && m_input->isHeld(buttons[i].button);
         ren.drawRoundedRect(cell, (held ? m_theme->cursorNormal : m_theme->panelBorder)
                                   .withAlpha((held ? 0.88f : 0.18f) * alpha), 13.f);
         ren.drawRoundedRectOutline(cell, (held ? m_theme->textPrimary : m_theme->panelBorder)
                                          .withAlpha((held ? 0.62f : 0.30f) * alpha), 13.f, 1.f);
+        constexpr float kLabelScale = 0.68f;
         nxui::Vec2 sz = m_smallFont->measure(buttons[i].label);
-        ren.drawText(buttons[i].label, {cell.x + (cell.width - sz.x * 0.68f) * 0.5f, cell.y + 6.f},
-                     m_smallFont, (held ? m_theme->textPrimary : m_theme->textSecondary).withAlpha(alpha), 0.68f);
+        const float labelW = sz.x * kLabelScale;
+        const float labelH = sz.y * kLabelScale;
+        ren.drawText(buttons[i].label,
+                     {cell.x + (cell.width - labelW) * 0.5f,
+                      cell.y + (cell.height - labelH) * 0.5f},
+                     m_smallFont,
+                     (held ? m_theme->textPrimary : m_theme->textSecondary).withAlpha(alpha),
+                     kLabelScale);
     }
 }
 
@@ -308,18 +353,20 @@ void ControllerTestScreen::drawFullscreenTouch(nxui::Renderer& ren, float alpha)
     if (t <= 0.01f)
         return;
     const float a = alpha * t;
-    nxui::Rect screen{0.f, 0.f, 1280.f, 720.f};
+    nxui::Rect screen = screenRect();
     ren.drawRect(screen, m_theme->background.withAlpha(0.98f * a));
 
     // Sparse guide grid makes edge and corner coverage easy to inspect.
     const nxui::Color guide = m_theme->panelBorder.withAlpha(0.18f * a);
-    for (int x = 160; x < 1280; x += 160)
-        ren.drawLine({(float)x, 0.f}, {(float)x, 720.f}, guide, 1.f);
-    for (int y = 120; y < 720; y += 120)
-        ren.drawLine({0.f, (float)y}, {1280.f, (float)y}, guide, 1.f);
+    const float stepX = isPortraitCanvas() ? 120.f : 160.f;
+    const float stepY = isPortraitCanvas() ? 160.f : 120.f;
+    for (float x = stepX; x < m_canvasW; x += stepX)
+        ren.drawLine({x, 0.f}, {x, m_canvasH}, guide, 1.f);
+    for (float y = stepY; y < m_canvasH; y += stepY)
+        ren.drawLine({0.f, y}, {m_canvasW, y}, guide, 1.f);
 
     drawTouchTrace(ren, screen, a, 6.f);
-    nxui::Rect hint{24.f, 20.f, 700.f, 48.f};
+    nxui::Rect hint{24.f, 20.f, std::min(700.f, m_canvasW - 48.f), 48.f};
     ren.drawRoundedRect(hint, m_theme->panelBase.withAlpha(0.95f * a), 18.f);
     ren.drawText(nxui::I18n::instance().tr(
                      "controller_test.touch_fullscreen_hint",
@@ -334,7 +381,7 @@ void ControllerTestScreen::render(nxui::Renderer& ren) {
     const float alpha = m_alpha.value();
     const float scale = m_scale.value();
     nxui::Rect p = panelRect(scale);
-    ren.drawRect({0.f, 0.f, 1280.f, 720.f}, nxui::Color::black().withAlpha(0.12f * alpha));
+    ren.drawRect(screenRect(), nxui::Color::black().withAlpha(0.12f * alpha));
     ren.drawFrostedInset(p, m_theme->panelBase.withAlpha(m_theme->mode == nxui::ThemeMode::Dark ? 0.95f : 0.96f),
                         m_theme->panelBorder.withAlpha(0.32f), m_theme->panelHighlight.withAlpha(0.10f), 26.f, alpha);
     ren.drawText(nxui::I18n::instance().tr("controller_test.title", "Controller Test"),
@@ -342,15 +389,12 @@ void ControllerTestScreen::render(nxui::Renderer& ren) {
     const std::string closeHint = nxui::I18n::instance().tr(
         "controller_test.close_hint", "Hold B 1 s or press HOME to close");
     nxui::Vec2 closeSize = m_smallFont->measure(closeHint);
+    const float closeScale = isPortraitCanvas() ? 0.58f : 0.68f;
     ren.drawText(closeHint,
-                 {p.right() - 30.f - closeSize.x * 0.68f, p.y + 30.f},
-                 m_smallFont, m_theme->textSecondary.withAlpha(alpha), 0.68f);
-    nxui::Rect stick{p.x + 30.f * scale, p.y + 82.f * scale,
-                     456.f * scale, 542.f * scale};
-    nxui::Rect buttons{p.x + 516.f * scale, p.y + 82.f * scale,
-                       668.f * scale, 254.f * scale};
-    nxui::Rect touch{p.x + 516.f * scale, p.y + 360.f * scale,
-                     668.f * scale, 264.f * scale};
+                 {p.right() - 30.f - closeSize.x * closeScale, p.y + 30.f},
+                 m_smallFont, m_theme->textSecondary.withAlpha(alpha), closeScale);
+    nxui::Rect stick, buttons, touch;
+    contentPanelRects(scale, stick, buttons, touch);
     drawStickPanel(ren, stick, alpha);
     drawButtonsPanel(ren, buttons, alpha);
     drawTouchPanel(ren, touch, alpha);

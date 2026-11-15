@@ -32,6 +32,8 @@ public:
     LockScreen();
 
     void setFonts(nxui::Font* body, nxui::Font* small) { m_font = body; m_smallFont = small; }
+    /// Logical canvas size. Portrait (720×1280) reflows chrome to the tall viewport.
+    void setCanvasSize(float width, float height);
     void setTimeFontSource(nxui::GpuDevice* gpu, nxui::Renderer* ren, std::string path) {
         if (path != m_timeFontPath)
             m_timeFont.reset();

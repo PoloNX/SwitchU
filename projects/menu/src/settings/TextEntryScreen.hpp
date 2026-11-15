@@ -57,6 +57,8 @@ public:
     void hide(bool accepted);
     bool isActive() const { return m_active || m_animatingOut; }
     const std::string& text() const { return m_text; }
+    // Logical canvas (1280×720 landscape, 720×1280 portrait).
+    void setCanvasSize(float width, float height);
 
     void handleTouch(nxui::Input& input);
 
@@ -184,6 +186,10 @@ private:
     StringCallback m_accessibilityCb;
     LayoutCallback m_layoutCb;
     LayoutCallback m_styleCb;
+
+    float m_canvasW = 1280.f;
+    float m_canvasH = 720.f;
+    bool isPortraitCanvas() const { return m_canvasH > m_canvasW + 0.5f; }
 
     static constexpr int kColumns = 10;
 };

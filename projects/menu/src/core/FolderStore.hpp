@@ -45,6 +45,9 @@ struct Folder {
     int colorIndex = 0;
     int sizeIndex = 1;
     int pageCount = 1;
+    // When true and the folder has a custom hero, always use that hero while
+    // the folder is open (titles keep icons/posters/logos).
+    bool overrideTitleHeroes = false;
 
     std::size_t titleCount() const;
 };
@@ -78,6 +81,7 @@ public:
     bool setColorIndex(std::uint32_t folderId, int colorIndex);
     bool setSizeIndex(std::uint32_t folderId, int sizeIndex);
     bool setPageCount(std::uint32_t folderId, int pages);
+    bool setOverrideTitleHeroes(std::uint32_t folderId, bool overrideTitleHeroes);
     std::uint32_t folderForTitle(std::uint64_t titleId) const;
 
 private:

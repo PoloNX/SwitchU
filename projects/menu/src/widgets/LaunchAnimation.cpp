@@ -70,14 +70,17 @@ void LaunchAnimation::start(const nxui::Rect& from, const nxui::Texture* tex, fl
     const bool poster = preservePosterAspect
         || m_from.height > m_from.width * 1.15f;
     const float zoomScale = poster ? 2.55f : 1.8f;
-    const float maxW = 1280.f * (poster ? 0.42f : 0.55f);
-    const float maxH = 720.f * (poster ? 0.92f : 0.72f);
+    const bool portrait = m_canvasH > m_canvasW + 0.5f;
+    const float maxW = m_canvasW * (portrait ? (poster ? 0.72f : 0.62f)
+                                             : (poster ? 0.42f : 0.55f));
+    const float maxH = m_canvasH * (portrait ? (poster ? 0.48f : 0.42f)
+                                             : (poster ? 0.92f : 0.72f));
     float tw = std::max(1.f, m_from.width) * zoomScale;
     float th = std::max(1.f, m_from.height) * zoomScale;
     const float fit = std::min(1.f, std::min(maxW / tw, maxH / th));
     tw *= fit;
     th *= fit;
-    m_target = {(1280.f - tw) * 0.5f, (720.f - th) * 0.5f, tw, th};
+    m_target = {(m_canvasW - tw) * 0.5f, (m_canvasH - th) * 0.5f, tw, th};
 }
 
 void LaunchAnimation::startResume(nxui::VoidCallback onDone) {
@@ -144,7 +147,7 @@ void LaunchAnimation::onRender(nxui::Renderer& ren) {
         float alpha = 1.f;
         if (m_timer < kResumeFadeDur)
             alpha = nxui::Easing::outCubic(std::min(m_timer / kResumeFadeDur, 1.f));
-        ren.drawRect({0, 0, 1280, 720}, nxui::Color(0, 0, 0, alpha));
+        ren.drawRect({0, 0, m_canvasW, m_canvasH}, nxui::Color(0, 0, 0, alpha));
         return;
     }
 
@@ -154,7 +157,7 @@ void LaunchAnimation::onRender(nxui::Renderer& ren) {
     if (t >= kIconEnd) {
         float bt = (t - kIconEnd) / kBlackDur;
         float blackAlpha = std::min(bt, 1.f);
-        ren.drawRect({0, 0, 1280, 720}, nxui::Color(0, 0, 0, blackAlpha));
+        ren.drawRect({0, 0, m_canvasW, m_canvasH}, nxui::Color(0, 0, 0, blackAlpha));
         return;
     }
 
@@ -187,7 +190,7 @@ void LaunchAnimation::onRender(nxui::Renderer& ren) {
     nxui::Rect animRect = {px, py, pw, ph};
 
     float dimAlpha = 0.5f * ez * fadeAlpha;
-    ren.drawRect({0, 0, 1280, 720}, nxui::Color(0, 0, 0, dimAlpha));
+    ren.drawRect({0, 0, m_canvasW, m_canvasH}, nxui::Color(0, 0, 0, dimAlpha));
 
     nxui::Color body = m_panelColor.withAlpha(m_panelColor.a * fadeAlpha);
     ren.drawRoundedRect(animRect, body, cr);

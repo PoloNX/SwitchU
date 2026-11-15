@@ -12,6 +12,7 @@
 #include "widgets/WaraWaraBackground.hpp"
 #include "widgets/DateTimeWidget.hpp"
 #include "widgets/LayoutFlipButton.hpp"
+#include "widgets/OrientationButton.hpp"
 #include "widgets/BatteryWidget.hpp"
 #include "widgets/TitlePillWidget.hpp"
 #include "core/AudioManager.hpp"
@@ -34,12 +35,14 @@
 #include "settings/SettingsScreen.hpp"
 #include "settings/GameOptionsScreen.hpp"
 #include "settings/SteamGridDbPickerScreen.hpp"
+#include "settings/HeroCustomizeScreen.hpp"
 #include "settings/FolderOptionsScreen.hpp"
 #include "settings/AutoThemeScreen.hpp"
 #include "settings/ControllerTestScreen.hpp"
 #include "settings/TextEntryScreen.hpp"
 #include "themeshop/ThemeShopScreen.hpp"
 #include "core/Config.hpp"
+#include "core/HomeLayoutMetrics.hpp"
 #include "core/FolderStore.hpp"
 #include "core/FolderPeekComposite.hpp"
 #include "core/WidgetStore.hpp"
@@ -121,7 +124,13 @@ private:
     GridLayoutMetrics computeGridLayoutMetrics() const;
     GridLayoutMetrics computeGridLayoutMetrics(int columns, int rows) const;
     std::pair<int, int> folderGridDimensions(std::uint32_t folderId) const;
+    /// Portrait display dims for an open folder (storage dims stay landscape).
+    std::pair<int, int> folderViewDimensions(std::uint32_t folderId) const;
     void reflowHomeGrid();
+    void reflowHomeShell();
+    int activeGridColumns() const;
+    int activeGridRows() const;
+    nxui::Rect homeGridRect() const;
     void buildGrid();
     void loadProfiles(bool loadImmediately = true);
     void loadNextProfile();
@@ -253,12 +262,17 @@ private:
     void editSteamGridDbApiKey();
     void startSteamGridDbScrape();
     void cancelSteamGridDbScrape();
+    void confirmSteamGridDbClearDecodeCaches();
+    void confirmSteamGridDbClearUnused();
+    void confirmSteamGridDbClearAll();
     void openSteamGridDbPicker(GameOptionsScreen::ArtworkKind kind,
                                const std::string& query = std::string());
     void openSteamGridDbPickerForTitle(std::uint64_t titleId,
                                        const std::string& title,
                                        GameOptionsScreen::ArtworkKind kind,
                                        const std::string& query = std::string());
+    void openHeroCustomize(std::uint64_t titleId = 0,
+                           const std::string& titleName = {});
     void clearSteamGridDbArtwork(std::uint64_t titleId,
                                  GameOptionsScreen::ArtworkKind kind);
     void editSteamGridDbPickerQuery();
@@ -321,6 +335,7 @@ private:
     bool m_touchArrowLeft = false, m_touchArrowRight = false;
     bool m_touchBattery = false;
     bool m_touchLayoutFlip = false;
+    bool m_touchOrientationBtn = false;
 
     nxui::Rect pageArrowRect(bool left);
     nxui::Rect deletePageButtonRect() const;
@@ -411,6 +426,7 @@ private:
         PageNext,          // ZR
         Properties,        // Plus
         ChangeView,        // Minus
+        Orientation,       // L3 — Flip-Grip cycle (chord-grace like shoulders)
         NavLeft,           // D-pad Left
         NavRight,          // D-pad Right
         NavUp,             // D-pad Up
@@ -539,6 +555,13 @@ private:
     void setAppLayoutMode(AppLayoutMode mode);
     // Keeps the Change View button's three-way hint in sync with the view.
     void syncLayoutFlipState();
+    // Apply NWindow transform + Input remap + HOME shell reflow.
+    void applyHomeOrientationState(bool saveConfig = false);
+    void cycleHomeOrientation();
+    void syncOrientationButtonState();
+    void placeOrientationButton();
+    void placeTitlePill();
+    void wireOrientationButtonNavigation();
     // Tall Poster tiles + icon loader preference for single-row only.
     void syncSingleRowPosterPresentation(bool forceReloadIcons = false);
     bool preferPosterForMode(AppLayoutMode mode) const;
@@ -559,7 +582,7 @@ private:
     bool tryCommitInPlaceLayoutMorph(std::uint64_t focused);
     void updateLayoutTransition(float dt);
     void layoutPrefetchWindow(int& page, int& pageSize) const;
-    void configureDynamicLineNavigation();
+    void configureDynamicLineNavigation(bool animateSidebar = true);
     void cycleSortMode();
     std::string sortModeLabel() const;
     AppLayoutMode appLayoutMode() const { return m_appLayoutMode; }
@@ -666,6 +689,7 @@ private:
     std::shared_ptr<SelectionCursor>   m_cursor;
     std::shared_ptr<DateTimeWidget>    m_clock;
     std::shared_ptr<LayoutFlipButton>  m_layoutFlip;
+    std::shared_ptr<OrientationButton> m_orientationBtn;
     std::shared_ptr<BatteryWidget>     m_battery;
     std::shared_ptr<TitlePillWidget>   m_titlePill;
     std::shared_ptr<PageIndicator>     m_pageIndicator;
@@ -679,6 +703,7 @@ private:
     std::shared_ptr<ThemeShopScreen>   m_themeShop;
     std::shared_ptr<GameOptionsScreen> m_gameOptions;
     std::shared_ptr<SteamGridDbPickerScreen> m_steamGridDbPicker;
+    std::shared_ptr<HeroCustomizeScreen> m_heroCustomize;
     std::shared_ptr<FolderOptionsScreen> m_folderOptions;
     std::shared_ptr<AutoThemeScreen>   m_autoThemeScreen;
     std::shared_ptr<ControllerTestScreen> m_controllerTest;
@@ -768,6 +793,7 @@ private:
 
     nxui::ThreadPool m_threadPool{2};
     SidebarManager  m_sidebar;
+    HomeLayoutMetrics m_homeLayout;
     AppletLauncher  m_launcher;
     AppListLoader   m_appLoader;
     IconStreamer    m_iconStreamer;
@@ -785,6 +811,9 @@ private:
     // After recreateSwapchain, underscan / music / cursor run over a few frames
     // so a hang in any of them still leaves "console awake" + step logs.
     int  m_wakePostSwapchainFrames = 0;
+    // Mix_PlayMusic on the wake frame soft-locks the UI thread (Lock frozen).
+    // Count down after unlock (or after wake when Lock is off), then restore.
+    int  m_wakeMusicResumeFrames = 0;
     bool m_editMode          = false;
     // Same-frame A after edit place: icon action exits edit, then bubbled root
     // A would arm Activate and open/launch the tile — suppress that press.
@@ -1082,7 +1111,7 @@ private:
     // >=0 while an armed HOME shortcut is pending; <0 idle.
     float m_pendingHomeChordSec[static_cast<std::size_t>(HomeChordShortcut::Count)] = {
         -1.f, -1.f, -1.f, -1.f, -1.f, -1.f, -1.f, -1.f,
-        -1.f, -1.f, -1.f, -1.f
+        -1.f, -1.f, -1.f, -1.f, -1.f
     };
     // D-pad: fire once after this grace while held, then Application repeats.
     static constexpr float kHomeChordGraceSec = 0.08f;

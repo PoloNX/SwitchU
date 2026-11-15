@@ -12,9 +12,14 @@ public:
 
     void setFont(nxui::Font* f)              { m_font = f; }
     void setTextColor(const nxui::Color& c)  { m_textColor = c; }
+    // Logical canvas width for centering (1280 landscape, 720 portrait).
+    void setCanvasWidth(float width) { m_canvasWidth = width > 0.f ? width : 1280.f; }
+    float canvasWidth() const { return m_canvasWidth; }
+    // Re-center after orientation change without clearing the label.
+    void relayoutForCanvas();
 
-    void setText(const std::string& text, float screenWidth = 1280.f);
-    void hideAnimated(float screenWidth = 1280.f);
+    void setText(const std::string& text, float screenWidth = -1.f);
+    void hideAnimated(float screenWidth = -1.f);
 
 protected:
     void onRender(nxui::Renderer& ren) override;
@@ -32,4 +37,5 @@ private:
     nxui::AnimatedFloat m_textReveal{1.f};
     bool m_layoutInitialized = false;
     bool m_hideOnCollapse = false;
+    float m_canvasWidth = 1280.f;
 };

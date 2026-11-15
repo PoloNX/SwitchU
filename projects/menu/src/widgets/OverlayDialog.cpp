@@ -45,9 +45,10 @@ OverlayDialog::OverlayDialog() {
 
 
 nxui::Rect OverlayDialog::panelRect() const {
-    float panelX = 640.f - m_panelW * 0.5f;
-    float panelY = 360.f - m_panelH * 0.5f;
-    return {panelX, panelY, m_panelW, m_panelH};
+    const float panelW = std::min(m_panelW, std::max(280.f, m_canvasW - 48.f));
+    float panelX = m_canvasW * 0.5f - panelW * 0.5f;
+    float panelY = m_canvasH * 0.5f - m_panelH * 0.5f;
+    return {panelX, panelY, panelW, m_panelH};
 }
 
 
@@ -67,7 +68,7 @@ void OverlayDialog::buildWidgetTree() {
     nxui::Color textSecondary = m_theme ? m_theme->textSecondary
                                         : nxui::Color(0.82f, 0.82f, 0.9f, 1.f);
 
-    m_panelW = kPanelW;
+    m_panelW = std::min(kPanelW, std::max(280.f, m_canvasW - 48.f));
     float contentW = m_panelW - kPanelPadX * 2.f;
 
     float titleH = 0.f;

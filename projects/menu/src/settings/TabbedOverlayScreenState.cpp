@@ -302,6 +302,13 @@ nxui::Rect TabbedOverlayScreen::tabsRect() const {
 
 nxui::Rect TabbedOverlayScreen::tabsRect(const nxui::Rect& panel) const {
     const float headerH = overlayHeaderHeight();
+    if (useTopTabRail()) {
+        // Horizontal strip under the title/folder header (or panel top).
+        const float rowH = useIconOnlyTopTabs() ? 52.f : kTabRowHeight;
+        const float stripH = rowH + kTabRailInset * 2.f + topTabRailBranchStripHeight();
+        return { panel.x + kInnerPad, panel.y + kInnerPad + headerH,
+                 std::max(0.f, panel.width - 2.f * kInnerPad), stripH };
+    }
     return { panel.x + kInnerPad, panel.y + kInnerPad + headerH,
              overlayTabWidth(), panel.height - 2 * kInnerPad - headerH };
 }
@@ -313,6 +320,15 @@ nxui::Rect TabbedOverlayScreen::contentRect() const {
 
 nxui::Rect TabbedOverlayScreen::contentRect(const nxui::Rect& panel) const {
     const float headerH = overlayHeaderHeight();
+    if (useTopTabRail()) {
+        const nxui::Rect tr = tabsRect(panel);
+        const float titleH = selectedTabTitleHeight();
+        // Extra air after the title chip so the page doesn't crowd it.
+        const float top = tr.bottom() + (titleH > 0.f ? titleH + 12.f : 12.f);
+        return { panel.x + kInnerPad, top,
+                 std::max(0.f, panel.width - 2.f * kInnerPad),
+                 std::max(0.f, panel.bottom() - kInnerPad - top) };
+    }
     float left = panel.x + kInnerPad + overlayTabWidth() + kInnerPad;
     return { left, panel.y + kInnerPad + headerH,
              panel.right() - kInnerPad - left, panel.height - 2 * kInnerPad - headerH };

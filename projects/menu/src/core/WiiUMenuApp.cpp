@@ -646,7 +646,8 @@ bool WiiUMenuApp::hasActiveLeaveCaptureOverlay() const {
         || (m_folderOptions && m_folderOptions->isActive())
         || (m_controllerTest && m_controllerTest->isActive())
         || (m_profileCarousel && m_profileCarousel->isActive())
-        || (m_steamGridDbPicker && m_steamGridDbPicker->isActive());
+        || (m_steamGridDbPicker && m_steamGridDbPicker->isActive())
+        || (m_heroCustomize && m_heroCustomize->isActive());
 }
 
 void WiiUMenuApp::pollDeferredLeaveCapture() {
@@ -698,6 +699,8 @@ LeaveFrameSession WiiUMenuApp::captureLeaveSession() const {
     session.openFolderId = m_openFolderId;
     session.page = m_grid ? m_grid->currentPage() : 0;
     session.focusTitleId = 0;
+    session.appLayoutMode = static_cast<std::uint32_t>(m_appLayoutMode);
+    session.homeOrientation = static_cast<std::uint32_t>(m_config.homeOrientation);
 
     // Prefer the launching title stamped by scheduleLeaveCapture — focusManager
     // can still briefly report the previous icon after a fast hop.
@@ -867,7 +870,8 @@ void WiiUMenuApp::updateLeaveSplashHandoff(float dt) {
             refreshOpenFolderChrome();
             if (m_grid) {
                 m_grid->setLayoutMode(m_appLayoutMode, false);
-                configureDynamicLineNavigation();
+                // Snap sidebars — gliding on splash handoff reads as a fly-in.
+                configureDynamicLineNavigation(false);
             }
             // Splash blocks focusRoot() the whole hold/fade. Re-pin a title
             // when input returns so D-pad isn't stranded on chrome/spatial.
@@ -1413,11 +1417,303 @@ void WiiUMenuApp::placeLayoutFlipButton() {
     constexpr float kSize = 52.f;
     constexpr float kGap = 12.f;
     const nxui::Rect clock = m_clock->rect();
+    // Change View stays to the right of the clock.
     const float x = clock.x + clock.width + kGap;
     const float y = clock.y + (clock.height - kSize) * 0.5f;
     m_layoutFlip->setRect({x, y, kSize, kSize});
     // Visible on HOME and inside folders (touch + controller Change View).
     m_layoutFlip->setVisible(m_topHud && m_topHud->isVisible());
+    placeOrientationButton();
+}
+
+void WiiUMenuApp::placeOrientationButton() {
+    if (!m_orientationBtn || !m_clock)
+        return;
+    constexpr float kSize = 52.f;
+    constexpr float kGap = 12.f;
+    const nxui::Rect clock = m_clock->rect();
+    // Left of the clock (portrait + landscape); UP from tiles prefers this.
+    const float y = clock.y + (clock.height - kSize) * 0.5f;
+    m_orientationBtn->setRect({clock.x - kGap - kSize, y, kSize, kSize});
+    const bool show = m_config.homeOrientationButton
+        && m_topHud && m_topHud->isVisible()
+        && m_layoutFlip && m_layoutFlip->isVisible();
+    m_orientationBtn->setVisible(show);
+    if (show)
+        syncOrientationButtonState();
+}
+
+void WiiUMenuApp::placeTitlePill() {
+    if (!m_titlePill)
+        return;
+    const float canvasW = m_homeLayout.logicalW();
+    m_titlePill->setCanvasWidth(canvasW);
+    // Landscape keeps classic y=630 (~55px above page dots at 685).
+    // Portrait: same breathing room above the page-dot pill.
+    const float y = m_homeLayout.isPortrait()
+        ? (m_homeLayout.pageIndicator().y - 55.f)
+        : 630.f;
+    m_titlePill->setPosition(m_titlePill->rect().x, y);
+    m_titlePill->relayoutForCanvas();
+}
+
+void WiiUMenuApp::applyHomeOrientationState(bool saveConfig) {
+    m_config.homeOrientationCycle = sanitizeHomeOrientationCycle(
+        m_config.homeOrientationCycle,
+        m_config.homeOrientation,
+        m_config.homeOrientationButton);
+
+    // Remember focus before the logical canvas remaps. Off-page icons keep a
+    // stale landscape rect after 6×N → 3×5 (etc.), and the blue ring would sit
+    // on that ghost under the new portrait projector.
+    nxui::Widget* prevFocus = focusManager().current();
+    int preserveGridIdx = -1;
+    std::uint64_t preserveTitleId = 0;
+    if (m_grid && prevFocus && prevFocus->tag() == "glossy_icon") {
+        preserveTitleId = static_cast<GlossyIcon*>(prevFocus)->titleId();
+        const auto& icons = m_grid->allIcons();
+        for (int i = 0; i < static_cast<int>(icons.size()); ++i) {
+            if (icons[static_cast<std::size_t>(i)].get() == prevFocus) {
+                preserveGridIdx = i;
+                break;
+            }
+        }
+    }
+
+    switchu::menu::applyHomeOrientation(m_config.homeOrientation);
+    app().input().setDisplayOrientation(
+        static_cast<nxui::DisplayOrientation>(m_config.homeOrientation));
+    reflowHomeShell();
+    syncOrientationButtonState();
+    placeOrientationButton();
+    placeTitlePill();
+    wireProfileLockNavigation();
+
+    // Open folders use a different grid (and glass panel) per orientation —
+    // rebuild the model + chrome so portrait 3×N / landscape N×M don't stick.
+    if (m_openFolderId != 0 && m_grid) {
+        applyDisplayModel(buildOpenFolderModel(m_openFolderId), preserveTitleId,
+                          false, {}, true);
+        refreshOpenFolderChrome();
+        configureDynamicLineNavigation();
+        syncPageIndicator();
+    } else if (preserveGridIdx >= 0 && m_grid) {
+        if (m_grid->focusGlobalIndex(preserveGridIdx, true)) {
+            if (auto* cur = m_grid->focusManager().current())
+                focusManager().setFocus(cur);
+        } else {
+            focusHomeGridFallback();
+        }
+    } else if (prevFocus && m_orientationBtn && prevFocus == m_orientationBtn.get()
+               && m_orientationBtn->isVisible()) {
+        focusManager().setFocus(m_orientationBtn.get());
+    } else if (prevFocus && m_layoutFlip && prevFocus == m_layoutFlip.get()
+               && m_layoutFlip->isVisible()) {
+        focusManager().setFocus(m_layoutFlip.get());
+    } else if (prevFocus && m_profileLock && prevFocus == m_profileLock.get()) {
+        focusManager().setFocus(m_profileLock.get());
+    } else if (prevFocus && m_battery && prevFocus == m_battery.get()
+               && m_battery->isVisible()) {
+        focusManager().setFocus(m_battery.get());
+    } else if (prevFocus && prevFocus->isFocusable() && prevFocus->isVisible()) {
+        focusManager().setFocus(prevFocus);
+    }
+
+    // Reflow flips portraitBackdrop; prefer a warm opposite-orientation crop
+    // (no forced reload — that would discard the prefetch). Miss path still
+    // reloads because setPortraitBackdrop cleared m_requestedTitleId.
+    if (m_steamGridDbBackdrop) {
+        m_steamGridDbBackdrop->setLayoutMode(m_appLayoutMode);
+        m_backdropSyncValid = false;
+        showFocusedSteamGridDbArtwork(false);
+    }
+
+    // Tile rects moved with the projection — snap the blue ring (no ease from
+    // the pre-rotate ghost position).
+    m_snapHomeFocus = true;
+    m_forceCursorTeleport = true;
+    updateCursor();
+    m_forceCursorTeleport = false;
+    if (saveConfig)
+        m_config.save();
+}
+
+int WiiUMenuApp::activeGridColumns() const {
+    return m_homeLayout.gridColumns(m_config.gridColumns);
+}
+
+int WiiUMenuApp::activeGridRows() const {
+    return m_homeLayout.gridRows(m_config.gridRows);
+}
+
+nxui::Rect WiiUMenuApp::homeGridRect() const {
+    if (!m_homeLayout.isPortrait()) {
+        if (m_openFolderId != 0)
+            return kFolderGridRect;
+        return {kGridRectX, kGridRectY, kGridRectW, kGridRectH};
+    }
+    const bool singleRowStrip = m_appLayoutMode == AppLayoutMode::DynamicLine
+        && m_openFolderId == 0;
+    return m_homeLayout.gridBand(m_openFolderId != 0, singleRowStrip);
+}
+
+void WiiUMenuApp::reflowHomeShell() {
+    m_homeLayout.orientation = m_config.homeOrientation;
+    const bool portrait = m_homeLayout.isPortrait();
+    const float lw = m_homeLayout.logicalW();
+    const float lh = m_homeLayout.logicalH();
+    const auto orient =
+        static_cast<nxui::DisplayOrientation>(m_config.homeOrientation);
+
+    // Portrait: logical 720x1280 + Renderer projection (nwindow identity).
+    // Landscape/180: classic 1280x720 + nwindow for 180 only.
+    if (portrait) {
+        app().renderer().setLayoutOrientation(orient, lw, lh);
+        app().input().setLogicalLayoutSize(lw, lh);
+    } else {
+        app().renderer().setLayoutOrientation(
+            nxui::DisplayOrientation::Landscape0, 0.f, 0.f);
+        app().input().setLogicalLayoutSize(1280.f, 720.f);
+    }
+
+    if (!portrait) {
+        if (m_bgLayer)
+            m_bgLayer->setRect({0.f, 0.f, 1280.f, 720.f});
+        if (m_contentLayer)
+            m_contentLayer->setRect({0.f, 0.f, 1280.f, 720.f});
+        if (m_overlayLayer)
+            m_overlayLayer->setRect({0.f, 0.f, 1280.f, 720.f});
+        if (m_folderBackdrop)
+            m_folderBackdrop->setRect({0.f, 0.f, 1280.f, 720.f});
+        if (m_folderZoom)
+            m_folderZoom->setRect({0.f, 0.f, 1280.f, 720.f});
+        if (m_background) {
+            m_background->setRect({0.f, 0.f, 1280.f, 720.f});
+            auto cfg = m_background->config();
+            cfg.imageCover = m_effectivePreset.background.imageCover;
+            cfg.imageFocusX = m_effectivePreset.background.imageFocusX;
+            cfg.imageFocusY = m_effectivePreset.background.imageFocusY;
+            m_background->setConfig(cfg);
+        }
+        if (m_steamGridDbBackdrop) {
+            m_steamGridDbBackdrop->setRect({0.f, 0.f, 1280.f, 720.f});
+            applySteamGridDbHeroPresentation();
+        }
+        if (m_topHud) {
+            m_topHud->setRect({0.f, 0.f, 1280.f, 90.f});
+            m_topHud->layout();
+        }
+        if (m_pageIndicator)
+            m_pageIndicator->placeOnCanvas(1280.f, 685.f);
+        m_sidebar.setCanvasSize(1280.f, 720.f);
+    } else {
+        if (m_bgLayer)
+            m_bgLayer->setRect({0.f, 0.f, lw, lh});
+        if (m_contentLayer)
+            m_contentLayer->setRect({0.f, 0.f, lw, lh});
+        if (m_overlayLayer)
+            m_overlayLayer->setRect({0.f, 0.f, lw, lh});
+        if (m_folderBackdrop)
+            m_folderBackdrop->setRect({0.f, 0.f, lw, lh});
+        if (m_folderZoom)
+            m_folderZoom->setRect({0.f, 0.f, lw, lh});
+        if (m_background) {
+            m_background->setRect(m_homeLayout.contentCanvas());
+            auto cfg = m_background->config();
+            // Cover the tall canvas (no letterbox bars); landscape restores preset.
+            cfg.imageCover = true;
+            m_background->setConfig(cfg);
+        }
+        // Heroes use the same full logical canvas + cover fill as wallpaper.
+        if (m_steamGridDbBackdrop) {
+            m_steamGridDbBackdrop->setRect(m_homeLayout.contentCanvas());
+            applySteamGridDbHeroPresentation();
+        }
+        if (m_topHud) {
+            m_topHud->setRect(m_homeLayout.topHud());
+            m_topHud->layout();
+        }
+        if (m_pageIndicator) {
+            const nxui::Rect pi = m_homeLayout.pageIndicator();
+            m_pageIndicator->placeOnCanvas(lw, pi.y);
+        }
+        m_sidebar.setCanvasSize(lw, lh);
+    }
+
+    // Swap landscape ↔ portrait theme wallpaper when Flip-Grip toggles.
+    if (m_background)
+        applyThemeResources(m_effectivePreset);
+
+    // Dialogs / lock / launch / context menus use logical canvas bounds.
+    const float canvasW = portrait ? lw : 1280.f;
+    const float canvasH = portrait ? lh : 720.f;
+    if (m_dialog) m_dialog->setCanvasSize(canvasW, canvasH);
+    if (m_userSelect) m_userSelect->setCanvasSize(canvasW, canvasH);
+    if (m_contextMenu) m_contextMenu->setCanvasSize(canvasW, canvasH);
+    if (m_progressDialog) m_progressDialog->setCanvasSize(canvasW, canvasH);
+    if (m_lockScreen) m_lockScreen->setCanvasSize(canvasW, canvasH);
+    if (m_launchAnim) m_launchAnim->setCanvasSize(canvasW, canvasH);
+    if (m_folderBackdrop) m_folderBackdrop->setCanvasSize(canvasW, canvasH);
+    if (m_quickSettings) m_quickSettings->setCanvasSize(canvasW, canvasH);
+    if (m_gameOptions) m_gameOptions->setCanvasSize(canvasW, canvasH);
+    if (m_folderOptions) m_folderOptions->setCanvasSize(canvasW, canvasH);
+    if (m_settings) m_settings->setCanvasSize(canvasW, canvasH);
+    if (m_themeShop) m_themeShop->setCanvasSize(canvasW, canvasH);
+    if (m_steamGridDbPicker) m_steamGridDbPicker->setCanvasSize(canvasW, canvasH);
+    if (m_heroCustomize) m_heroCustomize->setCanvasSize(canvasW, canvasH);
+    if (m_controllerTest) m_controllerTest->setCanvasSize(canvasW, canvasH);
+    if (m_profileCarousel) m_profileCarousel->setCanvasSize(canvasW, canvasH);
+    if (m_textEntry) m_textEntry->setCanvasSize(canvasW, canvasH);
+
+    // Portrait single-row keeps side columns (SidebarManager skips the top strip).
+    const bool dynamicLine = m_appLayoutMode == AppLayoutMode::DynamicLine
+        && m_openFolderId == 0;
+    m_sidebar.setDynamicLineLayout(dynamicLine);
+    placeLayoutFlipButton();
+
+    if (m_grid) {
+        m_grid->setRect(homeGridRect());
+        if (m_appLayoutMode != AppLayoutMode::DynamicLine) {
+            int cols = activeGridColumns();
+            int rows = activeGridRows();
+            if (m_openFolderId != 0)
+                std::tie(cols, rows) = folderViewDimensions(m_openFolderId);
+            const GridLayoutMetrics metrics =
+                computeGridLayoutMetrics(cols, rows);
+            m_grid->reconfigureLayout(cols, rows,
+                                     metrics.cellW, metrics.cellH,
+                                     metrics.padX, metrics.padY);
+        }
+    }
+}
+
+void WiiUMenuApp::cycleHomeOrientation() {
+    m_config.homeOrientationCycle = sanitizeHomeOrientationCycle(
+        m_config.homeOrientationCycle,
+        m_config.homeOrientation,
+        true);
+    m_config.homeOrientation = nextHomeOrientation(
+        m_config.homeOrientation, m_config.homeOrientationCycle);
+    applyHomeOrientationState(true);
+}
+
+void WiiUMenuApp::syncOrientationButtonState() {
+    if (!m_orientationBtn)
+        return;
+    m_orientationBtn->setOrientation(m_config.homeOrientation);
+}
+
+void WiiUMenuApp::wireOrientationButtonNavigation() {
+    if (!m_orientationBtn || !m_orientationBtn->isVisible())
+        return;
+    auto* orient = m_orientationBtn.get();
+    orient->setCustomNavigation(nxui::FocusDirection::UP, orient);
+    orient->removeAction(static_cast<uint64_t>(nxui::Button::DDown));
+    orient->removeAction(static_cast<uint64_t>(nxui::Button::LStickD));
+    orient->removeAction(static_cast<uint64_t>(nxui::Button::RStickD));
+    orient->addDirectionAction(nxui::FocusDirection::DOWN, [this]() {
+        focusHomeGridFallback();
+    });
 }
 
 bool WiiUMenuApp::keepLayoutFlipFocus() const {
@@ -1534,20 +1830,25 @@ void WiiUMenuApp::wireProfileLockNavigation() {
     if (!m_profileLock)
         return;
     auto* lock = m_profileLock.get();
-    const bool dynamicLine = m_appLayoutMode == AppLayoutMode::DynamicLine;
+    // Portrait single-row uses side columns — treat nav like grid chrome.
+    const bool lineStrip = m_appLayoutMode == AppLayoutMode::DynamicLine
+        && !m_homeLayout.isPortrait();
     const auto& leftButtons = m_sidebar.leftButtons();
     const auto& rightButtons = m_sidebar.rightButtons();
     auto* flip = (m_layoutFlip && m_layoutFlip->isVisible()) ? m_layoutFlip.get() : nullptr;
+    auto* orient = (m_orientationBtn && m_orientationBtn->isVisible())
+        ? m_orientationBtn.get() : nullptr;
     auto* battery = (m_battery && m_battery->isVisible()) ? m_battery.get() : nullptr;
     nxui::Widget* firstLeft = leftButtons.empty() ? nullptr : leftButtons.front().get();
     nxui::Widget* lastLeft = leftButtons.empty() ? nullptr : leftButtons.back().get();
     nxui::Widget* firstRight = rightButtons.empty() ? nullptr : rightButtons.front().get();
     nxui::Widget* lastRight = rightButtons.empty() ? nullptr : rightButtons.back().get();
 
-    // Change View is the chrome hub: titles jump here on UP in both layouts.
-    nxui::Widget* chromeUp = flip
-        ? static_cast<nxui::Widget*>(flip)
-        : static_cast<nxui::Widget*>(lock);
+    // UP from tiles: Orientation first when enabled, else Change View, else profile.
+    nxui::Widget* chromeUp = orient
+        ? static_cast<nxui::Widget*>(orient)
+        : (flip ? static_cast<nxui::Widget*>(flip)
+                : static_cast<nxui::Widget*>(lock));
 
     lock->setCustomNavigation(nxui::FocusDirection::LEFT, lock);
     lock->setCustomNavigation(nxui::FocusDirection::UP, lock);
@@ -1565,27 +1866,45 @@ void WiiUMenuApp::wireProfileLockNavigation() {
     }
 
     wireLayoutFlipNavigation();
+    wireOrientationButtonNavigation();
 
-    if (dynamicLine) {
-        // Strip: [profile] → [left…] → [flip] → [right…] → [battery]
+    if (lineStrip) {
+        // Strip: [profile] → [left…] → [orient?] → [flip] → [right…] → [battery]
         nxui::Widget* lockRight = firstLeft
             ? firstLeft
-            : (flip ? static_cast<nxui::Widget*>(flip)
-                    : (battery ? static_cast<nxui::Widget*>(battery)
-                               : static_cast<nxui::Widget*>(lock)));
+            : (orient ? static_cast<nxui::Widget*>(orient)
+                      : (flip ? static_cast<nxui::Widget*>(flip)
+                              : (battery ? static_cast<nxui::Widget*>(battery)
+                                         : static_cast<nxui::Widget*>(lock))));
         lock->setCustomNavigation(nxui::FocusDirection::RIGHT, lockRight);
         m_sidebar.setDynamicLineProfileTarget(lock);
 
-        nxui::Widget* afterLeft = flip
-            ? static_cast<nxui::Widget*>(flip)
-            : (firstRight ? firstRight
-                          : (battery ? static_cast<nxui::Widget*>(battery) : lastLeft));
+        nxui::Widget* afterLeft = orient
+            ? static_cast<nxui::Widget*>(orient)
+            : (flip ? static_cast<nxui::Widget*>(flip)
+                    : (firstRight ? firstRight
+                                  : (battery ? static_cast<nxui::Widget*>(battery)
+                                             : lastLeft)));
         if (lastLeft && afterLeft)
             lastLeft->setCustomNavigation(nxui::FocusDirection::RIGHT, afterLeft);
 
+        if (orient) {
+            orient->setCustomNavigation(nxui::FocusDirection::LEFT,
+                lastLeft ? lastLeft : static_cast<nxui::Widget*>(lock));
+            nxui::Widget* orientRight = flip
+                ? static_cast<nxui::Widget*>(flip)
+                : (firstRight ? firstRight
+                              : (battery ? static_cast<nxui::Widget*>(battery)
+                                         : static_cast<nxui::Widget*>(orient)));
+            orient->setCustomNavigation(nxui::FocusDirection::RIGHT, orientRight);
+            if (!flip && firstRight)
+                firstRight->setCustomNavigation(nxui::FocusDirection::LEFT, orient);
+        }
+
         if (flip) {
             flip->setCustomNavigation(nxui::FocusDirection::LEFT,
-                                      lastLeft ? lastLeft : static_cast<nxui::Widget*>(lock));
+                orient ? static_cast<nxui::Widget*>(orient)
+                       : (lastLeft ? lastLeft : static_cast<nxui::Widget*>(lock)));
             nxui::Widget* flipRight = firstRight
                 ? firstRight
                 : (battery ? static_cast<nxui::Widget*>(battery)
@@ -1599,7 +1918,8 @@ void WiiUMenuApp::wireProfileLockNavigation() {
             nxui::Widget* batteryLeft = lastRight
                 ? lastRight
                 : (flip ? static_cast<nxui::Widget*>(flip)
-                        : static_cast<nxui::Widget*>(lock));
+                        : (orient ? static_cast<nxui::Widget*>(orient)
+                                  : static_cast<nxui::Widget*>(lock)));
             battery->setCustomNavigation(nxui::FocusDirection::LEFT, batteryLeft);
             if (lastRight)
                 lastRight->setCustomNavigation(nxui::FocusDirection::RIGHT, battery);
@@ -1615,23 +1935,36 @@ void WiiUMenuApp::wireProfileLockNavigation() {
             m_grid->setDynamicLineUpTarget(chromeUp);
         m_sidebar.setDynamicLineUpTarget(nullptr);
     } else {
-        // Grid chrome: [profile] ↔ [flip] ↔ [battery]
+        // Grid chrome: [profile] ↔ [orient?] ↔ [flip] ↔ [battery]
+        // (orient sits left of clock; flip stays right of clock.)
         // DOWN from profile → left column; DOWN from battery → right column.
         m_sidebar.setDynamicLineProfileTarget(nullptr);
         lock->setCustomNavigation(nxui::FocusDirection::RIGHT,
-                                  flip ? static_cast<nxui::Widget*>(flip)
-                                       : (battery ? static_cast<nxui::Widget*>(battery)
-                                                  : nullptr));
+                                  orient ? static_cast<nxui::Widget*>(orient)
+                                         : (flip ? static_cast<nxui::Widget*>(flip)
+                                                 : (battery ? static_cast<nxui::Widget*>(battery)
+                                                            : nullptr)));
+        if (orient) {
+            orient->setCustomNavigation(nxui::FocusDirection::LEFT,
+                                        static_cast<nxui::Widget*>(lock));
+            orient->setCustomNavigation(nxui::FocusDirection::RIGHT,
+                flip ? static_cast<nxui::Widget*>(flip)
+                     : (battery ? static_cast<nxui::Widget*>(battery)
+                                : static_cast<nxui::Widget*>(orient)));
+        }
         if (flip) {
-            flip->setCustomNavigation(nxui::FocusDirection::LEFT, lock);
+            flip->setCustomNavigation(nxui::FocusDirection::LEFT,
+                orient ? static_cast<nxui::Widget*>(orient)
+                       : static_cast<nxui::Widget*>(lock));
             flip->setCustomNavigation(nxui::FocusDirection::RIGHT,
-                                      battery ? static_cast<nxui::Widget*>(battery)
-                                              : static_cast<nxui::Widget*>(flip));
+                battery ? static_cast<nxui::Widget*>(battery)
+                        : static_cast<nxui::Widget*>(flip));
         }
         if (battery) {
             battery->setCustomNavigation(nxui::FocusDirection::LEFT,
                                          flip ? static_cast<nxui::Widget*>(flip)
-                                              : static_cast<nxui::Widget*>(lock));
+                                              : (orient ? static_cast<nxui::Widget*>(orient)
+                                                        : static_cast<nxui::Widget*>(lock)));
             if (firstRight) {
                 battery->setCustomNavigation(nxui::FocusDirection::DOWN, firstRight);
                 firstRight->setCustomNavigation(nxui::FocusDirection::UP, battery);
@@ -1689,31 +2022,42 @@ void WiiUMenuApp::loadNextProfile() {
 }
 
 WiiUMenuApp::GridLayoutMetrics WiiUMenuApp::computeGridLayoutMetrics() const {
-    const int cols = std::clamp(m_config.gridColumns, 1, 8);
-    const int rows = std::clamp(m_config.gridRows, 1, 5);
-    return computeGridLayoutMetrics(cols, rows);
+    return computeGridLayoutMetrics(activeGridColumns(), activeGridRows());
 }
 
 WiiUMenuApp::GridLayoutMetrics WiiUMenuApp::computeGridLayoutMetrics(int cols,
                                                                       int rows) const {
     cols = std::clamp(cols, 1, 8);
-    rows = std::clamp(rows, 1, 5);
+    // Folders in portrait can be 4×6 (Large); HOME stays ≤5 via activeGridRows.
+    rows = std::clamp(rows, 1, 8);
 
     const float baseGridW = cols * kGridBaseCellW + (cols - 1) * kGridBasePadX;
     const float baseGridH = rows * kGridBaseCellH + (rows - 1) * kGridBasePadY;
 
-    const float safeW = std::max(1.f, kGridRectW - (kGridSafeSideMargin * 2.f));
-    const float safeH = std::max(1.f, kGridRectH - (kGridSafeTopBottomMargin * 2.f));
+    float safeW;
+    float safeH;
+    if (!m_homeLayout.isPortrait()) {
+        safeW = std::max(1.f, kGridRectW - (kGridSafeSideMargin * 2.f));
+        safeH = std::max(1.f, kGridRectH - (kGridSafeTopBottomMargin * 2.f));
+    } else {
+        const nxui::Rect band = homeGridRect();
+        const float side = m_homeLayout.gridSafeSideMargin();
+        safeW = std::max(1.f, band.width - (side * 2.f));
+        safeH = std::max(1.f, band.height - (kGridSafeTopBottomMargin * 2.f));
+    }
 
     const float scaleW = safeW / baseGridW;
     const float scaleH = safeH / baseGridH;
     const float scale = std::min(1.f, std::min(scaleW, scaleH));
 
     GridLayoutMetrics m;
-    m.cellW = std::max(88.f, kGridBaseCellW * scale);
-    m.cellH = std::max(88.f, kGridBaseCellH * scale);
-    m.padX = std::max(8.f, kGridBasePadX * scale);
-    m.padY = std::max(8.f, kGridBasePadY * scale);
+    // Portrait folders / grids need smaller floors so 3×N fits in ~520px width.
+    const float minCell = m_homeLayout.isPortrait() ? 72.f : 88.f;
+    const float minPad = m_homeLayout.isPortrait() ? 6.f : 8.f;
+    m.cellW = std::max(minCell, kGridBaseCellW * scale);
+    m.cellH = std::max(minCell, kGridBaseCellH * scale);
+    m.padX = std::max(minPad, kGridBasePadX * scale);
+    m.padY = std::max(minPad, kGridBasePadY * scale);
     return m;
 }
 
@@ -1725,6 +2069,20 @@ std::pair<int, int> WiiUMenuApp::folderGridDimensions(std::uint32_t folderId) co
         case 2: return {6, 4};
         default: return {5, 3};
     }
+}
+
+std::pair<int, int> WiiUMenuApp::folderViewDimensions(std::uint32_t folderId) const {
+    const auto stored = folderGridDimensions(folderId);
+    if (!m_homeLayout.isPortrait())
+        return stored;
+    // Landscape 4×2 / 5×3 / 6×4. Large (24 tiles) was 3×8 — too chunky in
+    // portrait; use 4×6. Small/Medium stay 3×N.
+    if (stored.first == 6 && stored.second == 4)
+        return {4, 6};
+    const int tiles = std::max(1, stored.first * stored.second);
+    constexpr int kPortraitCols = 3;
+    const int rows = std::max(2, (tiles + kPortraitCols - 1) / kPortraitCols);
+    return {kPortraitCols, rows};
 }
 
 void WiiUMenuApp::reflowHomeGrid() {
@@ -1831,7 +2189,23 @@ void WiiUMenuApp::reflowHomeGrid() {
                 oldIcons[i]->setFolderCoverTitleId(entry.folderCoverTitleId);
                 oldIcons[i]->setFolderStyleIndex(m_config.folderStyle);
                 oldIcons[i]->setFolderShowCover(m_config.folderShowCover);
-                oldIcons[i]->setPosterFrame(preferSingleRowPosters());
+                oldIcons[i]->setGridSpan(entry.widgetColumns, entry.widgetRows);
+                const bool tallPosterTile = switchu::widgets::isTallPosterGameTile(
+                    entry.widgetColumns, entry.widgetRows);
+                oldIcons[i]->setPosterFrame(
+                    (preferSingleRowPosters() || tallPosterTile)
+                    && SteamGridDbManager::hasPoster(entry.titleId));
+                const bool landscapeTile = switchu::widgets::isLandscapeWideGameTile(
+                    entry.widgetColumns, entry.widgetRows);
+                if (m_appLayoutMode == AppLayoutMode::Grid
+                    && (landscapeTile || tallPosterTile)
+                    && (SteamGridDbManager::hasPoster(entry.titleId)
+                        || SteamGridDbManager::hasGridWide(entry.titleId)
+                        || SteamGridDbManager::hasHeroPresentation(entry.titleId))) {
+                    ensureGameArtwork(entry.titleId);
+                }
+                oldIcons[i]->setWideGameTextures(nullptr, nullptr);
+                oldIcons[i]->setTallGamePoster(nullptr);
             }
         } else {
             auto icon = makeIcon(rebuiltModel.at(i));
@@ -1848,9 +2222,12 @@ void WiiUMenuApp::reflowHomeGrid() {
         reflowedTitleIds.push_back(m_model.at(i).titleId);
     m_iconStreamer.reconcileTitleIds(reflowedTitleIds);
 
-    GridLayoutMetrics gridMetrics = computeGridLayoutMetrics();
+    // Visual session dims (portrait 3x5); slot math above kept saved landscape size.
+    const int viewCols = activeGridColumns();
+    const int viewRows = activeGridRows();
+    GridLayoutMetrics gridMetrics = computeGridLayoutMetrics(viewCols, viewRows);
     m_grid->setSlideTransition(m_config.pageTransitionMode == 0);
-    m_grid->setup(std::move(icons), cols, rows,
+    m_grid->setup(std::move(icons), viewCols, viewRows,
                   gridMetrics.cellW, gridMetrics.cellH,
                   gridMetrics.padX, gridMetrics.padY);
 
@@ -2049,6 +2426,11 @@ void WiiUMenuApp::composeRootPending(std::vector<PendingApp>& apps) {
         item.folderColorIndex = folder.colorIndex;
         item.folderCoverTitleId = resolveFolderCoverTitleId(
             folder, preferSingleRowPosters());
+        {
+            const auto folderSize = gameGridSize(item.titleId, m_appLayoutMode);
+            item.widgetColumns = folderSize.columns;
+            item.widgetRows = folderSize.rows;
+        }
         itemOrder.push_back(item.titleId);
         byId.emplace(item.titleId, std::move(item));
     }
@@ -2132,7 +2514,8 @@ void WiiUMenuApp::composeRootPending(std::vector<PendingApp>& apps) {
             auto found = byId.find(slots[static_cast<std::size_t>(index)]);
             if (found == byId.end() ||
                 (found->second.kind != GridEntryKind::Widget &&
-                 found->second.kind != GridEntryKind::Application))
+                 found->second.kind != GridEntryKind::Application &&
+                 found->second.kind != GridEntryKind::Folder))
                 continue;
             auto& item = found->second;
             int spanColumns = std::max(1, item.widgetColumns);
@@ -2229,6 +2612,11 @@ GridModel WiiUMenuApp::buildRootFolderModel() {
         entry.folderColorIndex = folder.colorIndex;
         entry.folderCoverTitleId = resolveFolderCoverTitleId(
             folder, preferSingleRowPosters());
+        {
+            const auto size = gameGridSize(entry.titleId, m_appLayoutMode);
+            entry.widgetColumns = size.columns;
+            entry.widgetRows = size.rows;
+        }
         entries.emplace(entry.titleId, std::move(entry));
     }
     for (const auto& widget : m_widgetStore.all()) {
@@ -2415,8 +2803,10 @@ GridModel WiiUMenuApp::buildRootFolderModel() {
     if (m_appLayoutMode == AppLayoutMode::Grid) {
         for (int index = 0; index < static_cast<int>(displaySlots.size()); ++index) {
             auto found = entries.find(displaySlots[static_cast<std::size_t>(index)]);
+            // Folders can span HOME tiles the same way as apps/widgets.
             if (found == entries.end() ||
-                (!found->second.isWidget() && !found->second.isApplication()))
+                (!found->second.isWidget() && !found->second.isApplication()
+                 && !found->second.isFolder()))
                 continue;
             auto& entry = found->second;
             const int spanColumns = std::max(1, entry.widgetColumns);
@@ -2650,10 +3040,10 @@ void WiiUMenuApp::completeDisplayModelApply(
         m_folderCoverCache.clear();
         m_folderPeekBorrowed.clear();
     }
-    int columns = std::clamp(m_config.gridColumns, 1, 8);
-    int rows = std::clamp(m_config.gridRows, 1, 5);
+    int columns = activeGridColumns();
+    int rows = activeGridRows();
     if (m_openFolderId != 0)
-        std::tie(columns, rows) = folderGridDimensions(m_openFolderId);
+        std::tie(columns, rows) = folderViewDimensions(m_openFolderId);
     auto metrics = computeGridLayoutMetrics(columns, rows);
     if (m_openFolderId != 0) {
         // Reserve a real title band above and a title-pill band below. Scaling
@@ -2671,6 +3061,7 @@ void WiiUMenuApp::completeDisplayModelApply(
     m_grid->setEdgePaging(inFolder && m_appLayoutMode == AppLayoutMode::Grid);
     m_grid->setSlideTransition(m_config.pageTransitionMode == 0);
     m_grid->setLayoutMode(m_appLayoutMode, morphLayout);
+    m_grid->setRect(homeGridRect());
     m_grid->setup(std::move(icons), columns, rows, metrics.cellW, metrics.cellH,
                   metrics.padX, metrics.padY);
     // setup() rebuilds line/page geometry but does not touch morph state —
@@ -2801,6 +3192,7 @@ void WiiUMenuApp::createTextEntry() {
     m_textEntry->setFont(&m_fontNormal);
     m_textEntry->setSmallFont(&m_fontSmall);
     m_textEntry->setTheme(&m_theme);
+    m_textEntry->setCanvasSize(m_homeLayout.logicalW(), m_homeLayout.logicalH());
     m_textEntry->onKeySfx([this]() { m_audio.playSfx(Sfx::Activate); });
     m_textEntry->onNavigateSfx([this]() { m_audio.playSfx(Sfx::Navigate); });
     m_textEntry->onCloseSfx([this]() { m_audio.playSfx(Sfx::ModalHide); });
@@ -2837,6 +3229,7 @@ void WiiUMenuApp::requestTextEntry(
     });
     m_textEntry->onCancel(restoreFocus);
     m_audio.playSfx(Sfx::ModalShow);
+    m_textEntry->setCanvasSize(m_homeLayout.logicalW(), m_homeLayout.logicalH());
     m_textEntry->show({title, guide, initial, std::max(1, maxLength), password});
     focusManager().setFocus(m_textEntry.get());
     if (m_cursor) m_cursor->setVisible(false);
@@ -3122,16 +3515,40 @@ void WiiUMenuApp::syncGameArtworkTextures(std::uint64_t titleId) {
     const auto artwork = m_gameArtwork.find(titleId);
     if (artwork == m_gameArtwork.end()) return;
     for (const auto& icon : m_grid->allIcons()) {
-        if (icon && icon->entryKind() == GridEntryKind::Application &&
-            icon->titleId() == titleId) {
-            const int cols = icon->gridSpanColumns();
-            const int rows = icon->gridSpanRows();
-            if (switchu::widgets::isLandscapeWideGameTile(cols, rows))
-                icon->setWideGameTextures(artwork->second.hero.get(),
-                                          artwork->second.logo.get());
-            if (switchu::widgets::isTallPosterGameTile(cols, rows))
-                icon->setTallGamePoster(artwork->second.poster.get());
+        if (!icon || icon->titleId() != titleId)
+            continue;
+        if (icon->entryKind() != GridEntryKind::Application
+            && icon->entryKind() != GridEntryKind::Folder)
+            continue;
+        const int cols = icon->gridSpanColumns();
+        const int rows = icon->gridSpanRows();
+        const bool wide = switchu::widgets::isLandscapeWideGameTile(cols, rows);
+        const bool tall = switchu::widgets::isTallPosterGameTile(cols, rows);
+        if (icon->entryKind() == GridEntryKind::Folder) {
+            // Folder faces keep style chrome — attach as inset cover, not a
+            // bare game tile. Peeks win until custom art is present.
+            if (icon->folderPeekCount() > 0)
+                continue;
+            icon->setWideGameTextures(nullptr, nullptr);
+            icon->setTallGamePoster(nullptr);
+            nxui::Texture* face = nullptr;
+            if (tall && artwork->second.poster && artwork->second.poster->valid())
+                face = artwork->second.poster.get();
+            else if (wide && artwork->second.hero && artwork->second.hero->valid())
+                face = artwork->second.hero.get();
+            if (face) {
+                icon->setFolderCoverTexture(face);
+                icon->setFolderCoverIsPoster(true);
+                if (tall)
+                    icon->setPosterFrame(true);
+            }
+            continue;
         }
+        if (wide)
+            icon->setWideGameTextures(artwork->second.hero.get(),
+                                      artwork->second.logo.get());
+        if (tall)
+            icon->setTallGamePoster(artwork->second.poster.get());
     }
 }
 
@@ -3596,11 +4013,14 @@ void WiiUMenuApp::syncWidgetPageAssets() {
     std::unordered_set<std::uint64_t> retainedGameArtwork;
     for (std::size_t i = 0; i < icons.size(); ++i) {
         const auto* icon = icons[i].get();
-        if (!icon || icon->entryKind() != GridEntryKind::Application)
+        if (!icon
+            || (icon->entryKind() != GridEntryKind::Application
+                && icon->entryKind() != GridEntryKind::Folder))
             continue;
         const int cols = icon->gridSpanColumns();
         const int rows = icon->gridSpanRows();
-        // 2x1 / 4x2 landscape + 2x3 tall tiles own dedicated GPU art.
+        // 2x1 / 4x2 landscape + 2x3 tall tiles own dedicated GPU art
+        // (applications and multi-cell folder faces).
         if (!switchu::widgets::isLandscapeWideGameTile(cols, rows)
             && !switchu::widgets::isTallPosterGameTile(cols, rows))
             continue;
@@ -3658,8 +4078,9 @@ void WiiUMenuApp::syncWidgetPageAssets() {
     if (m_appLayoutMode == AppLayoutMode::Grid) {
         for (std::size_t i = 0; i < icons.size(); ++i) {
             auto* icon = icons[i].get();
-            if (!icon || !current[i] ||
-                icon->entryKind() != GridEntryKind::Application)
+            if (!icon || !current[i]
+                || (icon->entryKind() != GridEntryKind::Application
+                    && icon->entryKind() != GridEntryKind::Folder))
                 continue;
             const int cols = icon->gridSpanColumns();
             const int rows = icon->gridSpanRows();
@@ -3667,13 +4088,35 @@ void WiiUMenuApp::syncWidgetPageAssets() {
             const bool tall = switchu::widgets::isTallPosterGameTile(cols, rows);
             if (!wide && !tall)
                 continue;
+            // Folder peeks own the face until custom poster / poster-wide is set.
+            if (icon->entryKind() == GridEntryKind::Folder
+                && icon->folderPeekCount() > 0)
+                continue;
             const auto artwork = m_gameArtwork.find(icon->titleId());
             if (artwork != m_gameArtwork.end()) {
-                if (wide)
-                    icon->setWideGameTextures(artwork->second.hero.get(),
-                                              artwork->second.logo.get());
-                if (tall)
-                    icon->setTallGamePoster(artwork->second.poster.get());
+                if (icon->entryKind() == GridEntryKind::Folder) {
+                    icon->setWideGameTextures(nullptr, nullptr);
+                    icon->setTallGamePoster(nullptr);
+                    nxui::Texture* face = nullptr;
+                    if (tall && artwork->second.poster
+                        && artwork->second.poster->valid())
+                        face = artwork->second.poster.get();
+                    else if (wide && artwork->second.hero
+                             && artwork->second.hero->valid())
+                        face = artwork->second.hero.get();
+                    if (face) {
+                        icon->setFolderCoverTexture(face);
+                        icon->setFolderCoverIsPoster(true);
+                        if (tall)
+                            icon->setPosterFrame(true);
+                    }
+                } else {
+                    if (wide)
+                        icon->setWideGameTextures(artwork->second.hero.get(),
+                                                  artwork->second.logo.get());
+                    if (tall)
+                        icon->setTallGamePoster(artwork->second.poster.get());
+                }
             } else {
                 ensureGameArtwork(icon->titleId());
             }
@@ -3681,7 +4124,9 @@ void WiiUMenuApp::syncWidgetPageAssets() {
     } else {
         for (std::size_t i = 0; i < icons.size(); ++i) {
             auto* icon = icons[i].get();
-            if (icon && icon->entryKind() == GridEntryKind::Application) {
+            if (icon
+                && (icon->entryKind() == GridEntryKind::Application
+                    || icon->entryKind() == GridEntryKind::Folder)) {
                 icon->setWideGameTextures(nullptr, nullptr);
                 icon->setTallGamePoster(nullptr);
             }
@@ -4178,10 +4623,10 @@ void WiiUMenuApp::cycleSortMode() {
     reflowHomeGrid();
 }
 
-void WiiUMenuApp::configureDynamicLineNavigation() {
+void WiiUMenuApp::configureDynamicLineNavigation(bool animateSidebar) {
     const bool dynamicLine = m_appLayoutMode == AppLayoutMode::DynamicLine;
     const bool inFolder = (m_openFolderId != 0);
-    m_sidebar.setDynamicLineLayout(dynamicLine);
+    m_sidebar.setDynamicLineLayout(dynamicLine, animateSidebar);
     placeLayoutFlipButton();
 
     if (m_grid) {
@@ -4213,6 +4658,8 @@ void WiiUMenuApp::configureDynamicLineNavigation() {
         m_sidebar.setDynamicLineDownAction({});
         auto* flip = (m_layoutFlip && m_layoutFlip->isVisible())
             ? m_layoutFlip.get() : nullptr;
+        auto* orient = (m_orientationBtn && m_orientationBtn->isVisible())
+            ? m_orientationBtn.get() : nullptr;
         auto* lock = (m_profileLock && m_profileLock->isVisible())
             ? m_profileLock.get() : nullptr;
         auto* battery = (m_battery && m_battery->isVisible())
@@ -4223,16 +4670,28 @@ void WiiUMenuApp::configureDynamicLineNavigation() {
                                       lock ? static_cast<nxui::Widget*>(lock)
                                            : static_cast<nxui::Widget*>(flip));
             flip->setCustomNavigation(nxui::FocusDirection::RIGHT,
-                                      battery ? static_cast<nxui::Widget*>(battery)
-                                              : static_cast<nxui::Widget*>(flip));
+                                      orient ? static_cast<nxui::Widget*>(orient)
+                                             : (battery ? static_cast<nxui::Widget*>(battery)
+                                                        : static_cast<nxui::Widget*>(flip)));
+        }
+        if (orient) {
+            wireOrientationButtonNavigation();
+            orient->setCustomNavigation(nxui::FocusDirection::LEFT,
+                flip ? static_cast<nxui::Widget*>(flip)
+                     : (lock ? static_cast<nxui::Widget*>(lock)
+                             : static_cast<nxui::Widget*>(orient)));
+            orient->setCustomNavigation(nxui::FocusDirection::RIGHT,
+                battery ? static_cast<nxui::Widget*>(battery)
+                        : static_cast<nxui::Widget*>(orient));
         }
         if (lock) {
             lock->setCustomNavigation(nxui::FocusDirection::LEFT, lock);
             lock->setCustomNavigation(nxui::FocusDirection::UP, lock);
             lock->setCustomNavigation(nxui::FocusDirection::RIGHT,
                                       flip ? static_cast<nxui::Widget*>(flip)
-                                           : (battery ? static_cast<nxui::Widget*>(battery)
-                                                      : static_cast<nxui::Widget*>(lock)));
+                                           : (orient ? static_cast<nxui::Widget*>(orient)
+                                                     : (battery ? static_cast<nxui::Widget*>(battery)
+                                                                : static_cast<nxui::Widget*>(lock))));
             lock->removeAction(static_cast<uint64_t>(nxui::Button::DDown));
             lock->removeAction(static_cast<uint64_t>(nxui::Button::LStickD));
             lock->removeAction(static_cast<uint64_t>(nxui::Button::RStickD));
@@ -4244,9 +4703,10 @@ void WiiUMenuApp::configureDynamicLineNavigation() {
             battery->setCustomNavigation(nxui::FocusDirection::UP, battery);
             battery->setCustomNavigation(nxui::FocusDirection::RIGHT, battery);
             battery->setCustomNavigation(nxui::FocusDirection::LEFT,
-                                         flip ? static_cast<nxui::Widget*>(flip)
-                                              : (lock ? static_cast<nxui::Widget*>(lock)
-                                                      : static_cast<nxui::Widget*>(battery)));
+                                         orient ? static_cast<nxui::Widget*>(orient)
+                                                : (flip ? static_cast<nxui::Widget*>(flip)
+                                                        : (lock ? static_cast<nxui::Widget*>(lock)
+                                                                : static_cast<nxui::Widget*>(battery))));
             battery->removeAction(static_cast<uint64_t>(nxui::Button::DDown));
             battery->removeAction(static_cast<uint64_t>(nxui::Button::LStickD));
             battery->removeAction(static_cast<uint64_t>(nxui::Button::RStickD));
@@ -4348,7 +4808,7 @@ void WiiUMenuApp::layoutPrefetchWindow(int& page, int& pageSize) const {
             int cols = std::clamp(m_config.gridColumns, 1, 8);
             int rows = std::clamp(m_config.gridRows, 1, 5);
             if (m_openFolderId != 0)
-                std::tie(cols, rows) = folderGridDimensions(m_openFolderId);
+                std::tie(cols, rows) = folderViewDimensions(m_openFolderId);
             pageSize = std::max(1, cols * rows);
             const int focus = std::max(0, m_grid->focusedGlobalIndex());
             page = focus / pageSize;
@@ -4550,10 +5010,10 @@ bool WiiUMenuApp::tryCommitInPlaceLayoutMorph(std::uint64_t focused) {
         icon->setPosterFrame(posterTile);
     }
 
-    int columns = std::clamp(m_config.gridColumns, 1, 8);
-    int rows = std::clamp(m_config.gridRows, 1, 5);
+    int columns = activeGridColumns();
+    int rows = activeGridRows();
     if (m_openFolderId != 0)
-        std::tie(columns, rows) = folderGridDimensions(m_openFolderId);
+        std::tie(columns, rows) = folderViewDimensions(m_openFolderId);
     auto metrics = computeGridLayoutMetrics(columns, rows);
     if (m_openFolderId != 0) {
         metrics.cellW *= 0.92f;
@@ -4564,6 +5024,7 @@ bool WiiUMenuApp::tryCommitInPlaceLayoutMorph(std::uint64_t focused) {
 
     m_grid->setEdgePaging(false);
     m_grid->setLayoutMode(AppLayoutMode::DynamicLine, true);
+    m_grid->setRect(homeGridRect());
     m_grid->setup(std::move(icons), columns, rows, metrics.cellW, metrics.cellH,
                   metrics.padX, metrics.padY);
     const long setupMs = morphStepMs();
@@ -4858,7 +5319,8 @@ std::uint64_t WiiUMenuApp::resolveFolderCoverTitleId(
     const std::uint64_t pseudo = folderTitleId(folder.id);
     if (preferPoster && SteamGridDbManager::hasPoster(pseudo))
         return pseudo;
-    if (SteamGridDbManager::hasIcon(pseudo))
+    if (SteamGridDbManager::hasGridSquare(pseudo)
+        || SteamGridDbManager::hasIcon(pseudo))
         return pseudo;
     return switchu::folders::firstCoverTitleId(folder);
 }
@@ -5024,7 +5486,7 @@ void WiiUMenuApp::openCapturedFolder() {
     }
     applyFolderDefaultViewOnOpen();
     syncHeroBackdropPresentation();
-    m_grid->setRect(kFolderGridRect);
+    m_grid->setRect(homeGridRect());
     // Don't inherit the root page number into the folder grid.
     m_grid->setPage(0);
     const bool zoom = !refocus && m_folderZoom && m_folderZoomOriginRect.width > 0.f;
@@ -5103,8 +5565,13 @@ void WiiUMenuApp::openCapturedFolder() {
         endForcedCursorTeleport();
     }
     // The title lands just after the panel has reached its top edge.
+    // Portrait single-row hides the folder title (placeFolderHeader no-ops it).
     placeFolderHeader(folderPanelRect());
-    if (zoom) {
+    const bool hideFolderTitle = m_appLayoutMode == AppLayoutMode::DynamicLine
+        && m_homeLayout.isPortrait();
+    if (hideFolderTitle) {
+        m_folderHeaderAnim.setImmediate(0.f);
+    } else if (zoom) {
         m_folderHeaderAnim.setImmediate(0.f);
         m_folderHeaderAnim.set(1.f, 0.30f, nxui::Easing::outCubic, 0.16f);
     } else {
@@ -5150,7 +5617,8 @@ void WiiUMenuApp::refreshOpenFolderChrome() {
         m_folderHeaderLabel->setTextColor(m_homeChrome.textPrimary);
     }
     placeFolderHeader(panel);
-    m_folderHeaderAnim.setImmediate(1.f);
+    if (!(m_appLayoutMode == AppLayoutMode::DynamicLine && m_homeLayout.isPortrait()))
+        m_folderHeaderAnim.setImmediate(1.f);
     syncFolderHeader();
     DebugLog::log("[folders] chrome refreshed id=%u name=%s headerY=%.0f",
                   m_openFolderId, folder->name.c_str(), m_folderHeaderRest.y);
@@ -5189,21 +5657,31 @@ nxui::Rect WiiUMenuApp::folderPanelRect() const {
 }
 
 void WiiUMenuApp::placeFolderHeader(const nxui::Rect& panel) {
+    // Portrait single-row: hide the folder title — it fights the carousel /
+    // logo on the tall canvas.
+    if (m_appLayoutMode == AppLayoutMode::DynamicLine && m_homeLayout.isPortrait()) {
+        m_folderHeaderAnim.setImmediate(0.f);
+        syncFolderHeader();
+        syncSteamGridDbLogoArea();
+        return;
+    }
+
     // Anchored to the panel rather than the screen, so the largest folder
     // grid pushes the title up instead of sliding the panel under it.
     // Keep below the top HUD clock band when chrome is visible.
     const float minY = (m_topHud && m_topHud->isVisible()) ? 88.f : kFolderHeaderMinY;
-    m_folderHeaderRest.y = std::max(minY,
-        panel.y - kFolderHeaderGap - m_folderHeaderRest.height);
-    // Single-row: left so it does not cover clock / Change View / a Poster.
-    // Grid: centered title under the clock band.
+    // Landscape single-row: left so it does not cover clock / Change View /
+    // a Poster. Grid: centred.
     if (m_appLayoutMode == AppLayoutMode::DynamicLine) {
         m_folderHeaderRest.x = panel.x + 12.f;
         m_folderHeaderRest.width = 300.f;
     } else {
-        m_folderHeaderRest.x = 410.f;
-        m_folderHeaderRest.width = 460.f;
+        const float canvasW = m_homeLayout.logicalW();
+        m_folderHeaderRest.width = std::min(460.f, canvasW - 48.f);
+        m_folderHeaderRest.x = (canvasW - m_folderHeaderRest.width) * 0.5f;
     }
+    m_folderHeaderRest.y = std::max(
+        minY, panel.y - kFolderHeaderGap - m_folderHeaderRest.height);
     syncFolderHeader();
     syncSteamGridDbLogoArea();
 }
@@ -5211,11 +5689,48 @@ void WiiUMenuApp::placeFolderHeader(const nxui::Rect& panel) {
 void WiiUMenuApp::syncSteamGridDbLogoArea() {
     if (!m_steamGridDbBackdrop)
         return;
-    m_steamGridDbBackdrop->setShowLogo(m_config.steamGridDbEnabled
-                                       && m_config.steamGridDbShowLogoInDynamicLine);
-    // Single-row: left gutter only when the focused tile is a tall poster.
-    // Square icons keep the original centred logo band above the carousel.
+    const bool logosOn = m_config.steamGridDbEnabled
+        && m_config.steamGridDbShowLogoInDynamicLine;
+    m_steamGridDbBackdrop->setShowLogo(logosOn);
+    // Single-row (HOME + folders): center tiles when logos are off.
+    if (m_grid)
+        m_grid->setLineVerticallyCentered(!logosOn);
     const nxui::Rect kCenteredLogo{370.f, 149.f, 540.f, 150.f};
+
+    // Portrait single-row: top-centred logo under the applet strip (~2× the
+    // landscape 150px band). With posters, clamp into the gap between the
+    // strip and the focused tile so the logo isn't covered.
+    if (m_homeLayout.isPortrait()
+        && presentationLayoutMode() == AppLayoutMode::DynamicLine) {
+        const float canvasW = m_homeLayout.logicalW();
+        constexpr float kEdge = 28.f;
+        constexpr float kGap = 12.f;
+        constexpr float kLogoH2x = 300.f; // 2× the 150 landscape band
+        const float logoW = std::max(80.f, canvasW - kEdge * 2.f);
+        const float logoY = m_homeLayout.portraitSingleRowStripBottomY() + kGap;
+        float logoH = kLogoH2x;
+        if (m_grid) {
+            const int focusIdx = m_grid->focusedGlobalIndex();
+            const auto& icons = m_grid->allIcons();
+            const bool posterFocus = focusIdx >= 0
+                && focusIdx < static_cast<int>(icons.size())
+                && icons[static_cast<std::size_t>(focusIdx)]
+                && icons[static_cast<std::size_t>(focusIdx)]->usesPosterFrame();
+            if (posterFocus) {
+                nxui::Rect focus = m_grid->focusedDisplayRect();
+                if (focus.height >= 8.f) {
+                    const float maxH = focus.y - kGap - logoY;
+                    logoH = std::max(48.f, std::min(kLogoH2x, maxH));
+                }
+            }
+        }
+        m_steamGridDbBackdrop->setLogoArea(
+            {(canvasW - logoW) * 0.5f, logoY, logoW, logoH});
+        return;
+    }
+
+    // Landscape single-row: left gutter only when the focused tile is a tall
+    // poster. Square icons keep the original centred logo band.
     if (presentationLayoutMode() == AppLayoutMode::DynamicLine && m_grid) {
         const int focusIdx = m_grid->focusedGlobalIndex();
         const auto& icons = m_grid->allIcons();
@@ -5349,7 +5864,7 @@ void WiiUMenuApp::finishCloseFolder(std::uint32_t oldId, bool preserveEditMode) 
     if (m_rightSidebar) m_rightSidebar->setVisible(true);
     if (m_pageIndicator)
         m_pageIndicator->clearActiveColor();
-    m_grid->setRect({kGridRectX, kGridRectY, kGridRectW, kGridRectH});
+    m_grid->setRect(homeGridRect());
     applyDisplayModel(buildRootFolderModel(), folderTitleId(oldId), false, {}, true);
     configureDynamicLineNavigation();
     syncPageIndicator();
@@ -5397,21 +5912,44 @@ void WiiUMenuApp::resumeSuspendedApplication(std::uint64_t titleId,
                                              const std::string& launchTitle) {
     if (titleId == 0 || !m_launchAnim)
         return;
-    // Keep the splash captured at the original launch. Recapturing on resume
-    // (tile or HOME) often mismatches — folder closed, page changed, or the
-    // post-return HOME scene is not the launch view.
+
+    auto finishResume = [this, titleId, launchTitle]() {
+        reclaimForFrameTapLaunch("resume");
+        m_audio.playSfx(Sfx::LaunchGame);
+        m_launchAnim->startResume([this, titleId, launchTitle]() {
+            m_config.noteOpened(titleId);
+            m_config.save();
+            m_widgetStore.recordLaunch(titleId, launchTitle,
+                static_cast<std::int64_t>(std::time(nullptr)));
+            m_widgetStore.save();
+            m_launcher.resumeApplication();
+        });
+    };
+
+    // Default: reuse the launch splash. If the user flipped grid↔single-row
+    // or orientation while the title was suspended, that frame no longer
+    // matches HOME — capture a fresh one before resume.
+    LeaveFrameSession cached{};
+    const bool haveCached = LeaveFrameCache::loadSessionOnly(cached);
+    const bool chromeChanged = !haveCached
+        || cached.appLayoutMode != static_cast<std::uint32_t>(m_appLayoutMode)
+        || cached.homeOrientation
+            != static_cast<std::uint32_t>(m_config.homeOrientation);
+    if (chromeChanged) {
+        DebugLog::log(
+            "[leave] recapture on resume tid=%016lX layout=%u→%u orient=%u→%u",
+            static_cast<unsigned long>(titleId),
+            haveCached ? cached.appLayoutMode : 0u,
+            static_cast<unsigned>(m_appLayoutMode),
+            haveCached ? cached.homeOrientation : 0u,
+            static_cast<unsigned>(m_config.homeOrientation));
+        scheduleLeaveCapture(std::move(finishResume), titleId);
+        return;
+    }
+
     DebugLog::log("[leave] skip capture on resume tid=%016lX",
                   static_cast<unsigned long>(titleId));
-    reclaimForFrameTapLaunch("resume");
-    m_audio.playSfx(Sfx::LaunchGame);
-    m_launchAnim->startResume([this, titleId, launchTitle]() {
-        m_config.noteOpened(titleId);
-        m_config.save();
-        m_widgetStore.recordLaunch(titleId, launchTitle,
-            static_cast<std::int64_t>(std::time(nullptr)));
-        m_widgetStore.save();
-        m_launcher.resumeApplication();
-    });
+    finishResume();
 }
 
 void WiiUMenuApp::activateApplication(GlossyIcon* source, AppEntry* entry,
@@ -5991,7 +6529,8 @@ void WiiUMenuApp::trimFolderArtCachesDrip() {
         return;
     if (m_grid && m_grid->isLayoutMorphing())
         return;
-    constexpr std::size_t kMaxPeeks = 32;
+    // 4×2 folders hold 10 peeks each — keep headroom for a few on-screen albums.
+    constexpr std::size_t kMaxPeeks = 80;
     constexpr std::size_t kMaxComposites = 24;
     constexpr std::size_t kMaxCovers = 24;
     if (m_folderPeekCache.size() <= kMaxPeeks
@@ -6092,6 +6631,17 @@ void WiiUMenuApp::applyFolderCoversToIcons(int centerIndex, int radius,
         const std::uint64_t coverId = m_model.at(i).folderCoverTitleId;
         const std::uint64_t pseudo = m_model.at(i).titleId;
         const std::uint32_t folderId = m_model.at(i).folderId;
+        const int spanCols = std::max(1, icon->gridSpanColumns());
+        const int spanRows = std::max(1, icon->gridSpanRows());
+        const int spanCells = spanCols * spanRows;
+        const bool landscapeTile =
+            switchu::widgets::isLandscapeWideGameTile(spanCols, spanRows);
+        const bool tallTile =
+            switchu::widgets::isTallPosterGameTile(spanCols, spanRows);
+        const bool customFolderFace =
+            (tallTile && SteamGridDbManager::hasPoster(pseudo))
+            || (landscapeTile && (SteamGridDbManager::hasGridWide(pseudo)
+                                  || SteamGridDbManager::hasHeroPresentation(pseudo)));
 
         // Single-row: custom folder poster, else baked 2×3 composite (async).
         if (preferPoster) {
@@ -6119,6 +6669,100 @@ void WiiUMenuApp::applyFolderCoversToIcons(int centerIndex, int radius,
             icon->clearFolderPeeks();
             // Mark done so outward fill can move on; pump attaches when baked.
             markFolderCoverFilled(i);
+            continue;
+        }
+
+        // 1×1 / 2×2: square cover (SGDB grids) then Replacement icon, inside
+        // folder chrome. Tall poster / landscape poster-wide still win.
+        const bool squareTile = (spanCols == 1 && spanRows == 1)
+            || (spanCols == 2 && spanRows == 2);
+        if (!customFolderFace && squareTile
+            && (SteamGridDbManager::hasGridSquare(pseudo)
+                || SteamGridDbManager::hasIcon(pseudo))) {
+            icon->setFolderPeekComposite(false);
+            icon->clearFolderPeeks();
+            icon->setWideGameTextures(nullptr, nullptr);
+            icon->setTallGamePoster(nullptr);
+            // loadIconData prefers gridsquare.img over icon.img.
+            nxui::Texture* iconTex = folderCoverTexture(pseudo, false, allowColdLoad);
+            icon->setFolderCoverTexture(iconTex);
+            // Reuse the custom-face path so classic + other styles keep chrome.
+            icon->setFolderCoverIsPoster(iconTex != nullptr);
+            if (iconTex || allowColdLoad)
+                markFolderCoverFilled(i);
+            continue;
+        }
+
+        // Grid multi-cell folders: live peeks matching the tile span, unless a
+        // custom SGDB folder hero/poster owns the face.
+        if (m_appLayoutMode == AppLayoutMode::Grid && spanCells > 1
+            && !customFolderFace) {
+            icon->setFolderPeekComposite(false);
+            icon->setFolderCoverIsPoster(false);
+            icon->setFolderCoverTexture(nullptr);
+            icon->setWideGameTextures(nullptr, nullptr);
+            icon->setTallGamePoster(nullptr);
+
+            int peekCols = spanCols;
+            int peekRows = spanRows;
+            switchu::folders::folderPeekGridForSpan(spanCols, spanRows, peekCols, peekRows);
+            const int want = std::min(peekCols * peekRows, switchu::folders::kFolderPeekMax);
+            std::array<nxui::Texture*, switchu::folders::kFolderPeekMax> peeks{};
+            int peekCount = 0;
+            if (const auto* folder = m_folderStore.find(folderId)) {
+                for (const std::uint64_t titleId : folder->titleIds) {
+                    if (titleId == 0)
+                        continue;
+                    if (peekCount >= want)
+                        break;
+                    if (auto* tex = folderPeekTexture(titleId, true))
+                        peeks[static_cast<std::size_t>(peekCount++)] = tex;
+                    else if (!allowColdLoad)
+                        break;
+                }
+            }
+            icon->setFolderPeekGrid(peekCols, peekRows);
+            icon->setFolderPeekTextures(peeks, peekCount);
+            const int memberCap = [&]() {
+                if (const auto* folder = m_folderStore.find(folderId)) {
+                    int n = 0;
+                    for (const std::uint64_t titleId : folder->titleIds) {
+                        if (titleId != 0)
+                            ++n;
+                    }
+                    return std::min(n, want);
+                }
+                return 0;
+            }();
+            if (peekCount >= memberCap || allowColdLoad)
+                markFolderCoverFilled(i);
+            continue;
+        }
+
+        if (customFolderFace) {
+            // Same as single-row: custom art sits inside folder style chrome.
+            icon->setFolderPeekComposite(false);
+            icon->clearFolderPeeks();
+            icon->setWideGameTextures(nullptr, nullptr);
+            icon->setTallGamePoster(nullptr);
+            ensureGameArtwork(pseudo);
+            nxui::Texture* face = nullptr;
+            const auto artwork = m_gameArtwork.find(pseudo);
+            if (artwork != m_gameArtwork.end()) {
+                if (tallTile && artwork->second.poster && artwork->second.poster->valid())
+                    face = artwork->second.poster.get();
+                else if (landscapeTile && artwork->second.hero
+                         && artwork->second.hero->valid())
+                    face = artwork->second.hero.get();
+            }
+            if (!face && tallTile)
+                face = folderCoverTexture(pseudo, true, allowColdLoad);
+            icon->setFolderCoverTexture(face);
+            icon->setFolderCoverIsPoster(face != nullptr);
+            if (tallTile)
+                icon->setPosterFrame(face != nullptr);
+            if (face)
+                markFolderCoverFilled(i);
             continue;
         }
 
@@ -6279,7 +6923,27 @@ std::shared_ptr<GlossyIcon> WiiUMenuApp::makeIcon(const AppEntry& entry) {
         });
         icon->setFolderCoverTitleId(entry.folderCoverTitleId);
         icon->setFolderShowCover(m_config.folderShowCover);
-        icon->setPosterFrame(preferSingleRowPosters());
+        icon->setFolderStyleIndex(m_config.folderStyle);
+        icon->setFolderColorIndex(entry.folderColorIndex);
+        icon->setFolderPreviewCount(entry.folderPreviewCount);
+        icon->setGridSpan(entry.widgetColumns, entry.widgetRows);
+        const bool tallPosterTile = switchu::widgets::isTallPosterGameTile(
+            entry.widgetColumns, entry.widgetRows);
+        icon->setPosterFrame(
+            (preferSingleRowPosters() || tallPosterTile)
+            && SteamGridDbManager::hasPoster(entry.titleId));
+        const bool landscapeTile = switchu::widgets::isLandscapeWideGameTile(
+            entry.widgetColumns, entry.widgetRows);
+        // Queue decode only — applyFolderCovers attaches art inside folder chrome.
+        if (m_appLayoutMode == AppLayoutMode::Grid
+            && (landscapeTile || tallPosterTile)
+            && (SteamGridDbManager::hasPoster(entry.titleId)
+                || SteamGridDbManager::hasGridWide(entry.titleId)
+                || SteamGridDbManager::hasHeroPresentation(entry.titleId))) {
+            ensureGameArtwork(entry.titleId);
+        }
+        icon->setWideGameTextures(nullptr, nullptr);
+        icon->setTallGamePoster(nullptr);
         // Cover texture is applied in applyFolderCoversToIcons (poster-aware).
         return icon;
     }
@@ -6397,7 +7061,8 @@ void WiiUMenuApp::buildGrid() {
     m_theme = m_effectivePreset.toTheme();
 
     m_background = std::make_shared<WaraWaraBackground>();
-    m_background->setRect({0, 0, 1280, 720});
+    m_homeLayout.orientation = m_config.homeOrientation;
+    m_background->setRect(m_homeLayout.contentCanvas());
     applyThemeResources(m_effectivePreset);
 
     GridLayoutMetrics gridMetrics = computeGridLayoutMetrics();
@@ -6425,7 +7090,8 @@ void WiiUMenuApp::buildGrid() {
                   static_cast<int>(m_appLayoutMode));
 
     m_grid = std::make_shared<IconGrid>();
-    m_grid->setRect({kGridRectX, kGridRectY, kGridRectW, kGridRectH});
+    m_homeLayout.orientation = m_config.homeOrientation;
+    m_grid->setRect(homeGridRect());
     // Snap to the saved layout immediately — morphing Grid→Line on HOME return
     // briefly showed the grid under/after the leave splash.
     m_grid->setLayoutMode(m_appLayoutMode, false);
@@ -6434,8 +7100,8 @@ void WiiUMenuApp::buildGrid() {
     // boot ignored the Translate setting until a rebuild happened to fix it.
     m_grid->setSlideTransition(m_config.pageTransitionMode == 0);
     m_grid->setup(std::move(icons),
-                  std::clamp(m_config.gridColumns, 1, 8),
-                  std::clamp(m_config.gridRows, 1, 5),
+                  activeGridColumns(),
+                  activeGridRows(),
                   gridMetrics.cellW, gridMetrics.cellH,
                   gridMetrics.padX, gridMetrics.padY);
     m_grid->setLayoutMode(m_appLayoutMode, false);
@@ -6473,6 +7139,23 @@ void WiiUMenuApp::buildGrid() {
         m_audio.playSfx(Sfx::Navigate);
         toggleAppLayoutMode();
     });
+
+    m_orientationBtn = std::make_shared<OrientationButton>();
+    m_orientationBtn->setTheme(&m_theme);
+    syncOrientationButtonState();
+    m_orientationBtn->ensureIcon(app().gpu(), app().renderer(),
+                                 resolveActiveIconGlyphPath(switchu::icons::kScreenRotateFile));
+    m_orientationBtn->setOnActivate([this]() {
+        if (m_editMode || leaveSplashActive())
+            return;
+        if (m_dialog && m_dialog->isActive())
+            return;
+        if (!m_config.homeOrientationButton)
+            return;
+        m_audio.playSfx(Sfx::Navigate);
+        cycleHomeOrientation();
+    });
+    m_orientationBtn->setVisible(false);
 
     m_battery = std::make_shared<BatteryWidget>();
     m_battery->setMarginTop(14.f);
@@ -6516,7 +7199,7 @@ void WiiUMenuApp::buildGrid() {
     m_titlePill->setBlurEnabled(false);
 
     m_pageIndicator = std::make_shared<PageIndicator>();
-    m_pageIndicator->setRect({0, 685.f, 1280.f, 28.f});
+    m_pageIndicator->placeOnCanvas(1280.f, 685.f);
     m_pageIndicator->setTheme(&m_theme);
     m_pageIndicator->setForceLiquidGlass(true);
     m_pageIndicator->setBlurEnabled(false);
@@ -6524,7 +7207,7 @@ void WiiUMenuApp::buildGrid() {
     m_launchAnim = std::make_shared<LaunchAnimation>();
 
     m_folderZoom = std::make_shared<FolderZoom>();
-    m_folderZoom->setRect({0, 0, 1280, 720});
+    m_folderZoom->setRect(m_homeLayout.contentCanvas());
 
     m_userSelect = std::make_shared<OverlayDialog>();
     m_userSelect->cursor().setInstantMotion(m_config.cursorMotionMode == 1);
@@ -6854,6 +7537,7 @@ void WiiUMenuApp::buildGrid() {
         if (m_settings && m_settings->isActive())
             m_settings->hide();
         refreshThemeShopState();
+        m_themeShop->setCanvasSize(m_homeLayout.logicalW(), m_homeLayout.logicalH());
         m_themeShop->show();
         focusManager().setFocus(m_themeShop.get());
     };
@@ -6873,7 +7557,7 @@ void WiiUMenuApp::buildGrid() {
     root.clearChildren();
 
     m_bgLayer = std::make_shared<nxui::Box>();
-    m_bgLayer->setRect({0, 0, 1280, 720});
+    m_bgLayer->setRect(m_homeLayout.contentCanvas());
     m_bgLayer->setTag("bgLayer");
     m_bgLayer->setWireframeEnabled(false);
     m_bgLayer->addChild(m_background);
@@ -6885,12 +7569,12 @@ void WiiUMenuApp::buildGrid() {
     syncSteamGridDbLogoArea();
 
     m_contentLayer = std::make_shared<nxui::Box>();
-    m_contentLayer->setRect({0, 0, 1280, 720});
+    m_contentLayer->setRect(m_homeLayout.contentCanvas());
     m_contentLayer->setTag("contentLayer");
     m_contentLayer->setWireframeEnabled(false);
 
     m_folderBackdrop = std::make_shared<FolderBackdrop>();
-    m_folderBackdrop->setRect({0, 0, 1280, 720});
+    m_folderBackdrop->setRect(m_homeLayout.contentCanvas());
     m_folderBackdrop->setVisible(false);
 
     m_folderHeader = std::make_shared<nxui::GlassPanel>();
@@ -6913,7 +7597,7 @@ void WiiUMenuApp::buildGrid() {
     m_folderHeader->addChild(m_folderHeaderLabel);
 
     m_topHud = std::make_shared<nxui::Box>(nxui::Axis::ROW);
-    m_topHud->setRect({0, 0, 1280, 90});
+    m_topHud->setRect(m_homeLayout.topHud());
     m_topHud->setTag("topHud");
     m_topHud->setWireframeEnabled(false);
     m_topHud->setJustifyContent(nxui::JustifyContent::SPACE_BETWEEN);
@@ -6952,6 +7636,8 @@ void WiiUMenuApp::buildGrid() {
     // flip control remains independently focusable / tappable.
     if (m_layoutFlip)
         m_contentLayer->addChild(m_layoutFlip);
+    if (m_orientationBtn)
+        m_contentLayer->addChild(m_orientationBtn);
     m_contentLayer->addChild(m_titlePill);
     m_contentLayer->addChild(m_pageIndicator);
 
@@ -6970,6 +7656,7 @@ void WiiUMenuApp::buildGrid() {
     m_steamGridDbPicker->setFont(&m_fontNormal);
     m_steamGridDbPicker->setSmallFont(&m_fontSmall);
     m_steamGridDbPicker->setTheme(&m_theme);
+    m_steamGridDbPicker->setCanvasSize(m_homeLayout.logicalW(), m_homeLayout.logicalH());
     m_steamGridDbPicker->onClosed([this]() {
         if (m_gameOptions && m_gameOptions->isActive())
             focusManager().setFocus(m_gameOptions.get());
@@ -6978,6 +7665,84 @@ void WiiUMenuApp::buildGrid() {
         else if (m_settings && m_settings->isActive())
             focusManager().setFocus(m_settings.get());
     });
+    m_heroCustomize = std::make_shared<HeroCustomizeScreen>(
+        app().gpu(), app().renderer());
+    m_heroCustomize->setFont(&m_fontNormal);
+    m_heroCustomize->setSmallFont(&m_fontSmall);
+    m_heroCustomize->setTheme(&m_theme);
+    m_heroCustomize->setCanvasSize(m_homeLayout.logicalW(), m_homeLayout.logicalH());
+    m_heroCustomize->onClosed([this]() {
+        if (m_gameOptions && m_gameOptions->isActive())
+            focusManager().setFocus(m_gameOptions.get());
+        else if (m_folderOptions && m_folderOptions->isActive())
+            focusManager().setFocus(m_folderOptions.get());
+    });
+    m_heroCustomize->onSaved([this](std::uint64_t titleId) {
+        if (m_steamGridDbBackdrop)
+            m_steamGridDbBackdrop->invalidateArtworkCaches();
+        showFocusedSteamGridDbArtwork(true);
+        if (m_gameOptions && m_gameOptions->isActive()
+            && m_gameOptionsTitleId == titleId) {
+            std::error_code ec;
+            const bool hasHero = std::filesystem::exists(
+                SteamGridDbManager::heroPath(titleId), ec);
+            ec.clear();
+            const bool hasLogo = std::filesystem::exists(
+                SteamGridDbManager::logoPath(titleId), ec);
+            m_gameOptions->refreshArtworkPresence(
+                hasHero, hasLogo, SteamGridDbManager::hasIcon(titleId),
+                SteamGridDbManager::hasPoster(titleId),
+                SteamGridDbManager::hasGridWide(titleId),
+                SteamGridDbManager::hasHeroPresentation(titleId),
+                SteamGridDbManager::hasGridSquare(titleId));
+            m_gameOptions->requestToast(nxui::I18n::instance().tr(
+                "game.steamgriddb.hero_saved", "Hero crop saved."));
+        } else if (m_folderOptions && m_folderOptions->isActive()
+                   && isFolderTitleId(titleId)
+                   && folderIdFromTitleId(titleId) == m_folderOptionsId) {
+            if (const auto* folder = m_folderStore.find(m_folderOptionsId)) {
+                FolderOptionsScreen::FolderInfo info;
+                info.id = folder->id;
+                info.name = folder->name;
+                info.itemCount = static_cast<int>(folder->titleCount());
+                info.colorIndex = folder->colorIndex;
+                info.sizeIndex = folder->sizeIndex;
+                info.styleIndex = m_config.folderStyle;
+                info.defaultViewIndex = std::clamp(m_config.folderDefaultView, 0, 2);
+                info.showCover = m_config.folderShowCover;
+                const auto tile = gameGridSize(titleId, AppLayoutMode::Grid);
+                if (tile.columns == 2 && tile.rows == 1) info.tileSizeIndex = 1;
+                else if (tile.columns == 4 && tile.rows == 2) info.tileSizeIndex = 2;
+                else if (tile.columns == 2 && tile.rows == 2) info.tileSizeIndex = 3;
+                else if (tile.columns == 2 && tile.rows == 3) info.tileSizeIndex = 4;
+                else info.tileSizeIndex = 0;
+                info.hasCustomIcon = SteamGridDbManager::hasIcon(titleId);
+                info.hasCustomSquareCover = SteamGridDbManager::hasGridSquare(titleId);
+                info.hasCustomPoster = SteamGridDbManager::hasPoster(titleId);
+                info.hasCustomPosterWide = SteamGridDbManager::hasGridWide(titleId);
+                {
+                    std::error_code ec;
+                    info.hasCustomLogo = std::filesystem::exists(
+                        SteamGridDbManager::logoPath(titleId), ec);
+                    ec.clear();
+                    info.hasCustomHero = std::filesystem::exists(
+                        SteamGridDbManager::heroPath(titleId), ec);
+                }
+                info.hasHeroPresentation =
+                    SteamGridDbManager::hasHeroPresentation(titleId);
+                info.overrideTitleHeroes =
+                    folder->overrideTitleHeroes && info.hasCustomHero;
+                const auto coverId = resolveFolderCoverTitleId(
+                    *folder, preferSingleRowPosters());
+                info.cover = folderCoverTexture(coverId, preferSingleRowPosters());
+                m_folderOptions->setFolder(info);
+            }
+            m_folderOptions->requestToast(nxui::I18n::instance().tr(
+                "game.steamgriddb.hero_saved", "Hero crop saved."));
+        }
+    });
+    if (m_overlayLayer)
+        m_overlayLayer->addChild(m_heroCustomize);
     m_steamGridDbPicker->onSearch([this]() { editSteamGridDbPickerQuery(); });
     m_steamGridDbPicker->onApply(
         [this](const SteamGridDbManager::BrowseResult& browse,
@@ -7067,6 +7832,7 @@ void WiiUMenuApp::buildGrid() {
                 icon->forceVisible();
         }
     }
+    applyHomeOrientationState(false);
     updateCursor();
     {
         std::uint64_t focusedTid = 0;
@@ -7498,6 +8264,13 @@ void WiiUMenuApp::enterLockView(bool instant) {
     if (!m_lockScreen)
         return;
 
+    // Customize / picker re-add themselves as the last overlay child; dismiss
+    // them before Lock so they cannot paint above the lock screen.
+    if (m_heroCustomize && m_heroCustomize->isActive())
+        m_heroCustomize->hide();
+    if (m_steamGridDbPicker && m_steamGridDbPicker->isActive())
+        m_steamGridDbPicker->hide();
+
     if (m_lockViewActive && m_lockScreen->isActive()) {
         m_lockScreen->rearmInput();
         m_lockScreen->refreshNow();
@@ -7619,6 +8392,8 @@ void WiiUMenuApp::finishExitLockView(bool resumeSuspended) {
         m_startLocked = false;
         m_leaveCaptureLockCursor = false;
         endForcedCursorTeleport();
+        m_musicWasPlayingBeforeSleep = false;
+        m_wakeMusicResumeFrames = 0;
         m_audio.playSfx(Sfx::Activate);
         DebugLog::log("[lock] Lock view -> resuming suspended title (hold Lock)");
         m_launcher.resumeApplication();
@@ -7634,6 +8409,13 @@ void WiiUMenuApp::finishExitLockView(bool resumeSuspended) {
         m_bgLayer->setVisible(true);
     if (m_contentLayer)
         m_contentLayer->setVisible(true);
+
+    // Music paused for sleep: resume after Lock input is responsive again.
+    if (m_musicWasPlayingBeforeSleep && m_config.musicEnabled) {
+        m_wakeMusicResumeFrames = 20;
+        DebugLog::log("[power] unlock: arm wake music resume in 20f");
+    }
+    m_musicWasPlayingBeforeSleep = false;
 
     m_audio.playSfx(Sfx::Activate);
     beginForcedCursorTeleport();
@@ -8269,6 +9051,7 @@ void WiiUMenuApp::tickFrameTapLightPath(float dt) {
         app().gpu().remountDisplayForCaptureMitm();
         // New managed layer id — re-bind underscan to it.
         switchu::menu::initScreenFitLayer(::__nx_vi_layer_id);
+        applyHomeOrientationState(false);
         std::remove("sdmc:/config/switch-frame-tap/need_capture_remount");
         m_ftAsksRemountFile = false;
         m_wakePostSwapchainFrames = std::max(m_wakePostSwapchainFrames, 2);
@@ -8389,14 +9172,42 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
             DebugLog::log("[power] wake step: underscan mode=%d", m_lastOperationMode);
             // Prefer last daemon-forwarded mode; avoid stale local libnx cache.
             switchu::menu::applyScreenUnderscan(m_lastOperationMode);
+            applyHomeOrientationState(false);
         } else if (step == 2) {
-            DebugLog::log("[power] wake step: audio");
-            if (m_musicWasPlayingBeforeSleep && m_config.musicEnabled)
-                m_audio.play();
-            m_musicWasPlayingBeforeSleep = false;
+            // Never Mix_PlayMusic here. 2026-11-14 menu.log: wake reached
+            // "wake step: audio" then froze on Lock — Mix_PlayMusic soft-locked
+            // the UI thread so A/B never unlocked. Resume after unlock (or a
+            // short delay when Lock is off).
+            DebugLog::log("[power] wake step: audio lockView=%d wasPlaying=%d",
+                          m_lockViewActive ? 1 : 0,
+                          m_musicWasPlayingBeforeSleep ? 1 : 0);
+            if (m_musicWasPlayingBeforeSleep && m_config.musicEnabled) {
+                if (m_lockViewActive) {
+                    DebugLog::log("[power] wake music held until unlock");
+                } else {
+                    m_wakeMusicResumeFrames = 45;
+                    m_musicWasPlayingBeforeSleep = false;
+                }
+            } else {
+                m_musicWasPlayingBeforeSleep = false;
+            }
         } else if (step == 1) {
             DebugLog::log("[power] wake step: cursor");
             updateCursor();
+        }
+    }
+
+    if (m_wakeMusicResumeFrames > 0) {
+        --m_wakeMusicResumeFrames;
+        if (m_wakeMusicResumeFrames == 0) {
+            DebugLog::log("[power] wake music resume begin");
+            m_audio.setResumePositionEnabled(m_config.musicResumePosition);
+            m_audio.restorePlaybackState(m_config.musicTrackIndex,
+                                         m_config.musicPositionSeconds,
+                                         true,
+                                         m_config.musicTrackKey);
+            DebugLog::log("[power] wake music resume done deferredSeek=%d",
+                          m_audio.hasDeferredSeek() ? 1 : 0);
         }
     }
 
@@ -8627,6 +9438,19 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
                 warmFolderPeeksAroundFocus(1);
             }
         }
+        // Grid multi-cell folders: fill span-matched peeks as focus moves.
+        if (m_grid && m_appLayoutMode == AppLayoutMode::Grid
+            && !preferSingleRowPosters()
+            && !leaveSplashActive()
+            && !m_frameTapLightActive) {
+            const int focus = m_grid->focusedGlobalIndex();
+            if (focus != m_lastFolderPeekWarmFocus
+                && focus >= 0 && focus < m_model.count()
+                && m_model.at(focus).isFolder()) {
+                m_lastFolderPeekWarmFocus = focus;
+                applyFolderCoversToIcons(focus, 2, /*allowColdLoad=*/false);
+            }
+        }
     }
 
     pumpFolderPeekComposites();
@@ -8655,7 +9479,8 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
     // Own borrowed folder peeks before IconStreamer overwrites those GPU slots
     // with posters. Prefer spreading decode across the morph; drain any
     // remainder before the post-morph neighbour burst.
-    if (m_grid && !m_folderPeekBorrowed.empty() && preferSingleRowPosters()) {
+    if (m_grid && !m_folderPeekBorrowed.empty()
+        && (preferSingleRowPosters() || m_appLayoutMode == AppLayoutMode::Grid)) {
         const bool morphing = m_grid->isLayoutMorphing();
         const int budget = morphing ? 2 : (m_pendingNeighborArtBurst ? 8 : 1);
         if (promoteBorrowedFolderPeeks(budget) > 0) {
@@ -8669,7 +9494,8 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
     if (m_pendingNeighborArtBurst && m_grid && !m_grid->isLayoutMorphing()) {
         // Last chance: do not let onPageChanged recycle textures still aliased
         // by folder peek stacks.
-        if (!m_folderPeekBorrowed.empty() && preferSingleRowPosters()) {
+        if (!m_folderPeekBorrowed.empty()
+            && (preferSingleRowPosters() || m_appLayoutMode == AppLayoutMode::Grid)) {
             if (promoteBorrowedFolderPeeks(16) > 0)
                 applyFolderCoversToIcons(m_grid->focusedGlobalIndex(), 4);
         }
@@ -9268,6 +10094,7 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
                               mode, m_lastOperationMode);
                 m_lastOperationMode = mode;
                 switchu::menu::applyScreenUnderscan(mode);
+                applyHomeOrientationState(false);
                 break;
             }
             case switchu::smi::MenuMessage::ShowLock:
@@ -9382,8 +10209,13 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
     }
 
     if (!debugTouchBlocked && !textEntryActive && m_gameOptions && m_gameOptions->isActive()
-        && !(m_steamGridDbPicker && m_steamGridDbPicker->isActive()))
+        && !(m_steamGridDbPicker && m_steamGridDbPicker->isActive())
+        && !(m_heroCustomize && m_heroCustomize->isActive()))
         m_gameOptions->handleTouch(app().input());
+
+    if (!debugTouchBlocked && !textEntryActive &&
+        m_heroCustomize && m_heroCustomize->isActive())
+        m_heroCustomize->handleFrame(app().input());
 
     if (!debugTouchBlocked && !textEntryActive &&
         m_steamGridDbPicker && m_steamGridDbPicker->isActive())
@@ -9492,7 +10324,14 @@ std::vector<WiiUMenuApp::ActionHint> WiiUMenuApp::buildActionHints() {
     auto addVoiceControls = [&]() {
         if (!m_config.accessibilityEnabled)
             return;
-        add(buttonGlyph(nxui::Button::LStick), i18n.tr("hint.repeat", "Repeat"));
+        // HOME + orientation button: L3 cycles orientation (QS still owns L3
+        // for Repeat while open). Keep L3=Repeat elsewhere.
+        const bool l3IsOrientation =
+            m_navigator.route() == switchu::navigation::Route::Home
+            && m_config.homeOrientationButton
+            && !(m_quickSettings && m_quickSettings->isActive());
+        if (!l3IsOrientation)
+            add(buttonGlyph(nxui::Button::LStick), i18n.tr("hint.repeat", "Repeat"));
         add(buttonGlyph(nxui::Button::Plus) + buttonGlyph(nxui::Button::Minus),
             i18n.tr("hint.voice", "Voice"));
     };
@@ -9707,6 +10546,9 @@ std::vector<WiiUMenuApp::ActionHint> WiiUMenuApp::buildActionHints() {
             add(buttonGlyph(nxui::Button::A), i18n.tr("profilelock.choose", "Change profile"));
         if (m_layoutFlip && m_layoutFlip.get() == cur)
             add(buttonGlyph(nxui::Button::A), i18n.tr("hint.switch_layout", "Switch view"));
+        if (m_orientationBtn && m_orientationBtn.get() == cur)
+            add(buttonGlyph(nxui::Button::A),
+                i18n.tr("hint.switch_orientation", "Switch orientation"));
         if (m_battery && m_battery.get() == cur)
             add(buttonGlyph(nxui::Button::A), i18n.tr("quick_settings.title", "Quick Settings"));
     }
@@ -9718,6 +10560,9 @@ std::vector<WiiUMenuApp::ActionHint> WiiUMenuApp::buildActionHints() {
         else
             add(buttonGlyph(nxui::Button::Minus),
                 i18n.tr("hint.switch_layout", "Switch view"));
+        if (m_config.homeOrientationButton)
+            add(buttonGlyph(nxui::Button::LStick),
+                i18n.tr("hint.switch_orientation", "Switch orientation"));
     }
 
     // Paging lives on the arrows flanking the grid, not in the capsules.
@@ -10009,7 +10854,40 @@ bool WiiUMenuApp::pagingAvailable() {
 }
 
 nxui::Rect WiiUMenuApp::pageArrowRect(bool left) {
-    const float cx = left ? kPageArrowInset : 1280.f - kPageArrowInset;
+    const float canvasW = m_homeLayout.logicalW();
+    const float canvasH = m_homeLayout.logicalH();
+    if (m_homeLayout.isPortrait()) {
+        // Sit in the side gutter mid-X (between screen edge and grid/folder
+        // plate). Home grid: below the centred side-icon columns. Folders
+        // (no side icons): vertically centred on the plate.
+        float contentLeft = m_homeLayout.gridSafeSideMargin();
+        float contentRight = canvasW - contentLeft;
+        float contentMidY = canvasH * 0.5f;
+        if (m_openFolderId != 0) {
+            const nxui::Rect panel = folderPanelRect();
+            contentLeft = panel.x;
+            contentRight = panel.x + panel.width;
+            contentMidY = panel.y + panel.height * 0.5f;
+        } else if (m_grid) {
+            const nxui::Rect content = m_grid->contentRect();
+            if (content.width > 8.f) {
+                contentLeft = content.x;
+                contentRight = content.x + content.width;
+            }
+        }
+
+        const float leftGutterMid = contentLeft * 0.5f;
+        const float rightGutterMid = (contentRight + canvasW) * 0.5f;
+        const float cx = left ? leftGutterMid : rightGutterMid;
+
+        // Folders: vertically mid on the plate. Home grid: just under the
+        // centred side-icon columns (not beside them).
+        const float cy = (m_openFolderId != 0)
+            ? contentMidY
+            : (m_homeLayout.sidebarBottomY() + 18.f + kPageArrowH * 0.5f);
+        return {cx - kPageArrowW * 0.5f, cy - kPageArrowH * 0.5f, kPageArrowW, kPageArrowH};
+    }
+    const float cx = left ? kPageArrowInset : canvasW - kPageArrowInset;
     const float cy = m_arrowCenterY.value();
     return {cx - kPageArrowW * 0.5f, cy - kPageArrowH * 0.5f, kPageArrowW, kPageArrowH};
 }
@@ -10797,11 +11675,10 @@ void WiiUMenuApp::onRender(nxui::Renderer& ren) {
         constexpr float kPunchDur = 0.20f;
         const float punchT = std::clamp(elapsed / kPunchDur, 0.f, 1.f);
         const float scale = 1.f + 0.02f * (1.f - nxui::Easing::outCubic(punchT));
-        const float w = 1280.f * scale;
-        const float h = 720.f * scale;
-        ren.drawTexture(&m_leaveSplashTex,
-                        {(1280.f - w) * 0.5f, (720.f - h) * 0.5f, w, h},
-                        nxui::Color::white().withAlpha(alpha));
+        // FB-captured splash — map into the current layout so portrait stays tall.
+        ren.drawTextureFramebufferCover(&m_leaveSplashTex,
+                                        nxui::Color::white().withAlpha(alpha),
+                                        scale);
     }
 
 #ifdef SWITCHU_DEBUG_UI

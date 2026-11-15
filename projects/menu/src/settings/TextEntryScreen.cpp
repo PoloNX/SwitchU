@@ -75,8 +75,64 @@ void TextEntryScreen::setTheme(const nxui::Theme* theme) {
     setLiquidGlassShade(m_theme->mode == nxui::ThemeMode::Dark ? 0.08f : -0.03f);
 }
 
+void TextEntryScreen::setCanvasSize(float width, float height) {
+    m_canvasW = width > 1.f ? width : 1280.f;
+    m_canvasH = height > 1.f ? height : 720.f;
+    if (m_active || m_animatingOut)
+        applyPanelRect();
+}
+
 TextEntryScreen::Metrics TextEntryScreen::metrics() const {
     Metrics m;
+    if (isPortraitCanvas()) {
+        // Squish into 720-wide; compact hugs content + centers, full fills the canvas.
+        m.panelX = 12.f;
+        m.panelW = m_canvasW - 24.f;
+        m.inset = 12.f;
+        m.keyGap = 4.f;
+        m.keyRadius = 10.f;
+        m.boardPad = 0.f;
+        const int rowCount = std::max(1, static_cast<int>(rows().size()));
+        constexpr float kHintH = 32.f;
+        constexpr float kBottomPad = 14.f;
+        if (m_fullLayout) {
+            constexpr float kEdge = 6.f;
+            m.panelX = kEdge;
+            m.panelY = kEdge;
+            m.panelW = m_canvasW - kEdge * 2.f;
+            m.panelH = m_canvasH - kEdge * 2.f;
+            // Title + chips stay pinned; field / keys / hint center in the rest.
+            constexpr float kTitleBand = 88.f;
+            constexpr float kFieldToBoard = 16.f;
+            m.fieldHeight = 56.f;
+            m.rowHeight = 78.f;
+            const float gaps = static_cast<float>(std::max(0, rowCount - 1)) * m.keyGap;
+            float boardH = static_cast<float>(rowCount) * m.rowHeight + gaps;
+            float contentH = m.fieldHeight + kFieldToBoard + boardH + kHintH;
+            const float avail = m.panelH - kTitleBand - kBottomPad;
+            if (contentH + 48.f < avail) {
+                const float grow = std::min(
+                    18.f, (avail - contentH - 48.f) / static_cast<float>(rowCount));
+                m.rowHeight = std::min(96.f, m.rowHeight + grow);
+                boardH = static_cast<float>(rowCount) * m.rowHeight + gaps;
+                contentH = m.fieldHeight + kFieldToBoard + boardH + kHintH;
+            }
+            const float contentTop =
+                kTitleBand + std::max(0.f, (avail - contentH) * 0.5f);
+            m.fieldTop = contentTop;
+            m.keyboardTop = contentTop + m.fieldHeight + kFieldToBoard;
+        } else {
+            m.rowHeight = 56.f;
+            m.fieldTop = 86.f;
+            m.fieldHeight = 48.f;
+            m.keyboardTop = 148.f;
+            const float boardH = static_cast<float>(rowCount) * m.rowHeight
+                + static_cast<float>(std::max(0, rowCount - 1)) * m.keyGap;
+            m.panelH = m.keyboardTop + boardH + kHintH + kBottomPad;
+            m.panelY = std::max(12.f, (m_canvasH - m.panelH) * 0.5f);
+        }
+        return m;
+    }
     if (m_fullLayout) {
         // Large glass sheet — nearly full screen, still a rounded panel so the
         // frosted look matches the original keyboard language.
@@ -408,19 +464,27 @@ nxui::Rect TextEntryScreen::styleToggleRect() const {
     const Metrics m = metrics();
     const nxui::Rect panel = rect();
     // Leftmost of the three chrome chips: Style | Size | Cancel
-    return {panel.right() - m.inset - 346.f, panel.y + 18.f, 106.f, 40.f};
+    // Portrait chips need more width so "Flat"/"Compact"/"Cancel" stay readable.
+    const float chipW = isPortraitCanvas() ? 118.f : 106.f;
+    const float gap = isPortraitCanvas() ? 8.f : 14.f;
+    const float span = chipW * 3.f + gap * 2.f;
+    return {panel.right() - m.inset - span, panel.y + 18.f, chipW, 40.f};
 }
 
 nxui::Rect TextEntryScreen::sizeToggleRect() const {
     const Metrics m = metrics();
     const nxui::Rect panel = rect();
-    return {panel.right() - m.inset - 228.f, panel.y + 18.f, 106.f, 40.f};
+    const float chipW = isPortraitCanvas() ? 118.f : 106.f;
+    const float gap = isPortraitCanvas() ? 8.f : 14.f;
+    const float span = chipW * 2.f + gap;
+    return {panel.right() - m.inset - span, panel.y + 18.f, chipW, 40.f};
 }
 
 nxui::Rect TextEntryScreen::cancelChipRect() const {
     const Metrics m = metrics();
     const nxui::Rect panel = rect();
-    return {panel.right() - m.inset - 110.f, panel.y + 18.f, 106.f, 40.f};
+    const float chipW = isPortraitCanvas() ? 118.f : 106.f;
+    return {panel.right() - m.inset - chipW, panel.y + 18.f, chipW, 40.f};
 }
 
 void TextEntryScreen::togglePage() {
@@ -1042,7 +1106,7 @@ void TextEntryScreen::onRender(nxui::Renderer& ren) {
         ren.copyOffscreen(0, 2);
         m_backdropReady = true;
     }
-    ren.drawRect({0.f, 0.f, 1280.f, 720.f},
+    ren.drawRect({0.f, 0.f, m_canvasW, m_canvasH},
                  nxui::Color::black().withAlpha((m_glassStyle ? 0.62f : 0.72f) * alpha));
     if (m_glassStyle) {
         ren.drawOffscreenRounded(2, rect(), 26.f,
@@ -1081,13 +1145,13 @@ void TextEntryScreen::onContentRender(nxui::Renderer& ren) {
              r.y + (r.height - size.y * scale) * 0.5f},
             m_smallFont, m_theme->textPrimary.withAlpha(alpha), scale);
     };
-    // Chip shows the mode you switch TO (same pattern as Compact/Full).
+    // Short chip labels (dedicated keys) — a11y announcements keep the long forms.
     drawChip(styleToggleRect(),
-             m_glassStyle ? i18n.tr("text_entry.style_flat", "Flat")
-                          : i18n.tr("text_entry.style_glass", "Glass"));
+             m_glassStyle ? i18n.tr("text_entry.chip_flat", "Flat")
+                          : i18n.tr("text_entry.chip_glass", "Glass"));
     drawChip(sizeToggleRect(),
-             m_fullLayout ? i18n.tr("text_entry.layout_compact", "Compact")
-                          : i18n.tr("text_entry.layout_full", "Full"));
+             m_fullLayout ? i18n.tr("text_entry.chip_compact", "Compact")
+                          : i18n.tr("text_entry.chip_full", "Full"));
     drawChip(cancelChipRect(), i18n.tr("button.cancel", "Cancel"));
 
     const nxui::Rect field = textFieldRect();

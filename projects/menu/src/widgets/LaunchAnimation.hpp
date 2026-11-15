@@ -14,6 +14,11 @@ class LaunchAnimation : public nxui::Widget {
 public:
     LaunchAnimation() = default;
 
+    void setCanvasSize(float width, float height) {
+        m_canvasW = width > 1.f ? width : 1280.f;
+        m_canvasH = height > 1.f ? height : 720.f;
+    }
+
     // Cold launch: zoom to center, hold, fade, then black, then launch.
     // When preservePosterAspect is set, remap `from` to a 2:3 frame (same as
     // single-row posters) so grid 2x3 cells that are not exactly 2:3 don't
@@ -73,4 +78,6 @@ private:
     bool    m_launched = false;
     bool    m_doneCalled = false;
     bool    m_postLaunchHold = false;
+    float   m_canvasW = 1280.f;
+    float   m_canvasH = 720.f;
 };

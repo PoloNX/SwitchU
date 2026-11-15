@@ -31,6 +31,12 @@ std::string ellipsize(nxui::Font* font, const std::string& text, float maxWidth,
 }
 }
 
+void ProgressDialog::setCanvasSize(float width, float height) {
+    m_canvasW = width > 1.f ? width : 1280.f;
+    m_canvasH = height > 1.f ? height : 720.f;
+    setRect({0.f, 0.f, m_canvasW, m_canvasH});
+}
+
 ProgressDialog::ProgressDialog() {
     // The visual scrim and the touch target cover the whole screen. This makes
     // the dialog genuinely modal for both controller and touch input.
@@ -73,7 +79,8 @@ void ProgressDialog::requestCancel() {
 }
 
 nxui::Rect ProgressDialog::panelRect() const {
-    return {(1280.f - kPanelW) * 0.5f, (720.f - kPanelH) * 0.5f, kPanelW, kPanelH};
+    const float panelW = std::min(kPanelW, std::max(280.f, m_canvasW - 48.f));
+    return {(m_canvasW - panelW) * 0.5f, (m_canvasH - kPanelH) * 0.5f, panelW, kPanelH};
 }
 
 nxui::Rect ProgressDialog::cancelButtonRect(const nxui::Rect& panel) const {
@@ -153,7 +160,7 @@ void ProgressDialog::render(nxui::Renderer& ren) {
     if (alpha <= 0.01f)
         return;
 
-    ren.drawRect({0.f, 0.f, 1280.f, 720.f}, nxui::Color(0.f, 0.f, 0.f, 0.50f * alpha));
+    ren.drawRect({0.f, 0.f, m_canvasW, m_canvasH}, nxui::Color(0.f, 0.f, 0.f, 0.50f * alpha));
 
     nxui::Rect panel = scaledRect(panelRect(), m_panelScale.value());
     nxui::Color panelFill = m_theme->panelBase.withAlpha((m_theme->mode == nxui::ThemeMode::Dark ? 0.95f : 0.96f) * alpha);

@@ -1,4 +1,5 @@
 #pragma once
+#include "core/HomeOrientation.hpp"
 #include <cstdint>
 
 namespace switchu::menu {
@@ -20,5 +21,9 @@ bool initScreenFitLayer(std::uint64_t managedLayerId);
 // AppletOperationMode (menu's libnx cache is often stale until messages are
 // processed — prefer the mode the daemon forwarded).
 bool applyScreenUnderscan(int operationMode = -1);
+
+// Rotate the default NWindow for Flip-Grip / TATE. UI framebuffer stays
+// 1280×720; pair with Input::setDisplayOrientation so touch/sticks match.
+bool applyHomeOrientation(HomeOrientation orientation);
 
 } // namespace switchu::menu

@@ -57,6 +57,14 @@ public:
         m_lineLayoutCacheCount = -1;
     }
     bool linePosterAspect() const { return m_linePosterAspect; }
+    // When true (logos off), single-row tiles sit at mid-band; when false they
+    // stay in the lower half so the logo band above remains clear.
+    void setLineVerticallyCentered(bool centered) {
+        if (m_lineVerticallyCentered == centered) return;
+        m_lineVerticallyCentered = centered;
+        m_lineLayoutCacheCount = -1;
+    }
+    bool lineVerticallyCentered() const { return m_lineVerticallyCentered; }
     void invalidateLineLayout() { m_lineLayoutCacheCount = -1; }
 
     void setPage(int page);
@@ -166,6 +174,7 @@ private:
     nxui::Widget* m_lineUpTarget = nullptr;
     nxui::Widget* m_lineDownTarget = nullptr;
     bool m_linePosterAspect = false;
+    bool m_lineVerticallyCentered = false;
     std::vector<nxui::Widget*> m_gridLeftTargets;
     std::vector<nxui::Widget*> m_gridRightTargets;
 

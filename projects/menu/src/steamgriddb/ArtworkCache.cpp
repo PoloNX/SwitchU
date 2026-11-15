@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <list>
@@ -72,9 +73,22 @@ SourceStamp sourceStamp(const std::string& path) {
     return stamp;
 }
 
-std::string cachePathFor(const std::string& source, int width, int height) {
-    return source + "." + std::to_string(width) + "x" + std::to_string(height)
-        + ".rgba-cache";
+std::string cachePathFor(const std::string& source, int width, int height,
+                         float focusX = 0.5f, float focusY = 0.5f,
+                         bool fill = true, float zoom = 1.f) {
+    const int fx = std::clamp(static_cast<int>(std::lround(focusX * 100.f)), 0, 100);
+    const int fy = std::clamp(static_cast<int>(std::lround(focusY * 100.f)), 0, 100);
+    const int z = std::clamp(static_cast<int>(std::lround(zoom * 100.f)), 100, 250);
+    std::string path = source + "." + std::to_string(width) + "x" + std::to_string(height);
+    // Keep the legacy key for fill + dead-center + 1x zoom so existing caches stay warm.
+    if (!fill)
+        path += ".contain";
+    if (fx != 50 || fy != 50)
+        path += ".fx" + std::to_string(fx) + "fy" + std::to_string(fy);
+    if (z != 100)
+        path += ".z" + std::to_string(z);
+    path += ".rgba-cache";
+    return path;
 }
 
 std::string fitCachePathFor(const std::string& source, int maxWidth, int maxHeight) {
@@ -254,10 +268,11 @@ void saveFit(const std::string& source, int maxWidth, int maxHeight,
 }
 
 bool load(const std::string& source, int width, int height,
-          std::vector<std::uint8_t>& rgba) {
+          std::vector<std::uint8_t>& rgba, float focusX, float focusY, bool fill,
+          float zoom) {
     const SourceStamp stamp = sourceStamp(source);
     if (!stamp.valid) return false;
-    const std::string cachePath = cachePathFor(source, width, height);
+    const std::string cachePath = cachePathFor(source, width, height, focusX, focusY, fill, zoom);
     const auto started = std::chrono::steady_clock::now();
     std::ifstream input(cachePath, std::ios::binary);
     if (!input) return false;
@@ -288,7 +303,8 @@ bool load(const std::string& source, int width, int height,
 }
 
 void save(const std::string& source, int width, int height,
-          const std::vector<std::uint8_t>& rgba) {
+          const std::vector<std::uint8_t>& rgba, float focusX, float focusY, bool fill,
+          float zoom) {
     const SourceStamp stamp = sourceStamp(source);
     const std::uint64_t expected = static_cast<std::uint64_t>(width)
                                  * static_cast<std::uint64_t>(height) * 4ULL;
@@ -301,7 +317,7 @@ void save(const std::string& source, int width, int height,
     header.sourceWriteTime = stamp.writeTime;
     header.payloadSize = expected;
 
-    const std::string cachePath = cachePathFor(source, width, height);
+    const std::string cachePath = cachePathFor(source, width, height, focusX, focusY, fill, zoom);
     const std::string temporaryPath = cachePath + ".tmp";
     const auto started = std::chrono::steady_clock::now();
     std::ofstream output(temporaryPath, std::ios::binary | std::ios::trunc);
@@ -333,11 +349,14 @@ void save(const std::string& source, int width, int height,
 namespace steamgriddb::artwork {
 
 DecodedImage decode(const std::string& source, int outputWidth, int outputHeight,
-                    bool fill) {
+                    bool fill, float focusX, float focusY, float zoom) {
     DecodedImage out;
     out.width = std::max(1, outputWidth);
     out.height = std::max(1, outputHeight);
-    if (load(source, out.width, out.height, out.rgba)) return out;
+    focusX = std::clamp(focusX, 0.f, 1.f);
+    focusY = std::clamp(focusY, 0.f, 1.f);
+    zoom = std::clamp(zoom, 1.f, 2.5f);
+    if (load(source, out.width, out.height, out.rgba, focusX, focusY, fill, zoom)) return out;
 
     const auto loadStarted = std::chrono::steady_clock::now();
     int width = 0, height = 0, channels = 0;
@@ -348,10 +367,10 @@ DecodedImage decode(const std::string& source, int outputWidth, int outputHeight
     }
     const auto loadedAt = std::chrono::steady_clock::now();
 
-    if (width == out.width && height == out.height) {
+    if (width == out.width && height == out.height && zoom <= 1.001f) {
         out.rgba.assign(raw, raw + static_cast<std::size_t>(width) * height * 4);
         stbi_image_free(raw);
-        save(source, out.width, out.height, out.rgba);
+        save(source, out.width, out.height, out.rgba, focusX, focusY, fill, zoom);
         DebugLog::log("[steamgriddb-ui] image path=%s source=%dx%d load=%ldms scale=0ms",
                       source.c_str(), width, height,
                       std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -362,11 +381,12 @@ DecodedImage decode(const std::string& source, int outputWidth, int outputHeight
     out.rgba.assign(static_cast<std::size_t>(out.width) * out.height * 4, 0);
     const float scaleX = static_cast<float>(out.width) / width;
     const float scaleY = static_cast<float>(out.height) / height;
-    const float scale = fill ? std::max(scaleX, scaleY) : std::min(scaleX, scaleY);
+    const float scale = (fill ? std::max(scaleX, scaleY) : std::min(scaleX, scaleY)) * zoom;
     const float drawnWidth = width * scale;
     const float drawnHeight = height * scale;
-    const float offsetX = (out.width - drawnWidth) * 0.5f;
-    const float offsetY = (out.height - drawnHeight) * 0.5f;
+    // Focus pans cover crops (fill) and letterbox placement (contain).
+    const float offsetX = (out.width - drawnWidth) * focusX;
+    const float offsetY = (out.height - drawnHeight) * focusY;
     const float inverseScale = 1.f / scale;
 
     std::vector<int> sourceXs(static_cast<std::size_t>(out.width), -1);
@@ -398,7 +418,7 @@ DecodedImage decode(const std::string& source, int outputWidth, int outputHeight
     }
     const auto scaledAt = std::chrono::steady_clock::now();
     stbi_image_free(raw);
-    save(source, out.width, out.height, out.rgba);
+    save(source, out.width, out.height, out.rgba, focusX, focusY, fill, zoom);
     DebugLog::log("[steamgriddb-ui] image path=%s source=%dx%d load=%ldms scale=%ldms",
                   source.c_str(), width, height,
                   std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -408,8 +428,9 @@ DecodedImage decode(const std::string& source, int outputWidth, int outputHeight
     return out;
 }
 
-bool prepare(const std::string& source, int outputWidth, int outputHeight, bool fill) {
-    return !decode(source, outputWidth, outputHeight, fill).rgba.empty();
+bool prepare(const std::string& source, int outputWidth, int outputHeight, bool fill,
+             float focusX, float focusY, float zoom) {
+    return !decode(source, outputWidth, outputHeight, fill, focusX, focusY, zoom).rgba.empty();
 }
 
 void remove(const std::string& source, int outputWidth, int outputHeight) {

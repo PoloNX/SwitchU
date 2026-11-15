@@ -51,6 +51,8 @@ public:
         float cornerRoundness = 0.f;
         float imageOpacity = 0.f;
         bool imageCover = true;
+        float imageFocusX = 0.5f;
+        float imageFocusY = 0.5f;
     };
 
     WaraWaraBackground();

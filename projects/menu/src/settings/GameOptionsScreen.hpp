@@ -6,7 +6,7 @@
 
 class GameOptionsScreen final : public TabbedOverlayScreen {
 public:
-    enum class ArtworkKind { Hero, Logo, Icon, Poster, PosterWide };
+    enum class ArtworkKind { Hero, Logo, Icon, Poster, PosterWide, SquareCover };
     struct GameInfo {
         std::uint64_t titleId = 0;
         std::string name;
@@ -19,10 +19,12 @@ public:
         bool canResize = true;
         int sizeIndex = 0;
         bool hasHeroArt = false;
+        bool hasHeroPresentation = false;
         bool hasLogoArt = false;
         bool hasIconArt = false;
         bool hasPosterArt = false;
         bool hasPosterWideArt = false;
+        bool hasSquareCoverArt = false;
     };
 
     GameOptionsScreen();
@@ -31,7 +33,9 @@ public:
     void setGameIcon(nxui::Texture* icon) { m_game.icon = icon; }
     /// Rebuild SteamGridDB rows so × only appears when that kind has art.
     void refreshArtworkPresence(bool hasHero, bool hasLogo, bool hasIcon,
-                                bool hasPoster, bool hasPosterWide);
+                                bool hasPoster, bool hasPosterWide,
+                                bool hasHeroPresentation = false,
+                                bool hasSquareCover = false);
     void onMove(VoidCb cb) { m_moveCb = std::move(cb); }
     void onResize(IntCb cb) { m_resizeCb = std::move(cb); }
     void onCloseSoftware(VoidCb cb) { m_closeSoftwareCb = std::move(cb); }
@@ -41,6 +45,10 @@ public:
     }
     void onClearArtwork(std::function<void(ArtworkKind)> cb) {
         m_clearArtworkCb = std::move(cb);
+    }
+    void onCustomizeHero(VoidCb cb) { m_customizeHeroCb = std::move(cb); }
+    void onClearHeroPresentation(VoidCb cb) {
+        m_clearHeroPresentationCb = std::move(cb);
     }
 
 protected:
@@ -57,4 +65,6 @@ private:
     VoidCb m_deleteSoftwareCb;
     std::function<void(ArtworkKind)> m_selectArtworkCb;
     std::function<void(ArtworkKind)> m_clearArtworkCb;
+    VoidCb m_customizeHeroCb;
+    VoidCb m_clearHeroPresentationCb;
 };

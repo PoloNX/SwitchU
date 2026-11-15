@@ -9,6 +9,10 @@ public:
     void setTheme(const nxui::Theme* theme) { m_theme = theme; }
     void setPageCount(int total);
     void setCurrentPage(int page);
+    // Keep the glass pill sized to the dots; only the canvas width / Y move.
+    // Calling setRect() with a full-width strip stretches the pill until the
+    // next setPageCount — orientation reflow must use this instead.
+    void placeOnCanvas(float canvasWidth, float y);
 
     // Folder view tints the active dot with the folder colour.
     void setActiveColor(const nxui::Color& c) { m_activeColor = c; m_hasActiveColor = true; }

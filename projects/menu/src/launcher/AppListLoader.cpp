@@ -334,6 +334,9 @@ std::vector<uint8_t> AppListLoader::loadIconData(uint64_t titleId, bool preferPo
     };
     if (preferPoster && readFile(SteamGridDbManager::posterPath(titleId), iconData))
         return iconData;
+    // Square SGDB grids win over Replacement icon for 1x1 / 2x2 faces.
+    if (readFile(SteamGridDbManager::gridSquarePath(titleId), iconData))
+        return iconData;
     if (readFile(SteamGridDbManager::iconPath(titleId), iconData))
         return iconData;
     iconData = switchu::control_cache::readIcon(titleId);

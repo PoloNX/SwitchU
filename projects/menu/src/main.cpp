@@ -57,16 +57,47 @@ namespace switchu::menu {
 #ifdef SWITCHU_HOMEBREW
 bool initScreenFitLayer(std::uint64_t) { return false; }
 bool applyScreenUnderscan(int) { return true; }
+bool applyHomeOrientation(HomeOrientation) { return true; }
 #else
 namespace {
 u64 g_managedLayerId = 0;
+HomeOrientation g_homeOrientation = HomeOrientation::Landscape0;
+
+u32 nativeTransformFor(HomeOrientation orientation) {
+    switch (orientation) {
+        // Portrait 90/270: Renderer projects logical 720x1280 into the FB.
+        // Applying nwindow ROT_* as well double-transforms and cancels/squashes.
+        case HomeOrientation::Rot90:
+        case HomeOrientation::Rot270:
+            return 0;
+        case HomeOrientation::Rot180:
+            return NATIVE_WINDOW_TRANSFORM_ROT_180;
+        case HomeOrientation::Landscape0:
+        default:
+            return 0;
+    }
+}
 }
 
 bool initScreenFitLayer(std::uint64_t managedLayerId) {
     if (managedLayerId == 0)
         return false;
     g_managedLayerId = managedLayerId;
-    return applyScreenUnderscan();
+    const bool sized = applyScreenUnderscan();
+    applyHomeOrientation(g_homeOrientation);
+    return sized;
+}
+
+bool applyHomeOrientation(HomeOrientation orientation) {
+    g_homeOrientation = orientation;
+    NWindow* win = nwindowGetDefault();
+    if (!win)
+        return false;
+    const u32 transform = nativeTransformFor(orientation);
+    const Result rc = nwindowSetTransform(win, transform);
+    DebugLog::log("[menu] home orientation=%s transform=0x%X rc=0x%X",
+                  homeOrientationToString(orientation), transform, rc);
+    return R_SUCCEEDED(rc);
 }
 
 bool applyScreenUnderscan(int operationMode) {

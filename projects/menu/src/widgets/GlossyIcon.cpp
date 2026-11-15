@@ -552,6 +552,8 @@ void GlossyIcon::copyWidgetPresentationFrom(GlossyIcon& source) {
     m_folderPeekComposite = source.m_folderPeekComposite;
     m_folderPeeks = source.m_folderPeeks;
     m_folderPeekCount = source.m_folderPeekCount;
+    m_folderPeekColumns = source.m_folderPeekColumns;
+    m_folderPeekRows = source.m_folderPeekRows;
     m_folderCoverTitleId = source.m_folderCoverTitleId;
     m_themeMode = source.m_themeMode;
     m_widgetType = source.m_widgetType;
@@ -724,11 +726,42 @@ void GlossyIcon::onRender(nxui::Renderer& ren) {
                         nxui::Color(0.02f, 0.04f, 0.06f,
                                     (m_entryKind == GridEntryKind::Empty ? 0.12f : 0.20f) * m_opacity),
                         cornerRadius() + 1.f);
-    nxui::GlassWidget::onRender(ren);
+
+    // Portrait: empty cells must stay see-through so wara-wara passes behind
+    // the plate. Liquid-glass capture UVs smear under orthoPortrait; skip the
+    // acrylic path and draw a light translucent plate onto the live FB.
+    const bool portraitLayout =
+        ren.layoutOrientation() == nxui::DisplayOrientation::Rot90
+        || ren.layoutOrientation() == nxui::DisplayOrientation::Rot270;
+    const bool emptyPortraitPassThrough =
+        m_entryKind == GridEntryKind::Empty && portraitLayout;
+    const bool savedLg = liquidGlassEnabled();
+    const bool savedLgShader = liquidGlassShaderEnabled();
+    if (emptyPortraitPassThrough) {
+        setLiquidGlassEnabled(false);
+        setLiquidGlassShaderEnabled(false);
+        const nxui::Color plate = baseColor().withAlpha(
+            std::min(0.22f, std::max(0.10f, baseColor().a)) * m_opacity);
+        ren.drawRoundedRect(drawRect, plate, cornerRadius());
+        if (borderColor().a > 0.01f)
+            ren.drawRoundedRectOutline(drawRect,
+                borderColor().withAlpha(borderColor().a * 0.80f * m_opacity),
+                cornerRadius(), std::max(1.f, borderWidth()));
+        if (highlightColor().a > 0.01f)
+            ren.drawRoundedRectOutline(drawRect.shrunk(1.f),
+                highlightColor().withAlpha(highlightColor().a * 0.55f * m_opacity),
+                std::max(0.f, cornerRadius() - 1.f), 1.f);
+    } else {
+        nxui::GlassWidget::onRender(ren);
+    }
 
     m_opacity = savedOp;
     m_rect = savedRect;
     setLiquidGlassShade(savedShade);
+    if (emptyPortraitPassThrough) {
+        setLiquidGlassEnabled(savedLg);
+        setLiquidGlassShaderEnabled(savedLgShader);
+    }
     setScale(externalScale);
 
     nxui::Rect r = drawRect;
@@ -1098,10 +1131,23 @@ void GlossyIcon::onContentRender(nxui::Renderer& ren) {
         return;
     }
 
+    // Landscape wide face: 2x1 / 4x2 (same 2:1 aspect). 3x2 removed — aspect misfit.
+    const bool landscapeWideTile =
+        switchu::widgets::isLandscapeWideGameTile(m_widgetColumns, m_widgetRows);
+    // Tall poster face: 2x3 (and legacy 1x2). 2x2 / 1x1 always use the icon path.
+    const bool tallPosterTile =
+        switchu::widgets::isTallPosterGameTile(m_widgetColumns, m_widgetRows);
+
+    // Folders always keep style chrome. Peeks, custom poster, and poster-wide
+    // are drawn inside drawFolderStyle — never as a bare game-tile face.
     if (m_entryKind == GridEntryKind::Folder) {
+        (void)landscapeWideTile;
         const int style = m_folderStyleIndex;
         const bool mosaic = style == switchu::folders::kFolderStyleClassic;
-        const float inset = (m_posterFrame ? 6.f : (mosaic ? 10.f : 8.f)) * s;
+        const bool tallFolderPoster = tallPosterTile && m_folderCoverIsPoster
+            && m_folderCover && m_folderCover->valid();
+        const bool posterChrome = m_posterFrame || tallFolderPoster;
+        const float inset = (posterChrome ? 6.f : (mosaic ? 10.f : 8.f)) * s;
         switchu::folders::FolderStyleDrawArgs args;
         args.renderer = &ren;
         args.bounds = r.shrunk(inset);
@@ -1116,29 +1162,26 @@ void GlossyIcon::onContentRender(nxui::Renderer& ren) {
         args.cover = m_folderCover;
         args.peekCovers = m_folderPeeks;
         args.peekCoverCount = m_folderPeekCount;
+        args.peekColumns = m_folderPeekColumns;
+        args.peekRows = m_folderPeekRows;
         args.showCover = m_folderShowCover;
         args.focused = m_focused;
-        // Grid: name inside the tile. Single-row with peeks/covers: title pill
-        // only. Empty poster folders (FT lite suppresses peeks) get the same
-        // centered in-tile name as grid so the tile is not a blank plate.
+        // Grid: always keep the in-tile name (art reserved above). Single-row
+        // poster tiles stay title-pill-only when art is present; empty ones
+        // still get a centered name.
         const bool hasFolderArt =
             (m_folderCover && m_folderCover->valid())
             || m_folderPeekCount > 0
             || m_folderPeekComposite;
         args.drawName = !m_posterFrame || !hasFolderArt;
-        args.posterAspect = m_posterFrame;
+        args.posterAspect = posterChrome;
         args.coverIsFolderPoster = m_folderCoverIsPoster;
         args.coverIsPeekComposite = m_folderPeekComposite;
+        args.tileColumns = m_widgetColumns;
+        args.tileRows = m_widgetRows;
         switchu::folders::drawFolderStyle(args);
         return;
     }
-
-    // Landscape wide face: 2x1 / 4x2 (same 2:1 aspect). 3x2 removed — aspect misfit.
-    const bool landscapeWideTile =
-        switchu::widgets::isLandscapeWideGameTile(m_widgetColumns, m_widgetRows);
-    // Tall poster face: 2x3 (and legacy 1x2). 2x2 / 1x1 always use the icon path.
-    const bool tallPosterTile =
-        switchu::widgets::isTallPosterGameTile(m_widgetColumns, m_widgetRows);
 
     if (m_entryKind == GridEntryKind::Application && tallPosterTile) {
         const nxui::Rect card = r.shrunk(std::max(8.f, 10.f * s));

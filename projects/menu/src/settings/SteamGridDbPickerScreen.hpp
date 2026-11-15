@@ -37,6 +37,8 @@ public:
     void hide();
     void wait();
     bool isActive() const { return m_active; }
+    // Logical canvas (1280×720 landscape, 720×1280 portrait).
+    void setCanvasSize(float width, float height);
     bool pickingGame() const { return m_pickingGame; }
     /// Survives game-folder drill-down / setResult; source of truth for X Search.
     const std::string& query() const { return m_searchQuery; }
@@ -91,6 +93,10 @@ private:
     void previewCanvasSize(int& outW, int& outH) const;
     void cardMetrics(float& outW, float& outH, float& outGapX, float& outGapY,
                      int& outColumns, int& outRows) const;
+    bool isPortraitCanvas() const { return m_canvasH > m_canvasW + 0.5f; }
+    nxui::Rect panelRect() const;
+    float contentTop() const;
+    float footerY() const;
     int gameListCount() const;
     int artworkCount() const;
     int perPage() const;
@@ -120,4 +126,6 @@ private:
     std::function<void()> m_searchCb;
     std::function<void(const BrowseResult&, const Candidate&)> m_applyCb;
     std::function<void(const BrowseResult&, const GameMatch&)> m_pickGameCb;
+    float m_canvasW = 1280.f;
+    float m_canvasH = 720.f;
 };

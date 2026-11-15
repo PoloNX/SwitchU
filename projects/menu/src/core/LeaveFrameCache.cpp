@@ -13,7 +13,7 @@ namespace LeaveFrameCache {
 namespace {
 
 constexpr std::uint32_t kMagic = 0x4C555753u; // 'SWUL' LE
-constexpr std::uint32_t kVersion = 1;
+constexpr std::uint32_t kVersion = 2; // + appLayoutMode / homeOrientation
 constexpr int kMaxSide = 1280;
 constexpr std::size_t kMaxPixels = static_cast<std::size_t>(kMaxSide) * static_cast<std::size_t>(kMaxSide);
 
@@ -26,10 +26,12 @@ struct Header {
     std::uint32_t page = 0;
     std::uint32_t openFolderId = 0;
     std::uint64_t focusTitleId = 0;
+    std::uint32_t appLayoutMode = 0;
+    std::uint32_t homeOrientation = 0;
 };
 #pragma pack(pop)
 
-static_assert(sizeof(Header) == 32, "LeaveFrameCache header size");
+static_assert(sizeof(Header) == 40, "LeaveFrameCache header size");
 
 bool readHeader(std::ifstream& in, Header& header) {
     in.read(reinterpret_cast<char*>(&header), sizeof(header));
@@ -127,6 +129,8 @@ bool save(const LeaveFrameSession& session,
     header.page = session.page < 0 ? 0u : static_cast<std::uint32_t>(session.page);
     header.openFolderId = session.openFolderId;
     header.focusTitleId = session.focusTitleId;
+    header.appLayoutMode = session.appLayoutMode;
+    header.homeOrientation = session.homeOrientation;
 
     const std::size_t bytes = static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4u;
     std::vector<std::uint8_t> frosted(rgba, rgba + bytes);
@@ -180,6 +184,8 @@ bool load(LeaveFrameSession& session, LeaveFrameImage& image) {
     session.page = static_cast<int>(header.page);
     session.openFolderId = header.openFolderId;
     session.focusTitleId = header.focusTitleId;
+    session.appLayoutMode = header.appLayoutMode;
+    session.homeOrientation = header.homeOrientation;
     return image.valid();
 }
 
@@ -197,6 +203,8 @@ bool loadSessionOnly(LeaveFrameSession& session) {
     session.page = static_cast<int>(header.page);
     session.openFolderId = header.openFolderId;
     session.focusTitleId = header.focusTitleId;
+    session.appLayoutMode = header.appLayoutMode;
+    session.homeOrientation = header.homeOrientation;
     return true;
 }
 

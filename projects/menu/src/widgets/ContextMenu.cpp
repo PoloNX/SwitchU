@@ -62,11 +62,11 @@ void ContextMenu::show(const nxui::Rect& anchor, std::string title,
     constexpr float kAnchorGap = 16.f;
     const float rightX = anchor.x + anchor.width + kAnchorGap;
     const float leftX = anchor.x - kAnchorGap - kPanelWidth;
-    const bool fitsRight = rightX + kPanelWidth <= 1280.f - kScreenPadding;
+    const bool fitsRight = rightX + kPanelWidth <= m_canvasW - kScreenPadding;
     float x = fitsRight ? rightX : leftX;
-    x = std::clamp(x, kScreenPadding, 1280.f - kScreenPadding - kPanelWidth);
+    x = std::clamp(x, kScreenPadding, m_canvasW - kScreenPadding - kPanelWidth);
     float y = anchor.y + anchor.height * 0.5f - panelHeight * 0.5f;
-    y = std::clamp(y, kScreenPadding, 720.f - kScreenPadding - panelHeight);
+    y = std::clamp(y, kScreenPadding, m_canvasH - kScreenPadding - panelHeight);
     setRect({x, y, kPanelWidth, panelHeight});
 
     if (m_theme) {

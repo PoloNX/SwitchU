@@ -1,5 +1,6 @@
 #pragma once
 #include <nxui/core/Types.hpp>
+#include <nxui/core/DisplayOrientation.hpp>
 #include <nxui/core/GpuDevice.hpp>
 #ifdef NXUI_BACKEND_DEKO3D
 #include <deko3d.hpp>
@@ -106,6 +107,11 @@ public:
     void drawGradientRect(const Rect& r, const Color& top, const Color& bottom);
     void drawTexture(const Texture* tex, const Rect& dest, const Color& tint = Color::white());
     void drawTextureSub(const Texture* tex, const Rect& src, const Rect& dest, const Color& tint = Color::white());
+    /// Draw a FB-space capture so it covers the physical screen under the
+    /// current layout projection (leave splash / folder backdrop). `scale`
+    /// punches around the FB centre (1 = exact cover).
+    void drawTextureFramebufferCover(const Texture* tex, const Color& tint = Color::white(),
+                                     float scale = 1.f);
     void drawTextureRounded(const Texture* tex, const Rect& dest, float radius, const Color& tint = Color::white());
     void drawTextureSubRounded(const Texture* tex, const Rect& src, const Rect& dest,
                                float radius, const Color& tint = Color::white());
@@ -120,6 +126,8 @@ public:
     void captureToOffscreen(bool reuseIfValid = false);
     void copyOffscreen(int srcTarget, int dstTarget);
     void drawOffscreen(int target, const Rect& dest, const Color& tint = Color::white());
+    void drawOffscreenFramebufferCover(int target, const Color& tint = Color::white(),
+                                       float scale = 1.f);
     void drawOffscreenRounded(int target, const Rect& dest, float radius,
                               const Color& tint = Color::white());
     void drawLiquidGlass(int target, const Rect& panelRect, float radius,
@@ -138,9 +146,21 @@ public:
     void pushClipRect(const Rect& r);
     void popClipRect();
 
-    // Screen dimensions
+    // Screen dimensions (framebuffer)
     int width()  const { return m_gpu.width(); }
     int height() const { return m_gpu.height(); }
+
+    // Flip-Grip portrait: draw in logical WxH; projection maps into the FB so
+    // nwindow ROT_90/270 presents an upright tall UI. Landscape = identity.
+    void setLayoutOrientation(DisplayOrientation orientation,
+                              float logicalW = 0.f, float logicalH = 0.f);
+    DisplayOrientation layoutOrientation() const { return m_layoutOrientation; }
+    float layoutWidth() const {
+        return m_layoutW > 0.f ? m_layoutW : static_cast<float>(m_gpu.width());
+    }
+    float layoutHeight() const {
+        return m_layoutH > 0.f ? m_layoutH : static_cast<float>(m_gpu.height());
+    }
 
     // Flush current batch
     void flush();
@@ -254,6 +274,11 @@ private:
     bool m_liquidGlassDebugRawBackdrop = false;
     bool m_reusableOffscreenCaptureValid = false;
     LiquidGlassSettings m_liquidGlassSettings;
+
+    DisplayOrientation m_layoutOrientation = DisplayOrientation::Landscape0;
+    float m_layoutW = 0.f;
+    float m_layoutH = 0.f;
+    Rect layoutClipToFramebuffer(const Rect& logical) const;
 
     static inline std::string s_shaderBasePath = "romfs:/shaders/";
 };

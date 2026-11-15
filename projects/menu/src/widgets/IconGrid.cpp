@@ -462,9 +462,10 @@ nxui::Rect IconGrid::dynamicIconRect(int index, float* outScale,
                                      float* outOpacity,
                                      float* outDistance) const {
     const float centerX = m_rect.x + m_rect.width * 0.5f;
-    // Unfocused row sits in the lower half; a focused Poster rises to true
-    // vertical centre so the title pill has equal air above/below.
-    const float lineCenterY = m_rect.y + m_rect.height * 0.66f;
+    // Logos on: sit in the lower half so the logo band stays clear. Logos off:
+    // true mid-band so tiles/posters feel centered (HOME + folders).
+    const float lineCenterY = m_rect.y
+        + m_rect.height * (m_lineVerticallyCentered ? 0.50f : 0.66f);
     const float offset = m_lineScrollOffset.value();
     // Carousel sizing is independent of grid density. Square icons stay square;
     // apps with a Poster and folders (when posters are enabled) use tall 2:3.
@@ -502,11 +503,16 @@ nxui::Rect IconGrid::dynamicIconRect(int index, float* outScale,
     const float w = baseCellW * s;
     const float h = baseCellH * s;
     float centerY = lineCenterY;
-    if (poster && focusBlend > 0.f) {
+    // Landscape: focused posters rise toward screen mid. Portrait: keep the
+    // same baseline as neighbours so the carousel stays level.
+    const bool portraitLine = m_rect.height > m_rect.width + 0.5f;
+    if (poster && focusBlend > 0.f && !portraitLine) {
         // Clear the clock capsule (~y 70) and leave room for the title pill.
         constexpr float kTopPad = 100.f;
         constexpr float kBottomPad = 128.f;
-        const float focusedCenterY = kTopPad + (720.f - kTopPad - kBottomPad) * 0.5f;
+        const float layoutH = m_rect.height > 1.f ? (m_rect.y * 2.f + m_rect.height) : 720.f;
+        const float screenH = std::max(m_rect.bottom(), layoutH);
+        const float focusedCenterY = kTopPad + (screenH - kTopPad - kBottomPad) * 0.5f;
         centerY = lineCenterY + (focusedCenterY - lineCenterY) * focusBlend;
     }
     const float x = centerX + d * lineSpacing - w * 0.5f;
@@ -896,11 +902,12 @@ void IconGrid::renderPageAt(nxui::Renderer& ren, int page, float dx) {
 }
 
 void IconGrid::renderDynamicLine(nxui::Renderer& ren) {
-    // Focused Posters rise above the grid band for vertical centering — clip to
-    // the full screen height so their tops (and rounded corners) are not sheared.
+    // Focused Posters may rise above the grid band (landscape) — clip to the
+    // full layout height so their tops (and rounded corners) are not sheared.
     nxui::Rect clip = m_rect;
     clip.y = 0.f;
-    clip.height = 720.f;
+    const float layoutH = m_rect.height > m_rect.width + 0.5f ? 1280.f : 720.f;
+    clip.height = std::max(m_rect.bottom(), layoutH);
     ren.pushClipRect(clip);
 
     // The focused index is a linear scan over every icon. Reading it inside the
@@ -966,7 +973,7 @@ void IconGrid::renderLayoutMorph(nxui::Renderer& ren) {
 
     nxui::Rect clip = m_rect;
     clip.y = 0.f;
-    clip.height = 720.f;
+    clip.height = std::max(m_rect.bottom(), 720.f);
     ren.pushClipRect(clip);
     for (const auto& c : candidates) {
         auto& icon = m_allIcons[c.index];
