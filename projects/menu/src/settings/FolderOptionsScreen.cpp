@@ -31,6 +31,7 @@ void FolderOptionsScreen::setFolder(const FolderInfo& info) {
     m_folder = info;
     m_folder.colorIndex = std::clamp(m_folder.colorIndex, 0, 7);
     m_folder.sizeIndex = std::clamp(m_folder.sizeIndex, 0, 2);
+    m_folder.tileSizeIndex = std::clamp(m_folder.tileSizeIndex, 0, 4);
     m_folder.styleIndex = std::clamp(m_folder.styleIndex, 0,
                                      switchu::folders::kFolderStyleCount - 1);
     m_folder.defaultViewIndex = std::clamp(m_folder.defaultViewIndex, 0, 2);
@@ -125,6 +126,20 @@ void FolderOptionsScreen::buildTabs() {
     };
     appearance.items.push_back(std::move(style));
 
+    SettingItem tileSize;
+    tileSize.label = i18n.tr("folder.tile_size", "Tile size");
+    tileSize.description = i18n.tr(
+        "folder.tile_size_desc",
+        "Changes the size of this folder on the HOME grid.");
+    tileSize.type = ItemType::Selector;
+    tileSize.options = {"1x1", "2x1", "4x2", "2x2", "2x3"};
+    tileSize.intVal = m_folder.tileSizeIndex;
+    tileSize.onChange = [this](SettingItem& self) {
+        m_folder.tileSizeIndex = std::clamp(self.intVal, 0, 4);
+        if (m_tileSizeCb) m_tileSizeCb(m_folder.tileSizeIndex);
+    };
+    appearance.items.push_back(std::move(tileSize));
+
     SettingItem cover;
     cover.label = i18n.tr("folder.show_cover", "Show cover");
     cover.description = i18n.tr(
@@ -138,47 +153,137 @@ void FolderOptionsScreen::buildTabs() {
         if (m_coverCb) m_coverCb(m_folder.showCover);
     };
     appearance.items.push_back(std::move(cover));
-
-    SettingItem customIcon;
-    customIcon.label = i18n.tr("folder.custom_icon", "Custom cover icon");
-    customIcon.buttonLabel = i18n.tr("button.select", "Select");
-    if (m_folder.hasCustomIcon) {
-        customIcon.secondaryButtonLabel = i18n.tr("button.clear_x", "×");
-        customIcon.onSecondary = [this](SettingItem&) {
-            if (m_customIconClearCb) m_customIconClearCb();
-        };
-    }
-    customIcon.description = m_folder.hasCustomIcon
-        ? i18n.tr("folder.custom_icon_set_desc",
-                  "SteamGridDB icon is active for this folder. Requires Show cover.")
-        : i18n.tr("folder.custom_icon_desc",
-                  "Search SteamGridDB for an icon.");
-    customIcon.type = ItemType::Action;
-    customIcon.onChange = [this](SettingItem&) {
-        if (m_customIconSelectCb) m_customIconSelectCb();
-    };
-    appearance.items.push_back(std::move(customIcon));
-
-    SettingItem customPoster;
-    customPoster.label = i18n.tr("folder.custom_poster", "Custom poster");
-    customPoster.buttonLabel = i18n.tr("button.select", "Select");
-    if (m_folder.hasCustomPoster) {
-        customPoster.secondaryButtonLabel = i18n.tr("button.clear_x", "×");
-        customPoster.onSecondary = [this](SettingItem&) {
-            if (m_customPosterClearCb) m_customPosterClearCb();
-        };
-    }
-    customPoster.description = m_folder.hasCustomPoster
-        ? i18n.tr("folder.custom_poster_set_desc",
-                  "SteamGridDB poster is active for this folder in single-row view.")
-        : i18n.tr("folder.custom_poster_desc",
-                  "Search SteamGridDB for tall art.");
-    customPoster.type = ItemType::Action;
-    customPoster.onChange = [this](SettingItem&) {
-        if (m_customPosterSelectCb) m_customPosterSelectCb();
-    };
-    appearance.items.push_back(std::move(customPoster));
     m_tabs.push_back(std::move(appearance));
+
+    Tab artwork;
+    artwork.name = i18n.tr("folder.steamgriddb", "SteamGridDB");
+
+    // Invoke member callbacks at click time — setFolder/buildTabs often runs
+    // before showFolderContextMenu rebinds onCustom*Select, and capturing the
+    // VoidCb by value left rows dead or wired to the previous folder (search leak).
+    enum class ArtAction { Hero, Logo, Poster, PosterWide, Icon, SquareCover };
+    auto addArtRow = [this, &artwork, &i18n](const char* labelKey,
+                                             const char* label,
+                                             const char* descKey,
+                                             const char* desc,
+                                             bool hasArt,
+                                             ArtAction action) {
+        SettingItem row;
+        row.label = i18n.tr(labelKey, label);
+        row.buttonLabel = i18n.tr("button.select", "Select");
+        if (hasArt) {
+            row.secondaryButtonLabel = i18n.tr("button.clear_x", "×");
+            row.onSecondary = [this, action](SettingItem&) {
+                switch (action) {
+                    case ArtAction::Hero:
+                        if (m_customHeroClearCb) m_customHeroClearCb();
+                        break;
+                    case ArtAction::Logo:
+                        if (m_customLogoClearCb) m_customLogoClearCb();
+                        break;
+                    case ArtAction::Poster:
+                        if (m_customPosterClearCb) m_customPosterClearCb();
+                        break;
+                    case ArtAction::PosterWide:
+                        if (m_customPosterWideClearCb) m_customPosterWideClearCb();
+                        break;
+                    case ArtAction::Icon:
+                        if (m_customIconClearCb) m_customIconClearCb();
+                        break;
+                    case ArtAction::SquareCover:
+                        if (m_customSquareCoverClearCb) m_customSquareCoverClearCb();
+                        break;
+                }
+            };
+        }
+        row.description = i18n.tr(descKey, desc);
+        row.type = ItemType::Action;
+        row.onChange = [this, action](SettingItem&) {
+            switch (action) {
+                case ArtAction::Hero:
+                    if (m_customHeroSelectCb) m_customHeroSelectCb();
+                    break;
+                case ArtAction::Logo:
+                    if (m_customLogoSelectCb) m_customLogoSelectCb();
+                    break;
+                case ArtAction::Poster:
+                    if (m_customPosterSelectCb) m_customPosterSelectCb();
+                    break;
+                case ArtAction::PosterWide:
+                    if (m_customPosterWideSelectCb) m_customPosterWideSelectCb();
+                    break;
+                case ArtAction::Icon:
+                    if (m_customIconSelectCb) m_customIconSelectCb();
+                    break;
+                case ArtAction::SquareCover:
+                    if (m_customSquareCoverSelectCb) m_customSquareCoverSelectCb();
+                    break;
+            }
+        };
+        artwork.items.push_back(std::move(row));
+    };
+
+    addArtRow("game.steamgriddb.hero", "Hero",
+              "game.steamgriddb.hero_desc", "Choose a hero image.",
+              m_folder.hasCustomHero, ArtAction::Hero);
+
+    SettingItem customizeHero;
+    customizeHero.type = ItemType::Action;
+    customizeHero.label = i18n.tr("game.steamgriddb.customize_hero", "Customize Hero");
+    customizeHero.buttonLabel = i18n.tr("button.open", "Open");
+    if (m_folder.hasHeroPresentation) {
+        customizeHero.secondaryButtonLabel = i18n.tr("button.clear_x", "×");
+        customizeHero.onSecondary = [this](SettingItem&) {
+            if (m_clearHeroPresentationCb) m_clearHeroPresentationCb();
+        };
+    }
+    customizeHero.description = i18n.tr(
+        "folder.customize_hero_desc",
+        "Crop and pan this folder's hero for landscape and Flip-Grip.");
+    customizeHero.indentLevel = 1;
+    customizeHero.enabled = m_folder.hasCustomHero;
+    customizeHero.onChange = [this](SettingItem&) {
+        if (m_customizeHeroCb) m_customizeHeroCb();
+    };
+    artwork.items.push_back(std::move(customizeHero));
+
+    SettingItem overrideHeroes;
+    overrideHeroes.label = i18n.tr("folder.override_title_heroes", "Override Title Heroes");
+    overrideHeroes.description = i18n.tr(
+        "folder.override_title_heroes_desc",
+        "While this folder is open, always show the folder hero instead of each title's hero.");
+    overrideHeroes.type = ItemType::Toggle;
+    overrideHeroes.boolVal = m_folder.overrideTitleHeroes;
+    overrideHeroes.anim01 = overrideHeroes.boolVal ? 1.f : 0.f;
+    overrideHeroes.enabled = m_folder.hasCustomHero;
+    overrideHeroes.onChange = [this](SettingItem& self) {
+        m_folder.overrideTitleHeroes = self.boolVal;
+        if (m_overrideTitleHeroesCb) m_overrideTitleHeroesCb(m_folder.overrideTitleHeroes);
+    };
+    artwork.items.push_back(std::move(overrideHeroes));
+
+    addArtRow("game.steamgriddb.logo", "Logo",
+              "game.steamgriddb.logo_desc", "Choose a logo.",
+              m_folder.hasCustomLogo, ArtAction::Logo);
+    addArtRow("game.steamgriddb.poster", "Poster",
+              "game.steamgriddb.poster_desc", "Tall art in single-row and 2x3.",
+              m_folder.hasCustomPoster, ArtAction::Poster);
+    if (m_folder.tileSizeIndex == 1 || m_folder.tileSizeIndex == 2) {
+        addArtRow("game.steamgriddb.poster_wide", "Poster wide",
+                  "game.steamgriddb.poster_wide_desc",
+                  "Landscape grid art for this 2x1 / 4x2 tile.",
+                  m_folder.hasCustomPosterWide, ArtAction::PosterWide);
+    }
+    addArtRow("game.steamgriddb.icon", "Replacement icon",
+              "game.steamgriddb.icon_desc", "Applies to 1x1 and 2x2.",
+              m_folder.hasCustomIcon, ArtAction::Icon);
+    if (m_folder.tileSizeIndex == 0 || m_folder.tileSizeIndex == 3) {
+        addArtRow("game.steamgriddb.square_cover", "Square cover",
+                  "game.steamgriddb.square_cover_desc",
+                  "Applies to 1x1 and 2x2.",
+                  m_folder.hasCustomSquareCover, ArtAction::SquareCover);
+    }
+    m_tabs.push_back(std::move(artwork));
 
     Tab management;
     management.name = i18n.tr("folder.management", "Management");

@@ -70,10 +70,18 @@ public:
         m_folderPeeks = peeks;
         m_folderPeekCount = std::clamp(count, 0, switchu::folders::kFolderPeekMax);
     }
+    void setFolderPeekGrid(int columns, int rows) {
+        m_folderPeekColumns = std::clamp(columns, 1, switchu::folders::kFolderPeekMaxColumns);
+        m_folderPeekRows = std::clamp(rows, 1, switchu::folders::kFolderPeekMaxRows);
+    }
+    int folderPeekColumns() const { return m_folderPeekColumns; }
+    int folderPeekRows() const { return m_folderPeekRows; }
     int folderPeekCount() const { return m_folderPeekCount; }
     void clearFolderPeeks() {
         m_folderPeeks.fill(nullptr);
         m_folderPeekCount = 0;
+        m_folderPeekColumns = 2;
+        m_folderPeekRows = 3;
     }
     void setThemeMode(nxui::ThemeMode mode) { m_themeMode = mode; }
     void setFont(nxui::Font* font) { m_font = font; }  // folder tiles carry their name
@@ -233,6 +241,8 @@ private:
     bool          m_folderPeekComposite = false;
     std::array<nxui::Texture*, switchu::folders::kFolderPeekMax> m_folderPeeks{};
     int           m_folderPeekCount = 0;
+    int           m_folderPeekColumns = 2;
+    int           m_folderPeekRows = 3;
     std::uint64_t m_folderCoverTitleId = 0;
     nxui::ThemeMode m_themeMode = nxui::ThemeMode::Dark;
     nxui::Font*   m_font = nullptr;

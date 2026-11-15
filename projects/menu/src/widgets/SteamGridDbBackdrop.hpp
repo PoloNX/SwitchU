@@ -51,7 +51,11 @@ public:
     void setPreloadMinInterval(float seconds);
     void setPreloadPaused(bool paused);
     bool isArtworkBusy() const;
+    // Hero + logo from the same title (normal title focus).
     void showTitle(std::uint64_t titleId, bool forceReload = false);
+    // Folder override/fallback: hero from one id, logo from another (0 = none).
+    void showArtwork(std::uint64_t heroTitleId, std::uint64_t logoTitleId,
+                     bool forceReload = false);
 
 protected:
     void onUpdate(float dt) override;
@@ -61,7 +65,8 @@ private:
     struct ArtworkSet {
         nxui::Texture hero;
         nxui::Texture logo;
-        std::uint64_t titleId = 0;
+        std::uint64_t titleId = 0; // hero source id (cache / presentation key)
+        std::uint64_t logoTitleId = 0;
         bool portrait = false; // which Customize Hero slot this texture was baked for
         bool hasHero = false;
         bool hasLogo = false;
@@ -77,11 +82,13 @@ private:
     struct DecodedArtwork {
         DecodedImage hero;
         DecodedImage logo;
-        std::uint64_t titleId = 0;
+        std::uint64_t titleId = 0; // hero source id
+        std::uint64_t logoTitleId = 0;
         std::uint64_t generation = 0;
         long decodeMilliseconds = 0;
         float heroLuminance = -1.f;
         bool portrait = false;
+        bool logoOnly = false; // keep on-screen hero; replace logo only
     };
 
     struct DecodeState {
@@ -105,7 +112,8 @@ private:
     static nxui::Rect containRect(const nxui::Texture& texture, const nxui::Rect& area);
     bool useFullHeroOpacity() const;
     void drawSet(nxui::Renderer& renderer, const ArtworkSet& set, float alpha) const;
-    void startPendingDecode(std::uint64_t titleId, bool portrait);
+    void startPendingDecode(std::uint64_t heroTitleId, std::uint64_t logoTitleId,
+                            bool portrait, bool logoOnly = false);
     void beginCrossfade(int nextSet, std::uint64_t titleId);
     bool hasGpuArtwork(std::uint64_t titleId) const;
     bool hasGpuArtwork(std::uint64_t titleId, bool portrait) const;
@@ -121,7 +129,8 @@ private:
     std::array<ArtworkSet, 2> m_sets;
     int m_current = 0;
     bool m_enabled = true;
-    std::uint64_t m_requestedTitleId = 0;
+    std::uint64_t m_requestedTitleId = 0; // hero source
+    std::uint64_t m_requestedLogoTitleId = 0;
     std::uint64_t m_requestGeneration = 0;
     std::uint64_t m_appliedGeneration = 0;
     float m_decodeDebounce = 0.f;

@@ -1519,7 +1519,9 @@ void WiiUMenuApp::applyHomeOrientationState(bool saveConfig) {
         focusManager().setFocus(prevFocus);
     }
 
-    // Prefer a warm opposite-orientation crop on rotate (Customize Hero).
+    // Reflow flips portraitBackdrop; prefer a warm opposite-orientation crop
+    // (no forced reload — that would discard the prefetch). Miss path still
+    // reloads because setPortraitBackdrop cleared m_requestedTitleId.
     if (m_steamGridDbBackdrop) {
         m_steamGridDbBackdrop->setLayoutMode(m_appLayoutMode);
         m_backdropSyncValid = false;
@@ -2187,7 +2189,23 @@ void WiiUMenuApp::reflowHomeGrid() {
                 oldIcons[i]->setFolderCoverTitleId(entry.folderCoverTitleId);
                 oldIcons[i]->setFolderStyleIndex(m_config.folderStyle);
                 oldIcons[i]->setFolderShowCover(m_config.folderShowCover);
-                oldIcons[i]->setPosterFrame(preferSingleRowPosters());
+                oldIcons[i]->setGridSpan(entry.widgetColumns, entry.widgetRows);
+                const bool tallPosterTile = switchu::widgets::isTallPosterGameTile(
+                    entry.widgetColumns, entry.widgetRows);
+                oldIcons[i]->setPosterFrame(
+                    (preferSingleRowPosters() || tallPosterTile)
+                    && SteamGridDbManager::hasPoster(entry.titleId));
+                const bool landscapeTile = switchu::widgets::isLandscapeWideGameTile(
+                    entry.widgetColumns, entry.widgetRows);
+                if (m_appLayoutMode == AppLayoutMode::Grid
+                    && (landscapeTile || tallPosterTile)
+                    && (SteamGridDbManager::hasPoster(entry.titleId)
+                        || SteamGridDbManager::hasGridWide(entry.titleId)
+                        || SteamGridDbManager::hasHeroPresentation(entry.titleId))) {
+                    ensureGameArtwork(entry.titleId);
+                }
+                oldIcons[i]->setWideGameTextures(nullptr, nullptr);
+                oldIcons[i]->setTallGamePoster(nullptr);
             }
         } else {
             auto icon = makeIcon(rebuiltModel.at(i));
@@ -2408,6 +2426,11 @@ void WiiUMenuApp::composeRootPending(std::vector<PendingApp>& apps) {
         item.folderColorIndex = folder.colorIndex;
         item.folderCoverTitleId = resolveFolderCoverTitleId(
             folder, preferSingleRowPosters());
+        {
+            const auto folderSize = gameGridSize(item.titleId, m_appLayoutMode);
+            item.widgetColumns = folderSize.columns;
+            item.widgetRows = folderSize.rows;
+        }
         itemOrder.push_back(item.titleId);
         byId.emplace(item.titleId, std::move(item));
     }
@@ -2491,7 +2514,8 @@ void WiiUMenuApp::composeRootPending(std::vector<PendingApp>& apps) {
             auto found = byId.find(slots[static_cast<std::size_t>(index)]);
             if (found == byId.end() ||
                 (found->second.kind != GridEntryKind::Widget &&
-                 found->second.kind != GridEntryKind::Application))
+                 found->second.kind != GridEntryKind::Application &&
+                 found->second.kind != GridEntryKind::Folder))
                 continue;
             auto& item = found->second;
             int spanColumns = std::max(1, item.widgetColumns);
@@ -2588,6 +2612,11 @@ GridModel WiiUMenuApp::buildRootFolderModel() {
         entry.folderColorIndex = folder.colorIndex;
         entry.folderCoverTitleId = resolveFolderCoverTitleId(
             folder, preferSingleRowPosters());
+        {
+            const auto size = gameGridSize(entry.titleId, m_appLayoutMode);
+            entry.widgetColumns = size.columns;
+            entry.widgetRows = size.rows;
+        }
         entries.emplace(entry.titleId, std::move(entry));
     }
     for (const auto& widget : m_widgetStore.all()) {
@@ -2774,8 +2803,10 @@ GridModel WiiUMenuApp::buildRootFolderModel() {
     if (m_appLayoutMode == AppLayoutMode::Grid) {
         for (int index = 0; index < static_cast<int>(displaySlots.size()); ++index) {
             auto found = entries.find(displaySlots[static_cast<std::size_t>(index)]);
+            // Folders can span HOME tiles the same way as apps/widgets.
             if (found == entries.end() ||
-                (!found->second.isWidget() && !found->second.isApplication()))
+                (!found->second.isWidget() && !found->second.isApplication()
+                 && !found->second.isFolder()))
                 continue;
             auto& entry = found->second;
             const int spanColumns = std::max(1, entry.widgetColumns);
@@ -3484,16 +3515,40 @@ void WiiUMenuApp::syncGameArtworkTextures(std::uint64_t titleId) {
     const auto artwork = m_gameArtwork.find(titleId);
     if (artwork == m_gameArtwork.end()) return;
     for (const auto& icon : m_grid->allIcons()) {
-        if (icon && icon->entryKind() == GridEntryKind::Application &&
-            icon->titleId() == titleId) {
-            const int cols = icon->gridSpanColumns();
-            const int rows = icon->gridSpanRows();
-            if (switchu::widgets::isLandscapeWideGameTile(cols, rows))
-                icon->setWideGameTextures(artwork->second.hero.get(),
-                                          artwork->second.logo.get());
-            if (switchu::widgets::isTallPosterGameTile(cols, rows))
-                icon->setTallGamePoster(artwork->second.poster.get());
+        if (!icon || icon->titleId() != titleId)
+            continue;
+        if (icon->entryKind() != GridEntryKind::Application
+            && icon->entryKind() != GridEntryKind::Folder)
+            continue;
+        const int cols = icon->gridSpanColumns();
+        const int rows = icon->gridSpanRows();
+        const bool wide = switchu::widgets::isLandscapeWideGameTile(cols, rows);
+        const bool tall = switchu::widgets::isTallPosterGameTile(cols, rows);
+        if (icon->entryKind() == GridEntryKind::Folder) {
+            // Folder faces keep style chrome — attach as inset cover, not a
+            // bare game tile. Peeks win until custom art is present.
+            if (icon->folderPeekCount() > 0)
+                continue;
+            icon->setWideGameTextures(nullptr, nullptr);
+            icon->setTallGamePoster(nullptr);
+            nxui::Texture* face = nullptr;
+            if (tall && artwork->second.poster && artwork->second.poster->valid())
+                face = artwork->second.poster.get();
+            else if (wide && artwork->second.hero && artwork->second.hero->valid())
+                face = artwork->second.hero.get();
+            if (face) {
+                icon->setFolderCoverTexture(face);
+                icon->setFolderCoverIsPoster(true);
+                if (tall)
+                    icon->setPosterFrame(true);
+            }
+            continue;
         }
+        if (wide)
+            icon->setWideGameTextures(artwork->second.hero.get(),
+                                      artwork->second.logo.get());
+        if (tall)
+            icon->setTallGamePoster(artwork->second.poster.get());
     }
 }
 
@@ -3958,11 +4013,14 @@ void WiiUMenuApp::syncWidgetPageAssets() {
     std::unordered_set<std::uint64_t> retainedGameArtwork;
     for (std::size_t i = 0; i < icons.size(); ++i) {
         const auto* icon = icons[i].get();
-        if (!icon || icon->entryKind() != GridEntryKind::Application)
+        if (!icon
+            || (icon->entryKind() != GridEntryKind::Application
+                && icon->entryKind() != GridEntryKind::Folder))
             continue;
         const int cols = icon->gridSpanColumns();
         const int rows = icon->gridSpanRows();
-        // 2x1 / 4x2 landscape + 2x3 tall tiles own dedicated GPU art.
+        // 2x1 / 4x2 landscape + 2x3 tall tiles own dedicated GPU art
+        // (applications and multi-cell folder faces).
         if (!switchu::widgets::isLandscapeWideGameTile(cols, rows)
             && !switchu::widgets::isTallPosterGameTile(cols, rows))
             continue;
@@ -4020,8 +4078,9 @@ void WiiUMenuApp::syncWidgetPageAssets() {
     if (m_appLayoutMode == AppLayoutMode::Grid) {
         for (std::size_t i = 0; i < icons.size(); ++i) {
             auto* icon = icons[i].get();
-            if (!icon || !current[i] ||
-                icon->entryKind() != GridEntryKind::Application)
+            if (!icon || !current[i]
+                || (icon->entryKind() != GridEntryKind::Application
+                    && icon->entryKind() != GridEntryKind::Folder))
                 continue;
             const int cols = icon->gridSpanColumns();
             const int rows = icon->gridSpanRows();
@@ -4029,13 +4088,35 @@ void WiiUMenuApp::syncWidgetPageAssets() {
             const bool tall = switchu::widgets::isTallPosterGameTile(cols, rows);
             if (!wide && !tall)
                 continue;
+            // Folder peeks own the face until custom poster / poster-wide is set.
+            if (icon->entryKind() == GridEntryKind::Folder
+                && icon->folderPeekCount() > 0)
+                continue;
             const auto artwork = m_gameArtwork.find(icon->titleId());
             if (artwork != m_gameArtwork.end()) {
-                if (wide)
-                    icon->setWideGameTextures(artwork->second.hero.get(),
-                                              artwork->second.logo.get());
-                if (tall)
-                    icon->setTallGamePoster(artwork->second.poster.get());
+                if (icon->entryKind() == GridEntryKind::Folder) {
+                    icon->setWideGameTextures(nullptr, nullptr);
+                    icon->setTallGamePoster(nullptr);
+                    nxui::Texture* face = nullptr;
+                    if (tall && artwork->second.poster
+                        && artwork->second.poster->valid())
+                        face = artwork->second.poster.get();
+                    else if (wide && artwork->second.hero
+                             && artwork->second.hero->valid())
+                        face = artwork->second.hero.get();
+                    if (face) {
+                        icon->setFolderCoverTexture(face);
+                        icon->setFolderCoverIsPoster(true);
+                        if (tall)
+                            icon->setPosterFrame(true);
+                    }
+                } else {
+                    if (wide)
+                        icon->setWideGameTextures(artwork->second.hero.get(),
+                                                  artwork->second.logo.get());
+                    if (tall)
+                        icon->setTallGamePoster(artwork->second.poster.get());
+                }
             } else {
                 ensureGameArtwork(icon->titleId());
             }
@@ -4043,7 +4124,9 @@ void WiiUMenuApp::syncWidgetPageAssets() {
     } else {
         for (std::size_t i = 0; i < icons.size(); ++i) {
             auto* icon = icons[i].get();
-            if (icon && icon->entryKind() == GridEntryKind::Application) {
+            if (icon
+                && (icon->entryKind() == GridEntryKind::Application
+                    || icon->entryKind() == GridEntryKind::Folder)) {
                 icon->setWideGameTextures(nullptr, nullptr);
                 icon->setTallGamePoster(nullptr);
             }
@@ -5236,7 +5319,8 @@ std::uint64_t WiiUMenuApp::resolveFolderCoverTitleId(
     const std::uint64_t pseudo = folderTitleId(folder.id);
     if (preferPoster && SteamGridDbManager::hasPoster(pseudo))
         return pseudo;
-    if (SteamGridDbManager::hasIcon(pseudo))
+    if (SteamGridDbManager::hasGridSquare(pseudo)
+        || SteamGridDbManager::hasIcon(pseudo))
         return pseudo;
     return switchu::folders::firstCoverTitleId(folder);
 }
@@ -6445,7 +6529,8 @@ void WiiUMenuApp::trimFolderArtCachesDrip() {
         return;
     if (m_grid && m_grid->isLayoutMorphing())
         return;
-    constexpr std::size_t kMaxPeeks = 32;
+    // 4×2 folders hold 10 peeks each — keep headroom for a few on-screen albums.
+    constexpr std::size_t kMaxPeeks = 80;
     constexpr std::size_t kMaxComposites = 24;
     constexpr std::size_t kMaxCovers = 24;
     if (m_folderPeekCache.size() <= kMaxPeeks
@@ -6546,6 +6631,17 @@ void WiiUMenuApp::applyFolderCoversToIcons(int centerIndex, int radius,
         const std::uint64_t coverId = m_model.at(i).folderCoverTitleId;
         const std::uint64_t pseudo = m_model.at(i).titleId;
         const std::uint32_t folderId = m_model.at(i).folderId;
+        const int spanCols = std::max(1, icon->gridSpanColumns());
+        const int spanRows = std::max(1, icon->gridSpanRows());
+        const int spanCells = spanCols * spanRows;
+        const bool landscapeTile =
+            switchu::widgets::isLandscapeWideGameTile(spanCols, spanRows);
+        const bool tallTile =
+            switchu::widgets::isTallPosterGameTile(spanCols, spanRows);
+        const bool customFolderFace =
+            (tallTile && SteamGridDbManager::hasPoster(pseudo))
+            || (landscapeTile && (SteamGridDbManager::hasGridWide(pseudo)
+                                  || SteamGridDbManager::hasHeroPresentation(pseudo)));
 
         // Single-row: custom folder poster, else baked 2×3 composite (async).
         if (preferPoster) {
@@ -6573,6 +6669,100 @@ void WiiUMenuApp::applyFolderCoversToIcons(int centerIndex, int radius,
             icon->clearFolderPeeks();
             // Mark done so outward fill can move on; pump attaches when baked.
             markFolderCoverFilled(i);
+            continue;
+        }
+
+        // 1×1 / 2×2: square cover (SGDB grids) then Replacement icon, inside
+        // folder chrome. Tall poster / landscape poster-wide still win.
+        const bool squareTile = (spanCols == 1 && spanRows == 1)
+            || (spanCols == 2 && spanRows == 2);
+        if (!customFolderFace && squareTile
+            && (SteamGridDbManager::hasGridSquare(pseudo)
+                || SteamGridDbManager::hasIcon(pseudo))) {
+            icon->setFolderPeekComposite(false);
+            icon->clearFolderPeeks();
+            icon->setWideGameTextures(nullptr, nullptr);
+            icon->setTallGamePoster(nullptr);
+            // loadIconData prefers gridsquare.img over icon.img.
+            nxui::Texture* iconTex = folderCoverTexture(pseudo, false, allowColdLoad);
+            icon->setFolderCoverTexture(iconTex);
+            // Reuse the custom-face path so classic + other styles keep chrome.
+            icon->setFolderCoverIsPoster(iconTex != nullptr);
+            if (iconTex || allowColdLoad)
+                markFolderCoverFilled(i);
+            continue;
+        }
+
+        // Grid multi-cell folders: live peeks matching the tile span, unless a
+        // custom SGDB folder hero/poster owns the face.
+        if (m_appLayoutMode == AppLayoutMode::Grid && spanCells > 1
+            && !customFolderFace) {
+            icon->setFolderPeekComposite(false);
+            icon->setFolderCoverIsPoster(false);
+            icon->setFolderCoverTexture(nullptr);
+            icon->setWideGameTextures(nullptr, nullptr);
+            icon->setTallGamePoster(nullptr);
+
+            int peekCols = spanCols;
+            int peekRows = spanRows;
+            switchu::folders::folderPeekGridForSpan(spanCols, spanRows, peekCols, peekRows);
+            const int want = std::min(peekCols * peekRows, switchu::folders::kFolderPeekMax);
+            std::array<nxui::Texture*, switchu::folders::kFolderPeekMax> peeks{};
+            int peekCount = 0;
+            if (const auto* folder = m_folderStore.find(folderId)) {
+                for (const std::uint64_t titleId : folder->titleIds) {
+                    if (titleId == 0)
+                        continue;
+                    if (peekCount >= want)
+                        break;
+                    if (auto* tex = folderPeekTexture(titleId, true))
+                        peeks[static_cast<std::size_t>(peekCount++)] = tex;
+                    else if (!allowColdLoad)
+                        break;
+                }
+            }
+            icon->setFolderPeekGrid(peekCols, peekRows);
+            icon->setFolderPeekTextures(peeks, peekCount);
+            const int memberCap = [&]() {
+                if (const auto* folder = m_folderStore.find(folderId)) {
+                    int n = 0;
+                    for (const std::uint64_t titleId : folder->titleIds) {
+                        if (titleId != 0)
+                            ++n;
+                    }
+                    return std::min(n, want);
+                }
+                return 0;
+            }();
+            if (peekCount >= memberCap || allowColdLoad)
+                markFolderCoverFilled(i);
+            continue;
+        }
+
+        if (customFolderFace) {
+            // Same as single-row: custom art sits inside folder style chrome.
+            icon->setFolderPeekComposite(false);
+            icon->clearFolderPeeks();
+            icon->setWideGameTextures(nullptr, nullptr);
+            icon->setTallGamePoster(nullptr);
+            ensureGameArtwork(pseudo);
+            nxui::Texture* face = nullptr;
+            const auto artwork = m_gameArtwork.find(pseudo);
+            if (artwork != m_gameArtwork.end()) {
+                if (tallTile && artwork->second.poster && artwork->second.poster->valid())
+                    face = artwork->second.poster.get();
+                else if (landscapeTile && artwork->second.hero
+                         && artwork->second.hero->valid())
+                    face = artwork->second.hero.get();
+            }
+            if (!face && tallTile)
+                face = folderCoverTexture(pseudo, true, allowColdLoad);
+            icon->setFolderCoverTexture(face);
+            icon->setFolderCoverIsPoster(face != nullptr);
+            if (tallTile)
+                icon->setPosterFrame(face != nullptr);
+            if (face)
+                markFolderCoverFilled(i);
             continue;
         }
 
@@ -6733,7 +6923,27 @@ std::shared_ptr<GlossyIcon> WiiUMenuApp::makeIcon(const AppEntry& entry) {
         });
         icon->setFolderCoverTitleId(entry.folderCoverTitleId);
         icon->setFolderShowCover(m_config.folderShowCover);
-        icon->setPosterFrame(preferSingleRowPosters());
+        icon->setFolderStyleIndex(m_config.folderStyle);
+        icon->setFolderColorIndex(entry.folderColorIndex);
+        icon->setFolderPreviewCount(entry.folderPreviewCount);
+        icon->setGridSpan(entry.widgetColumns, entry.widgetRows);
+        const bool tallPosterTile = switchu::widgets::isTallPosterGameTile(
+            entry.widgetColumns, entry.widgetRows);
+        icon->setPosterFrame(
+            (preferSingleRowPosters() || tallPosterTile)
+            && SteamGridDbManager::hasPoster(entry.titleId));
+        const bool landscapeTile = switchu::widgets::isLandscapeWideGameTile(
+            entry.widgetColumns, entry.widgetRows);
+        // Queue decode only — applyFolderCovers attaches art inside folder chrome.
+        if (m_appLayoutMode == AppLayoutMode::Grid
+            && (landscapeTile || tallPosterTile)
+            && (SteamGridDbManager::hasPoster(entry.titleId)
+                || SteamGridDbManager::hasGridWide(entry.titleId)
+                || SteamGridDbManager::hasHeroPresentation(entry.titleId))) {
+            ensureGameArtwork(entry.titleId);
+        }
+        icon->setWideGameTextures(nullptr, nullptr);
+        icon->setTallGamePoster(nullptr);
         // Cover texture is applied in applyFolderCoversToIcons (poster-aware).
         return icon;
     }
@@ -7464,6 +7674,8 @@ void WiiUMenuApp::buildGrid() {
     m_heroCustomize->onClosed([this]() {
         if (m_gameOptions && m_gameOptions->isActive())
             focusManager().setFocus(m_gameOptions.get());
+        else if (m_folderOptions && m_folderOptions->isActive())
+            focusManager().setFocus(m_folderOptions.get());
     });
     m_heroCustomize->onSaved([this](std::uint64_t titleId) {
         if (m_steamGridDbBackdrop)
@@ -7481,8 +7693,51 @@ void WiiUMenuApp::buildGrid() {
                 hasHero, hasLogo, SteamGridDbManager::hasIcon(titleId),
                 SteamGridDbManager::hasPoster(titleId),
                 SteamGridDbManager::hasGridWide(titleId),
-                SteamGridDbManager::hasHeroPresentation(titleId));
+                SteamGridDbManager::hasHeroPresentation(titleId),
+                SteamGridDbManager::hasGridSquare(titleId));
             m_gameOptions->requestToast(nxui::I18n::instance().tr(
+                "game.steamgriddb.hero_saved", "Hero crop saved."));
+        } else if (m_folderOptions && m_folderOptions->isActive()
+                   && isFolderTitleId(titleId)
+                   && folderIdFromTitleId(titleId) == m_folderOptionsId) {
+            if (const auto* folder = m_folderStore.find(m_folderOptionsId)) {
+                FolderOptionsScreen::FolderInfo info;
+                info.id = folder->id;
+                info.name = folder->name;
+                info.itemCount = static_cast<int>(folder->titleCount());
+                info.colorIndex = folder->colorIndex;
+                info.sizeIndex = folder->sizeIndex;
+                info.styleIndex = m_config.folderStyle;
+                info.defaultViewIndex = std::clamp(m_config.folderDefaultView, 0, 2);
+                info.showCover = m_config.folderShowCover;
+                const auto tile = gameGridSize(titleId, AppLayoutMode::Grid);
+                if (tile.columns == 2 && tile.rows == 1) info.tileSizeIndex = 1;
+                else if (tile.columns == 4 && tile.rows == 2) info.tileSizeIndex = 2;
+                else if (tile.columns == 2 && tile.rows == 2) info.tileSizeIndex = 3;
+                else if (tile.columns == 2 && tile.rows == 3) info.tileSizeIndex = 4;
+                else info.tileSizeIndex = 0;
+                info.hasCustomIcon = SteamGridDbManager::hasIcon(titleId);
+                info.hasCustomSquareCover = SteamGridDbManager::hasGridSquare(titleId);
+                info.hasCustomPoster = SteamGridDbManager::hasPoster(titleId);
+                info.hasCustomPosterWide = SteamGridDbManager::hasGridWide(titleId);
+                {
+                    std::error_code ec;
+                    info.hasCustomLogo = std::filesystem::exists(
+                        SteamGridDbManager::logoPath(titleId), ec);
+                    ec.clear();
+                    info.hasCustomHero = std::filesystem::exists(
+                        SteamGridDbManager::heroPath(titleId), ec);
+                }
+                info.hasHeroPresentation =
+                    SteamGridDbManager::hasHeroPresentation(titleId);
+                info.overrideTitleHeroes =
+                    folder->overrideTitleHeroes && info.hasCustomHero;
+                const auto coverId = resolveFolderCoverTitleId(
+                    *folder, preferSingleRowPosters());
+                info.cover = folderCoverTexture(coverId, preferSingleRowPosters());
+                m_folderOptions->setFolder(info);
+            }
+            m_folderOptions->requestToast(nxui::I18n::instance().tr(
                 "game.steamgriddb.hero_saved", "Hero crop saved."));
         }
     });
@@ -8009,6 +8264,13 @@ void WiiUMenuApp::enterLockView(bool instant) {
     if (!m_lockScreen)
         return;
 
+    // Customize / picker re-add themselves as the last overlay child; dismiss
+    // them before Lock so they cannot paint above the lock screen.
+    if (m_heroCustomize && m_heroCustomize->isActive())
+        m_heroCustomize->hide();
+    if (m_steamGridDbPicker && m_steamGridDbPicker->isActive())
+        m_steamGridDbPicker->hide();
+
     if (m_lockViewActive && m_lockScreen->isActive()) {
         m_lockScreen->rearmInput();
         m_lockScreen->refreshNow();
@@ -8130,6 +8392,8 @@ void WiiUMenuApp::finishExitLockView(bool resumeSuspended) {
         m_startLocked = false;
         m_leaveCaptureLockCursor = false;
         endForcedCursorTeleport();
+        m_musicWasPlayingBeforeSleep = false;
+        m_wakeMusicResumeFrames = 0;
         m_audio.playSfx(Sfx::Activate);
         DebugLog::log("[lock] Lock view -> resuming suspended title (hold Lock)");
         m_launcher.resumeApplication();
@@ -8145,6 +8409,13 @@ void WiiUMenuApp::finishExitLockView(bool resumeSuspended) {
         m_bgLayer->setVisible(true);
     if (m_contentLayer)
         m_contentLayer->setVisible(true);
+
+    // Music paused for sleep: resume after Lock input is responsive again.
+    if (m_musicWasPlayingBeforeSleep && m_config.musicEnabled) {
+        m_wakeMusicResumeFrames = 20;
+        DebugLog::log("[power] unlock: arm wake music resume in 20f");
+    }
+    m_musicWasPlayingBeforeSleep = false;
 
     m_audio.playSfx(Sfx::Activate);
     beginForcedCursorTeleport();
@@ -8903,13 +9174,40 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
             switchu::menu::applyScreenUnderscan(m_lastOperationMode);
             applyHomeOrientationState(false);
         } else if (step == 2) {
-            DebugLog::log("[power] wake step: audio");
-            if (m_musicWasPlayingBeforeSleep && m_config.musicEnabled)
-                m_audio.play();
-            m_musicWasPlayingBeforeSleep = false;
+            // Never Mix_PlayMusic here. 2026-11-14 menu.log: wake reached
+            // "wake step: audio" then froze on Lock — Mix_PlayMusic soft-locked
+            // the UI thread so A/B never unlocked. Resume after unlock (or a
+            // short delay when Lock is off).
+            DebugLog::log("[power] wake step: audio lockView=%d wasPlaying=%d",
+                          m_lockViewActive ? 1 : 0,
+                          m_musicWasPlayingBeforeSleep ? 1 : 0);
+            if (m_musicWasPlayingBeforeSleep && m_config.musicEnabled) {
+                if (m_lockViewActive) {
+                    DebugLog::log("[power] wake music held until unlock");
+                } else {
+                    m_wakeMusicResumeFrames = 45;
+                    m_musicWasPlayingBeforeSleep = false;
+                }
+            } else {
+                m_musicWasPlayingBeforeSleep = false;
+            }
         } else if (step == 1) {
             DebugLog::log("[power] wake step: cursor");
             updateCursor();
+        }
+    }
+
+    if (m_wakeMusicResumeFrames > 0) {
+        --m_wakeMusicResumeFrames;
+        if (m_wakeMusicResumeFrames == 0) {
+            DebugLog::log("[power] wake music resume begin");
+            m_audio.setResumePositionEnabled(m_config.musicResumePosition);
+            m_audio.restorePlaybackState(m_config.musicTrackIndex,
+                                         m_config.musicPositionSeconds,
+                                         true,
+                                         m_config.musicTrackKey);
+            DebugLog::log("[power] wake music resume done deferredSeek=%d",
+                          m_audio.hasDeferredSeek() ? 1 : 0);
         }
     }
 
@@ -9140,6 +9438,19 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
                 warmFolderPeeksAroundFocus(1);
             }
         }
+        // Grid multi-cell folders: fill span-matched peeks as focus moves.
+        if (m_grid && m_appLayoutMode == AppLayoutMode::Grid
+            && !preferSingleRowPosters()
+            && !leaveSplashActive()
+            && !m_frameTapLightActive) {
+            const int focus = m_grid->focusedGlobalIndex();
+            if (focus != m_lastFolderPeekWarmFocus
+                && focus >= 0 && focus < m_model.count()
+                && m_model.at(focus).isFolder()) {
+                m_lastFolderPeekWarmFocus = focus;
+                applyFolderCoversToIcons(focus, 2, /*allowColdLoad=*/false);
+            }
+        }
     }
 
     pumpFolderPeekComposites();
@@ -9168,7 +9479,8 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
     // Own borrowed folder peeks before IconStreamer overwrites those GPU slots
     // with posters. Prefer spreading decode across the morph; drain any
     // remainder before the post-morph neighbour burst.
-    if (m_grid && !m_folderPeekBorrowed.empty() && preferSingleRowPosters()) {
+    if (m_grid && !m_folderPeekBorrowed.empty()
+        && (preferSingleRowPosters() || m_appLayoutMode == AppLayoutMode::Grid)) {
         const bool morphing = m_grid->isLayoutMorphing();
         const int budget = morphing ? 2 : (m_pendingNeighborArtBurst ? 8 : 1);
         if (promoteBorrowedFolderPeeks(budget) > 0) {
@@ -9182,7 +9494,8 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
     if (m_pendingNeighborArtBurst && m_grid && !m_grid->isLayoutMorphing()) {
         // Last chance: do not let onPageChanged recycle textures still aliased
         // by folder peek stacks.
-        if (!m_folderPeekBorrowed.empty() && preferSingleRowPosters()) {
+        if (!m_folderPeekBorrowed.empty()
+            && (preferSingleRowPosters() || m_appLayoutMode == AppLayoutMode::Grid)) {
             if (promoteBorrowedFolderPeeks(16) > 0)
                 applyFolderCoversToIcons(m_grid->focusedGlobalIndex(), 4);
         }

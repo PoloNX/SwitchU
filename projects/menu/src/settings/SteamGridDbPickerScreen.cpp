@@ -161,7 +161,8 @@ void SteamGridDbPickerScreen::previewCanvasSize(int& outW, int& outH) const {
     if (m_result.kind == Kind::Poster) {
         outW = std::max(96, (int)(180.f * zoom));
         outH = std::max(144, (int)(270.f * zoom));
-    } else if (m_result.kind == Kind::Icon) {
+    } else if (m_result.kind == Kind::Icon
+               || m_result.kind == Kind::GridSquare) {
         outW = outH = std::max(96, (int)(180.f * zoom));
     } else if (m_result.kind == Kind::Logo) {
         outW = std::max(160, (int)(280.f * zoom));
@@ -189,7 +190,8 @@ void SteamGridDbPickerScreen::cardMetrics(float& outW, float& outH, float& outGa
             : (m_zoomLevel >= 3 ? 1 : 2);
         outW = 168.f * zoom;
         outH = 252.f * zoom;
-    } else if (m_result.kind == Kind::Icon) {
+    } else if (m_result.kind == Kind::Icon
+               || m_result.kind == Kind::GridSquare) {
         outColumns = portrait
             ? (m_zoomLevel >= 3 ? 2 : 3)
             : (m_zoomLevel >= 4 ? 2 : (m_zoomLevel >= 3 ? 3 : 4));
@@ -262,10 +264,10 @@ void SteamGridDbPickerScreen::showLoading(std::uint64_t titleId,
         slot.failed = false;
     }
     // Keep title/query/kind for the loading header; clear candidates so we do
-    // not flash stale artwork while a new search runs.
+    // not flash stale artwork while a new search runs. Always replace the
+    // search string (even when empty) so a prior title's query cannot leak.
     const auto keptMatches = m_gameMatches;
-    if (!query.empty())
-        m_searchQuery = query;
+    m_searchQuery = query;
     m_result = {};
     m_result.titleId = titleId;
     m_result.title = title;
@@ -524,6 +526,7 @@ std::string SteamGridDbPickerScreen::kindLabel() const {
          : m_result.kind == SteamGridDbManager::ArtworkKind::Logo ? "Logo"
          : m_result.kind == SteamGridDbManager::ArtworkKind::Poster ? "Poster"
          : m_result.kind == SteamGridDbManager::ArtworkKind::GridWide ? "Poster wide"
+         : m_result.kind == SteamGridDbManager::ArtworkKind::GridSquare ? "Square cover"
          : "Icon";
 }
 

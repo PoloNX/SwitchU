@@ -202,31 +202,37 @@ nxui::Rect coverPhotoRect(const nxui::Rect& host, float topPad, float bottomPad,
     float side = std::min(host.width, host.height) * 0.62f;
     side = std::min(side, availH);
     side = std::max(18.f, side);
-    return {host.x + (host.width - side) * 0.5f, host.y + topPad, side, side};
+    // Center in the art band so 1×1 matches the even margins on peeks.
+    return {host.x + (host.width - side) * 0.5f,
+            host.y + topPad + (availH - side) * 0.5f, side, side};
 }
 
 void drawPeekGrid(nxui::Renderer& ren, const nxui::Rect& host,
                   const std::array<nxui::Texture*, kFolderPeekMax>& peeks,
-                  int peekCount, const nxui::Color& accent, float scale,
-                  float opacity) {
+                  int peekCount, int cols, int rows, const nxui::Color& accent,
+                  float scale, float opacity) {
     if (peekCount <= 0 || host.width < 8.f || host.height < 8.f)
         return;
-    constexpr int kCols = 2;
-    constexpr int kRows = 3;
+    const int kCols = std::clamp(cols, 1, kFolderPeekMaxColumns);
+    const int kRows = std::clamp(rows, 1, kFolderPeekMaxRows);
+    const int kCells = std::min(kCols * kRows, kFolderPeekMax);
     const float s = scale;
     // Equal margin on all sides; size cells to the remaining box.
     const float margin = std::max(6.f, std::min(host.width, host.height) * 0.08f);
     const float gap = std::max(3.f, margin * 0.45f);
     const float innerW = std::max(8.f, host.width - margin * 2.f);
     const float innerH = std::max(8.f, host.height - margin * 2.f);
-    const float cell = std::min((innerW - gap * (kCols - 1)) / static_cast<float>(kCols),
-                                (innerH - gap * (kRows - 1)) / static_cast<float>(kRows));
-    const float gridW = cell * kCols + gap * (kCols - 1);
-    const float gridH = cell * kRows + gap * (kRows - 1);
+    const float cell = std::min(
+        (innerW - gap * static_cast<float>(kCols - 1)) / static_cast<float>(kCols),
+        (innerH - gap * static_cast<float>(kRows - 1)) / static_cast<float>(kRows));
+    const float gridW = cell * static_cast<float>(kCols)
+        + gap * static_cast<float>(kCols - 1);
+    const float gridH = cell * static_cast<float>(kRows)
+        + gap * static_cast<float>(kRows - 1);
     const float originX = host.x + (host.width - gridW) * 0.5f;
     const float originY = host.y + (host.height - gridH) * 0.5f;
     const float rad = std::max(4.f, cell * 0.16f);
-    for (int i = 0; i < kCols * kRows; ++i) {
+    for (int i = 0; i < kCells; ++i) {
         const int col = i % kCols;
         const int row = i / kCols;
         const nxui::Rect cellRect{
@@ -281,14 +287,20 @@ void drawFolderStyle(const FolderStyleDrawArgs& args) {
             break;
         }
     }
-    const bool hasArt = cover || args.schematicPlaceholder || peekCount > 0 || peekComposite;
-    // Caller sets drawName. Poster+art stays title-pill-only; empty poster
-    // tiles (e.g. FT lite) still get a centered in-tile name like grid.
+    const int peekCols = std::clamp(args.peekColumns, 1, kFolderPeekMaxColumns);
+    const int peekRows = std::clamp(args.peekRows, 1, kFolderPeekMaxRows);
+    const bool livePeekGrid = peekCount > 0;
+    const bool hasArt = cover || args.schematicPlaceholder || livePeekGrid || peekComposite;
+    // Caller sets drawName. Grid always names; single-row with art stays
+    // title-pill-only (drawName false). Empty single-row still names.
     const bool named = args.drawName && args.font && args.title
         && !args.title->empty();
+    const bool customFolderFace = args.coverIsFolderPoster && cover;
     const bool useCover = hasArt && (
         (style != kFolderStyleClassic && folderShouldShowCover(style, args.showCover))
-        || (poster && (cover || peekCount > 0 || peekComposite)));
+        || (poster && (cover || livePeekGrid || peekComposite))
+        || livePeekGrid
+        || customFolderFace);
     // Poster tiles are ~2× taller than grid icons — use a larger preferred
     // scale (still width-clamped) so empty single-row folders read clearly.
     const float namePref = poster ? 1.48f : 0.92f;
@@ -309,31 +321,76 @@ void drawFolderStyle(const FolderStyleDrawArgs& args) {
             ren.drawText(*args.title, pos, args.font, theme.title, fit.scale);
     };
 
-    auto drawCoverName = [&](const nxui::Rect& host, const nxui::Rect& photo, bool halo) {
+    // Compact on 1×1 / 2×1; larger on 2×2 / 4×2 / 2×3.
+    const int tileCols = std::max(1, args.tileColumns);
+    const int tileRows = std::max(1, args.tileRows);
+    const bool largeTitle =
+        (tileCols == 2 && tileRows == 2)
+        || (tileCols == 4 && tileRows == 2)
+        || (tileCols == 2 && tileRows == 3);
+    const float coverNamePref = largeTitle ? 0.92f : 0.78f;
+    const float coverNameMin = largeTitle ? 0.48f : 0.38f;
+    FittedTitle coverNameFit{};
+    if (named) {
+        coverNameFit = measureTitle(args.font, *args.title,
+                                    std::max(8.f, shell.width - 16.f * s),
+                                    coverNamePref * s, coverNameMin * s);
+    }
+    const float namedGutter = named
+        ? std::max(20.f * s, coverNameFit.height + 10.f * s)
+        : 0.f;
+
+    // Center in the full gap from visual art bottom → name-band bottom.
+    auto drawCoverName = [&](float gutterTop, float gutterBottom,
+                             float hostX, float hostWidth, bool halo) {
         if (!named)
             return;
         const FittedTitle fit = measureTitle(args.font, *args.title,
-                                             std::max(8.f, host.width - 16.f * s),
-                                             0.78f * s, 0.38f * s);
-        const float nameY = std::min(photo.bottom() + 4.f * s,
-                                     host.bottom() - fit.height - 6.f * s);
-        const nxui::Vec2 pos{host.x + (host.width - fit.width) * 0.5f, nameY};
+                                             std::max(8.f, hostWidth - 16.f * s),
+                                             coverNamePref * s, coverNameMin * s);
+        const float gutterH = std::max(fit.height, gutterBottom - gutterTop);
+        // Slight optical lift — measure boxes sit a hair low vs glyphs.
+        const float nameY = gutterTop + (gutterH - fit.height) * 0.5f - 1.f * s;
+        const nxui::Vec2 pos{hostX + (hostWidth - fit.width) * 0.5f, nameY};
         if (halo)
             drawHaloTitle(ren, args.font, *args.title, pos, fit.scale, s, opacity);
         else
             ren.drawText(*args.title, pos, args.font, theme.title, fit.scale);
     };
 
-    // Shared art fill: custom poster, 2x2 peeks, or single cover / placeholder.
-    auto drawArtInHost = [&](const nxui::Rect& host, float topPad, float bottomPad) {
+    // Returns the visual bottom of drawn art (for title centering in the gap).
+    auto drawArtInHost = [&](const nxui::Rect& host, float topPad,
+                             float bottomPad) -> float {
+        const float bandBottom =
+            host.y + topPad + std::max(18.f, host.height - topPad - bottomPad);
         if (args.coverIsFolderPoster && cover) {
-            const nxui::Rect photo = coverPhotoRect(host, topPad, bottomPad, true);
-            drawCoverPhoto(ren, photo, std::max(6.f, photo.width * 0.12f),
-                           cover, accent, opacity, true);
-            return;
+            if (poster) {
+                // Single-row / tall 2×3: inset 2:3 poster inside folder chrome.
+                const nxui::Rect photo = coverPhotoRect(host, topPad, bottomPad, true);
+                drawCoverPhoto(ren, photo, std::max(6.f, photo.width * 0.12f),
+                               cover, accent, opacity, true);
+                return photo.bottom();
+            }
+            if (tileCols == tileRows) {
+                // Square tiles (1×1 / 2×2): centered square face, even margins.
+                const nxui::Rect photo = coverPhotoRect(host, topPad, bottomPad, false);
+                drawCoverPhoto(ren, photo, std::max(6.f, photo.width * 0.16f),
+                               cover, accent, opacity, false);
+                return photo.bottom();
+            }
+            // Wide grid (2×1 / 4×2): landscape art fills the content band.
+            const float side = std::max(4.f, 6.f * s);
+            const nxui::Rect content{
+                host.x + side,
+                host.y + topPad,
+                std::max(8.f, host.width - side * 2.f),
+                std::max(18.f, host.height - topPad - bottomPad)};
+            const float rad = std::max(6.f,
+                std::min(content.width, content.height) * 0.08f);
+            drawCoverPhoto(ren, content, rad, cover, accent, opacity, false);
+            return content.bottom();
         }
         if (poster && peekComposite) {
-            // Same content band as drawPeekGrid; mosaic margins are baked in.
             const float side = std::max(4.f, 6.f * s);
             const nxui::Rect content{
                 host.x + side,
@@ -343,24 +400,40 @@ void drawFolderStyle(const FolderStyleDrawArgs& args) {
             const float rad = std::max(6.f, std::min(content.width, content.height) * 0.06f);
             ren.drawTextureRounded(cover, content, rad,
                                    nxui::Color::white().withAlpha(opacity));
-            return;
+            return content.bottom();
         }
-        if (poster && peekCount > 0) {
-            // Stay below/above style chrome; equal margin is applied inside drawPeekGrid.
+        if (livePeekGrid) {
             const float side = std::max(4.f, 6.f * s);
             const nxui::Rect content{
                 host.x + side,
                 host.y + topPad,
                 std::max(8.f, host.width - side * 2.f),
                 std::max(18.f, host.height - topPad - bottomPad)};
-            drawPeekGrid(ren, content, args.peekCovers, peekCount, accent, s, opacity);
-            return;
+            // Match drawPeekGrid: equal margin, then centered cell mosaic.
+            const float margin =
+                std::max(6.f, std::min(content.width, content.height) * 0.08f);
+            const float gap = std::max(3.f, margin * 0.45f);
+            const float innerW = std::max(8.f, content.width - margin * 2.f);
+            const float innerH = std::max(8.f, content.height - margin * 2.f);
+            const float cell = std::min(
+                (innerW - gap * static_cast<float>(peekCols - 1))
+                    / static_cast<float>(peekCols),
+                (innerH - gap * static_cast<float>(peekRows - 1))
+                    / static_cast<float>(peekRows));
+            const float gridH = cell * static_cast<float>(peekRows)
+                + gap * static_cast<float>(peekRows - 1);
+            const float originY = content.y + (content.height - gridH) * 0.5f;
+            drawPeekGrid(ren, content, args.peekCovers, peekCount, peekCols, peekRows,
+                         accent, s, opacity);
+            return originY + gridH;
         }
         if (cover || args.schematicPlaceholder) {
             const nxui::Rect photo = coverPhotoRect(host, topPad, bottomPad, poster);
             drawCoverPhoto(ren, photo, std::max(6.f, photo.width * 0.16f),
                            cover, accent, opacity, poster);
+            return photo.bottom();
         }
+        return bandBottom;
     };
 
     if (style == kFolderStyleClassic) {
@@ -370,9 +443,15 @@ void drawFolderStyle(const FolderStyleDrawArgs& args) {
         ren.drawRoundedRect(shell, plateWash, shellRadius);
         ren.drawRoundedRectOutline(shell.shrunk(1.f * s), theme.outline,
                                    std::max(8.f, shellRadius - 1.f * s), 1.5f * s);
-        if (poster && (peekCount > 0 || peekComposite
-                       || (args.coverIsFolderPoster && cover))) {
-            drawArtInHost(inner.shrunk(8.f * s), 0.f, 0.f);
+        if (livePeekGrid || peekComposite || (args.coverIsFolderPoster && cover)) {
+            const nxui::Rect host = inner.shrunk(8.f * s);
+            const float bottomPad = namedGutter;
+            const float visualBottom = drawArtInHost(host, 0.f, bottomPad);
+            if (named) {
+                const float nameBottom =
+                    host.y + std::max(18.f, host.height - bottomPad) + namedGutter;
+                drawCoverName(visualBottom, nameBottom, shell.x, shell.width, true);
+            }
         } else {
             drawNineGrid(ren, shell, accent, s, opacity);
             if (named) {
@@ -407,11 +486,14 @@ void drawFolderStyle(const FolderStyleDrawArgs& args) {
                                    std::max(8.f, bodyRadius - 1.f * s), 1.5f * s);
         if (useCover) {
             const nxui::Rect host = body.shrunk(6.f * s);
-            const float bottomPad = named ? 20.f * s : 8.f * s;
-            drawArtInHost(host, 4.f * s, bottomPad);
-            if (named && !poster && !peekCount) {
-                const nxui::Rect photo = coverPhotoRect(host, 4.f * s, bottomPad, false);
-                drawCoverName(body, photo, true);
+            const float topPad = 4.f * s;
+            const float bottomPad = named ? namedGutter : 8.f * s;
+            const float visualBottom = drawArtInHost(host, topPad, bottomPad);
+            if (named) {
+                const float nameBottom =
+                    host.y + topPad
+                    + std::max(18.f, host.height - topPad - bottomPad) + namedGutter;
+                drawCoverName(visualBottom, nameBottom, body.x, body.width, true);
             }
         } else if (named) {
             const FittedTitle fit = measureTitle(args.font, *args.title,
@@ -457,22 +539,15 @@ void drawFolderStyle(const FolderStyleDrawArgs& args) {
         const float topPad = (style == kFolderStyleSimple || style == kFolderStyleTab)
             ? sliceH + 6.f * s : 6.f * s;
         const float bottomPad = style == kFolderStyleLabel
-            ? sliceH + (named ? 18.f * s : 8.f * s)
-            : (named ? 20.f * s : 8.f * s);
-        drawArtInHost(inner, topPad, bottomPad);
-        if (named && !poster && cover && peekCount == 0) {
-            const nxui::Rect photo = coverPhotoRect(inner, topPad, bottomPad, false);
-            if (style == kFolderStyleLabel) {
-                const FittedTitle fit = measureTitle(args.font, *args.title,
-                                                     std::max(8.f, shell.width - 18.f * s),
-                                                     0.78f * s, 0.38f * s);
-                const float nameY = std::min(photo.bottom() + 3.f * s,
-                                             shell.bottom() - sliceH - fit.height - 3.f * s);
-                const nxui::Vec2 pos{shell.x + (shell.width - fit.width) * 0.5f, nameY};
-                ren.drawText(*args.title, pos, args.font, theme.title, fit.scale);
-            } else {
-                drawCoverName(shell, photo, true);
-            }
+            ? sliceH + (named ? namedGutter : 8.f * s)
+            : (named ? namedGutter : 8.f * s);
+        const float visualBottom = drawArtInHost(inner, topPad, bottomPad);
+        if (named) {
+            // Center in the full gap from art → name-band bottom (above Label accent).
+            const float nameBottom =
+                inner.y + topPad
+                + std::max(18.f, inner.height - topPad - bottomPad) + namedGutter;
+            drawCoverName(visualBottom, nameBottom, shell.x, shell.width, true);
         }
         if (args.focused)
             drawFocus(ren, shell, shellRadius, accent, s, opacity);

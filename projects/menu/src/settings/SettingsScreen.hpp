@@ -81,6 +81,14 @@ public:
     }
     void onSteamGridDbApiKeyRequest(VoidCb cb) { m_steamGridDbApiKeyCb = std::move(cb); }
     void onSteamGridDbScrapeRequest(VoidCb cb) { m_steamGridDbScrapeCb = std::move(cb); }
+    void onSteamGridDbScanKindsChange(std::function<void(bool, bool, bool, bool)> cb) {
+        m_steamGridDbScanKindsCb = std::move(cb);
+    }
+    void onSteamGridDbClearDecodeCaches(VoidCb cb) {
+        m_steamGridDbClearDecodeCachesCb = std::move(cb);
+    }
+    void onSteamGridDbClearUnused(VoidCb cb) { m_steamGridDbClearUnusedCb = std::move(cb); }
+    void onSteamGridDbClearAll(VoidCb cb) { m_steamGridDbClearAllCb = std::move(cb); }
     void onControllerPairing(VoidCb cb) { m_controllerPairingCb = std::move(cb); }
     void onControllerRemapping(VoidCb cb) { m_controllerRemappingCb = std::move(cb); }
     void onControllerTest(VoidCb cb) { m_controllerTestCb = std::move(cb); }
@@ -124,7 +132,11 @@ public:
                              bool showPosterInDynamicLine = true,
                              bool showLogoInDynamicLine = true,
                              int heroQuality = 2,
-                             int heroBlur = 0) {
+                             int heroBlur = 0,
+                             bool scanHeroes = true,
+                             bool scanLogos = true,
+                             bool scanPosters = true,
+                             bool scanGridWide = true) {
         m_steamGridDbEnabled = enabled;
         m_steamGridDbHasApiKey = hasApiKey;
         m_steamGridDbShowInGrid = showInGrid;
@@ -134,6 +146,10 @@ public:
         m_steamGridDbShowLogoInDynamicLine = showLogoInDynamicLine;
         m_steamGridDbHeroQuality = std::clamp(heroQuality, 0, 3);
         m_steamGridDbHeroBlur = std::clamp(heroBlur, 0, 10);
+        m_steamGridDbScanHeroes = scanHeroes;
+        m_steamGridDbScanLogos = scanLogos;
+        m_steamGridDbScanPosters = scanPosters;
+        m_steamGridDbScanGridWide = scanGridWide;
     }
     void setSteamGridDbProgress(bool running, bool finished, int completed, int total,
                                 int matched, int failed, const std::string& current,
@@ -192,6 +208,10 @@ private:
     IntCb m_steamGridDbHeroBlurCb;
     VoidCb m_steamGridDbApiKeyCb;
     VoidCb m_steamGridDbScrapeCb;
+    std::function<void(bool, bool, bool, bool)> m_steamGridDbScanKindsCb;
+    VoidCb m_steamGridDbClearDecodeCachesCb;
+    VoidCb m_steamGridDbClearUnusedCb;
+    VoidCb m_steamGridDbClearAllCb;
     VoidCb m_controllerPairingCb;
     VoidCb m_controllerRemappingCb;
     VoidCb m_controllerTestCb;
@@ -223,6 +243,10 @@ private:
     bool m_steamGridDbShowLogoInDynamicLine = true;
     int m_steamGridDbHeroQuality = 2;
     int m_steamGridDbHeroBlur = 0;
+    bool m_steamGridDbScanHeroes = true;
+    bool m_steamGridDbScanLogos = true;
+    bool m_steamGridDbScanPosters = true;
+    bool m_steamGridDbScanGridWide = true;
     bool m_steamGridDbHasApiKey = false;
     bool m_steamGridDbRunning = false;
     bool m_steamGridDbFinished = false;

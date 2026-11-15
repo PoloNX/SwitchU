@@ -34,8 +34,8 @@
 #include "steamgriddb/ArtworkCache.hpp"
 #include "settings/SettingsScreen.hpp"
 #include "settings/GameOptionsScreen.hpp"
-#include "settings/HeroCustomizeScreen.hpp"
 #include "settings/SteamGridDbPickerScreen.hpp"
+#include "settings/HeroCustomizeScreen.hpp"
 #include "settings/FolderOptionsScreen.hpp"
 #include "settings/AutoThemeScreen.hpp"
 #include "settings/ControllerTestScreen.hpp"
@@ -262,15 +262,19 @@ private:
     void editSteamGridDbApiKey();
     void startSteamGridDbScrape();
     void cancelSteamGridDbScrape();
+    void confirmSteamGridDbClearDecodeCaches();
+    void confirmSteamGridDbClearUnused();
+    void confirmSteamGridDbClearAll();
     void openSteamGridDbPicker(GameOptionsScreen::ArtworkKind kind,
                                const std::string& query = std::string());
     void openSteamGridDbPickerForTitle(std::uint64_t titleId,
                                        const std::string& title,
                                        GameOptionsScreen::ArtworkKind kind,
                                        const std::string& query = std::string());
+    void openHeroCustomize(std::uint64_t titleId = 0,
+                           const std::string& titleName = {});
     void clearSteamGridDbArtwork(std::uint64_t titleId,
                                  GameOptionsScreen::ArtworkKind kind);
-    void openHeroCustomize();
     void editSteamGridDbPickerQuery();
     void applySteamGridDbCandidate(const SteamGridDbManager::BrowseResult& browse,
                                    const SteamGridDbManager::Candidate& candidate);
@@ -698,8 +702,8 @@ private:
     std::shared_ptr<SettingsScreen>    m_settings;
     std::shared_ptr<ThemeShopScreen>   m_themeShop;
     std::shared_ptr<GameOptionsScreen> m_gameOptions;
-    std::shared_ptr<HeroCustomizeScreen> m_heroCustomize;
     std::shared_ptr<SteamGridDbPickerScreen> m_steamGridDbPicker;
+    std::shared_ptr<HeroCustomizeScreen> m_heroCustomize;
     std::shared_ptr<FolderOptionsScreen> m_folderOptions;
     std::shared_ptr<AutoThemeScreen>   m_autoThemeScreen;
     std::shared_ptr<ControllerTestScreen> m_controllerTest;
@@ -807,6 +811,9 @@ private:
     // After recreateSwapchain, underscan / music / cursor run over a few frames
     // so a hang in any of them still leaves "console awake" + step logs.
     int  m_wakePostSwapchainFrames = 0;
+    // Mix_PlayMusic on the wake frame soft-locks the UI thread (Lock frozen).
+    // Count down after unlock (or after wake when Lock is off), then restore.
+    int  m_wakeMusicResumeFrames = 0;
     bool m_editMode          = false;
     // Same-frame A after edit place: icon action exits edit, then bubbled root
     // A would arm Activate and open/launch the tile — suppress that press.

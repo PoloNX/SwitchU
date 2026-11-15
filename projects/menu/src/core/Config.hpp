@@ -69,6 +69,11 @@ struct AppConfig {
     // Decode-time blur on the fullscreen hero, 0–10. 0 = off; 10 matches
     // the music-player / leave-splash frost. Default off.
     int   steamGridDbHeroBlur = 0;
+    // Missing-art scan kind checklist (Settings → SteamGridDB).
+    bool  steamGridDbScanHeroes = true;
+    bool  steamGridDbScanLogos = true;
+    bool  steamGridDbScanPosters = true;
+    bool  steamGridDbScanGridWide = true;
     std::string steamGridDbApiKey;
 
     // 0 keeps the hand-made layout. The other modes are display-only

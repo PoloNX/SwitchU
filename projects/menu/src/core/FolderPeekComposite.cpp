@@ -35,9 +35,9 @@ struct Header {
     std::uint32_t colorIndex = 0;
     std::uint32_t layoutVersion = kLayoutVersion;
     std::uint32_t reserved = 0;
-    std::uint64_t titleIds[kFolderPeekMax]{};
-    std::uint64_t sourceSize[kFolderPeekMax]{};
-    std::int64_t sourceWriteTime[kFolderPeekMax]{};
+    std::uint64_t titleIds[kFolderPeekCompositeSlots]{};
+    std::uint64_t sourceSize[kFolderPeekCompositeSlots]{};
+    std::int64_t sourceWriteTime[kFolderPeekCompositeSlots]{};
     std::uint64_t payloadSize = 0;
 };
 static_assert(sizeof(Header) == 184);
@@ -61,14 +61,14 @@ SourceStamp stampForTitle(std::uint64_t titleId) {
 }
 
 void fillHeader(Header& header, const Folder& folder,
-                const std::array<std::uint64_t, kFolderPeekMax>& titles) {
+                const std::array<std::uint64_t, kFolderPeekCompositeSlots>& titles) {
     header = Header{};
     header.width = kWidth;
     header.height = kHeight;
     header.folderId = folder.id;
     header.colorIndex = static_cast<std::uint32_t>(std::max(0, folder.colorIndex));
     header.layoutVersion = kLayoutVersion;
-    for (int i = 0; i < kFolderPeekMax; ++i) {
+    for (int i = 0; i < kFolderPeekCompositeSlots; ++i) {
         header.titleIds[i] = titles[static_cast<std::size_t>(i)];
         const SourceStamp stamp = stampForTitle(titles[static_cast<std::size_t>(i)]);
         header.sourceSize[i] = stamp.size;
@@ -78,7 +78,7 @@ void fillHeader(Header& header, const Folder& folder,
 }
 
 bool headerMatches(const Header& header, const Folder& folder,
-                   const std::array<std::uint64_t, kFolderPeekMax>& titles) {
+                   const std::array<std::uint64_t, kFolderPeekCompositeSlots>& titles) {
     if (header.magic != kMagic || header.version != kVersion)
         return false;
     if (header.width != static_cast<std::uint32_t>(kWidth)
@@ -92,7 +92,7 @@ bool headerMatches(const Header& header, const Folder& folder,
         return false;
     if (header.payloadSize != static_cast<std::uint64_t>(kWidth) * kHeight * 4u)
         return false;
-    for (int i = 0; i < kFolderPeekMax; ++i) {
+    for (int i = 0; i < kFolderPeekCompositeSlots; ++i) {
         if (header.titleIds[i] != titles[static_cast<std::size_t>(i)])
             return false;
         const SourceStamp stamp = stampForTitle(titles[static_cast<std::size_t>(i)]);
@@ -236,14 +236,14 @@ void strokeRounded(std::uint8_t* canvas, int canvasW, int canvasH,
 
 } // namespace
 
-std::array<std::uint64_t, kFolderPeekMax> memberTitleIds(const Folder& folder) {
-    std::array<std::uint64_t, kFolderPeekMax> ids{};
+std::array<std::uint64_t, kFolderPeekCompositeSlots> memberTitleIds(const Folder& folder) {
+    std::array<std::uint64_t, kFolderPeekCompositeSlots> ids{};
     int count = 0;
     for (const std::uint64_t titleId : folder.titleIds) {
         if (titleId == 0)
             continue;
         ids[static_cast<std::size_t>(count++)] = titleId;
-        if (count >= kFolderPeekMax)
+        if (count >= kFolderPeekCompositeSlots)
             break;
     }
     return ids;
@@ -348,7 +348,7 @@ BakedImage bake(const Folder& folder) {
     const auto accentB = static_cast<std::uint8_t>(std::clamp(accent.b * 255.f, 0.f, 255.f));
 
     int peekCount = 0;
-    for (int i = 0; i < kFolderPeekMax; ++i) {
+    for (int i = 0; i < kFolderPeekCompositeSlots; ++i) {
         if (titles[static_cast<std::size_t>(i)] != 0)
             peekCount = i + 1;
     }

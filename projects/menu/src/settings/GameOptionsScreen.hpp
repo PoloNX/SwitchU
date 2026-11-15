@@ -6,7 +6,7 @@
 
 class GameOptionsScreen final : public TabbedOverlayScreen {
 public:
-    enum class ArtworkKind { Hero, Logo, Icon, Poster, PosterWide };
+    enum class ArtworkKind { Hero, Logo, Icon, Poster, PosterWide, SquareCover };
     struct GameInfo {
         std::uint64_t titleId = 0;
         std::string name;
@@ -24,6 +24,7 @@ public:
         bool hasIconArt = false;
         bool hasPosterArt = false;
         bool hasPosterWideArt = false;
+        bool hasSquareCoverArt = false;
     };
 
     GameOptionsScreen();
@@ -33,7 +34,8 @@ public:
     /// Rebuild SteamGridDB rows so × only appears when that kind has art.
     void refreshArtworkPresence(bool hasHero, bool hasLogo, bool hasIcon,
                                 bool hasPoster, bool hasPosterWide,
-                                bool hasHeroPresentation = false);
+                                bool hasHeroPresentation = false,
+                                bool hasSquareCover = false);
     void onMove(VoidCb cb) { m_moveCb = std::move(cb); }
     void onResize(IntCb cb) { m_resizeCb = std::move(cb); }
     void onCloseSoftware(VoidCb cb) { m_closeSoftwareCb = std::move(cb); }

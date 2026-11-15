@@ -13,7 +13,7 @@
 class SteamGridDbManager {
 public:
     using ProgressCallback = std::function<void(const std::string&, float)>;
-    enum class ArtworkKind { None, Hero, Logo, Icon, Poster, GridWide };
+    enum class ArtworkKind { None, Hero, Logo, Icon, Poster, GridWide, GridSquare };
 
     struct Candidate {
         long long id = 0;
@@ -70,6 +70,13 @@ public:
         std::uint64_t revision = 0;
     };
 
+    struct ScrapeKinds {
+        bool heroes = true;
+        bool logos = true;
+        bool posters = true;
+        bool gridWide = true;
+    };
+
     /// Per-title hero crop for one orientation (HOME landscape vs Flip-Grip).
     struct HeroPresentation {
         bool fill = true; // true = cover, false = contain / letterbox
@@ -92,7 +99,7 @@ public:
     ~SteamGridDbManager();
 
     bool start(const std::string& apiKey, const std::vector<AppEntry>& apps,
-               bool fetchHeroes = true);
+               ScrapeKinds kinds);
     bool startSelectNext(const std::string& apiKey, std::uint64_t titleId,
                          const std::string& title, ArtworkKind kind, int direction);
     void wait();
@@ -119,11 +126,18 @@ public:
                                       const AbortCheck& shouldAbort = {});
     /// Clear cached art. Pass ArtworkKind::None to clear all kinds.
     static bool clearArtwork(std::uint64_t titleId, ArtworkKind kind);
+    /// Delete *.rgba-cache / *.fit*.rgba-cache under kCacheRoot (art files kept).
+    static int clearDecodeCaches();
+    /// Delete title folders whose id is not in keepTitleIds.
+    static int clearUnusedArtwork(const std::vector<std::uint64_t>& keepTitleIds);
+    /// Delete every title folder under kCacheRoot.
+    static int clearAllArtwork();
     static bool hasIcon(std::uint64_t titleId);
     static bool hasPoster(std::uint64_t titleId);
     static bool hasGridWide(std::uint64_t titleId);
+    static bool hasGridSquare(std::uint64_t titleId);
 
-    /// Per-title SteamGridDB search string shared by Hero/Logo/Icon/Poster/GridWide.
+    /// Per-title SteamGridDB search string shared across artwork kinds.
     static std::string savedSearchQuery(std::uint64_t titleId);
     static void saveSearchQuery(std::uint64_t titleId, const std::string& query);
 
@@ -142,10 +156,11 @@ public:
     static std::string iconPath(std::uint64_t titleId);
     static std::string posterPath(std::uint64_t titleId);
     static std::string gridWidePath(std::uint64_t titleId);
+    static std::string gridSquarePath(std::uint64_t titleId);
     static bool hasArtwork(std::uint64_t titleId);
 
 private:
-    void scrape(std::string apiKey, std::vector<AppEntry> apps, bool fetchHeroes);
+    void scrape(std::string apiKey, std::vector<AppEntry> apps, ScrapeKinds kinds);
     void selectNext(std::string apiKey, std::uint64_t titleId,
                     std::string title, ArtworkKind kind, int direction);
     void updateStatus(const std::function<void(Status&)>& change);
