@@ -25,6 +25,8 @@ enum class MenuMessage : uint32_t {
     // Daemon saw AppletMessage_OperationModeChanged (dock/TV ↔ handheld).
     // payload = AppletOperationMode (0 handheld, 1 console).
     OperationModeChanged  = 13,
+    // PlayGuard / stock pctl play-timer lockout. payload: 0=info, 1=force Lock.
+    ParentalLock          = 14,
 };
 
 enum class SystemMessage : uint32_t {
@@ -60,8 +62,14 @@ enum class SystemMessage : uint32_t {
     // POSIX UTC seconds — skip timezone calendar convert (sysmodule coexistence).
     SetPosixNetworkTime   = 38,
 
+    // Close menu, run pctlauth (temporary unlock), then MainMenu / resume / launch.
+    ParentalAuthenticate  = 39,
+
     MenuReady             = 40,
     MenuClosing           = 41,
+
+    // Unlock→HOME while play-timer gated: clear soft Lock flag only (pctl still gates play).
+    ParentalDismissLock   = 42,
 };
 
 enum class MenuStartMode : uint32_t {
@@ -111,6 +119,14 @@ struct PosixTimeArgs {
 };
 static_assert(sizeof(PosixTimeArgs) == 8);
 
+// Third applet InData on menu launch: wall-clock seed when menu time:s is dead.
+struct MenuTimeSeed {
+    uint64_t posix_utc;
+    int32_t  tz_offset_sec; // local = UTC + offset (from timeToCalendarTimeWithMyRule)
+    uint32_t _pad;
+};
+static_assert(sizeof(MenuTimeSeed) == 16);
+
 struct InternetTimeSyncArgs {
     uint8_t enabled;
     uint8_t _pad[7];
@@ -125,13 +141,32 @@ struct OperationOutcome {
 };
 static_assert(sizeof(OperationOutcome) == 24);
 
+// mode: 0 = HOME after PIN, 1 = resume suspended, 2 = launch title_id (+ user_uid)
+struct ParentalAuthArgs {
+    uint8_t  mode;
+    uint8_t  _pad[7];
+    uint64_t title_id;
+    uint8_t  user_uid[16];
+};
+static_assert(sizeof(ParentalAuthArgs) == 32);
+
+enum class ParentalAuthMode : uint8_t {
+    Home   = 0,
+    Resume = 1,
+    Launch = 2,
+};
+
 struct SystemStatus {
     uint64_t  suspended_app_id;
     uint8_t   selected_user[16];
     bool      app_running;
     // Daemon-lived: public clock already applied this console boot.
     uint8_t   web_clock_synced;
-    uint8_t   _pad[6];
+    // Non-zero when daemon opened the menu for Lock (belt if LaVersion lost).
+    uint8_t   lock_wake;
+    // PlayGuard / stock pctl: menu must show Lock and require PIN to leave.
+    uint8_t   parental_lock;
+    uint8_t   _pad[4];
     OperationOutcome last_failure;
 };
 static_assert(sizeof(SystemStatus) == 56);

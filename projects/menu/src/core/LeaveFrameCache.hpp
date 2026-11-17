@@ -30,15 +30,22 @@ struct LeaveFrameImage {
 namespace LeaveFrameCache {
 
 inline constexpr const char* kPath = "sdmc:/config/SwitchU/leave_frame.bin";
-
+// Last Lock view paint — used when wake relaunches into LockScreen so the
+// crossfade matches Lock instead of the stale HOME grid capture.
 bool save(const LeaveFrameSession& session,
           const std::uint8_t* rgba, int width, int height);
 
-/// Soft-blur + light chroma so half-res splash reads as frosted glass rather
-/// than a soft upscale. Safe on 640×360 leave captures.
-void frostRgbaInPlace(std::uint8_t* rgba, int width, int height);
+bool saveToPath(const char* path, const LeaveFrameSession& session,
+                const std::uint8_t* rgba, int width, int height,
+                bool frost = true);
+
+/// Soft-blur + light chroma (HOME leave / Lock wake covers).
+/// radius≈2 suits 640×360; use ~4 for full 1280×720 so softness matches.
+void frostRgbaInPlace(std::uint8_t* rgba, int width, int height, int radius = 2);
 
 bool load(LeaveFrameSession& session, LeaveFrameImage& image);
+
+bool loadFromPath(const char* path, LeaveFrameSession& session, LeaveFrameImage& image);
 
 bool loadSessionOnly(LeaveFrameSession& session);
 

@@ -154,6 +154,9 @@ bool AppConfig::load() {
     readJsonOpt(j, "lockScreenEnabled", lockScreenEnabled);
     readJsonOpt(j, "powerButtonAction", powerButtonAction);
     powerButtonAction = std::clamp(powerButtonAction, 0, 2);
+    readJsonOpt(j, "lockAuthMode", lockAuthMode);
+    lockAuthMode = std::clamp(lockAuthMode, 0, 4);
+    readJsonOpt(j, "lockAuthGuardSettings", lockAuthGuardSettings);
     readJsonOpt(j, "lockScreenClockFont", lockScreenClockFont);
     readJsonOpt(j, "lockScreenTransition", lockScreenTransition);
     lockScreenTransition = std::clamp(lockScreenTransition, 0, 3);
@@ -362,6 +365,8 @@ bool AppConfig::save() const {
     j["batterySaver"] = batterySaver;
     j["lockScreenEnabled"] = lockScreenEnabled;
     j["powerButtonAction"] = std::clamp(powerButtonAction, 0, 2);
+    j["lockAuthMode"] = std::clamp(lockAuthMode, 0, 4);
+    j["lockAuthGuardSettings"] = lockAuthGuardSettings;
     j["lockScreenClockFont"] = lockScreenClockFont;
     j["lockScreenTransition"] = std::clamp(lockScreenTransition, 0, 3);
     j["lockScreenZoomDir"] = std::clamp(lockScreenZoomDir, 0, 1);

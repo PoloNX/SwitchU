@@ -223,6 +223,9 @@ void LockScreen::show(bool instant) {
     if (instant) {
         m_fade.setImmediate(1.f);
         m_dateReveal.setImmediate(1.f);
+        // Match animated enter: callers rely on settle to hide HOME / capture.
+        if (m_onEnterSettled)
+            m_onEnterSettled();
     } else {
         float enterDur = kCurtainEnterSec;
         if (m_transition == Transition::Dissolve) enterDur = kDissolveEnterSec;
@@ -341,14 +344,32 @@ void LockScreen::beginCurtainUnlock() {
 void LockScreen::unlock() {
     if (!m_active || m_unlocking || m_age < kInputGuard)
         return;
+    if (m_authGate && !m_authGate(false)) {
+        // Swipe may have pulled the curtain — ease it shut while Sign-in shows.
+        if (m_curtain.value() > 0.01f) {
+            m_curtain.set(0.f, 0.28f, nxui::Easing::outCubic);
+            m_fade.set(1.f, 0.28f, nxui::Easing::outCubic);
+            m_zoom.set(1.f, 0.28f, nxui::Easing::outCubic);
+        }
+        return;
+    }
     beginCurtainUnlock();
 }
 
 void LockScreen::resumeGame() {
     if (!m_active || !m_canResume || m_unlocking || m_age < kInputGuard)
         return;
+    if (m_authGate && !m_authGate(true))
+        return;
     // Keep Lock painted until the suspended title takes the foreground —
     // hiding here flashed HOME for a frame.
+    if (m_onResume)
+        m_onResume();
+}
+
+void LockScreen::completeResumeAfterAuth() {
+    if (!m_active || !m_canResume || m_unlocking)
+        return;
     if (m_onResume)
         m_onResume();
 }
@@ -406,7 +427,7 @@ void LockScreen::handleTouch(nxui::Input& input) {
 
     if (wasDragging) {
         if (progress >= kSwipeCommit || flick >= kSwipeFlickPx) {
-            beginCurtainUnlock();
+            unlock(); // auth gate may intercept
         } else {
             m_curtain.set(0.f, 0.28f, nxui::Easing::outCubic);
             m_fade.set(1.f, 0.28f, nxui::Easing::outCubic);
@@ -439,9 +460,10 @@ void LockScreen::refreshClock() {
     if (!snapshot.valid)
         return;
     const auto& cal = snapshot.calendar;
-    if (static_cast<int>(cal.hour) * 60 + cal.minute == m_lastMinute)
+    const int minuteOfDay = static_cast<int>(cal.hour) * 60 + cal.minute;
+    if (minuteOfDay == m_lastMinute)
         return;
-    m_lastMinute = static_cast<int>(cal.hour) * 60 + cal.minute;
+    m_lastMinute = minuteOfDay;
 
     char buf[32];
     if (m_use12Hour) {

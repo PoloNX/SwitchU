@@ -193,6 +193,25 @@ inline Result terminateApplication() {
     return sendSimple(smi::SystemMessage::TerminateApplication);
 }
 
+inline Result parentalAuthenticate(smi::ParentalAuthMode mode,
+                                   uint64_t titleId = 0,
+                                   AccountUid uid = {}) {
+    uint8_t buf[sizeof(smi::CommandHeader) + sizeof(smi::ParentalAuthArgs)]{};
+    auto* hdr = reinterpret_cast<smi::CommandHeader*>(buf);
+    auto* args = reinterpret_cast<smi::ParentalAuthArgs*>(buf + sizeof(smi::CommandHeader));
+    hdr->magic = smi::kCommandMagic;
+    hdr->message = static_cast<uint32_t>(smi::SystemMessage::ParentalAuthenticate);
+    hdr->request_id = nextRequestId();
+    args->mode = static_cast<uint8_t>(mode);
+    args->title_id = titleId;
+    std::memcpy(args->user_uid, &uid, sizeof(uid));
+    return pushOutStorage(buf, sizeof(buf));
+}
+
+inline Result parentalDismissLock() {
+    return sendSimple(smi::SystemMessage::ParentalDismissLock);
+}
+
 inline Result enterSleep()  { return sendSimple(smi::SystemMessage::EnterSleep); }
 inline Result shutdown()    { return sendSimple(smi::SystemMessage::Shutdown); }
 inline Result reboot()      { return sendSimple(smi::SystemMessage::Reboot); }

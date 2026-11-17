@@ -84,26 +84,27 @@ void boxBlurPass(const std::uint8_t* src, std::uint8_t* dst,
 
 } // namespace
 
-void frostRgbaInPlace(std::uint8_t* rgba, int width, int height) {
+void frostRgbaInPlace(std::uint8_t* rgba, int width, int height, int radius) {
     if (!rgba || width <= 0 || height <= 0)
         return;
+    const int r = std::max(1, radius);
     const std::size_t bytes = static_cast<std::size_t>(width)
                             * static_cast<std::size_t>(height) * 4u;
     std::vector<std::uint8_t> tmp(bytes);
-    // Two separable passes (r=2) ≈ gentle frost at 640×360 without smear.
-    boxBlurPass(rgba, tmp.data(), width, height, 2, true);
-    boxBlurPass(tmp.data(), rgba, width, height, 2, false);
-    boxBlurPass(rgba, tmp.data(), width, height, 2, true);
-    boxBlurPass(tmp.data(), rgba, width, height, 2, false);
+    // Two separable passes ≈ gentle frost without smear.
+    boxBlurPass(rgba, tmp.data(), width, height, r, true);
+    boxBlurPass(tmp.data(), rgba, width, height, r, false);
+    boxBlurPass(rgba, tmp.data(), width, height, r, true);
+    boxBlurPass(tmp.data(), rgba, width, height, r, false);
 
-    // Chromatic fringe (±2px at half-res ≈ ±4px on screen): R left, B right.
-    constexpr int kChromaPx = 2;
+    // Chromatic fringe scales with radius (≈ screen-space at half or full res).
+    const int chromaPx = std::max(1, r);
     std::memcpy(tmp.data(), rgba, bytes);
     for (int y = 0; y < height; ++y) {
         for (int x = 0; x < width; ++x) {
             const std::size_t i = (static_cast<std::size_t>(y) * width + x) * 4u;
-            const int xl = std::max(0, x - kChromaPx);
-            const int xr = std::min(width - 1, x + kChromaPx);
+            const int xl = std::max(0, x - chromaPx);
+            const int xr = std::min(width - 1, x + chromaPx);
             const std::size_t il = (static_cast<std::size_t>(y) * width + xl) * 4u;
             const std::size_t ir = (static_cast<std::size_t>(y) * width + xr) * 4u;
             rgba[i]     = tmp[il];
@@ -113,9 +114,9 @@ void frostRgbaInPlace(std::uint8_t* rgba, int width, int height) {
     }
 }
 
-bool save(const LeaveFrameSession& session,
-          const std::uint8_t* rgba, int width, int height) {
-    if (!rgba || width <= 0 || height <= 0 || width > kMaxSide || height > kMaxSide)
+bool saveToPath(const char* path, const LeaveFrameSession& session,
+                const std::uint8_t* rgba, int width, int height, bool frost) {
+    if (!path || !rgba || width <= 0 || height <= 0 || width > kMaxSide || height > kMaxSide)
         return false;
 
     std::error_code ec;
@@ -133,23 +134,24 @@ bool save(const LeaveFrameSession& session,
     header.homeOrientation = session.homeOrientation;
 
     const std::size_t bytes = static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4u;
-    std::vector<std::uint8_t> frosted(rgba, rgba + bytes);
-    frostRgbaInPlace(frosted.data(), width, height);
-    const std::string tmpPath = std::string(kPath) + ".tmp";
+    std::vector<std::uint8_t> pixels(rgba, rgba + bytes);
+    if (frost)
+        frostRgbaInPlace(pixels.data(), width, height);
+    const std::string tmpPath = std::string(path) + ".tmp";
 
     {
         std::ofstream out(tmpPath, std::ios::binary | std::ios::trunc);
         if (!out)
             return false;
         out.write(reinterpret_cast<const char*>(&header), sizeof(header));
-        out.write(reinterpret_cast<const char*>(frosted.data()),
+        out.write(reinterpret_cast<const char*>(pixels.data()),
                   static_cast<std::streamsize>(bytes));
         if (!out)
             return false;
     }
 
-    std::filesystem::remove(kPath, ec);
-    std::filesystem::rename(tmpPath, kPath, ec);
+    std::filesystem::remove(path, ec);
+    std::filesystem::rename(tmpPath, path, ec);
     if (ec) {
         std::filesystem::remove(tmpPath, ec);
         return false;
@@ -157,11 +159,18 @@ bool save(const LeaveFrameSession& session,
     return true;
 }
 
-bool load(LeaveFrameSession& session, LeaveFrameImage& image) {
+bool save(const LeaveFrameSession& session,
+          const std::uint8_t* rgba, int width, int height) {
+    return saveToPath(kPath, session, rgba, width, height);
+}
+
+bool loadFromPath(const char* path, LeaveFrameSession& session, LeaveFrameImage& image) {
     session = {};
     image = {};
+    if (!path)
+        return false;
 
-    std::ifstream in(kPath, std::ios::binary);
+    std::ifstream in(path, std::ios::binary);
     if (!in)
         return false;
 
@@ -187,6 +196,10 @@ bool load(LeaveFrameSession& session, LeaveFrameImage& image) {
     session.appLayoutMode = header.appLayoutMode;
     session.homeOrientation = header.homeOrientation;
     return image.valid();
+}
+
+bool load(LeaveFrameSession& session, LeaveFrameImage& image) {
+    return loadFromPath(kPath, session, image);
 }
 
 bool loadSessionOnly(LeaveFrameSession& session) {

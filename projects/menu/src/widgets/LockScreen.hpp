@@ -58,6 +58,11 @@ public:
     void setOnUnlocked(std::function<void()> cb) { m_onUnlocked = std::move(cb); }
     /// Leave Lock by resuming the suspended title (lock stays up until exit).
     void setOnResume(std::function<void()> cb) { m_onResume = std::move(cb); }
+    /// Optional gate before Unlock/Resume (Sign-in). Return true to proceed.
+    void setAuthGate(std::function<bool(bool resume)> cb) { m_authGate = std::move(cb); }
+    /// Continue Unlock/Resume after Sign-in succeeded (skips gate).
+    void completeUnlockAfterAuth() { beginCurtainUnlock(); }
+    void completeResumeAfterAuth();
     /// Fired once enter motion settles (hide HOME under Curtain/Wipe).
     void setOnEnterSettled(std::function<void()> cb) { m_onEnterSettled = std::move(cb); }
     /// Dissolve/Zoom fade/zoom the Lock plane as one unit over the live wallpaper.
@@ -170,4 +175,5 @@ private:
     std::function<void()> m_onUnlocked;
     std::function<void()> m_onResume;
     std::function<void()> m_onEnterSettled;
+    std::function<bool(bool resume)> m_authGate;
 };

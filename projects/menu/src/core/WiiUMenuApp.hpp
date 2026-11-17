@@ -23,6 +23,8 @@
 #include "widgets/ContextMenu.hpp"
 #include "widgets/ProgressDialog.hpp"
 #include "widgets/LockScreen.hpp"
+#include "lockauth/LockAuthStore.hpp"
+#include "lockauth/LockAuthOverlay.hpp"
 #include "widgets/AppletButton.hpp"
 #include "widgets/PageIndicator.hpp"
 #include "widgets/ProfileCarouselScreen.hpp"
@@ -709,6 +711,32 @@ private:
     std::shared_ptr<ControllerTestScreen> m_controllerTest;
     std::shared_ptr<ProfileCarouselScreen> m_profileCarousel;
     std::shared_ptr<LockScreen> m_lockScreen;
+    switchu::lockauth::LockAuthStore m_lockAuthStore;
+    std::shared_ptr<switchu::lockauth::LockAuthOverlay> m_lockAuthOverlay;
+    int m_lockAuthPendingMode = 0; // enroll target while verifying guard
+    enum class LockAuthFlow : std::uint8_t {
+        None,
+        Unlock,
+        Enroll,
+        Disable,
+        ChangeGuard,
+    };
+    LockAuthFlow m_lockAuthFlow = LockAuthFlow::None;
+    std::function<void()> m_lockAuthPendingAfterVerify;
+    bool m_lockAuthResumeIntent = false;
+    bool m_lockAuthPasswordConfirm = false;
+    std::string m_lockAuthPasswordFirst;
+    int m_lockAuthPasswordFails = 0;
+    float m_lockAuthPasswordLockout = 0.f;
+    void syncLockAuthToThemeShop();
+    void beginLockAuthEnroll(int mode);
+    void beginLockAuthDisable();
+    bool gateLockAuthSettingsChange(std::function<void()> afterVerify);
+    void handleLockAuthDone(switchu::lockauth::LockAuthOverlay::PendingAction action);
+    void promptLockAuthPassword();
+    void handleLockAuthPasswordAccepted(const std::string& value);
+    void handleLockAuthPasswordCancelled();
+    bool beginLockAuthOverlayOrPassword(switchu::lockauth::Mode mode, bool resumeIntent);
     std::vector<switchu::lockfonts::Entry> m_lockClockFontEntries;
     nxui::Widget* m_lockReturnFocus = nullptr;
     std::uint64_t m_lockReturnTitleId = 0;
@@ -1085,6 +1113,10 @@ private:
     bool  m_audioHeldLogged  = false;
     bool m_fastReturnRequested = false;
     bool m_startLocked = false; // MenuStartMode::LockScreen with suspended game
+    bool m_parentalLockActive = false; // PlayGuard / stock pctl play-timer lockout
+    void requestParentalUnlock(switchu::smi::ParentalAuthMode mode,
+                               std::uint64_t titleId = 0,
+                               AccountUid uid = {});
     std::future<void> m_themePackageTransferFuture;
     std::future<void> m_softwareDeleteFuture;
     Result m_softwareDeleteResult = 0;

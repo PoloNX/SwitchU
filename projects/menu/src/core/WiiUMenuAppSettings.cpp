@@ -2378,6 +2378,7 @@ void WiiUMenuApp::createThemeShop() {
     m_themeShop->setLockScreenTransitionState(m_config.lockScreenTransition);
     m_themeShop->setLockScreenZoomDirState(m_config.lockScreenZoomDir);
     m_themeShop->setLockScreenWipeDirState(m_config.lockScreenWipeDir);
+    syncLockAuthToThemeShop();
     m_themeShop->setThemeLockClockFontOverrideState(m_config.themeLockClockFontOverride);
     m_themeShop->setThemeIconPackOverrideState(m_config.themeIconPackOverride);
     m_themeShop->setThemeMusicOverrideState(m_config.themeMusicOverride);
@@ -2488,6 +2489,36 @@ void WiiUMenuApp::createThemeShop() {
         m_config.lockScreenClockFont = id;
         m_config.save();
         applyLockScreenClockFont();
+    });
+    m_themeShop->onLockAuthSetup([this](int mode) {
+        beginLockAuthEnroll(mode);
+    });
+    m_themeShop->onLockAuthDisable([this]() {
+        beginLockAuthDisable();
+    });
+    m_themeShop->onLockAuthGuardChange([this](bool enabled) {
+        if (!m_lockAuthStore.isEnabled()) {
+            m_config.lockAuthGuardSettings = enabled;
+            m_config.save();
+            return;
+        }
+        if (!m_config.lockAuthGuardSettings && enabled) {
+            m_config.lockAuthGuardSettings = true;
+            m_config.save();
+            syncLockAuthToThemeShop();
+            return;
+        }
+        if (m_config.lockAuthGuardSettings && !enabled) {
+            gateLockAuthSettingsChange([this]() {
+                m_config.lockAuthGuardSettings = false;
+                m_config.save();
+                syncLockAuthToThemeShop();
+            });
+            syncLockAuthToThemeShop();
+            return;
+        }
+        m_config.lockAuthGuardSettings = enabled;
+        m_config.save();
     });
     m_themeShop->onAutoThemeOpen([this]() { openAutoThemeSettings(); });
     m_themeShop->onCursorMotionModeChange([this](int mode) {
@@ -3559,6 +3590,7 @@ void WiiUMenuApp::refreshThemeShopState(bool rebuildTab) {
     m_themeShop->setLockScreenTransitionState(m_config.lockScreenTransition);
     m_themeShop->setLockScreenZoomDirState(m_config.lockScreenZoomDir);
     m_themeShop->setLockScreenWipeDirState(m_config.lockScreenWipeDir);
+    syncLockAuthToThemeShop();
     m_themeShop->setThemeLockClockFontOverrideState(m_config.themeLockClockFontOverride);
     m_themeShop->setThemeIconPackOverrideState(m_config.themeIconPackOverride);
     m_themeShop->setThemeMusicOverrideState(m_config.themeMusicOverride);
