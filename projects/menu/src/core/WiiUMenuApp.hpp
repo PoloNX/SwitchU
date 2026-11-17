@@ -80,9 +80,9 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <switch.h>
-#ifdef SWITCHU_MENU
+/* Common SMI types (ParentalAuthMode, …). Needed for Lock/PlayGuard decls in
+ * homebrew builds too — those still compile requestParentalUnlock (stub body). */
 #include <switchu/smi_protocol.hpp>
-#endif
 
 
 #ifdef SWITCHU_HOMEBREW
