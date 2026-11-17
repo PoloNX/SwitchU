@@ -21,6 +21,12 @@ bool isRetriableClockSyncError(const std::string& error) {
 
 } // namespace
 
+void SettingsScreen::showControllersTab() {
+    constexpr int kControllersTab = 7;
+    show();
+    activateTopRailSlot(kControllersTab);
+}
+
 void SettingsScreen::buildTabs() {
     auto& i18n = nxui::I18n::instance();
     m_tabs = {

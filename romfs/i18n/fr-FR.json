@@ -353,8 +353,8 @@
       "remapping": "Modifier les boutons",
       "remapping_desc": "Ouvre l'outil système de remappage des boutons.",
       "vibration": "Vibration",
-      "usb_wired": "Communication USB filaire",
-      "usb_wired_desc": "Utilise l’USB filaire pour réduire la latence.",
+      "usb_wired": "Communication filaire manette Pro",
+      "usb_wired_desc": "Autorise la manette Pro en USB ou dongle 2,4 GHz.",
       "nfc": "NFC (amiibo)"
     },
     "bluetooth": {

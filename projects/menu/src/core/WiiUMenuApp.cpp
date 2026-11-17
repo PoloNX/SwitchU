@@ -7457,8 +7457,18 @@ void WiiUMenuApp::buildGrid() {
     sidebarActions.onMiiEditor = [this]() {
         scheduleLeaveCapture([this]() { m_launcher.launchMiiEditor(); });
     };
+    // Stock Controllers opens a page with Wired Communication + Grip/Order.
+    // Open Settings → Controllers (Change Grip/Order stays a row there) (#215).
     sidebarActions.onControllers = [this]() {
-        scheduleLeaveCapture([this]() { m_launcher.launchControllerPairing(); });
+        m_audio.playSfx(Sfx::ModalShow);
+        if (m_settings) {
+            m_navigator.navigate(switchu::navigation::Route::Settings);
+            if (m_themeShop && m_themeShop->isActive())
+                m_themeShop->hide();
+            m_settings->setGridLayoutState(m_config.gridColumns, m_config.gridRows);
+            m_settings->showControllersTab();
+            focusManager().setFocus(m_settings.get());
+        }
     };
 #else
     sidebarActions.onAlbum       = [this]() { m_audio.playSfx(Sfx::Activate); };

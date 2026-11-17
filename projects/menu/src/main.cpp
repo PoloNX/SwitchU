@@ -245,6 +245,7 @@ extern "C" void userAppInit(void) {
     plInitialize(PlServiceType_User);
     setInitialize();
     setsysInitialize();
+    hidsysInitialize();
     accountInitialize(AccountServiceType_Application);
     psmInitialize();
     lblInitialize();
@@ -255,6 +256,7 @@ extern "C" void userAppExit(void) {
     lblExit();
     psmExit();
     accountExit();
+    hidsysExit();
     setsysExit();
     setExit();
     plExit();
@@ -289,6 +291,7 @@ extern "C" void __appInit(void) {
     __libnx_init_time();
     setsysInitialize();
     setInitialize();
+    hidsysInitialize();
     // pl:u — shared fonts (JP/CN/KO) are unavailable through pl:s on [16.0.0+].
     plInitialize(PlServiceType_User);
     psmInitialize();
@@ -410,6 +413,7 @@ extern "C" void __appExit(void) {
     appletExit();
 
     setExit();
+    hidsysExit();
     setsysExit();
     timeExit();
 

@@ -134,8 +134,8 @@
     },
     "controllers": {
       "vibration": "Vibración",
-      "usb_wired": "Comunicación USB por cable",
-      "usb_wired_desc": "Usa el modo USB por cable para reducir la latencia.",
+      "usb_wired": "Comunicación por cable del Pro Controller",
+      "usb_wired_desc": "Permite Pro Controllers por USB o dongle 2,4 GHz.",
       "nfc": "NFC (amiibo)",
       "test": "Probar dispositivos de entrada",
       "test_desc": "Prueba los joysticks, los botones y la pantalla táctil.",
