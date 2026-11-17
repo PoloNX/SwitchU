@@ -72,6 +72,8 @@ private:
     void submitCombo();
     void handlePinKey(int key); // 0-9, -1 backspace, -2 ok
     void patternAddCell(int cell);
+    /// True when the drawn path has reached the known target length (PIN-like).
+    bool patternComplete() const;
     void comboAdd(std::uint32_t button);
     void drawPin(nxui::Renderer& ren, float opacity);
     void drawPassword(nxui::Renderer& ren, float opacity);

@@ -1076,7 +1076,7 @@
     "pattern_short": "Connect more dots",
     "combo_short": "Need more presses",
     "password_controls": "A type · Y delete · + / X OK · B cancel",
-    "pattern_controls": "Touch draw · A add · + check · Y clear · B cancel",
+    "pattern_controls": "Touch draw · A add (auto on last) · + done · Y clear · B cancel",
     "combo_controls": "A/B/X · L/R/ZL/ZR · D-pad · + submit · Y clear · − cancel"
   },
   "lock": {

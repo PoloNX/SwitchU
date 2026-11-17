@@ -310,6 +310,18 @@ void LockAuthOverlay::patternAddCell(int cell) {
     m_pattern.push_back(static_cast<std::uint8_t>(cell));
 }
 
+bool LockAuthOverlay::patternComplete() const {
+    const int n = static_cast<int>(m_pattern.size());
+    if (n < kMinPatternLen)
+        return false;
+    if (m_purpose == Purpose::Enroll && m_enrollConfirm)
+        return n == static_cast<int>(m_enrollFirst.size());
+    if (m_purpose == Purpose::Unlock || m_purpose == Purpose::Verify)
+        return n == std::clamp(m_pinLen, kMinPatternLen, kMaxPatternLen);
+    // First enroll pass: length is chosen by the user (+ / lift). Auto only at max.
+    return n >= kMaxPatternLen;
+}
+
 void LockAuthOverlay::submitPattern() {
     if (static_cast<int>(m_pattern.size()) < kMinPatternLen) {
         showError(nxui::I18n::instance().tr("lockauth.pattern_short", "Connect more dots"));
@@ -319,6 +331,7 @@ void LockAuthOverlay::submitPattern() {
     if (m_purpose == Purpose::Enroll) {
         if (!m_enrollConfirm) {
             m_enrollFirst = secret;
+            m_pinLen = static_cast<int>(m_pattern.size());
             m_enrollConfirm = true;
             resetEntry();
             return;
@@ -540,8 +553,13 @@ void LockAuthOverlay::handleInput(nxui::Input& input) {
         if (input.isDown(nxui::Button::DRight) && m_patternFocus % 3 < 2) ++m_patternFocus;
         if (input.isDown(nxui::Button::DUp) && m_patternFocus >= 3) m_patternFocus -= 3;
         if (input.isDown(nxui::Button::DDown) && m_patternFocus < 6) m_patternFocus += 3;
-        if (input.isDown(nxui::Button::A))
+        if (input.isDown(nxui::Button::A)) {
+            const auto before = m_pattern.size();
             patternAddCell(m_patternFocus);
+            // PIN-like: last A that completes the known path submits (no + needed).
+            if (m_pattern.size() > before && patternComplete())
+                submitPattern();
+        }
         if (input.isDown(nxui::Button::Plus) || input.isDown(nxui::Button::X))
             submitPattern();
         if (input.isDown(nxui::Button::Y)) {
@@ -706,7 +724,8 @@ void LockAuthOverlay::drawPattern(nxui::Renderer& ren, float opacity) {
     }
     if (m_smallFont) {
         const auto tip = nxui::I18n::instance().tr(
-            "lockauth.pattern_controls", "Touch draw · A add · + check · Y clear · B cancel");
+            "lockauth.pattern_controls",
+            "Touch draw · A add (auto on last) · + done · Y clear · B cancel");
         const auto tw = m_smallFont->measure(tip);
         m_smallFont->draw(ren, tip, {(m_canvasW - tw.x) * 0.5f, m_canvasH * 0.82f},
                           nxui::Color(0.8f, 0.85f, 0.9f, 0.85f * opacity));
