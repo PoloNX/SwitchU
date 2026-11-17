@@ -7412,7 +7412,9 @@ void WiiUMenuApp::buildGrid() {
     m_lockScreen->setOnUnlocked([this]() {
         if (m_parentalLockActive) {
             DebugLog::log("[pctl] Unlock → HOME (play still gated until PIN on resume/launch)");
+#ifdef SWITCHU_MENU
             switchu::menu::smi_cmd::parentalDismissLock();
+#endif
         }
         m_parentalLockActive = false;
         finishExitLockView(false);
