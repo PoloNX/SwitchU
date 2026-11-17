@@ -311,15 +311,15 @@ void LockAuthOverlay::patternAddCell(int cell) {
 }
 
 bool LockAuthOverlay::patternComplete() const {
-    const int n = static_cast<int>(m_pattern.size());
-    if (n < kMinPatternLen)
+    // Setup (enroll / re-draw) never auto-submits — user finishes with + / Start.
+    // Unlock & settings-verify auto-submit once the path matches the stored length.
+    if (m_purpose == Purpose::Enroll)
         return false;
-    if (m_purpose == Purpose::Enroll && m_enrollConfirm)
-        return n == static_cast<int>(m_enrollFirst.size());
-    if (m_purpose == Purpose::Unlock || m_purpose == Purpose::Verify)
-        return n == std::clamp(m_pinLen, kMinPatternLen, kMaxPatternLen);
-    // First enroll pass: length is chosen by the user (+ / lift). Auto only at max.
-    return n >= kMaxPatternLen;
+    if (m_purpose != Purpose::Unlock && m_purpose != Purpose::Verify)
+        return false;
+    const int n = static_cast<int>(m_pattern.size());
+    const int need = std::clamp(m_pinLen, kMinPatternLen, kMaxPatternLen);
+    return n == need;
 }
 
 void LockAuthOverlay::submitPattern() {
@@ -723,9 +723,13 @@ void LockAuthOverlay::drawPattern(nxui::Renderer& ren, float opacity) {
                           : nxui::Color(1.f, 1.f, 1.f, (focus ? 0.55f : 0.28f) * opacity));
     }
     if (m_smallFont) {
-        const auto tip = nxui::I18n::instance().tr(
-            "lockauth.pattern_controls",
-            "Touch draw · A add (auto on last) · + done · Y clear · B cancel");
+        const char* tipKey = (m_purpose == Purpose::Enroll)
+            ? "lockauth.pattern_controls_enroll"
+            : "lockauth.pattern_controls";
+        const char* tipFb = (m_purpose == Purpose::Enroll)
+            ? "Touch draw · A add · + / Start confirm · Y clear · B cancel"
+            : "Touch draw · A add (unlocks on last) · Y clear · B cancel";
+        const auto tip = nxui::I18n::instance().tr(tipKey, tipFb);
         const auto tw = m_smallFont->measure(tip);
         m_smallFont->draw(ren, tip, {(m_canvasW - tw.x) * 0.5f, m_canvasH * 0.82f},
                           nxui::Color(0.8f, 0.85f, 0.9f, 0.85f * opacity));
