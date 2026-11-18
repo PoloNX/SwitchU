@@ -62,6 +62,9 @@ bool applyHomeOrientation(HomeOrientation) { return true; }
 namespace {
 u64 g_managedLayerId = 0;
 HomeOrientation g_homeOrientation = HomeOrientation::Landscape0;
+// Daemon-forwarded Console/Handheld. Menu's appletGetOperationMode() cache is
+// often frozen (library applet) — prefer this when callers pass -1 (#214).
+int g_lastKnownOperationMode = -1;
 
 u32 nativeTransformFor(HomeOrientation orientation) {
     switch (orientation) {
@@ -77,13 +80,27 @@ u32 nativeTransformFor(HomeOrientation orientation) {
             return 0;
     }
 }
+
+// Stock "Adjust Screen Size" also updates display magnification so games and
+// other layers shrink/grow — setsys alone is not enough (#214).
+void applyTvDisplayMagnification(s32 fullW, s32 fullH, s32 w, s32 h) {
+    ViDisplay display{};
+    if (R_FAILED(viOpenDefaultDisplay(&display)))
+        return;
+    const s32 x = (fullW - w) / 2;
+    const s32 y = (fullH - h) / 2;
+    const Result rc = viSetDisplayMagnification(&display, x, y, w, h);
+    DebugLog::log("[menu] display magnification %dx%d @ (%d,%d) rc=0x%X",
+                  w, h, x, y, rc);
+    viCloseDisplay(&display);
+}
 }
 
 bool initScreenFitLayer(std::uint64_t managedLayerId) {
     if (managedLayerId == 0)
         return false;
     g_managedLayerId = managedLayerId;
-    const bool sized = applyScreenUnderscan();
+    const bool sized = applyScreenUnderscan(g_lastKnownOperationMode);
     applyHomeOrientation(g_homeOrientation);
     return sized;
 }
@@ -108,9 +125,18 @@ bool applyScreenUnderscan(int operationMode) {
     layer.initialized = true;
     layer.layer_id = g_managedLayerId;
 
-    const AppletOperationMode mode = operationMode >= 0
-        ? static_cast<AppletOperationMode>(operationMode)
-        : appletGetOperationMode();
+    if (operationMode >= 0)
+        g_lastKnownOperationMode = operationMode;
+
+    int resolvedMode = operationMode;
+    if (resolvedMode < 0)
+        resolvedMode = g_lastKnownOperationMode;
+    if (resolvedMode < 0)
+        resolvedMode = static_cast<int>(appletGetOperationMode());
+    else
+        g_lastKnownOperationMode = resolvedMode;
+
+    const AppletOperationMode mode = static_cast<AppletOperationMode>(resolvedMode);
 
     // Docked: size the managed layer toward 1920x1080 (underscan %). Handheld:
     // always reset to 1280x720 — otherwise a prior dock pass leaves the LCD
@@ -126,25 +152,41 @@ bool applyScreenUnderscan(int operationMode) {
         return R_SUCCEEDED(rc);
     }
 
-    constexpr s32 kFullW = 1920;
-    constexpr s32 kFullH = 1080;
+    s32 fullW = 1920;
+    s32 fullH = 1080;
+    {
+        ViDisplay display{};
+        if (R_SUCCEEDED(viOpenDefaultDisplay(&display))) {
+            s32 lw = 0, lh = 0;
+            if (R_SUCCEEDED(viGetDisplayLogicalResolution(&display, &lw, &lh))
+                && lw > 0 && lh > 0) {
+                fullW = lw;
+                fullH = lh;
+            }
+            viCloseDisplay(&display);
+        }
+    }
 
     u32 underscan = 100;
     SetSysTvSettings tv{};
     if (R_SUCCEEDED(setsysGetTvSettings(&tv)) && tv.underscan >= 1 && tv.underscan <= 100)
         underscan = tv.underscan;
 
-    const s32 w = kFullW * static_cast<s32>(underscan) / 100;
-    const s32 h = kFullH * static_cast<s32>(underscan) / 100;
+    const s32 w = fullW * static_cast<s32>(underscan) / 100;
+    const s32 h = fullH * static_cast<s32>(underscan) / 100;
 
     const Result rc = viSetLayerSize(&layer, w, h);
     if (R_SUCCEEDED(rc)) {
-        viSetLayerPosition(&layer, static_cast<float>(kFullW - w) / 2.f,
-                           static_cast<float>(kFullH - h) / 2.f);
+        viSetLayerPosition(&layer, static_cast<float>(fullW - w) / 2.f,
+                           static_cast<float>(fullH - h) / 2.f);
     }
 
-    DebugLog::log("[menu] display mode=docked underscan=%u%% -> layer %dx%d rc=0x%X",
-                  underscan, w, h, rc);
+    // Match stock System Settings: underscan must also resize the display
+    // magnification, or games keep a black frame until you leave SwitchU (#214).
+    applyTvDisplayMagnification(fullW, fullH, w, h);
+
+    DebugLog::log("[menu] display mode=docked underscan=%u%% logical=%dx%d -> layer %dx%d rc=0x%X",
+                  underscan, fullW, fullH, w, h, rc);
     return R_SUCCEEDED(rc);
 }
 #endif

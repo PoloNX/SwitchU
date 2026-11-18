@@ -15,11 +15,12 @@ namespace switchu::menu {
 // Returns true when the layer was initialized successfully.
 bool initScreenFitLayer(std::uint64_t managedLayerId);
 
-// Re-reads operation mode + tv.underscan and resizes the layer. Returns true on
-// success, or when there is nothing to adjust (standalone homebrew / no layer).
-// operationMode: <0 = query appletGetOperationMode(); else treat as
-// AppletOperationMode (menu's libnx cache is often stale until messages are
-// processed — prefer the mode the daemon forwarded).
+// Re-reads operation mode + tv.underscan, resizes the managed layer, and when
+// docked also applies viSetDisplayMagnification (stock Adjust Screen Size).
+// Returns true on success, or when there is nothing to adjust (homebrew / no
+// layer). operationMode: <0 = last daemon-known mode, else appletGetOperationMode();
+// >=0 = AppletOperationMode (prefer the mode the daemon forwarded — menu libnx
+// cache is often stale).
 bool applyScreenUnderscan(int operationMode = -1);
 
 // Rotate the default NWindow for Flip-Grip / TATE. UI framebuffer stays

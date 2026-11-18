@@ -79,9 +79,10 @@ SettingsScreen::Tab settings::tabs::DisplayTab::build(SettingsScreen& screen) {
                 tv.tv_resolution = (s32)self.intVal;
                 setsysSetTvSettings(&tv);
             }
-            // Refresh the managed layer after the HDMI preference changes so a
-            // docked session does not keep a stale size until the next redock.
-            switchu::menu::applyScreenUnderscan();
+            // TV settings only apply docked — pass Console so a stale handheld
+            // appletGetOperationMode() cache cannot no-op the resize (#214).
+            switchu::menu::applyScreenUnderscan(
+                static_cast<int>(AppletOperationMode_Console));
         };
         t.items.push_back(std::move(it));
     }
@@ -130,9 +131,11 @@ SettingsScreen::Tab settings::tabs::DisplayTab::build(SettingsScreen& screen) {
                 tv.underscan = percent;
                 setsysSetTvSettings(&tv);
             }
-            // Resize the managed layer now so the result is visible immediately,
-            // without waiting for a re-dock (like qlaunch's live preview).
-            switchu::menu::applyScreenUnderscan();
+            // Resize layer + display magnification live (stock Adjust Screen
+            // Size). Force Console — TV Screen Size is meaningless handheld,
+            // and the library-applet mode cache is often stuck there (#214).
+            switchu::menu::applyScreenUnderscan(
+                static_cast<int>(AppletOperationMode_Console));
         };
         t.items.push_back(std::move(it));
     }
