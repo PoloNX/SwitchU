@@ -277,12 +277,12 @@ void FolderOptionsScreen::buildTabs() {
     addArtRow("game.steamgriddb.icon", "Replacement icon",
               "game.steamgriddb.icon_desc", "Applies to 1x1 and 2x2.",
               m_folder.hasCustomIcon, ArtAction::Icon);
-    if (m_folder.tileSizeIndex == 0 || m_folder.tileSizeIndex == 3) {
-        addArtRow("game.steamgriddb.square_cover", "Square cover",
-                  "game.steamgriddb.square_cover_desc",
-                  "Applies to 1x1 and 2x2.",
-                  m_folder.hasCustomSquareCover, ArtAction::SquareCover);
-    }
+    // Always list Square cover (same as titles) so it can be set before/after
+    // resizing; art still applies on 1x1 / 2x2 faces.
+    addArtRow("game.steamgriddb.square_cover", "Square cover",
+              "game.steamgriddb.square_cover_desc",
+              "Applies to 1x1 and 2x2.",
+              m_folder.hasCustomSquareCover, ArtAction::SquareCover);
     m_tabs.push_back(std::move(artwork));
 
     Tab management;
