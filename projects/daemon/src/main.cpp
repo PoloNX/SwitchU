@@ -2191,8 +2191,25 @@ static bool handleAction(daemon::SystemAction& action) {
             const auto mode = static_cast<smi::ParentalAuthMode>(action.parentalAuthMode);
             switchu::FileLog::log("[action] parental auth (pctlauth) mode=%u tid=0x%016lX",
                                   (unsigned)action.parentalAuthMode, action.titleId);
+            // Same foreground dance as launchLibraryApplet: PIN owns the display,
+            // then we must reclaim FG before launch/resume or the title can start
+            // invisible (black screen until HOME / relaunch).
+            {
+                const Result fgRc = appletRequestToGetForeground();
+                switchu::FileLog::log(
+                    "[action] parental auth RequestToGetForeground (pre) rc=0x%X", fgRc);
+            }
+            g_foregroundAppletActive = true;
+            g_pendingForegroundAppletHome = false;
             // pctlauth needs the privileged session free — no held pctl handle here.
             Result rc = pctlauthShow(false);
+            g_foregroundAppletActive = false;
+            {
+                const Result fgRc = appletRequestToGetForeground();
+                switchu::FileLog::log(
+                    "[action] parental auth RequestToGetForeground (post) rc=0x%X", fgRc);
+            }
+            handleAppletMessages();
             switchu::FileLog::log("[action] pctlauthShow rc=0x%X", rc);
             // 0x690 = library applet canceled (user backed out of PIN). Not a hard failure.
             constexpr Result kAppletCanceled = 0x690;
