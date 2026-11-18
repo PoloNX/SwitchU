@@ -636,6 +636,8 @@ int IconGrid::hitTest(float screenX, float screenY) const {
     int start = m_page * iconsPerPage();
     int end   = std::min(start + iconsPerPage(), (int)m_allIcons.size());
     for (int i = start; i < end; ++i) {
+        if (!m_allIcons[i] || !m_allIcons[i]->isVisible())
+            continue; // Skip WidgetContinuation placeholders under multi-cell folders.
         nxui::Rect r = m_allIcons[i]->focusRect();
         if (r.contains(screenX, screenY))
             return i - start;

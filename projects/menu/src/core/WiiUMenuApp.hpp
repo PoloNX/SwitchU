@@ -541,6 +541,10 @@ private:
     void syncEditPlacementAfterModelChange(bool preferEmptySlot);
     bool commitEditModePlacement();
     bool activateEditModeTarget();
+    // Multi-cell folders only store Folder at the top-left; other cells are
+    // WidgetContinuation. Resolve any cell inside the footprint to that anchor
+    // so drop / hover-open / cursor highlight work across the whole folder.
+    int resolveEditFolderDropAnchor(int cell) const;
     bool moveFocusedIcon(nxui::FocusDirection dir);
     void enterEditMode();
     void exitEditMode();

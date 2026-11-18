@@ -523,7 +523,9 @@ void WiiUMenuApp::updateEditGhost(float dt) {
             heldIsNestableTitle &&
             m_editTargetIndex >= 0 && m_editTargetIndex < m_model.count();
         if (canHoverOpen) {
-            const AppEntry hovered = m_model.at(m_editTargetIndex);
+            const int folderAnchor = resolveEditFolderDropAnchor(m_editTargetIndex);
+            const AppEntry& hovered = m_model.at(
+                folderAnchor >= 0 ? folderAnchor : m_editTargetIndex);
             if (hovered.isFolder()) {
                 m_editDragFolderHold += dt;
                 if (m_editDragFolderHold >= kEditDragFolderHoldDelay) {
@@ -1198,6 +1200,42 @@ bool WiiUMenuApp::commitEditModePlacement() {
     return true;
 }
 
+int WiiUMenuApp::resolveEditFolderDropAnchor(int cell) const {
+    if (cell < 0 || cell >= m_model.count() || m_openFolderId != 0)
+        return -1;
+    const AppEntry& direct = m_model.at(cell);
+    if (direct.isFolder())
+        return cell;
+    if (!m_grid)
+        return -1;
+
+    const int cols = std::max(1, m_grid->columns());
+    const int rows = std::max(1, m_grid->rowsPerPage());
+    const int perPage = cols * rows;
+    if (perPage <= 0)
+        return -1;
+    const int pageStart = (cell / perPage) * perPage;
+    const int pageEnd = std::min(m_model.count(), pageStart + perPage);
+    const int cellCol = (cell - pageStart) % cols;
+    const int cellRow = (cell - pageStart) / cols;
+
+    for (int anchor = pageStart; anchor < pageEnd; ++anchor) {
+        const AppEntry& entry = m_model.at(anchor);
+        if (!entry.isFolder())
+            continue;
+        const int fCols = std::max(1, entry.widgetColumns);
+        const int fRows = std::max(1, entry.widgetRows);
+        if (fCols <= 1 && fRows <= 1)
+            continue;
+        const int aCol = (anchor - pageStart) % cols;
+        const int aRow = (anchor - pageStart) / cols;
+        if (cellCol >= aCol && cellCol < aCol + fCols
+            && cellRow >= aRow && cellRow < aRow + fRows)
+            return anchor;
+    }
+    return -1;
+}
+
 bool WiiUMenuApp::activateEditModeTarget() {
     if (!m_editMode || !m_grid)
         return false;
@@ -1232,7 +1270,9 @@ bool WiiUMenuApp::activateEditModeTarget() {
         m_editTargetIndex = target;
     }
 
-    const AppEntry targetEntry = m_model.at(target);
+    // Multi-cell folders: drop on any spanned cell, not only the top-left.
+    const int folderAnchor = resolveEditFolderDropAnchor(target);
+    const AppEntry targetEntry = m_model.at(folderAnchor >= 0 ? folderAnchor : target);
     // Games dropped on a folder open it for slot pick. Folders dropped on a
     // folder fall through to commitEditModePlacement and swap like any tile.
     if (m_openFolderId == 0 && targetEntry.isFolder()
@@ -1399,6 +1439,10 @@ bool WiiUMenuApp::moveFocusedIcon(nxui::FocusDirection dir) {
     // Focus the underlying selectable item when possible, but the edit anchor
     // remains valid even over an invisible continuation cell.
     if (m_grid->focusGlobalIndex(target)) {
+        if (auto* focused = m_grid->focusManager().current())
+            focusManager().setFocus(focused);
+    } else if (const int folderAnchor = resolveEditFolderDropAnchor(target);
+               folderAnchor >= 0 && m_grid->focusGlobalIndex(folderAnchor)) {
         if (auto* focused = m_grid->focusManager().current())
             focusManager().setFocus(focused);
     }
@@ -2751,10 +2795,23 @@ void WiiUMenuApp::handleTouch() {
         focusManager().setFocus(cur);
         if (m_cursor) {
             nxui::Rect cursorRect = cur->focusRect();
-            if (m_editMode && m_editGhostIcon)
-                cursorRect = m_grid->gridSpanRect(
-                    global, m_editGhostIcon->gridSpanColumns(),
-                    m_editGhostIcon->gridSpanRows());
+            if (m_editMode && m_editGhostIcon) {
+                const int folderAnchor = resolveEditFolderDropAnchor(global);
+                if (folderAnchor >= 0
+                    && m_editHeldTitleId != 0
+                    && !isFolderTitleId(m_editHeldTitleId)
+                    && !switchu::widgets::isWidgetTitleId(m_editHeldTitleId)) {
+                    const AppEntry& folder = m_model.at(folderAnchor);
+                    cursorRect = m_grid->gridSpanRect(
+                        folderAnchor,
+                        std::max(1, folder.widgetColumns),
+                        std::max(1, folder.widgetRows));
+                } else {
+                    cursorRect = m_grid->gridSpanRect(
+                        global, m_editGhostIcon->gridSpanColumns(),
+                        m_editGhostIcon->gridSpanRows());
+                }
+            }
             m_cursor->moveTo(cursorRect.expanded(4.f), 0.f);
             m_cursor->setVisible(true);
         } else {
@@ -3183,9 +3240,21 @@ void WiiUMenuApp::updateCursor() {
                 || switchu::widgets::isLandscapeWideGameTile(cols, rows);
         }
         if (m_editMode && m_editGhostIcon && m_grid) {
-            fr = m_grid->gridSpanRect(m_editTargetIndex,
-                                      m_editGhostIcon->gridSpanColumns(),
-                                      m_editGhostIcon->gridSpanRows());
+            const int folderAnchor = resolveEditFolderDropAnchor(m_editTargetIndex);
+            if (folderAnchor >= 0
+                && m_editHeldTitleId != 0
+                && !isFolderTitleId(m_editHeldTitleId)
+                && !switchu::widgets::isWidgetTitleId(m_editHeldTitleId)) {
+                // Nestable game over a multi-cell folder: frame the whole folder.
+                const AppEntry& folder = m_model.at(folderAnchor);
+                fr = m_grid->gridSpanRect(folderAnchor,
+                                          std::max(1, folder.widgetColumns),
+                                          std::max(1, folder.widgetRows));
+            } else {
+                fr = m_grid->gridSpanRect(m_editTargetIndex,
+                                          m_editGhostIcon->gridSpanColumns(),
+                                          m_editGhostIcon->gridSpanRows());
+            }
             outsideFitCursor = false;
         } else if (outsideFitCursor && glossyFocus) {
             // GlossyIcon also applies focusScale at draw time; without it the
