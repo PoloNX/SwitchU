@@ -57,8 +57,6 @@ public:
     void pollClockSync();
     void pollClockVerify();
     void openSettingDropdown(int rawIdx) { openDropdown(rawIdx); }
-    /** Open Settings already on the Controllers tab (sidebar Controllers). */
-    void showControllersTab();
     void onAccessibilityEnabledChange(BoolCb cb) { m_accessibilityEnabledCb = std::move(cb); }
     void onAccessibilitySpeakHintsChange(BoolCb cb) { m_accessibilitySpeakHintsCb = std::move(cb); }
     void onAccessibilitySpeakContextEveryFocusChange(BoolCb cb) { m_accessibilitySpeakContextEveryFocusCb = std::move(cb); }
