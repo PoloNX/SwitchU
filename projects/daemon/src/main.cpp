@@ -50,6 +50,21 @@ extern "C" {
     TimeServiceType __nx_time_service_type = TimeServiceType_System;
 }
 
+// Controller applet inherits the caller's npad config. Without publishing a
+// style set + Horizontal hold, Change Grip/Order cannot register a lone Joy-Con
+// the way qlaunch does (issue #218).
+static void setupNpad() {
+    static const HidNpadIdType npadIds[] = {
+        HidNpadIdType_No1, HidNpadIdType_No2, HidNpadIdType_No3,
+        HidNpadIdType_No4, HidNpadIdType_No5, HidNpadIdType_No6,
+        HidNpadIdType_No7, HidNpadIdType_No8, HidNpadIdType_Handheld,
+    };
+    hidInitializeNpad();
+    hidSetSupportedNpadIdType(npadIds, sizeof(npadIds) / sizeof(npadIds[0]));
+    hidSetSupportedNpadStyleSet(HidNpadStyleSet_NpadStandard | HidNpadStyleTag_NpadSystemExt);
+    hidSetNpadJoyHoldType(HidNpadJoyHoldType_Horizontal);
+}
+
 extern "C" void __appInit(void) {
     Result rc;
 
@@ -141,6 +156,8 @@ extern "C" void __appInit(void) {
     g_hidReady = R_SUCCEEDED(rc);
     if (R_FAILED(rc))
         svcOutputDebugString("[SwitchU-daemon] hidInitialize FAIL", 36);
+    else
+        setupNpad();
 
     rc = fsdevMountSdmc();
     if (R_FAILED(rc)) {
@@ -1675,10 +1692,9 @@ static Result setupControllerPrivateArg(HidLaControllerSupportArgPrivate& privat
     privateArg.mode = mode;
     if (hosversionAtLeast(3, 0, 0)) {
         Result setupRc = hidGetSupportedNpadStyleSet(&privateArg.npad_style_set);
-        HidNpadJoyHoldType holdType{};
-        if (R_SUCCEEDED(setupRc))
-            setupRc = hidGetNpadJoyHoldType(&holdType);
-        privateArg.npad_joy_hold_type = holdType;
+        // Always Horizontal for HOME-style Controllers so SL+SR single Joy-Con
+        // registration matches qlaunch (issue #218).
+        privateArg.npad_joy_hold_type = HidNpadJoyHoldType_Horizontal;
         return setupRc;
     } else {
         privateArg.npad_style_set = 0;

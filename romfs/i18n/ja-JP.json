@@ -380,8 +380,8 @@
       "remapping": "ボタン配置を変更",
       "remapping_desc": "システムのコントローラーボタン配置ツールを開きます。",
       "vibration": "振動",
-      "usb_wired": "USB有線通信",
-      "usb_wired_desc": "USB有線モードで遅延を減らします。",
+      "usb_wired": "Proコントローラー有線通信",
+      "usb_wired_desc": "USBまたは2.4GHzドングルでProコントローラーを使います。",
       "nfc": "NFC（amiibo）"
     },
     "bluetooth": {

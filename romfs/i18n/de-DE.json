@@ -113,7 +113,7 @@
     "controllers": {
       "vibration": "Vibration",
       "usb_wired": "Kabelgebundene Verbindung für Pro Controller",
-      "usb_wired_desc": "USB-Kabelmodus nutzen, um die Latenz zu verringern.",
+      "usb_wired_desc": "Pro Controller per USB oder 2,4-GHz-Dongle nutzen.",
       "nfc": "NFC (amiibo)"
     },
     "bluetooth": {

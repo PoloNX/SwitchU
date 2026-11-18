@@ -411,8 +411,8 @@
       "remapping": "Change Button Mapping",
       "remapping_desc": "Open the system controller button mapping tool.",
       "vibration": "Vibration",
-      "usb_wired": "USB Wired Communication",
-      "usb_wired_desc": "Use USB wired mode to reduce latency.",
+      "usb_wired": "Pro Controller Wired Communication",
+      "usb_wired_desc": "Allow Pro Controllers over USB or a 2.4 GHz dongle.",
       "nfc": "NFC (amiibo)"
     },
     "bluetooth": {

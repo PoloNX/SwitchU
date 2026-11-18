@@ -190,6 +190,14 @@ constexpr HidNpadIdType kNpadIds[] = {
 
 void Input::initialize() {
     padConfigureInput(8, kSupportedNpadStyles);
+    // Fresh LibraryApplet ARUIDs default to Dual + Vertical. Stock HOME applies
+    // system Npad policy and Horizontal hold so Change Grip/Order single Joy-Cons
+    // show up as JoyLeft/JoyRight (issue #218). Tomas's #190 remap only runs then.
+    hidSetNpadJoyHoldType(HidNpadJoyHoldType_Horizontal);
+    hidsysApplyNpadSystemCommonPolicy();
+    // Policy can narrow styles; keep Gc / SystemExt for HOME (#99).
+    hidSetSupportedNpadStyleSet(kSupportedNpadStyles);
+    hidSetNpadJoyHoldType(HidNpadJoyHoldType_Horizontal);
     hidInitializeTouchScreen();
 }
 
@@ -255,8 +263,18 @@ void Input::update() {
                                        | HidNpadStyleTag_NpadJoyDual
                                        | HidNpadStyleTag_NpadGc
                                        | HidNpadStyleTag_NpadSystemExt));
-        const bool leftJoyCon = single && (style & HidNpadStyleTag_NpadJoyLeft);
-        const bool rightJoyCon = single && (style & HidNpadStyleTag_NpadJoyRight);
+        bool leftJoyCon = single && (style & HidNpadStyleTag_NpadJoyLeft);
+        bool rightJoyCon = single && (style & HidNpadStyleTag_NpadJoyRight);
+        // If this ARUID still reports JoyDual after Change Grip (policy missed /
+        // race), a lone half is still sideways HOME input.
+        if (!leftJoyCon && !rightJoyCon && (style & HidNpadStyleTag_NpadJoyDual)) {
+            const bool leftOn = (state.attributes & HidNpadAttribute_IsLeftConnected) != 0;
+            const bool rightOn = (state.attributes & HidNpadAttribute_IsRightConnected) != 0;
+            if (leftOn && !rightOn)
+                leftJoyCon = true;
+            else if (rightOn && !leftOn)
+                rightJoyCon = true;
+        }
         if (leftJoyCon || rightJoyCon) {
             const uint32_t bit = id == HidNpadIdType_Handheld
                 ? (1u << 9) : (1u << static_cast<uint32_t>(id));

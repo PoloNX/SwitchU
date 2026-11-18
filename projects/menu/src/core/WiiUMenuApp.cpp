@@ -7573,6 +7573,8 @@ void WiiUMenuApp::buildGrid() {
     sidebarActions.onMiiEditor = [this]() {
         scheduleLeaveCapture([this]() { m_launcher.launchMiiEditor(); });
     };
+    // Sidebar Controllers = Change Grip/Order (stock shortcut). Wired Comm stays
+    // under Settings → Controllers (#215).
     sidebarActions.onControllers = [this]() {
         scheduleLeaveCapture([this]() { m_launcher.launchControllerPairing(); });
     };
