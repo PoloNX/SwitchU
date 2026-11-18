@@ -268,12 +268,12 @@ void FolderOptionsScreen::buildTabs() {
     addArtRow("game.steamgriddb.poster", "Poster",
               "game.steamgriddb.poster_desc", "Tall art in single-row and 2x3.",
               m_folder.hasCustomPoster, ArtAction::Poster);
-    if (m_folder.tileSizeIndex == 1 || m_folder.tileSizeIndex == 2) {
-        addArtRow("game.steamgriddb.poster_wide", "Poster wide",
-                  "game.steamgriddb.poster_wide_desc",
-                  "Landscape grid art for this 2x1 / 4x2 tile.",
-                  m_folder.hasCustomPosterWide, ArtAction::PosterWide);
-    }
+    // Always list Poster wide (same as Square cover) so it can be set
+    // before/after resizing; art still applies on 2x1 / 4x2 faces.
+    addArtRow("game.steamgriddb.poster_wide", "Poster wide",
+              "game.steamgriddb.poster_wide_desc",
+              "Landscape grid art for 2x1 / 4x2 tiles.",
+              m_folder.hasCustomPosterWide, ArtAction::PosterWide);
     addArtRow("game.steamgriddb.icon", "Replacement icon",
               "game.steamgriddb.icon_desc", "Applies to 1x1 and 2x2.",
               m_folder.hasCustomIcon, ArtAction::Icon);
