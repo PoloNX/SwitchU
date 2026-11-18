@@ -132,6 +132,20 @@ private:
     void reflowHomeShell();
     int activeGridColumns() const;
     int activeGridRows() const;
+    int landscapeGridColumns() const;
+    int landscapeGridRows() const;
+    /// Portrait with separatePortraitLayout off — view-only dense projection.
+    bool portraitLayoutDerived() const;
+    const std::vector<std::uint64_t>& viewLayoutSlots() const;
+    /// Landscape slots, or portrait slots (auto-enables separate on first edit).
+    std::vector<std::uint64_t>& mutableLayoutSlots();
+    void refreshDerivedPortraitLayout();
+    void ensurePortraitLayoutEditable();
+    void setSeparatePortraitLayout(bool enabled);
+    std::vector<std::uint64_t> packDenseLayout(
+        const std::vector<std::uint64_t>& source,
+        int sourceCols, int sourceRows,
+        int destCols, int destRows) const;
     nxui::Rect homeGridRect() const;
     void buildGrid();
     void loadProfiles(bool loadImmediately = true);
@@ -249,6 +263,8 @@ private:
     /// title before the splash frame is captured (does not open folders).
     void previewLeaveCaptureTitle(std::uint64_t titleId);
     LeaveFrameSession captureLeaveSession() const;
+    /// Hash of on-screen tile order / sizes / sort — resume misses when HOME moved.
+    std::uint64_t leaveLayoutFingerprint() const;
     bool saveLeaveFrame(nxui::Renderer& ren);
     void restoreLeaveSession();
     void setLeaveMotionFrozen(bool frozen);
@@ -875,7 +891,9 @@ private:
     float m_editDragFolderHold = 0.f;
     // Countdown while the hover-opened folder swaps in.
     float m_editDragFolderOpenWait = 0.f;
-    std::vector<uint64_t> m_layoutSlots;
+    std::vector<uint64_t> m_layoutSlots;          // canonical landscape
+    std::vector<uint64_t> m_portraitLayoutSlots;  // when separatePortraitLayout
+    std::vector<uint64_t> m_derivedPortraitSlots; // ephemeral dense projection
     // The A-Z / Recent grid as shown (empty when the personal layout is shown).
     std::vector<uint64_t> m_lastProjectedSlots;
     std::unordered_map<std::uint64_t, switchu::widgets::WidgetSize> m_gameSizes;

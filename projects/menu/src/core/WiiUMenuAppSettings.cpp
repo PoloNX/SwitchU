@@ -302,7 +302,8 @@ void WiiUMenuApp::createSettings() {
     m_settings->setWireframeState(m_showWireframe);
     m_settings->setHomeOrientationState(m_config.homeOrientation,
                                         m_config.homeOrientationButton,
-                                        m_config.homeOrientationCycle);
+                                        m_config.homeOrientationCycle,
+                                        m_config.separatePortraitLayout);
     m_settings->setGridLayoutState(m_config.gridColumns, m_config.gridRows);
     m_settings->setUiLanguageOverride(m_config.uiLanguageOverride);
     m_settings->setClockUse12HourState(m_config.clockUse12Hour);
@@ -357,7 +358,8 @@ void WiiUMenuApp::createSettings() {
         if (m_settings) {
             m_settings->setHomeOrientationState(m_config.homeOrientation,
                                                 m_config.homeOrientationButton,
-                                                m_config.homeOrientationCycle);
+                                                m_config.homeOrientationCycle,
+                                                m_config.separatePortraitLayout);
             // Rebuild chrome for the new canvas; stash/restore keeps Display
             // focus + scroll (cancels if the user leaves that tab early).
             if (m_settings->isActive())
@@ -370,7 +372,8 @@ void WiiUMenuApp::createSettings() {
         if (m_settings) {
             m_settings->setHomeOrientationState(m_config.homeOrientation,
                                                 m_config.homeOrientationButton,
-                                                m_config.homeOrientationCycle);
+                                                m_config.homeOrientationCycle,
+                                                m_config.separatePortraitLayout);
         }
     });
     m_settings->onHomeOrientationCycleChange([this](std::uint8_t mask) {
@@ -379,7 +382,17 @@ void WiiUMenuApp::createSettings() {
         if (m_settings) {
             m_settings->setHomeOrientationState(m_config.homeOrientation,
                                                 m_config.homeOrientationButton,
-                                                m_config.homeOrientationCycle);
+                                                m_config.homeOrientationCycle,
+                                                m_config.separatePortraitLayout);
+        }
+    });
+    m_settings->onSeparatePortraitLayoutChange([this](bool enabled) {
+        setSeparatePortraitLayout(enabled);
+        if (m_settings) {
+            m_settings->setHomeOrientationState(m_config.homeOrientation,
+                                                m_config.homeOrientationButton,
+                                                m_config.homeOrientationCycle,
+                                                m_config.separatePortraitLayout);
         }
     });
     m_settings->onGridColumnsChange([this](int cols) {

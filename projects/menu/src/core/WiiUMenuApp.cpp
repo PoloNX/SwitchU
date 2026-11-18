@@ -50,6 +50,7 @@ namespace {
 template <typename SpanOf>
 std::size_t firstFreeSlot(const std::vector<std::uint64_t>& slots, int columns,
                           int perPage, bool grid, SpanOf spanOf) {
+    const int rows = std::max(1, perPage / std::max(1, columns));
     std::vector<bool> covered(slots.size(), false);
     if (grid) {
         for (std::size_t index = 0; index < slots.size(); ++index) {
@@ -58,6 +59,7 @@ std::size_t firstFreeSlot(const std::vector<std::uint64_t>& slots, int columns,
             if (spanColumns <= 1 && spanRows <= 1) continue;
             const int local = static_cast<int>(index) % perPage;
             if (local % columns + spanColumns > columns) continue;
+            if (local / columns + spanRows > rows) continue;
             for (int dy = 0; dy < spanRows; ++dy)
                 for (int dx = 0; dx < spanColumns; ++dx) {
                     const std::size_t cell = index + static_cast<std::size_t>(dy * columns + dx);
@@ -715,6 +717,34 @@ void WiiUMenuApp::previewLeaveCaptureTitle(std::uint64_t titleId) {
     }
 }
 
+std::uint64_t WiiUMenuApp::leaveLayoutFingerprint() const {
+    // FNV-1a 64 — cheap, order-sensitive. Covers rearrange, sort projection,
+    // tile sizes, and open-folder interiors (m_model is what's on screen).
+    auto mix = [](std::uint64_t hash, std::uint64_t value) {
+        hash ^= value;
+        hash *= 1099511628211ull;
+        return hash;
+    };
+
+    std::uint64_t hash = 14695981039346656037ull;
+    hash = mix(hash, static_cast<std::uint64_t>(m_config.sortMode));
+    hash = mix(hash, m_config.sortLargeTiles ? 1ull : 0ull);
+    hash = mix(hash, static_cast<std::uint64_t>(m_config.gridColumns));
+    hash = mix(hash, static_cast<std::uint64_t>(m_config.gridRows));
+    hash = mix(hash, m_config.separatePortraitLayout ? 1ull : 0ull);
+    hash = mix(hash, static_cast<std::uint64_t>(m_openFolderId));
+    hash = mix(hash, static_cast<std::uint64_t>(m_model.count()));
+    for (int i = 0; i < m_model.count(); ++i) {
+        const auto& entry = m_model.at(i);
+        hash = mix(hash, entry.titleId);
+        hash = mix(hash, static_cast<std::uint64_t>(entry.kind));
+        hash = mix(hash, static_cast<std::uint64_t>(std::max(1, entry.widgetColumns)));
+        hash = mix(hash, static_cast<std::uint64_t>(std::max(1, entry.widgetRows)));
+        hash = mix(hash, static_cast<std::uint64_t>(entry.folderId));
+    }
+    return hash;
+}
+
 LeaveFrameSession WiiUMenuApp::captureLeaveSession() const {
     LeaveFrameSession session;
     session.valid = true;
@@ -723,6 +753,7 @@ LeaveFrameSession WiiUMenuApp::captureLeaveSession() const {
     session.focusTitleId = 0;
     session.appLayoutMode = static_cast<std::uint32_t>(m_appLayoutMode);
     session.homeOrientation = static_cast<std::uint32_t>(m_config.homeOrientation);
+    session.layoutFingerprint = leaveLayoutFingerprint();
 
     // Prefer the launching title stamped by scheduleLeaveCapture — focusManager
     // can still briefly report the previous icon after a fast hop.
@@ -1530,18 +1561,34 @@ void WiiUMenuApp::applyHomeOrientationState(bool saveConfig) {
 
     // Open folders use a different grid (and glass panel) per orientation —
     // rebuild the model + chrome so portrait 3×N / landscape N×M don't stick.
+    // HOME must rebuild too: tile spans demote to the active grid (transpose +
+    // fit), and reconfigureLayout alone keeps stale widgetColumns from the
+    // previous orientation (overlaps / off-screen large tiles).
     if (m_openFolderId != 0 && m_grid) {
         applyDisplayModel(buildOpenFolderModel(m_openFolderId), preserveTitleId,
                           false, {}, true);
         refreshOpenFolderChrome();
         configureDynamicLineNavigation();
         syncPageIndicator();
-    } else if (preserveGridIdx >= 0 && m_grid) {
-        if (m_grid->focusGlobalIndex(preserveGridIdx, true)) {
+    } else if (m_openFolderId == 0 && m_grid && !m_allApps.empty()) {
+        reflowHomeGrid();
+        configureDynamicLineNavigation();
+        syncPageIndicator();
+        if (preserveTitleId != 0) {
+            if (focusTitle(preserveTitleId)) {
+                if (auto* cur = m_grid->focusManager().current())
+                    focusManager().setFocus(cur);
+            } else if (preserveGridIdx >= 0 &&
+                       m_grid->focusGlobalIndex(preserveGridIdx, true)) {
+                if (auto* cur = m_grid->focusManager().current())
+                    focusManager().setFocus(cur);
+            } else {
+                focusHomeGridFallback();
+            }
+        } else if (preserveGridIdx >= 0 &&
+                   m_grid->focusGlobalIndex(preserveGridIdx, true)) {
             if (auto* cur = m_grid->focusManager().current())
                 focusManager().setFocus(cur);
-        } else {
-            focusHomeGridFallback();
         }
     } else if (prevFocus && m_orientationBtn && prevFocus == m_orientationBtn.get()
                && m_orientationBtn->isVisible()) {
@@ -1578,11 +1625,213 @@ void WiiUMenuApp::applyHomeOrientationState(bool saveConfig) {
 }
 
 int WiiUMenuApp::activeGridColumns() const {
-    return m_homeLayout.gridColumns(m_config.gridColumns);
+    return m_homeLayout.gridColumns(m_config.gridColumns, m_config.gridRows);
 }
 
 int WiiUMenuApp::activeGridRows() const {
-    return m_homeLayout.gridRows(m_config.gridRows);
+    return m_homeLayout.gridRows(m_config.gridColumns, m_config.gridRows);
+}
+
+int WiiUMenuApp::landscapeGridColumns() const {
+    return std::clamp(m_config.gridColumns, 1, 8);
+}
+
+int WiiUMenuApp::landscapeGridRows() const {
+    return std::clamp(m_config.gridRows, 1, 5);
+}
+
+bool WiiUMenuApp::portraitLayoutDerived() const {
+    return m_homeLayout.isPortrait() && !m_config.separatePortraitLayout;
+}
+
+const std::vector<std::uint64_t>& WiiUMenuApp::viewLayoutSlots() const {
+    if (!m_homeLayout.isPortrait())
+        return m_layoutSlots;
+    if (m_config.separatePortraitLayout && !m_portraitLayoutSlots.empty())
+        return m_portraitLayoutSlots;
+    return m_derivedPortraitSlots;
+}
+
+std::vector<std::uint64_t>& WiiUMenuApp::mutableLayoutSlots() {
+    if (m_homeLayout.isPortrait()) {
+        ensurePortraitLayoutEditable();
+        return m_portraitLayoutSlots;
+    }
+    return m_layoutSlots;
+}
+
+void WiiUMenuApp::refreshDerivedPortraitLayout() {
+    m_derivedPortraitSlots = packDenseLayout(
+        m_layoutSlots,
+        landscapeGridColumns(), landscapeGridRows(),
+        activeGridColumns(), activeGridRows());
+}
+
+void WiiUMenuApp::ensurePortraitLayoutEditable() {
+    if (!m_homeLayout.isPortrait())
+        return;
+    const bool wasSeparate = m_config.separatePortraitLayout;
+    if (!m_config.separatePortraitLayout) {
+        m_config.separatePortraitLayout = true;
+        m_config.save();
+        m_accessibility.announce(nxui::I18n::instance().tr(
+            "layout.separate_portrait_enabled",
+            "Separate portrait layout enabled"), true, true);
+    }
+    if (m_portraitLayoutSlots.empty()) {
+        if (m_derivedPortraitSlots.empty())
+            refreshDerivedPortraitLayout();
+        m_portraitLayoutSlots = m_derivedPortraitSlots;
+        m_layoutDirty = true;
+    }
+    (void)wasSeparate;
+}
+
+void WiiUMenuApp::setSeparatePortraitLayout(bool enabled) {
+    if (m_config.separatePortraitLayout == enabled)
+        return;
+    m_config.separatePortraitLayout = enabled;
+    m_config.save();
+    if (enabled) {
+        if (m_portraitLayoutSlots.empty()) {
+            refreshDerivedPortraitLayout();
+            m_portraitLayoutSlots = m_derivedPortraitSlots;
+            m_layoutDirty = true;
+            saveMenuLayout();
+        }
+    } else if (m_homeLayout.isPortrait()) {
+        // Fall back to landscape-derived projection; keep portraitSlots stored
+        // so re-enabling restores the user's portrait arrangement.
+        refreshDerivedPortraitLayout();
+    }
+    if (m_openFolderId == 0 && m_grid && !m_allApps.empty())
+        reflowHomeGrid();
+    else if (m_grid)
+        reflowHomeShell();
+}
+
+std::vector<std::uint64_t> WiiUMenuApp::packDenseLayout(
+    const std::vector<std::uint64_t>& source,
+    int sourceCols, int sourceRows,
+    int destCols, int destRows) const {
+    sourceCols = std::max(1, sourceCols);
+    sourceRows = std::max(1, sourceRows);
+    destCols = std::max(1, destCols);
+    destRows = std::max(1, destRows);
+    const int srcPerPage = std::max(1, sourceCols * sourceRows);
+    const int dstPerPage = std::max(1, destCols * destRows);
+
+    auto spanOf = [&](std::uint64_t id) -> std::pair<int, int> {
+        if (const auto* widget = m_widgetStore.find(
+                switchu::widgets::widgetIdFromTitleId(id))) {
+            const auto size = switchu::widgets::demoteWidgetTileToFit(
+                widget->type, widget->size, AppLayoutMode::Grid,
+                destCols, destRows);
+            return {std::max(1, size.columns), std::max(1, size.rows)};
+        }
+        const auto size = switchu::widgets::demoteGameTileToFit(
+            gameGridSize(id, AppLayoutMode::Grid), destCols, destRows);
+        return {std::max(1, size.columns), std::max(1, size.rows)};
+    };
+
+    // Pack landscape page → portrait page (same index when it fits). Within a
+    // page, first-fit only accepts cells where the demoted footprint fits —
+    // never park a 2×3 on column 2 of a 3-wide grid (that forced 1×1 demotion).
+    std::vector<std::uint64_t> out;
+    std::vector<bool> reserved;
+    auto ensurePages = [&](int pageCount) {
+        const std::size_t need =
+            static_cast<std::size_t>(std::max(1, pageCount) * dstPerPage);
+        if (out.size() < need) {
+            out.resize(need, 0);
+            reserved.resize(need, false);
+        }
+    };
+    auto fitsAt = [&](int index, int spanColumns, int spanRows) {
+        if (index < 0 || index >= static_cast<int>(out.size()))
+            return false;
+        const int local = index % dstPerPage;
+        const int column = local % destCols;
+        const int row = local / destCols;
+        if (column + spanColumns > destCols || row + spanRows > destRows)
+            return false;
+        for (int dy = 0; dy < spanRows; ++dy) {
+            for (int dx = 0; dx < spanColumns; ++dx) {
+                const int cell = index + dy * destCols + dx;
+                if (cell >= static_cast<int>(out.size()) ||
+                    out[static_cast<std::size_t>(cell)] != 0 ||
+                    reserved[static_cast<std::size_t>(cell)])
+                    return false;
+            }
+        }
+        return true;
+    };
+    auto occupy = [&](int index, int spanColumns, int spanRows, std::uint64_t id) {
+        out[static_cast<std::size_t>(index)] = id;
+        for (int dy = 0; dy < spanRows; ++dy)
+            for (int dx = 0; dx < spanColumns; ++dx)
+                reserved[static_cast<std::size_t>(index + dy * destCols + dx)] =
+                    true;
+    };
+
+    const int srcPages = std::max(1,
+        (static_cast<int>(source.size()) + srcPerPage - 1) / srcPerPage);
+    std::unordered_set<std::uint64_t> seen;
+    seen.reserve(source.size());
+    int spillPage = 0;
+
+    for (int srcPage = 0; srcPage < srcPages; ++srcPage) {
+        std::vector<std::uint64_t> pageItems;
+        const int srcBegin = srcPage * srcPerPage;
+        const int srcEnd = std::min(srcBegin + srcPerPage,
+                                    static_cast<int>(source.size()));
+        for (int i = srcBegin; i < srcEnd; ++i) {
+            const std::uint64_t tid = source[static_cast<std::size_t>(i)];
+            if (tid == 0 || !seen.insert(tid).second)
+                continue;
+            pageItems.push_back(tid);
+        }
+        if (pageItems.empty()) {
+            // Keep page alignment so later landscape pages stay put.
+            spillPage = std::max(spillPage, srcPage + 1);
+            ensurePages(spillPage);
+            continue;
+        }
+
+        // Prefer the matching portrait page index; never go backwards so prior
+        // landscape pages keep their room (trailing empties OK, no reshuffle).
+        int destPage = std::max(spillPage, srcPage);
+        for (const std::uint64_t id : pageItems) {
+            const auto [spanColumns, spanRows] = spanOf(id);
+            bool placed = false;
+            for (int page = destPage; !placed; ++page) {
+                ensurePages(page + 1);
+                const int pageStart = page * dstPerPage;
+                for (int local = 0; local < dstPerPage; ++local) {
+                    const int index = pageStart + local;
+                    if (!fitsAt(index, spanColumns, spanRows))
+                        continue;
+                    occupy(index, spanColumns, spanRows, id);
+                    destPage = page;
+                    placed = true;
+                    break;
+                }
+            }
+        }
+        spillPage = destPage;
+        // Next landscape page prefers its own index when there's room.
+        if (srcPage + 1 > spillPage)
+            spillPage = srcPage + 1;
+    }
+
+    const int minSlots = std::max(dstPerPage * kMinHomePages,
+                                  static_cast<int>(out.size()));
+    const int rounded = ((minSlots + dstPerPage - 1) / dstPerPage) * dstPerPage;
+    if (static_cast<int>(out.size()) < rounded) {
+        out.resize(static_cast<std::size_t>(rounded), 0);
+        reserved.resize(out.size(), false);
+    }
+    return out;
 }
 
 nxui::Rect WiiUMenuApp::homeGridRect() const {
@@ -2159,7 +2408,9 @@ void WiiUMenuApp::reflowHomeGrid() {
         byId.emplace(entry.titleId, entry);
     }
 
-    std::vector<uint64_t> slots = m_layoutSlots;
+    if (portraitLayoutDerived())
+        refreshDerivedPortraitLayout();
+    std::vector<uint64_t> slots = viewLayoutSlots();
     if (slots.empty())
         slots = appOrder;
 
@@ -2187,15 +2438,23 @@ void WiiUMenuApp::reflowHomeGrid() {
         placed.insert(tid);
     }
 
-    const int cols = std::clamp(m_config.gridColumns, 1, 8);
-    const int rows = std::clamp(m_config.gridRows, 1, 5);
+    const int cols = activeGridColumns();
+    const int rows = activeGridRows();
     const int perPage = std::max(1, cols * rows);
     int minSlots = std::max(perPage * kMinHomePages, (int)slots.size());
     int roundedSlots = ((minSlots + perPage - 1) / perPage) * perPage;
     if ((int)slots.size() < roundedSlots)
         slots.resize(roundedSlots, 0);
 
-    if (slots != m_layoutSlots) {
+    if (portraitLayoutDerived()) {
+        m_derivedPortraitSlots = slots;
+    } else if (m_homeLayout.isPortrait() && m_config.separatePortraitLayout) {
+        if (slots != m_portraitLayoutSlots) {
+            m_portraitLayoutSlots = std::move(slots);
+            slots = m_portraitLayoutSlots;
+            m_layoutDirty = true;
+        }
+    } else if (slots != m_layoutSlots) {
         m_layoutSlots = slots;
         m_layoutDirty = true;
     }
@@ -2262,7 +2521,7 @@ void WiiUMenuApp::reflowHomeGrid() {
         reflowedTitleIds.push_back(m_model.at(i).titleId);
     m_iconStreamer.reconcileTitleIds(reflowedTitleIds);
 
-    // Visual session dims (portrait 3x5); slot math above kept saved landscape size.
+    // Pack + view share activeGrid* (portrait transpose / demote-to-fit).
     const int viewCols = activeGridColumns();
     const int viewRows = activeGridRows();
     GridLayoutMetrics gridMetrics = computeGridLayoutMetrics(viewCols, viewRows);
@@ -2308,6 +2567,8 @@ void WiiUMenuApp::reflowHomeGrid() {
 
 void WiiUMenuApp::loadMenuLayout() {
     m_layoutSlots.clear();
+    m_portraitLayoutSlots.clear();
+    m_derivedPortraitSlots.clear();
     m_gameSizes.clear();
 
     std::ifstream f(kLayoutPath);
@@ -2342,24 +2603,27 @@ void WiiUMenuApp::loadMenuLayout() {
         }
     }
 
-    auto it = j.find("slots");
-    if (it == j.end() || !it->is_array())
-        return;
-
-    for (const auto& v : *it) {
-        uint64_t tid = 0;
-        if (v.is_string()) {
-            std::string s = v.get<std::string>();
-            if (!hexToTitleId(s, tid))
-                tid = 0;
-        } else if (v.is_number_unsigned()) {
-            tid = v.get<uint64_t>();
-        } else if (v.is_number_integer()) {
-            auto raw = v.get<int64_t>();
-            tid = raw > 0 ? (uint64_t)raw : 0;
+    auto readSlots = [&](const char* key, std::vector<std::uint64_t>& out) {
+        const auto it = j.find(key);
+        if (it == j.end() || !it->is_array())
+            return;
+        for (const auto& v : *it) {
+            uint64_t tid = 0;
+            if (v.is_string()) {
+                std::string s = v.get<std::string>();
+                if (!hexToTitleId(s, tid))
+                    tid = 0;
+            } else if (v.is_number_unsigned()) {
+                tid = v.get<uint64_t>();
+            } else if (v.is_number_integer()) {
+                auto raw = v.get<int64_t>();
+                tid = raw > 0 ? (uint64_t)raw : 0;
+            }
+            out.push_back(tid);
         }
-        m_layoutSlots.push_back(tid);
-    }
+    };
+    readSlots("slots", m_layoutSlots);
+    readSlots("portraitSlots", m_portraitLayoutSlots);
 }
 
 void WiiUMenuApp::saveMenuLayout() {
@@ -2368,15 +2632,21 @@ void WiiUMenuApp::saveMenuLayout() {
     ec.clear();
     std::filesystem::create_directory("sdmc:/config/SwitchU", ec);
 
+    auto writeSlots = [&](const char* key, const std::vector<std::uint64_t>& slots,
+                          nlohmann::json& j) {
+        j[key] = nlohmann::json::array();
+        for (uint64_t tid : slots) {
+            if (tid == 0)
+                j[key].push_back("0");
+            else
+                j[key].push_back(titleIdToHex(tid));
+        }
+    };
+
     nlohmann::json j;
     j["version"] = 1;
-    j["slots"] = nlohmann::json::array();
-    for (uint64_t tid : m_layoutSlots) {
-        if (tid == 0)
-            j["slots"].push_back("0");
-        else
-            j["slots"].push_back(titleIdToHex(tid));
-    }
+    writeSlots("slots", m_layoutSlots, j);
+    writeSlots("portraitSlots", m_portraitLayoutSlots, j);
     j["gameSizes"] = nlohmann::json::array();
     for (const auto& [titleId, size] : m_gameSizes) {
         if (size == switchu::widgets::WidgetSize{1, 1}) continue;
@@ -2415,9 +2685,13 @@ void WiiUMenuApp::applyMenuLayoutToPending(std::vector<PendingApp>& apps) {
 }
 
 void WiiUMenuApp::composeRootPending(std::vector<PendingApp>& apps) {
-    const int cols = std::clamp(m_config.gridColumns, 1, 8);
-    const int rows = std::clamp(m_config.gridRows, 1, 5);
+    const int cols = activeGridColumns();
+    const int rows = activeGridRows();
     const int perPage = std::max(1, cols * rows);
+    const int landCols = landscapeGridColumns();
+    const int landRows = landscapeGridRows();
+    const int landPerPage = std::max(1, landCols * landRows);
+    const bool derivedPortrait = portraitLayoutDerived();
 
     m_allApps.clear();
     m_allApps.reserve(apps.size());
@@ -2435,6 +2709,7 @@ void WiiUMenuApp::composeRootPending(std::vector<PendingApp>& apps) {
         entry.startupUserAccount = pending.startupUserAccount;
         entry.startupUserAccountOption = pending.startupUserAccountOption;
         entry.kind = GridEntryKind::Application;
+        // Preferred sizes live on AppEntry; view demotion happens below.
         const auto gameSize = gameGridSize(entry.titleId, m_appLayoutMode);
         entry.widgetColumns = gameSize.columns;
         entry.widgetRows = gameSize.rows;
@@ -2448,7 +2723,8 @@ void WiiUMenuApp::composeRootPending(std::vector<PendingApp>& apps) {
     itemOrder.reserve(apps.size() + m_folderStore.all().size() + m_widgetStore.all().size());
     for (auto& app : apps) {
         if (app.titleId != 0 && m_folderStore.folderForTitle(app.titleId) == 0) {
-            const auto gameSize = gameGridSize(app.titleId, m_appLayoutMode);
+            const auto gameSize = switchu::widgets::demoteGameTileToFit(
+                gameGridSize(app.titleId, m_appLayoutMode), cols, rows);
             app.widgetColumns = gameSize.columns;
             app.widgetRows = gameSize.rows;
             itemOrder.push_back(app.titleId);
@@ -2467,7 +2743,8 @@ void WiiUMenuApp::composeRootPending(std::vector<PendingApp>& apps) {
         item.folderCoverTitleId = resolveFolderCoverTitleId(
             folder, preferSingleRowPosters());
         {
-            const auto folderSize = gameGridSize(item.titleId, m_appLayoutMode);
+            const auto folderSize = switchu::widgets::demoteGameTileToFit(
+                gameGridSize(item.titleId, m_appLayoutMode), cols, rows);
             item.widgetColumns = folderSize.columns;
             item.widgetRows = folderSize.rows;
         }
@@ -2486,8 +2763,8 @@ void WiiUMenuApp::composeRootPending(std::vector<PendingApp>& apps) {
         item.kind = GridEntryKind::Widget;
         item.widgetId = widget.id;
         item.widgetType = widget.type;
-        const auto effectiveSize = switchu::widgets::validatedSize(
-            widget.type, widget.size, m_appLayoutMode);
+        const auto effectiveSize = switchu::widgets::demoteWidgetTileToFit(
+            widget.type, widget.size, m_appLayoutMode, cols, rows);
         item.widgetColumns = effectiveSize.columns;
         item.widgetRows = effectiveSize.rows;
         item.widgetAssetRef = widget.assetRef;
@@ -2495,10 +2772,64 @@ void WiiUMenuApp::composeRootPending(std::vector<PendingApp>& apps) {
         byId.emplace(item.titleId, std::move(item));
     }
 
-    std::vector<uint64_t> slots = m_layoutSlots;
-    if (slots.empty()) {
-        slots = itemOrder;
+    // Keep canonical landscape slots complete (Interface dims). Portrait view
+    // either dense-packs from that or uses a separate portrait slot list.
+    {
+        std::vector<uint64_t>& land = m_layoutSlots;
+        if (land.empty())
+            land = itemOrder;
+        std::unordered_set<uint64_t> landPlaced;
+        landPlaced.reserve(byId.size());
+        for (auto& slotTid : land) {
+            if (slotTid == 0) continue;
+            if (!byId.count(slotTid) || landPlaced.count(slotTid)) {
+                slotTid = 0;
+                continue;
+            }
+            landPlaced.insert(slotTid);
+        }
+        for (uint64_t itemId : itemOrder) {
+            if (itemId == 0 || landPlaced.count(itemId)) continue;
+            const std::size_t free = firstFreeSlot(
+                land, landCols, landPerPage, m_appLayoutMode == AppLayoutMode::Grid,
+                [&](std::uint64_t id) {
+                    // Landscape pack uses preferred (pre-demote) footprint.
+                    if (const auto* widget = m_widgetStore.find(
+                            switchu::widgets::widgetIdFromTitleId(id))) {
+                        const auto size = switchu::widgets::validatedSize(
+                            widget->type, widget->size, m_appLayoutMode);
+                        return std::pair<int, int>{std::max(1, size.columns),
+                                                   std::max(1, size.rows)};
+                    }
+                    const auto size = gameGridSize(id, m_appLayoutMode);
+                    return std::pair<int, int>{std::max(1, size.columns),
+                                               std::max(1, size.rows)};
+                });
+            if (free < land.size()) land[free] = itemId;
+            else land.push_back(itemId);
+            landPlaced.insert(itemId);
+            m_layoutDirty = true;
+        }
+        const int landMin = std::max(landPerPage * kMinHomePages, (int)land.size());
+        const int landRounded = ((landMin + landPerPage - 1) / landPerPage) * landPerPage;
+        if ((int)land.size() < landRounded) {
+            land.resize(landRounded, 0);
+            m_layoutDirty = true;
+        }
     }
+
+    if (derivedPortrait)
+        refreshDerivedPortraitLayout();
+    else if (m_homeLayout.isPortrait() && m_config.separatePortraitLayout
+             && m_portraitLayoutSlots.empty()) {
+        refreshDerivedPortraitLayout();
+        m_portraitLayoutSlots = m_derivedPortraitSlots;
+        m_layoutDirty = true;
+    }
+
+    std::vector<uint64_t> slots = viewLayoutSlots();
+    if (slots.empty())
+        slots = itemOrder;
 
     std::unordered_set<uint64_t> placed;
     placed.reserve(byId.size());
@@ -2558,36 +2889,57 @@ void WiiUMenuApp::composeRootPending(std::vector<PendingApp>& apps) {
                  found->second.kind != GridEntryKind::Folder))
                 continue;
             auto& item = found->second;
-            int spanColumns = std::max(1, item.widgetColumns);
-            int spanRows = std::max(1, item.widgetRows);
-            if (spanColumns == 1 && spanRows == 1)
-                continue;
-            const int pageOffset = index % perPage;
-            const int column = pageOffset % cols;
-            const int row = pageOffset / cols;
-            bool fits = column + spanColumns <= cols && row + spanRows <= rows;
-            for (int dy = 0; fits && dy < spanRows; ++dy) {
-                for (int dx = 0; dx < spanColumns; ++dx) {
-                    const int cell = index + dy * cols + dx;
-                    if (cell >= static_cast<int>(slots.size()) ||
-                        (cell != index && slots[static_cast<std::size_t>(cell)] != 0) ||
-                        coveredBy[static_cast<std::size_t>(cell)] >= 0) {
-                        fits = false;
-                        break;
-                    }
-                }
-            }
-            if (!fits) {
-                // Placement normalization normally relocates a large item.
-                // Keep a safe 1x1 fallback for malformed legacy layouts.
-                item.widgetColumns = 1;
-                item.widgetRows = 1;
+            const switchu::widgets::WidgetSize preferred{
+                std::max(1, item.widgetColumns), std::max(1, item.widgetRows)};
+            if (preferred.columns == 1 && preferred.rows == 1) {
                 coveredBy[static_cast<std::size_t>(index)] = index;
                 continue;
             }
-            for (int dy = 0; dy < spanRows; ++dy)
-                for (int dx = 0; dx < spanColumns; ++dx)
-                    coveredBy[static_cast<std::size_t>(index + dy * cols + dx)] = index;
+
+            auto cellFree = [&](int spanColumns, int spanRows) {
+                const int pageOffset = index % perPage;
+                const int column = pageOffset % cols;
+                const int row = pageOffset / cols;
+                if (column + spanColumns > cols || row + spanRows > rows)
+                    return false;
+                for (int dy = 0; dy < spanRows; ++dy) {
+                    for (int dx = 0; dx < spanColumns; ++dx) {
+                        const int cell = index + dy * cols + dx;
+                        if (cell >= static_cast<int>(slots.size()) ||
+                            (cell != index &&
+                             slots[static_cast<std::size_t>(cell)] != 0) ||
+                            coveredBy[static_cast<std::size_t>(cell)] >= 0)
+                            return false;
+                    }
+                }
+                return true;
+            };
+
+            switchu::widgets::WidgetSize span = preferred;
+            bool placed = false;
+            // Prefer gradual demotion over a blunt 1×1 when the anchor can't
+            // host the preferred footprint (session-only; m_gameSizes untouched).
+            const auto chain = (item.kind == GridEntryKind::Widget)
+                ? std::vector<switchu::widgets::WidgetSize>{preferred,
+                      switchu::widgets::demoteWidgetTileToFit(
+                          item.widgetType, preferred, m_appLayoutMode, cols, rows),
+                      {1, 1}}
+                : switchu::widgets::gameTileDemotionChain(preferred);
+            for (const auto candidate : chain) {
+                if (!cellFree(candidate.columns, candidate.rows))
+                    continue;
+                span = candidate;
+                placed = true;
+                break;
+            }
+            if (!placed)
+                span = {1, 1};
+            item.widgetColumns = span.columns;
+            item.widgetRows = span.rows;
+            for (int dy = 0; dy < span.rows; ++dy)
+                for (int dx = 0; dx < span.columns; ++dx)
+                    coveredBy[static_cast<std::size_t>(index + dy * cols + dx)] =
+                        index;
         }
     }
 
@@ -2620,7 +2972,14 @@ void WiiUMenuApp::composeRootPending(std::vector<PendingApp>& apps) {
         }
     }
 
-    if (slots != m_layoutSlots) {
+    if (derivedPortrait) {
+        m_derivedPortraitSlots = std::move(slots);
+    } else if (m_homeLayout.isPortrait() && m_config.separatePortraitLayout) {
+        if (slots != m_portraitLayoutSlots) {
+            m_portraitLayoutSlots = std::move(slots);
+            m_layoutDirty = true;
+        }
+    } else if (slots != m_layoutSlots) {
         m_layoutSlots = std::move(slots);
         m_layoutDirty = true;
     }
@@ -2631,11 +2990,18 @@ void WiiUMenuApp::composeRootPending(std::vector<PendingApp>& apps) {
 GridModel WiiUMenuApp::buildRootFolderModel() {
     normalizeWidgetPlacements();
     GridModel model;
+    const int columns = activeGridColumns();
+    const int rows = activeGridRows();
+    const int landCols = landscapeGridColumns();
+    const int landRows = landscapeGridRows();
+    const int landPerPage = std::max(1, landCols * landRows);
+    const bool derivedPortrait = portraitLayoutDerived();
     std::unordered_map<std::uint64_t, AppEntry> entries;
     for (const auto& app : m_allApps) {
         if (m_folderStore.folderForTitle(app.titleId) == 0) {
             AppEntry effective = app;
-            const auto size = gameGridSize(app.titleId, m_appLayoutMode);
+            const auto size = switchu::widgets::demoteGameTileToFit(
+                gameGridSize(app.titleId, m_appLayoutMode), columns, rows);
             effective.widgetColumns = size.columns;
             effective.widgetRows = size.rows;
             entries.emplace(effective.titleId, std::move(effective));
@@ -2653,7 +3019,8 @@ GridModel WiiUMenuApp::buildRootFolderModel() {
         entry.folderCoverTitleId = resolveFolderCoverTitleId(
             folder, preferSingleRowPosters());
         {
-            const auto size = gameGridSize(entry.titleId, m_appLayoutMode);
+            const auto size = switchu::widgets::demoteGameTileToFit(
+                gameGridSize(entry.titleId, m_appLayoutMode), columns, rows);
             entry.widgetColumns = size.columns;
             entry.widgetRows = size.rows;
         }
@@ -2669,16 +3036,16 @@ GridModel WiiUMenuApp::buildRootFolderModel() {
         entry.kind = GridEntryKind::Widget;
         entry.widgetId = widget.id;
         entry.widgetType = widget.type;
-        const auto size = switchu::widgets::validatedSize(
-            widget.type, widget.size, m_appLayoutMode);
+        const auto size = switchu::widgets::demoteWidgetTileToFit(
+            widget.type, widget.size, m_appLayoutMode, columns, rows);
         entry.widgetColumns = size.columns;
         entry.widgetRows = size.rows;
         entry.widgetAssetRef = widget.assetRef;
         entries.emplace(entry.titleId, std::move(entry));
     }
 
-    const int perPage = std::max(1, std::clamp(m_config.gridColumns, 1, 8) *
-                                     std::clamp(m_config.gridRows, 1, 5));
+    const int perPage = std::max(1, columns * rows);
+    // Maintain canonical landscape slots against Interface dims only.
     if (m_layoutSlots.empty()) {
         for (const auto& app : m_allApps)
             if (entries.count(app.titleId)) m_layoutSlots.push_back(app.titleId);
@@ -2690,7 +3057,52 @@ GridModel WiiUMenuApp::buildRootFolderModel() {
     for (const auto& pair : entries) {
         if (std::find(m_layoutSlots.begin(), m_layoutSlots.end(), pair.first) == m_layoutSlots.end()) {
             const std::size_t free = firstFreeSlot(
-                m_layoutSlots, std::clamp(m_config.gridColumns, 1, 8), perPage,
+                m_layoutSlots, landCols, landPerPage,
+                m_appLayoutMode == AppLayoutMode::Grid,
+                [&](std::uint64_t id) {
+                    // Preferred footprint for landscape storage.
+                    if (const auto* widget = m_widgetStore.find(
+                            switchu::widgets::widgetIdFromTitleId(id))) {
+                        const auto size = switchu::widgets::validatedSize(
+                            widget->type, widget->size, m_appLayoutMode);
+                        return std::pair<int, int>{std::max(1, size.columns),
+                                                   std::max(1, size.rows)};
+                    }
+                    const auto size = gameGridSize(id, m_appLayoutMode);
+                    return std::pair<int, int>{std::max(1, size.columns),
+                                               std::max(1, size.rows)};
+                });
+            if (free >= m_layoutSlots.size()) m_layoutSlots.push_back(pair.first);
+            else m_layoutSlots[free] = pair.first;
+            m_layoutDirty = true;
+        }
+    }
+    {
+        const int landMin = landPerPage * kMinHomePages;
+        const int landRounded =
+            ((std::max(landMin, static_cast<int>(m_layoutSlots.size())) + landPerPage - 1)
+             / landPerPage) * landPerPage;
+        if (static_cast<int>(m_layoutSlots.size()) < landRounded) {
+            m_layoutSlots.resize(landRounded, 0);
+            m_layoutDirty = true;
+        }
+    }
+
+    if (derivedPortrait) {
+        refreshDerivedPortraitLayout();
+    } else if (m_homeLayout.isPortrait() && m_config.separatePortraitLayout) {
+        if (m_portraitLayoutSlots.empty()) {
+            refreshDerivedPortraitLayout();
+            m_portraitLayoutSlots = m_derivedPortraitSlots;
+            m_layoutDirty = true;
+        }
+        // Keep separate portrait slots aware of newly installed titles.
+        for (const auto& pair : entries) {
+            if (std::find(m_portraitLayoutSlots.begin(), m_portraitLayoutSlots.end(),
+                          pair.first) != m_portraitLayoutSlots.end())
+                continue;
+            const std::size_t free = firstFreeSlot(
+                m_portraitLayoutSlots, columns, perPage,
                 m_appLayoutMode == AppLayoutMode::Grid,
                 [&](std::uint64_t id) {
                     auto it = entries.find(id);
@@ -2699,33 +3111,37 @@ GridModel WiiUMenuApp::buildRootFolderModel() {
                         : std::pair<int, int>{std::max(1, it->second.widgetColumns),
                                               std::max(1, it->second.widgetRows)};
                 });
-            if (free >= m_layoutSlots.size()) m_layoutSlots.push_back(pair.first);
-            else m_layoutSlots[free] = pair.first;
+            if (free >= m_portraitLayoutSlots.size())
+                m_portraitLayoutSlots.push_back(pair.first);
+            else
+                m_portraitLayoutSlots[free] = pair.first;
+            m_layoutDirty = true;
+        }
+        const int minimum = perPage * kMinHomePages;
+        const int rounded =
+            ((std::max(minimum, static_cast<int>(m_portraitLayoutSlots.size())) + perPage - 1)
+             / perPage) * perPage;
+        if (static_cast<int>(m_portraitLayoutSlots.size()) < rounded) {
+            m_portraitLayoutSlots.resize(rounded, 0);
             m_layoutDirty = true;
         }
     }
-    const int minimum = perPage * kMinHomePages;
-    const int rounded = ((std::max(minimum, static_cast<int>(m_layoutSlots.size())) + perPage - 1) / perPage) * perPage;
-    if (static_cast<int>(m_layoutSlots.size()) < rounded) {
-        m_layoutSlots.resize(rounded, 0);
-        m_layoutDirty = true;
-    }
+
+    const std::vector<std::uint64_t>& layoutForView = viewLayoutSlots();
 
     // Automatic views are only a projection of the personal layout. Folders
     // and widgets remain anchored (including every cell of a wide tile), while
     // applications fill the remaining cells in the requested order.
     std::vector<std::uint64_t> projected;
     if (m_config.sortMode != 0 && m_appLayoutMode == AppLayoutMode::Grid) {
-        const int columns = std::clamp(m_config.gridColumns, 1, 8);
-        const int gridRows = std::clamp(m_config.gridRows, 1, 5);
         // With sortLargeTiles, applications that use a bigger tile also join
         // the order instead of staying anchored where they were placed.
         const bool sortLarge = m_config.sortLargeTiles;
-        projected.assign(m_layoutSlots.size(), 0);
-        std::vector<bool> reserved(m_layoutSlots.size(), false);
+        projected.assign(layoutForView.size(), 0);
+        std::vector<bool> reserved(layoutForView.size(), false);
 
-        for (std::size_t index = 0; index < m_layoutSlots.size(); ++index) {
-            const auto stored = m_layoutSlots[index];
+        for (std::size_t index = 0; index < layoutForView.size(); ++index) {
+            const auto stored = layoutForView[index];
             const auto found = entries.find(stored);
             const bool movableApplication = found != entries.end() &&
                 found->second.isApplication() &&
@@ -2747,7 +3163,7 @@ GridModel WiiUMenuApp::buildRootFolderModel() {
 
         std::unordered_map<std::uint64_t, int> personalRank;
         int rank = 0;
-        for (const auto stored : m_layoutSlots) {
+        for (const auto stored : layoutForView) {
             if (stored != 0 && !personalRank.count(stored))
                 personalRank.emplace(stored, rank++);
         }
@@ -2797,7 +3213,7 @@ GridModel WiiUMenuApp::buildRootFolderModel() {
             auto fitsAt = [&](std::size_t index, int spanColumns, int spanRows) {
                 const int local = static_cast<int>(index % static_cast<std::size_t>(perPage));
                 if (local % columns + spanColumns > columns ||
-                    local / columns + spanRows > gridRows)
+                    local / columns + spanRows > rows)
                     return false;
                 for (int dy = 0; dy < spanRows; ++dy) {
                     for (int dx = 0; dx < spanColumns; ++dx) {
@@ -2811,7 +3227,7 @@ GridModel WiiUMenuApp::buildRootFolderModel() {
             for (const auto id : applications) {
                 const auto& entry = entries.at(id);
                 const int spanColumns = std::clamp(entry.widgetColumns, 1, columns);
-                const int spanRows = std::clamp(entry.widgetRows, 1, gridRows);
+                const int spanRows = std::clamp(entry.widgetRows, 1, rows);
                 for (std::size_t index = 0;; ++index) {
                     if (index >= projected.size()) {
                         projected.resize(projected.size() + static_cast<std::size_t>(perPage), 0);
@@ -2835,10 +3251,8 @@ GridModel WiiUMenuApp::buildRootFolderModel() {
         }
     }
     m_lastProjectedSlots = projected;
-    const auto& displaySlots = projected.empty() ? m_layoutSlots : projected;
+    const auto& displaySlots = projected.empty() ? layoutForView : projected;
 
-    const int columns = std::clamp(m_config.gridColumns, 1, 8);
-    const int rows = std::clamp(m_config.gridRows, 1, 5);
     std::vector<int> coveredBy(displaySlots.size(), -1);
     if (m_appLayoutMode == AppLayoutMode::Grid) {
         for (int index = 0; index < static_cast<int>(displaySlots.size()); ++index) {
@@ -2849,33 +3263,56 @@ GridModel WiiUMenuApp::buildRootFolderModel() {
                  && !found->second.isFolder()))
                 continue;
             auto& entry = found->second;
-            const int spanColumns = std::max(1, entry.widgetColumns);
-            const int spanRows = std::max(1, entry.widgetRows);
-            if (spanColumns == 1 && spanRows == 1) continue;
-            const int local = index % perPage;
-            const int column = local % columns;
-            const int row = local / columns;
-            bool fits = column + spanColumns <= columns && row + spanRows <= rows;
-            for (int dy = 0; fits && dy < spanRows; ++dy) {
-                for (int dx = 0; dx < spanColumns; ++dx) {
-                    const int cell = index + dy * columns + dx;
-                    if (cell >= static_cast<int>(displaySlots.size()) ||
-                        (cell != index && displaySlots[static_cast<std::size_t>(cell)] != 0) ||
-                        coveredBy[static_cast<std::size_t>(cell)] >= 0) {
-                        fits = false;
-                        break;
-                    }
-                }
-            }
-            if (!fits) {
-                entry.widgetColumns = 1;
-                entry.widgetRows = 1;
+            const switchu::widgets::WidgetSize preferred{
+                std::max(1, entry.widgetColumns), std::max(1, entry.widgetRows)};
+            if (preferred.columns == 1 && preferred.rows == 1) {
                 coveredBy[static_cast<std::size_t>(index)] = index;
                 continue;
             }
-            for (int dy = 0; dy < spanRows; ++dy)
-                for (int dx = 0; dx < spanColumns; ++dx)
-                    coveredBy[static_cast<std::size_t>(index + dy * columns + dx)] = index;
+
+            auto cellFree = [&](int spanColumns, int spanRows) {
+                const int local = index % perPage;
+                const int column = local % columns;
+                const int row = local / columns;
+                if (column + spanColumns > columns || row + spanRows > rows)
+                    return false;
+                for (int dy = 0; dy < spanRows; ++dy) {
+                    for (int dx = 0; dx < spanColumns; ++dx) {
+                        const int cell = index + dy * columns + dx;
+                        if (cell >= static_cast<int>(displaySlots.size()) ||
+                            (cell != index &&
+                             displaySlots[static_cast<std::size_t>(cell)] != 0) ||
+                            coveredBy[static_cast<std::size_t>(cell)] >= 0)
+                            return false;
+                    }
+                }
+                return true;
+            };
+
+            switchu::widgets::WidgetSize span = preferred;
+            bool placed = false;
+            const auto chain = entry.isWidget()
+                ? std::vector<switchu::widgets::WidgetSize>{preferred,
+                      switchu::widgets::demoteWidgetTileToFit(
+                          entry.widgetType, preferred, m_appLayoutMode,
+                          columns, rows),
+                      {1, 1}}
+                : switchu::widgets::gameTileDemotionChain(preferred);
+            for (const auto candidate : chain) {
+                if (!cellFree(candidate.columns, candidate.rows))
+                    continue;
+                span = candidate;
+                placed = true;
+                break;
+            }
+            if (!placed)
+                span = {1, 1};
+            entry.widgetColumns = span.columns;
+            entry.widgetRows = span.rows;
+            for (int dy = 0; dy < span.rows; ++dy)
+                for (int dx = 0; dx < span.columns; ++dx)
+                    coveredBy[static_cast<std::size_t>(
+                        index + dy * columns + dx)] = index;
         }
     }
 
@@ -2936,29 +3373,35 @@ GridModel WiiUMenuApp::buildOpenFolderModel(std::uint32_t folderId) const {
         }
 
         AppEntry entry = *found;
-        const auto size = gameGridSize(titleId, m_appLayoutMode);
-        entry.widgetColumns = std::max(1, size.columns);
-        entry.widgetRows = std::max(1, size.rows);
-        const int local = index % perPage;
-        const int column = local % folderCols;
-        const int row = local / folderCols;
-        bool fits = column + entry.widgetColumns <= folderCols &&
-                    row + entry.widgetRows <= folderRows;
-        for (int dy = 0; fits && dy < entry.widgetRows; ++dy) {
-            for (int dx = 0; dx < entry.widgetColumns; ++dx) {
-                const int cell = index + dy * folderCols + dx;
-                if (cell >= static_cast<int>(slots.size()) ||
-                    (cell != index && slots[static_cast<std::size_t>(cell)] != 0) ||
-                    coveredBy[static_cast<std::size_t>(cell)] >= 0) {
-                    fits = false;
-                    break;
+        const auto preferred = switchu::widgets::demoteGameTileToFit(
+            gameGridSize(titleId, m_appLayoutMode), folderCols, folderRows);
+        auto cellFree = [&](int spanColumns, int spanRows) {
+            const int local = index % perPage;
+            const int column = local % folderCols;
+            const int row = local / folderCols;
+            if (column + spanColumns > folderCols || row + spanRows > folderRows)
+                return false;
+            for (int dy = 0; dy < spanRows; ++dy) {
+                for (int dx = 0; dx < spanColumns; ++dx) {
+                    const int cell = index + dy * folderCols + dx;
+                    if (cell >= static_cast<int>(slots.size()) ||
+                        (cell != index && slots[static_cast<std::size_t>(cell)] != 0) ||
+                        coveredBy[static_cast<std::size_t>(cell)] >= 0)
+                        return false;
                 }
             }
+            return true;
+        };
+        switchu::widgets::WidgetSize span{1, 1};
+        for (const auto candidate :
+             switchu::widgets::gameTileDemotionChain(preferred)) {
+            if (!cellFree(candidate.columns, candidate.rows))
+                continue;
+            span = candidate;
+            break;
         }
-        if (!fits) {
-            entry.widgetColumns = 1;
-            entry.widgetRows = 1;
-        }
+        entry.widgetColumns = span.columns;
+        entry.widgetRows = span.rows;
         anchors.emplace(index, entry);
         for (int dy = 0; dy < entry.widgetRows; ++dy)
             for (int dx = 0; dx < entry.widgetColumns; ++dx)
@@ -3298,9 +3741,10 @@ void WiiUMenuApp::createFolder(int targetSlot) {
                           targetSlot, typed.c_str());
             const std::uint32_t id = m_folderStore.create(typed);
             if (id == 0 || !saveFoldersOrReport("create")) return;
-            if (targetSlot >= 0 && targetSlot < static_cast<int>(m_layoutSlots.size()) &&
-                m_layoutSlots[static_cast<std::size_t>(targetSlot)] == 0) {
-                m_layoutSlots[static_cast<std::size_t>(targetSlot)] = folderTitleId(id);
+            auto& slots = mutableLayoutSlots();
+            if (targetSlot >= 0 && targetSlot < static_cast<int>(slots.size()) &&
+                slots[static_cast<std::size_t>(targetSlot)] == 0) {
+                slots[static_cast<std::size_t>(targetSlot)] = folderTitleId(id);
                 m_layoutDirty = true;
                 saveMenuLayout();
             }
@@ -3702,23 +4146,26 @@ switchu::widgets::WidgetSize WiiUMenuApp::layoutSlotSpan(
         return {1, 1};
     if (m_appLayoutMode == AppLayoutMode::DynamicLine)
         return {1, 1};
+    const int cols = activeGridColumns();
+    const int rows = activeGridRows();
     const std::uint32_t widgetId = switchu::widgets::widgetIdFromTitleId(titleId);
     if (const auto* widget = widgetId != 0 ? m_widgetStore.find(widgetId) : nullptr)
-        return switchu::widgets::validatedSize(
-            widget->type, widget->size, AppLayoutMode::Grid);
-    return gameGridSize(titleId, AppLayoutMode::Grid);
+        return switchu::widgets::demoteWidgetTileToFit(
+            widget->type, widget->size, AppLayoutMode::Grid, cols, rows);
+    return switchu::widgets::demoteGameTileToFit(
+        gameGridSize(titleId, AppLayoutMode::Grid), cols, rows);
 }
 
 int WiiUMenuApp::layoutSpanAnchorFor(int cell) const {
-    return layoutSpanAnchorFor(m_layoutSlots, cell);
+    return layoutSpanAnchorFor(viewLayoutSlots(), cell);
 }
 
 int WiiUMenuApp::layoutSpanAnchorFor(const std::vector<std::uint64_t>& slots,
                                      int cell) const {
     if (cell < 0 || cell >= static_cast<int>(slots.size()))
         return -1;
-    const int columns = std::clamp(m_config.gridColumns, 1, 8);
-    const int rows = std::clamp(m_config.gridRows, 1, 5);
+    const int columns = activeGridColumns();
+    const int rows = activeGridRows();
     const int perPage = std::max(1, columns * rows);
     const int pageStart = (cell / perPage) * perPage;
     for (int anchor = pageStart; anchor <= cell; ++anchor) {
@@ -3745,8 +4192,8 @@ bool WiiUMenuApp::layoutFitsAt(const std::vector<std::uint64_t>& slots,
         return false;
     if (m_appLayoutMode == AppLayoutMode::DynamicLine)
         return true;
-    const int columns = std::clamp(m_config.gridColumns, 1, 8);
-    const int rows = std::clamp(m_config.gridRows, 1, 5);
+    const int columns = activeGridColumns();
+    const int rows = activeGridRows();
     const int perPage = std::max(1, columns * rows);
     const int local = anchor % perPage;
     size.columns = std::max(1, size.columns);
@@ -3779,8 +4226,8 @@ int WiiUMenuApp::layoutDropAnchorFor(const std::vector<std::uint64_t>& slots,
     if (layoutFitsAt(slots, dropCell, size))
         return dropCell;
 
-    const int columns = std::clamp(m_config.gridColumns, 1, 8);
-    const int rows = std::clamp(m_config.gridRows, 1, 5);
+    const int columns = activeGridColumns();
+    const int rows = activeGridRows();
     const int perPage = std::max(1, columns * rows);
     const int pageStart = (dropCell / perPage) * perPage;
     const int dropLocal = dropCell % perPage;
@@ -3819,12 +4266,17 @@ bool WiiUMenuApp::canPlaceGridItem(int targetSlot,
                                    switchu::widgets::WidgetSize size,
                                    std::uint64_t ignoringTitleId,
                                    std::uint64_t alsoIgnoringTitleId) const {
-    if (targetSlot < 0 || targetSlot >= static_cast<int>(m_layoutSlots.size()))
+    const auto& slots = viewLayoutSlots();
+    if (targetSlot < 0 || targetSlot >= static_cast<int>(slots.size()))
         return false;
     size = m_appLayoutMode == AppLayoutMode::DynamicLine
         ? switchu::widgets::WidgetSize{1, 1} : size;
-    const int columns = std::clamp(m_config.gridColumns, 1, 8);
-    const int rows = std::clamp(m_config.gridRows, 1, 5);
+    const int columns = activeGridColumns();
+    const int rows = activeGridRows();
+    // Placement / resize requests may still be the preferred size; demote to
+    // the active grid so portrait (or a tight Interface grid) can accept them.
+    if (m_appLayoutMode == AppLayoutMode::Grid)
+        size = switchu::widgets::demoteGameTileToFit(size, columns, rows);
     const int perPage = columns * rows;
     const int local = targetSlot % perPage;
     const int targetColumn = local % columns;
@@ -3832,9 +4284,9 @@ bool WiiUMenuApp::canPlaceGridItem(int targetSlot,
     if (targetColumn + size.columns > columns || targetRow + size.rows > rows)
         return false;
 
-    std::vector<bool> occupied(m_layoutSlots.size(), false);
-    for (int index = 0; index < static_cast<int>(m_layoutSlots.size()); ++index) {
-        const std::uint64_t value = m_layoutSlots[static_cast<std::size_t>(index)];
+    std::vector<bool> occupied(slots.size(), false);
+    for (int index = 0; index < static_cast<int>(slots.size()); ++index) {
+        const std::uint64_t value = slots[static_cast<std::size_t>(index)];
         if (value == 0) continue;
         if (value == ignoringTitleId || value == alsoIgnoringTitleId) continue;
         if (m_appLayoutMode == AppLayoutMode::DynamicLine) {
@@ -3871,9 +4323,22 @@ bool WiiUMenuApp::canPlaceGridItem(int targetSlot,
 }
 
 void WiiUMenuApp::normalizeWidgetPlacements() {
-    if (m_layoutSlots.empty()) return;
-    const int columns = std::clamp(m_config.gridColumns, 1, 8);
-    const int rows = std::clamp(m_config.gridRows, 1, 5);
+    // Derived portrait is a view projection — never relocate landscape slots.
+    if (portraitLayoutDerived())
+        return;
+
+    std::vector<std::uint64_t>& slots =
+        (m_homeLayout.isPortrait() && m_config.separatePortraitLayout)
+            ? m_portraitLayoutSlots
+            : m_layoutSlots;
+    if (slots.empty()) return;
+
+    // Landscape canonical layout always normalizes against Interface dims so a
+    // portrait session cannot rewrite it. Separate portrait uses active dims.
+    const int columns = m_homeLayout.isPortrait()
+        ? activeGridColumns() : landscapeGridColumns();
+    const int rows = m_homeLayout.isPortrait()
+        ? activeGridRows() : landscapeGridRows();
     const int perPage = std::max(1, columns * rows);
 
     struct Placement {
@@ -3882,8 +4347,8 @@ void WiiUMenuApp::normalizeWidgetPlacements() {
         switchu::widgets::WidgetSize size;
     };
     std::vector<Placement> placements;
-    for (int index = 0; index < static_cast<int>(m_layoutSlots.size()); ++index) {
-        const std::uint64_t titleId = m_layoutSlots[static_cast<std::size_t>(index)];
+    for (int index = 0; index < static_cast<int>(slots.size()); ++index) {
+        const std::uint64_t titleId = slots[static_cast<std::size_t>(index)];
         const auto* widget = m_widgetStore.find(
             switchu::widgets::widgetIdFromTitleId(titleId));
         switchu::widgets::WidgetSize size{1, 1};
@@ -3891,22 +4356,24 @@ void WiiUMenuApp::normalizeWidgetPlacements() {
             const auto sizes = switchu::widgets::supportedSizes(
                 widget->type, AppLayoutMode::Grid);
             if (sizes.empty()) continue;
-            size = switchu::widgets::validatedSize(
-                widget->type, widget->size, AppLayoutMode::Grid);
+            size = switchu::widgets::demoteWidgetTileToFit(
+                widget->type, widget->size, AppLayoutMode::Grid, columns, rows);
         } else {
             const bool isGame = std::any_of(m_allApps.begin(), m_allApps.end(),
                 [titleId](const AppEntry& app) { return app.titleId == titleId; });
-            if (!isGame) continue;
-            size = gameGridSize(titleId, AppLayoutMode::Grid);
+            const bool isFolder = isFolderTitleId(titleId);
+            if (!isGame && !isFolder) continue;
+            size = switchu::widgets::demoteGameTileToFit(
+                gameGridSize(titleId, AppLayoutMode::Grid), columns, rows);
         }
         if (size.columns > 1 || size.rows > 1)
             placements.push_back({titleId, index, size});
     }
     if (placements.empty()) return;
 
-    std::vector<bool> reserved(m_layoutSlots.size(), false);
-    for (int index = 0; index < static_cast<int>(m_layoutSlots.size()); ++index) {
-        const std::uint64_t titleId = m_layoutSlots[static_cast<std::size_t>(index)];
+    std::vector<bool> reserved(slots.size(), false);
+    for (int index = 0; index < static_cast<int>(slots.size()); ++index) {
+        const std::uint64_t titleId = slots[static_cast<std::size_t>(index)];
         reserved[static_cast<std::size_t>(index)] = titleId != 0;
         if (const auto* widget = m_widgetStore.find(
                 switchu::widgets::widgetIdFromTitleId(titleId));
@@ -3914,10 +4381,10 @@ void WiiUMenuApp::normalizeWidgetPlacements() {
                 widget->type, AppLayoutMode::Grid).empty())
             reserved[static_cast<std::size_t>(index)] = false;
     }
-    std::vector<bool> occupied(m_layoutSlots.size(), false);
+    std::vector<bool> occupied(slots.size(), false);
 
     auto fits = [&](int anchor, switchu::widgets::WidgetSize size) {
-        if (anchor < 0 || anchor >= static_cast<int>(m_layoutSlots.size()))
+        if (anchor < 0 || anchor >= static_cast<int>(slots.size()))
             return false;
         const int local = anchor % perPage;
         const int column = local % columns;
@@ -3946,7 +4413,7 @@ void WiiUMenuApp::normalizeWidgetPlacements() {
         int target = fits(placement.anchor, placement.size) ? placement.anchor : -1;
         if (target < 0) {
             for (int candidate = 0;
-                 candidate < static_cast<int>(m_layoutSlots.size()); ++candidate) {
+                 candidate < static_cast<int>(slots.size()); ++candidate) {
                 if (fits(candidate, placement.size)) {
                     target = candidate;
                     break;
@@ -3954,12 +4421,12 @@ void WiiUMenuApp::normalizeWidgetPlacements() {
             }
         }
         if (target < 0) {
-            const std::size_t oldSize = m_layoutSlots.size();
-            m_layoutSlots.resize(oldSize + static_cast<std::size_t>(perPage), 0);
-            reserved.resize(m_layoutSlots.size(), false);
-            occupied.resize(m_layoutSlots.size(), false);
+            const std::size_t oldSize = slots.size();
+            slots.resize(oldSize + static_cast<std::size_t>(perPage), 0);
+            reserved.resize(slots.size(), false);
+            occupied.resize(slots.size(), false);
             for (int candidate = static_cast<int>(oldSize);
-                 candidate < static_cast<int>(m_layoutSlots.size()); ++candidate) {
+                 candidate < static_cast<int>(slots.size()); ++candidate) {
                 if (fits(candidate, placement.size)) {
                     target = candidate;
                     break;
@@ -3971,8 +4438,8 @@ void WiiUMenuApp::normalizeWidgetPlacements() {
             continue;
         }
         if (target != placement.anchor) {
-            m_layoutSlots[static_cast<std::size_t>(placement.anchor)] = 0;
-            m_layoutSlots[static_cast<std::size_t>(target)] = placement.titleId;
+            slots[static_cast<std::size_t>(placement.anchor)] = 0;
+            slots[static_cast<std::size_t>(target)] = placement.titleId;
             m_layoutDirty = true;
         }
         reserved[static_cast<std::size_t>(target)] = true;
@@ -4845,8 +5312,8 @@ void WiiUMenuApp::layoutPrefetchWindow(int& page, int& pageSize) const {
             pageSize = std::max(1, m_grid->iconsPerPage());
             page = m_grid->currentPage();
         } else {
-            int cols = std::clamp(m_config.gridColumns, 1, 8);
-            int rows = std::clamp(m_config.gridRows, 1, 5);
+            int cols = activeGridColumns();
+            int rows = activeGridRows();
             if (m_openFolderId != 0)
                 std::tie(cols, rows) = folderViewDimensions(m_openFolderId);
             pageSize = std::max(1, cols * rows);
@@ -5966,23 +6433,29 @@ void WiiUMenuApp::resumeSuspendedApplication(std::uint64_t titleId,
         });
     };
 
-    // Default: reuse the launch splash. If the user flipped grid↔single-row
-    // or orientation while the title was suspended, that frame no longer
-    // matches HOME — capture a fresh one before resume.
+    // Default: reuse the launch splash. If HOME chrome or tile arrangement
+    // changed while suspended (view / orientation / rearrange / sort), that
+    // frame no longer matches — capture a fresh one before resume.
     LeaveFrameSession cached{};
     const bool haveCached = LeaveFrameCache::loadSessionOnly(cached);
+    const std::uint64_t liveFingerprint = leaveLayoutFingerprint();
     const bool chromeChanged = !haveCached
         || cached.appLayoutMode != static_cast<std::uint32_t>(m_appLayoutMode)
         || cached.homeOrientation
-            != static_cast<std::uint32_t>(m_config.homeOrientation);
+            != static_cast<std::uint32_t>(m_config.homeOrientation)
+        || cached.layoutFingerprint != liveFingerprint;
     if (chromeChanged) {
         DebugLog::log(
-            "[leave] recapture on resume tid=%016lX layout=%u→%u orient=%u→%u",
+            "[leave] recapture on resume tid=%016lX layout=%u→%u orient=%u→%u "
+            "fp=%016llX→%016llX",
             static_cast<unsigned long>(titleId),
             haveCached ? cached.appLayoutMode : 0u,
             static_cast<unsigned>(m_appLayoutMode),
             haveCached ? cached.homeOrientation : 0u,
-            static_cast<unsigned>(m_config.homeOrientation));
+            static_cast<unsigned>(m_config.homeOrientation),
+            static_cast<unsigned long long>(
+                haveCached ? cached.layoutFingerprint : 0ull),
+            static_cast<unsigned long long>(liveFingerprint));
         scheduleLeaveCapture(std::move(finishResume), titleId);
         return;
     }
@@ -11425,14 +11898,14 @@ void WiiUMenuApp::createPage() {
         return;
     }
 
-    const int cols = std::clamp(m_config.gridColumns, 1, 8);
-    const int rows = std::clamp(m_config.gridRows, 1, 5);
+    const int cols = activeGridColumns();
+    const int rows = activeGridRows();
     const int perPage = std::max(1, cols * rows);
     const int pages = m_grid->totalPages();
     if (pages >= kMaxHomePages)
         return;
 
-    m_layoutSlots.resize(static_cast<std::size_t>((pages + 1) * perPage), 0);
+    mutableLayoutSlots().resize(static_cast<std::size_t>((pages + 1) * perPage), 0);
     m_layoutDirty = true;
     saveMenuLayout();
 
@@ -11661,22 +12134,23 @@ void WiiUMenuApp::deleteAllUnusedPages() {
 
     int removedBefore = 0;
     {
+        auto& slots = mutableLayoutSlots();
         const int pages = std::max(1,
-            (static_cast<int>(m_layoutSlots.size()) + perPage - 1) / perPage);
-        m_layoutSlots.resize(static_cast<std::size_t>(pages * perPage), 0);
+            (static_cast<int>(slots.size()) + perPage - 1) / perPage);
+        slots.resize(static_cast<std::size_t>(pages * perPage), 0);
         for (int page = 0; page < stayPage; ++page) {
-            if (pageSlotsEmpty(m_layoutSlots, page, perPage))
+            if (pageSlotsEmpty(slots, page, perPage))
                 ++removedBefore;
         }
     }
-    const int removed = removeEmptySlotPages(m_layoutSlots, perPage);
+    const int removed = removeEmptySlotPages(mutableLayoutSlots(), perPage);
     if (removed <= 0)
         return;
     m_layoutDirty = true;
     saveMenuLayout();
 
     const int newPages = std::max(1,
-        (static_cast<int>(m_layoutSlots.size()) + perPage - 1) / perPage);
+        (static_cast<int>(mutableLayoutSlots().size()) + perPage - 1) / perPage);
     const int focusPage = std::clamp(stayPage - removedBefore, 0, newPages - 1);
     applyDisplayModel(buildRootFolderModel(), 0, false);
     syncPageIndicator();

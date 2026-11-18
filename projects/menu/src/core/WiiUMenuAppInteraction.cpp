@@ -650,9 +650,9 @@ void WiiUMenuApp::enterEditMode() {
     if (m_openFolderId == 0 && m_appLayoutMode == AppLayoutMode::Grid
         && m_config.sortMode != 0) {
         if (!m_lastProjectedSlots.empty())
-            m_layoutSlots = m_lastProjectedSlots;
+            mutableLayoutSlots() = m_lastProjectedSlots;
         DebugLog::log("[edit] sort %d -> My order (adopted the on-screen order, %zu slots)",
-                      m_config.sortMode, m_layoutSlots.size());
+                      m_config.sortMode, mutableLayoutSlots().size());
         m_config.sortMode = 0;
         m_config.save();
         m_layoutDirty = true;
@@ -788,8 +788,8 @@ bool WiiUMenuApp::commitEditModePlacement() {
             const std::unordered_set<std::uint64_t> visibleIds(
                 visibleOrder.begin(), visibleOrder.end());
             visibleSlots.reserve(visibleOrder.size());
-            for (std::size_t index = 0; index < m_layoutSlots.size(); ++index) {
-                if (visibleIds.count(m_layoutSlots[index]))
+            for (std::size_t index = 0; index < mutableLayoutSlots().size(); ++index) {
+                if (visibleIds.count(mutableLayoutSlots()[index]))
                     visibleSlots.push_back(index);
             }
             if (visibleSlots.size() != visibleOrder.size()) {
@@ -808,7 +808,7 @@ bool WiiUMenuApp::commitEditModePlacement() {
                               m_editHeldTitleId, false);
         } else {
             for (std::size_t index = 0; index < visibleOrder.size(); ++index)
-                m_layoutSlots[visibleSlots[index]] = visibleOrder[index];
+                mutableLayoutSlots()[visibleSlots[index]] = visibleOrder[index];
             m_editSourceIndex = static_cast<int>(destinationOrder);
             m_editTargetIndex = m_editSourceIndex;
             m_editOriginRootSlot = m_editSourceIndex;
@@ -839,7 +839,7 @@ bool WiiUMenuApp::commitEditModePlacement() {
         // Resolve on a copy so a refused placement leaves the layout untouched.
         // Clear the held tile first so its old cells can host a displacee
         // (4x2 ↔ 2x1).
-        std::vector<std::uint64_t> slots = m_layoutSlots;
+        std::vector<std::uint64_t> slots = mutableLayoutSlots();
         std::replace(slots.begin(), slots.end(), m_editHeldTitleId, std::uint64_t{0});
 
         auto collectOverlappingAnchors = [&](int footprintAnchor) {
@@ -958,7 +958,7 @@ bool WiiUMenuApp::commitEditModePlacement() {
                     {displaced.front().second, from}};
                 detachEditSourceIcon();
                 unbindEditActions();
-                m_layoutSlots = std::move(slots);
+                mutableLayoutSlots() = std::move(slots);
                 m_editSourceIndex = placeAt;
                 m_editOriginRootSlot = placeAt;
                 m_layoutDirty = true;
@@ -1127,7 +1127,7 @@ bool WiiUMenuApp::commitEditModePlacement() {
         if (from != placeAt || !displacedMoves.empty()) {
             detachEditSourceIcon();
             unbindEditActions();
-            m_layoutSlots = std::move(slots);
+            mutableLayoutSlots() = std::move(slots);
             m_editSourceIndex = placeAt;
             m_editOriginRootSlot = placeAt;
             m_layoutDirty = true;
@@ -1162,8 +1162,8 @@ bool WiiUMenuApp::commitEditModePlacement() {
             m_iconStreamer.swapIndices(from, target);
             return false;
         }
-        if (!m_layoutSlots.empty() && from < (int)m_layoutSlots.size() && target < (int)m_layoutSlots.size())
-            std::swap(m_layoutSlots[from], m_layoutSlots[target]);
+        if (!mutableLayoutSlots().empty() && from < (int)mutableLayoutSlots().size() && target < (int)mutableLayoutSlots().size())
+            std::swap(mutableLayoutSlots()[from], mutableLayoutSlots()[target]);
 
         m_editSourceIndex = target;
         m_iconStreamer.setPinnedIndex(m_editSourceIndex);
@@ -1304,8 +1304,8 @@ bool WiiUMenuApp::activateEditModeTarget() {
         refreshFolderPeekComposite(targetFolderId);
 
         if (m_editOriginFolderId == 0 && m_editOriginRootSlot >= 0 &&
-            m_editOriginRootSlot < static_cast<int>(m_layoutSlots.size())) {
-            m_layoutSlots[static_cast<std::size_t>(m_editOriginRootSlot)] = 0;
+            m_editOriginRootSlot < static_cast<int>(mutableLayoutSlots().size())) {
+            mutableLayoutSlots()[static_cast<std::size_t>(m_editOriginRootSlot)] = 0;
             m_layoutDirty = true;
         }
         const std::uint64_t titleId = m_editHeldTitleId;
@@ -1320,7 +1320,7 @@ bool WiiUMenuApp::activateEditModeTarget() {
     // empty slots at all, so any tile is a valid destination there.
     const bool dropIntoRootSlot =
         targetEntry.kind == GridEntryKind::Empty
-        && target < static_cast<int>(m_layoutSlots.size());
+        && target < static_cast<int>(mutableLayoutSlots().size());
     const bool dropAtRootRow = m_appLayoutMode == AppLayoutMode::DynamicLine;
     if (m_openFolderId == 0 && m_editOriginFolderId != 0 &&
         m_editHeldTitleId < kFolderTitleIdPrefix &&
@@ -1331,7 +1331,7 @@ bool WiiUMenuApp::activateEditModeTarget() {
         refreshFolderPeekComposite(m_editOriginFolderId);
         const std::uint64_t titleId = m_editHeldTitleId;
         if (dropIntoRootSlot)
-            m_layoutSlots[static_cast<std::size_t>(target)] = titleId;
+            mutableLayoutSlots()[static_cast<std::size_t>(target)] = titleId;
         // Single-row relies on buildRootFolderModel()'s first-free-slot pass.
         m_layoutDirty = true;
         exitEditMode();
@@ -2727,7 +2727,11 @@ void WiiUMenuApp::showFolderContextMenu(std::uint32_t folderId) {
                                const auto pseudo = folderTitleId(folderId);
                                m_gameSizes.erase(pseudo);
                                m_gameArtwork.erase(pseudo);
-                               std::replace(m_layoutSlots.begin(), m_layoutSlots.end(), pseudo, std::uint64_t{0});
+                               std::replace(m_layoutSlots.begin(), m_layoutSlots.end(),
+                                            pseudo, std::uint64_t{0});
+                               std::replace(m_portraitLayoutSlots.begin(),
+                                            m_portraitLayoutSlots.end(),
+                                            pseudo, std::uint64_t{0});
                                m_layoutDirty = true;
                                saveMenuLayout();
                                if (m_folderOptions) m_folderOptions->hide();

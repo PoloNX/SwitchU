@@ -130,7 +130,7 @@ void FolderOptionsScreen::buildTabs() {
     tileSize.label = i18n.tr("folder.tile_size", "Tile size");
     tileSize.description = i18n.tr(
         "folder.tile_size_desc",
-        "Changes the size of this folder on the HOME grid.");
+        "Change folder tile size on HOME.");
     tileSize.type = ItemType::Selector;
     tileSize.options = {"1x1", "2x1", "4x2", "2x2", "2x3"};
     tileSize.intVal = m_folder.tileSizeIndex;
@@ -239,7 +239,7 @@ void FolderOptionsScreen::buildTabs() {
     }
     customizeHero.description = i18n.tr(
         "folder.customize_hero_desc",
-        "Crop and pan this folder's hero for landscape and Flip-Grip.");
+        "Crop and pan this folder's hero.");
     customizeHero.indentLevel = 1;
     customizeHero.enabled = m_folder.hasCustomHero;
     customizeHero.onChange = [this](SettingItem&) {
@@ -251,7 +251,7 @@ void FolderOptionsScreen::buildTabs() {
     overrideHeroes.label = i18n.tr("folder.override_title_heroes", "Override Title Heroes");
     overrideHeroes.description = i18n.tr(
         "folder.override_title_heroes_desc",
-        "While this folder is open, always show the folder hero instead of each title's hero.");
+        "Use folders hero for all folder items.");
     overrideHeroes.type = ItemType::Toggle;
     overrideHeroes.boolVal = m_folder.overrideTitleHeroes;
     overrideHeroes.anim01 = overrideHeroes.boolVal ? 1.f : 0.f;

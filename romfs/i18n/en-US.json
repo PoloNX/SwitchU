@@ -579,7 +579,7 @@
       "hero": "Hero",
       "hero_desc": "Choose a hero image.",
       "customize_hero": "Customize Hero",
-      "customize_hero_desc": "Crop and pan this title's hero for landscape and Flip-Grip.",
+      "customize_hero_desc": "Crop and pan this title's hero.",
       "customize_hero_select_hint": "A to adjust image",
       "customize_hero_adjust_hints": "Drag/Stick pan  ·  Pinch/R-Stick zoom  ·  X crop  ·  Y reset  ·  A/B done",
       "hero_slot_landscape": "Landscape",
@@ -671,11 +671,11 @@
     "custom_hero": "Custom hero",
     "custom_hero_desc": "Search SteamGridDB for a hero backdrop.",
     "custom_hero_set_desc": "SteamGridDB hero is active for this folder on HOME and inside it.",
-    "customize_hero_desc": "Crop and pan this folder's hero for landscape and Flip-Grip.",
+    "customize_hero_desc": "Crop and pan this folder's hero.",
     "override_title_heroes": "Override Title Heroes",
-    "override_title_heroes_desc": "While this folder is open, always show the folder hero instead of each title's hero.",
+    "override_title_heroes_desc": "Use folders hero for all folder items.",
     "tile_size": "Tile size",
-    "tile_size_desc": "Changes the size of this folder on the HOME grid.",
+    "tile_size_desc": "Change folder tile size on HOME.",
     "steamgriddb": "SteamGridDB"
   },
   "add": {

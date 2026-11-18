@@ -53,6 +53,23 @@ int main() {
     assert((switchu::widgets::validatedSize(
                 WidgetType::ImagePin, {1, 2}, AppLayoutMode::Grid) == WidgetSize{1, 2}));
 
+    // Demote-to-fit keeps preferred size in storage; session span shrinks only.
+    assert((switchu::widgets::demoteGameTileToFit({4, 2}, 5, 3) == WidgetSize{4, 2}));
+    assert((switchu::widgets::demoteGameTileToFit({4, 2}, 3, 5) == WidgetSize{2, 2}));
+    assert((switchu::widgets::demoteGameTileToFit({2, 3}, 3, 5) == WidgetSize{2, 3}));
+    assert((switchu::widgets::demoteGameTileToFit({2, 3}, 3, 2) == WidgetSize{2, 2}));
+    assert((switchu::widgets::demoteGameTileToFit({2, 3}, 1, 1) == WidgetSize{1, 1}));
+    assert((switchu::widgets::demoteGameTileToFit({2, 1}, 1, 5) == WidgetSize{1, 1}));
+    assert((switchu::widgets::demoteWidgetTileToFit(
+                WidgetType::Batteries, {2, 2}, AppLayoutMode::Grid, 3, 5) ==
+            WidgetSize{2, 2}));
+    assert((switchu::widgets::demoteWidgetTileToFit(
+                WidgetType::Batteries, {2, 2}, AppLayoutMode::Grid, 2, 1) ==
+            WidgetSize{2, 1}));
+    assert((switchu::widgets::demoteWidgetTileToFit(
+                WidgetType::ImagePin, {1, 2}, AppLayoutMode::Grid, 3, 1) ==
+            WidgetSize{1, 1}));
+
     for (const std::uint32_t id : {1u, 42u, 0xFFFFFFFFu}) {
         const auto titleId = switchu::widgets::widgetTitleId(id);
         assert(switchu::widgets::isWidgetTitleId(titleId));

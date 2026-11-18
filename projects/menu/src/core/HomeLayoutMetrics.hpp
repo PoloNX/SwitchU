@@ -34,12 +34,23 @@ struct HomeLayoutMetrics {
     float logicalW() const { return isPortrait() ? kPortraitW : kFbW; }
     float logicalH() const { return isPortrait() ? kPortraitH : kFbH; }
 
-    // Portrait draws in logical 720x1280 (true 3x5). Landscape keeps saved dims.
-    int gridColumns(int savedCols) const {
-        return isPortrait() ? 3 : std::clamp(savedCols, 1, 8);
+    // Landscape keeps Theme Shop Interface dims. Portrait: transpose when the
+    // landscape grid is wider than tall (5×3→3×5, 4×3→3×4); keep vertical or
+    // square layouts as-is (3×5 stays 3×5). Product cols×rows is unchanged so
+    // page slot counts stay aligned across Flip-Grip flips.
+    int gridColumns(int savedCols, int savedRows) const {
+        const int c = std::clamp(savedCols, 1, 8);
+        const int r = std::clamp(savedRows, 1, 5);
+        if (!isPortrait())
+            return c;
+        return (c > r) ? r : c;
     }
-    int gridRows(int savedRows) const {
-        return isPortrait() ? 5 : std::clamp(savedRows, 1, 5);
+    int gridRows(int savedCols, int savedRows) const {
+        const int c = std::clamp(savedCols, 1, 8);
+        const int r = std::clamp(savedRows, 1, 5);
+        if (!isPortrait())
+            return r;
+        return (c > r) ? c : r;
     }
 
     nxui::Rect topHud() const {

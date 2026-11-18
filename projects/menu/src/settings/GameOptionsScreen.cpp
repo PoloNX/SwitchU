@@ -173,7 +173,7 @@ void GameOptionsScreen::buildTabs() {
             };
         }
         customize.description = i18n.tr("game.steamgriddb.customize_hero_desc",
-            "Crop and pan this title's hero for landscape and Flip-Grip.");
+            "Crop and pan this title's hero.");
         customize.indentLevel = 1;
         customize.enabled = m_game.hasHeroArt;
         customize.onChange = [this](SettingItem&) {
