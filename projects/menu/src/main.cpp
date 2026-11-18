@@ -283,9 +283,17 @@ extern "C" void __appInit(void) {
     rc = hidInitialize();
     if (R_FAILED(rc)) svcOutputDebugString("[SwitchU-menu] hidInitialize FAIL", 33);
 
-    // On a HOME return this can fail or answer before the clocks are set;
-    // services/SystemTime recovers both later (logged once the SD log is open).
-    const Result timeRc = timeInitialize();
+    // On a HOME return / wake→Lock this can fail or answer before the clocks
+    // are set; services/SystemTime recovers both later (and the daemon may
+    // push a POSIX seed via applet InData).
+    Result timeRc = timeInitialize();
+    if (R_FAILED(timeRc)) {
+        for (int attempt = 0; attempt < 3 && R_FAILED(timeRc); ++attempt) {
+            svcSleepThread(50'000'000ULL);
+            timeExit();
+            timeRc = timeInitialize();
+        }
+    }
     __libnx_init_time();
     setsysInitialize();
     setInitialize();
@@ -314,6 +322,8 @@ extern "C" void __appInit(void) {
     DebugLog::log("[menu] __appInit complete (sd mount: 0x%X)", rc);
     DebugLog::log("[time] timeInitialize rc=0x%X", timeRc);
     switchu::services::system_time::logBootState();
+    if (R_FAILED(timeRc))
+        switchu::services::system_time::tryRecoverNow("appInit-retry");
     // Grow off the boot-lean heap when Frame Tap is not installed.
     expandHeapIfNoFrameTap();
 
@@ -445,6 +455,31 @@ static switchu::smi::SystemStatus readSystemStatus() {
     }
     return status;
 }
+
+// Optional third InData from the daemon: POSIX UTC (+ TZ) for wall-clock
+// seeding when time:s failed at __appInit (wake→Lock path).
+static void readAndApplyDaemonPosixSeed() {
+    AppletStorage stor{};
+    if (R_FAILED(appletPopInData(&stor)))
+        return;
+    s64 sz = 0;
+    appletStorageGetSize(&stor, &sz);
+    switchu::smi::MenuTimeSeed seed{};
+    if (sz >= (s64)sizeof(seed))
+        appletStorageRead(&stor, 0, &seed, sizeof(seed));
+    else if (sz >= (s64)sizeof(seed.posix_utc))
+        appletStorageRead(&stor, 0, &seed.posix_utc, sizeof(seed.posix_utc));
+    appletStorageClose(&stor);
+    if (seed.posix_utc == 0)
+        return;
+    if (switchu::services::system_time::wallClockAvailable()) {
+        DebugLog::log("[time] daemon time seed ignored (wall already ok) posix=%llu",
+                      static_cast<unsigned long long>(seed.posix_utc));
+        return;
+    }
+    switchu::services::system_time::seedFromDaemonPosix(
+        seed.posix_utc, seed.tz_offset_sec, "applet-indata");
+}
 #endif
 
 int main(int argc, char* argv[]) {
@@ -461,9 +496,12 @@ int main(int argc, char* argv[]) {
 
     auto startMode = readStartMode();
     auto sysStatus = readSystemStatus();
+    readAndApplyDaemonPosixSeed();
 
-    DebugLog::log("[menu] start mode=%d  suspended=0x%016lX running=%d",
-                  (int)startMode, sysStatus.suspended_app_id, sysStatus.app_running);
+    DebugLog::log("[menu] start mode=%d lock_wake=%u parental=%u suspended=0x%016lX running=%d",
+                  (int)startMode, static_cast<unsigned>(sysStatus.lock_wake),
+                  static_cast<unsigned>(sysStatus.parental_lock),
+                  sysStatus.suspended_app_id, sysStatus.app_running);
 
     {
         std::string sdPath = fmt::format("{}/shaders/", SD_ASSETS);
@@ -509,9 +547,13 @@ int main(int argc, char* argv[]) {
 #else
         auto makeMenuActivity = [sysStatus, startMode](bool fromTutorial = false) -> std::unique_ptr<nxui::Activity> {
             auto activity = std::make_unique<WiiUMenuApp>();
+            const bool startLocked =
+                startMode == switchu::smi::MenuStartMode::LockScreen
+                || sysStatus.lock_wake != 0
+                || sysStatus.parental_lock != 0;
             activity->setStartupStatus(sysStatus,
                 startMode == switchu::smi::MenuStartMode::AppletReturn,
-                startMode == switchu::smi::MenuStartMode::LockScreen,
+                startLocked,
                 startMode == switchu::smi::MenuStartMode::StartupBoot);
             activity->setTutorialStartupFade(fromTutorial);
             return activity;

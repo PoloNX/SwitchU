@@ -18,6 +18,7 @@ enum class SystemActionType : std::uint32_t {
     OpenNetConnect,
     OpenUserPage,
     OpenUserCreator,
+    ParentalAuthenticate,
 };
 
 struct SystemAction {
@@ -25,6 +26,7 @@ struct SystemAction {
     std::uint64_t requestId = 0;
     std::uint64_t titleId = 0;
     AccountUid uid{};
+    std::uint8_t parentalAuthMode = 0; // ParentalAuthMode
 };
 
 // The menu is an all-foreground applet: accepting multiple navigation actions

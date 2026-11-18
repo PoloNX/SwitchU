@@ -54,6 +54,10 @@ std::mutex g_mutex;
 std::uint64_t g_lastRecoveryNs = 0;
 std::uint64_t g_failingSinceNs = 0;
 unsigned g_recoveryAttempts = 0;
+// Fallback when time:s is dead but the daemon passed a POSIX seed.
+std::uint64_t g_daemonSeedPosix = 0;
+std::uint64_t g_daemonSeedUptimeNs = 0;
+std::int32_t g_daemonSeedTzOffsetSec = 0;
 
 const char* clockName(TimeType type) {
     switch (type) {
@@ -134,21 +138,40 @@ Result currentPosixTime(std::uint64_t* out) {
         const std::uint64_t now = uptimeNs();
         if (g_failingSinceNs == 0)
             g_failingSinceNs = now;
-        if (g_lastRecoveryNs != 0 && now - g_lastRecoveryNs < kRecoveryIntervalNs)
-            return rc;
-        g_lastRecoveryNs = now;
-        ++g_recoveryAttempts;
+        const bool allowAttempt = g_lastRecoveryNs == 0
+            || now - g_lastRecoveryNs >= kRecoveryIntervalNs;
+        if (allowAttempt) {
+            g_lastRecoveryNs = now;
+            ++g_recoveryAttempts;
 
-        const bool reopen = now - g_failingSinceNs >= kReopenAfterNs;
-        const Result initRc = reopenServiceLocked(reopen);
-        rc = readClocksLocked(out, &used);
-        // Rate-limit the log as well: the first attempts, then every 30th.
-        if (g_recoveryAttempts <= 3 || g_recoveryAttempts % 30 == 0 || R_SUCCEEDED(rc)) {
-            DebugLog::log("[time] recovery #%u reopen=%d init=0x%X clocks=0x%X",
-                          g_recoveryAttempts, reopen ? 1 : 0, initRc, rc);
+            // Dead session (common on wake→Lock): reopen immediately. Only wait
+            // out kReopenAfterNs when a live session keeps returning clock errors.
+            const bool reopen = !serviceActive()
+                || now - g_failingSinceNs >= kReopenAfterNs;
+            const Result initRc = reopenServiceLocked(reopen);
+            rc = readClocksLocked(out, &used);
+            // Rate-limit the log as well: the first attempts, then every 30th.
+            if (g_recoveryAttempts <= 3 || g_recoveryAttempts % 30 == 0 || R_SUCCEEDED(rc)) {
+                DebugLog::log("[time] recovery #%u reopen=%d init=0x%X clocks=0x%X",
+                              g_recoveryAttempts, reopen ? 1 : 0, initRc, rc);
+            }
         }
-        if (R_FAILED(rc))
+        if (R_FAILED(rc)) {
+            // Daemon POSIX seed: keep the HUD/Lock clock alive while time:s
+            // stays busy (settimeofday is unavailable on this newlib).
+            if (g_daemonSeedPosix >= 1'600'000'000ULL) {
+                const std::uint64_t elapsedSec =
+                    (uptimeNs() - g_daemonSeedUptimeNs) / kNsPerSecond;
+                *out = g_daemonSeedPosix + elapsedSec;
+                return 0;
+            }
+            timeval tv{};
+            if (::gettimeofday(&tv, nullptr) == 0 && tv.tv_sec > 1'600'000'000L) {
+                *out = static_cast<std::uint64_t>(tv.tv_sec);
+                return 0;
+            }
             return rc;
+        }
     }
 
     g_failingSinceNs = 0;
@@ -181,6 +204,42 @@ void logBootState() {
                   serviceActive() ? 1 : 0, rc,
                   R_SUCCEEDED(rc) ? clockName(used) : "none",
                   wallClockWorks() ? 1 : 0);
+}
+
+bool seedFromDaemonPosix(std::uint64_t posixUtc, std::int32_t tzOffsetSec,
+                         const char* reason) {
+    if (posixUtc < 1'600'000'000ULL) // before ~2020 — reject garbage
+        return false;
+    std::lock_guard<std::mutex> lk(g_mutex);
+    g_daemonSeedPosix = posixUtc;
+    g_daemonSeedUptimeNs = uptimeNs();
+    g_daemonSeedTzOffsetSec = tzOffsetSec;
+    DebugLog::log("[time] daemon posix seed (%s) posix=%llu tz=%d (uptime fallback)",
+                  reason ? reason : "?",
+                  static_cast<unsigned long long>(posixUtc),
+                  static_cast<int>(tzOffsetSec));
+    return true;
+}
+
+std::int32_t daemonSeedTzOffsetSec() {
+    std::lock_guard<std::mutex> lk(g_mutex);
+    return g_daemonSeedTzOffsetSec;
+}
+
+Result tryRecoverNow(const char* reason) {
+    std::lock_guard<std::mutex> lk(g_mutex);
+    const Result initRc = reopenServiceLocked(true);
+    std::uint64_t value = 0;
+    TimeType used = TimeType_UserSystemClock;
+    const Result rc = readClocksLocked(&value, &used);
+    DebugLog::log("[time] tryRecoverNow (%s) init=0x%X clocks=0x%X wall=%d",
+                  reason ? reason : "?", initRc, rc, wallClockWorks() ? 1 : 0);
+    if (R_SUCCEEDED(rc)) {
+        g_failingSinceNs = 0;
+        if (!wallClockWorks())
+            reseedLocked(used, reason ? reason : "tryRecoverNow");
+    }
+    return rc;
 }
 
 } // namespace switchu::services::system_time

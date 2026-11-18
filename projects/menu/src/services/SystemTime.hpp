@@ -34,4 +34,13 @@ bool wallClockAvailable();
 // Logs the state of the time service at boot (call once the SD log is open).
 void logBootState();
 
+// When time:s is dead at menu start (common on wake→Lock), seed from a POSIX
+// UTC (+ optional TZ offset) the daemon already read with its working session.
+bool seedFromDaemonPosix(std::uint64_t posixUtc, std::int32_t tzOffsetSec,
+                         const char* reason);
+std::int32_t daemonSeedTzOffsetSec();
+
+// Force a time:s reopen + clock read once (used right after __appInit fails).
+Result tryRecoverNow(const char* reason);
+
 } // namespace switchu::services::system_time

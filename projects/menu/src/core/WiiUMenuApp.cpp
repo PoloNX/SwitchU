@@ -16,6 +16,7 @@
 #include <switch.h>
 #ifdef SWITCHU_MENU
 #include "smi_commands.hpp"
+#include <switchu/pctl_honor.hpp>
 #endif
 #include <cstdio>
 #include <cstdlib>
@@ -527,13 +528,23 @@ void WiiUMenuApp::setStartupStatus(const switchu::smi::SystemStatus& status, boo
                                    bool startLocked, bool startupBoot) {
     m_launcher.setStartupStatus(status.suspended_app_id, status.app_running);
     m_startupFailure = status.last_failure;
-    m_fastReturnRequested = fastReturn || status.suspended_app_id != 0;
-    m_startLocked = startLocked && status.suspended_app_id != 0;
+    m_parentalLockActive = status.parental_lock != 0;
+    // Parental lockout shows Lock even with no suspended title.
+    m_startLocked = (startLocked && status.suspended_app_id != 0) || m_parentalLockActive;
+    // Wake→Lock must not reuse the HOME leave_frame.bin (stale grid capture).
+    // Keep fast-return splash for normal AppletReturn / title resume only.
+    m_fastReturnRequested = !m_startLocked
+        && (fastReturn || status.suspended_app_id != 0);
     // Public HTTPS Date once per console boot. HOME restarts after homebrew;
     // the daemon keeps the session flag and the RTC keeps ticking.
-    if (status.web_clock_synced || !startupBoot) {
+    // LockScreen wake often has a dead time:s session — always allow sync even
+    // when the daemon already marked web_clock_synced (seed may be TZ-wrong).
+    if (m_startLocked) {
+        DebugLog::log("[boot] LockScreen wake — allow public clock sync (synced=%u)",
+                      static_cast<unsigned>(status.web_clock_synced));
+    } else if (status.web_clock_synced || !startupBoot) {
         m_webClockBootSyncStarted = true;
-        DebugLog::log("[boot] skip public clock sync (synced=%u startupBoot=%d)",
+        DebugLog::log("[boot] skip public clock sync (synced=%u startupBoot=%d startLocked=0)",
                       static_cast<unsigned>(status.web_clock_synced),
                       startupBoot ? 1 : 0);
     }
@@ -542,6 +553,17 @@ void WiiUMenuApp::setStartupStatus(const switchu::smi::SystemStatus& status, boo
 
 bool WiiUMenuApp::presentInitialFrame(nxui::Renderer& ren) {
 #ifdef SWITCHU_MENU
+    // Lock launch: solid plate only — no Lock leave splash (clock/hero always
+    // drift from any capture). Live Lock paints as soon as init finishes.
+    if (m_startLocked) {
+        ren.drawRect({0.f, 0.f, 1280.f, 720.f}, nxui::Color(0.04f, 0.06f, 0.09f, 1.f));
+        m_leaveSplashDrawn = true;
+        m_leaveSplashPhase = LeaveSplashPhase::None;
+        m_leaveSplashFade = 0.f;
+        DebugLog::log("[leave] LockScreen — solid plate (no lock splash)");
+        return true;
+    }
+
     if (!m_fastReturnRequested)
         return false;
 
@@ -865,6 +887,10 @@ void WiiUMenuApp::updateLeaveSplashHandoff(float dt) {
             m_leaveSplashPhase = LeaveSplashPhase::None;
             releaseLeaveSplashGpu("fade-done");
             setLeaveMotionFrozen(false);
+            if (m_lockViewActive || m_startLocked) {
+                DebugLog::log("[leave] splash handoff skipped (lock view)");
+                return;
+            }
             // Leave-restore can open the folder before the grid has its final
             // content rect; re-anchor glass + title once HOME is interactive.
             refreshOpenFolderChrome();
@@ -1043,8 +1069,12 @@ bool WiiUMenuApp::onCreate() {
 
     nxui::I18n::instance().initialize(std::string(SD_ASSETS) + "/i18n", "en-US");
     applyUiLanguage();
-    const bool fastReturn = m_fastReturnRequested || m_launcher.suspendedTitleId() != 0;
-    m_fastReturnRequested = fastReturn;
+    // Lean boot when a title is suspended — but do NOT re-arm HOME leave-splash
+    // restore on LockScreen wake (that forced the grid leave_frame over Lock).
+    const bool leanBoot = m_fastReturnRequested || m_launcher.suspendedTitleId() != 0;
+    if (!m_startLocked)
+        m_fastReturnRequested = leanBoot;
+    const bool fastReturn = leanBoot;
     m_fastReturnStartupTick = fastReturn ? initStartTick : 0;
     m_appLoader.setPrefetchIcons(!fastReturn);
     if (fastReturn)
@@ -1094,6 +1124,14 @@ bool WiiUMenuApp::onCreate() {
     DebugLog::log("[init] buildGrid done at %lums", initElapsedMs());
 
 #ifdef SWITCHU_MENU
+    // ParentalAuthenticate cancel / soft failures must never alarm on boot.
+    if (m_startupFailure.result != 0
+        && m_startupFailure.command
+            == static_cast<uint32_t>(switchu::smi::SystemMessage::ParentalAuthenticate)) {
+        DebugLog::log("[pctl] suppressing ParentalAuthenticate startup failure 0x%X",
+                      m_startupFailure.result);
+        m_startupFailure = {};
+    }
     if (m_startupFailure.result != 0 && m_dialog) {
         auto commandName = [](uint32_t command) -> const char* {
             using Message = switchu::smi::SystemMessage;
@@ -1105,6 +1143,7 @@ bool WiiUMenuApp::onCreate() {
                 case Message::LaunchUserPage: return "UserPage";
                 case Message::LaunchControllerRemapping: return "ControllerRemapping";
                 case Message::LaunchUserCreator: return "UserCreator";
+                case Message::ParentalAuthenticate: return "ParentalAuth";
                 default: return "SystemAction";
             }
         };
@@ -1652,6 +1691,7 @@ void WiiUMenuApp::reflowHomeShell() {
     if (m_contextMenu) m_contextMenu->setCanvasSize(canvasW, canvasH);
     if (m_progressDialog) m_progressDialog->setCanvasSize(canvasW, canvasH);
     if (m_lockScreen) m_lockScreen->setCanvasSize(canvasW, canvasH);
+    if (m_lockAuthOverlay) m_lockAuthOverlay->setCanvasSize(canvasW, canvasH);
     if (m_launchAnim) m_launchAnim->setCanvasSize(canvasW, canvasH);
     if (m_folderBackdrop) m_folderBackdrop->setCanvasSize(canvasW, canvasH);
     if (m_quickSettings) m_quickSettings->setCanvasSize(canvasW, canvasH);
@@ -5956,6 +5996,43 @@ void WiiUMenuApp::activateApplication(GlossyIcon* source, AppEntry* entry,
                                       std::uint64_t titleId,
                                       const std::string& launchTitle) {
     if (!source || titleId == 0) return;
+
+#ifdef SWITCHU_MENU
+    // PlayGuard / stock pctl: block launch/resume until PIN (HOME itself stays usable).
+    if (switchu::pctl_honor::shouldBlockApplicationStart()) {
+        m_parentalLockActive = true;
+        const bool resumeSame = m_launcher.isAppSuspended(titleId);
+        DebugLog::log("[pctl] launch/resume blocked tid=%016lX — PIN required (resumeSame=%d)",
+                      static_cast<unsigned long>(titleId), resumeSame ? 1 : 0);
+        m_audio.playSfx(Sfx::ModalShow);
+        m_dialogReturnFocus = source;
+        auto& i18n = nxui::I18n::instance();
+        // Capture the title the user actually tapped (PlayGuard ≠ suspended Mina).
+        const std::uint64_t pendingTid = titleId;
+        AccountUid pendingUid{};
+        if (entry && entry->startupUserAccount != 0) {
+            // Best-effort: selected profile when known; launch path re-resolves if needed.
+        }
+        m_dialog->show(
+            i18n.tr("parental.play_time_up", "Play time is up"),
+            i18n.tr("parental.enter_pin_to_play",
+                    "Enter the Parental Controls PIN to keep playing."),
+            {{i18n.tr("parental.enter_pin", "Enter PIN"),
+              [this, resumeSame, pendingTid, pendingUid]() {
+                  if (resumeSame) {
+                      requestParentalUnlock(switchu::smi::ParentalAuthMode::Resume);
+                  } else {
+                      requestParentalUnlock(switchu::smi::ParentalAuthMode::Launch,
+                                            pendingTid, pendingUid);
+                  }
+              }, true},
+             {i18n.tr("button.cancel", "Cancel"), []() {}, false}},
+            0, {});
+        focusManager().setFocus(m_dialog.get());
+        return;
+    }
+#endif
+
     if (m_launcher.isAppSuspended(titleId)) {
         resumeSuspendedApplication(titleId, launchTitle);
         return;
@@ -7273,6 +7350,18 @@ void WiiUMenuApp::buildGrid() {
     m_progressDialog->setSmallFont(&m_fontSmall);
     m_progressDialog->setTheme(&m_theme);
 
+    m_lockAuthStore.load(switchu::lockauth::modeFromInt(m_config.lockAuthMode));
+    if (m_lockAuthStore.failsafeCleared()) {
+        m_config.lockAuthMode = 0;
+        m_config.save();
+        m_lockAuthStore.acknowledgeFailsafe();
+        DebugLog::log("[lockauth] failsafe cleared Sign-in in settings");
+    } else if (m_lockAuthStore.isEnabled()) {
+        m_config.lockAuthMode = static_cast<int>(m_lockAuthStore.mode());
+    } else {
+        m_config.lockAuthMode = 0;
+    }
+
     m_lockScreen = std::make_shared<LockScreen>();
     m_lockScreen->setFonts(&m_fontNormal, &m_fontSmall);
     applyLockScreenClockFont();
@@ -7283,6 +7372,15 @@ void WiiUMenuApp::buildGrid() {
         std::clamp(m_config.lockScreenTransition, 0, 3)));
     m_lockScreen->setZoomDir(m_config.lockScreenZoomDir);
     m_lockScreen->setWipeDir(m_config.lockScreenWipeDir);
+    m_lockScreen->setAuthGate([this](bool resume) -> bool {
+        if (!m_lockAuthStore.isEnabled())
+            return true;
+        m_lockAuthFlow = LockAuthFlow::Unlock;
+        m_lockAuthResumeIntent = resume;
+        if (!beginLockAuthOverlayOrPassword(m_lockAuthStore.mode(), resume))
+            return true; // no UI available — allow unlock rather than soft-brick
+        return false;
+    });
     m_lockScreen->setBackdropDrawer([this](nxui::Renderer& ren, float dy, float opacity, float scale) {
         if (m_background)
             m_background->renderShifted(ren, dy, opacity, scale);
@@ -7309,8 +7407,25 @@ void WiiUMenuApp::buildGrid() {
         if (m_cursor)
             m_cursor->setVisible(false);
     });
-    m_lockScreen->setOnUnlocked([this]() { finishExitLockView(false); });
-    m_lockScreen->setOnResume([this]() { finishExitLockView(true); });
+    // Parental (PlayGuard): Unlock → HOME is always allowed (browse only).
+    // Resume / launch still require the stock PIN via pctlauth.
+    m_lockScreen->setOnUnlocked([this]() {
+        if (m_parentalLockActive) {
+            DebugLog::log("[pctl] Unlock → HOME (play still gated until PIN on resume/launch)");
+#ifdef SWITCHU_MENU
+            switchu::menu::smi_cmd::parentalDismissLock();
+#endif
+        }
+        m_parentalLockActive = false;
+        finishExitLockView(false);
+    });
+    m_lockScreen->setOnResume([this]() {
+        if (m_parentalLockActive) {
+            requestParentalUnlock(switchu::smi::ParentalAuthMode::Resume);
+            return;
+        }
+        finishExitLockView(true);
+    });
 
     app().renderer().setBoxWireframeEnabled(m_showWireframe);
 
@@ -7347,9 +7462,10 @@ void WiiUMenuApp::buildGrid() {
 
     // Prefer the leave-frame session from the last title launch/resume so the
     // live UI matches the splash. System applets do not rewrite that cache.
+    // LockScreen wake must not restore HOME leave session under the Lock cover.
     bool restoredLeaveSession = false;
 #ifdef SWITCHU_MENU
-    if (m_leaveSession.valid) {
+    if (m_leaveSession.valid && !m_startLocked) {
         restoreLeaveSession();
         restoredLeaveSession = true;
     } else if (m_launcher.suspendedTitleId() != 0) {
@@ -7786,10 +7902,23 @@ void WiiUMenuApp::buildGrid() {
     m_overlayLayer->addChild(m_steamGridDbPicker);
     createControllerTest();
 
+    m_lockAuthOverlay = std::make_shared<switchu::lockauth::LockAuthOverlay>();
+    m_lockAuthOverlay->setFonts(&m_fontNormal, &m_fontSmall);
+    m_lockAuthOverlay->setTheme(&m_theme);
+    m_lockAuthOverlay->setCanvasSize(m_homeLayout.logicalW(), m_homeLayout.logicalH());
+    m_lockAuthOverlay->setStore(&m_lockAuthStore);
+    m_lockAuthOverlay->setOnSfx([this](bool ok) {
+        m_audio.playSfx(ok ? Sfx::Activate : Sfx::ModalShow);
+    });
+    m_lockAuthOverlay->setOnDone([this](auto action) {
+        handleLockAuthDone(action);
+    });
+
     m_overlayLayer->addChild(m_contextMenu);
     m_overlayLayer->addChild(m_dialog);
     m_overlayLayer->addChild(m_progressDialog);
     m_overlayLayer->addChild(m_lockScreen);
+    m_overlayLayer->addChild(m_lockAuthOverlay);
     m_overlayLayer->addChild(m_launchAnim);
 
     root.addChild(m_bgLayer);
@@ -8174,6 +8303,8 @@ void WiiUMenuApp::onUpdate(float dt) {
             m_sleepHoldSec -= dt;
             // Still presenting during the hold — keep Lock enter tweens moving
             // so power→sleep can show the chosen transition before frames stop.
+            if (m_lockAuthOverlay && m_lockAuthOverlay->isActive())
+                m_lockAuthOverlay->update(dt);
             if (m_lockScreen && m_lockScreen->isActive())
                 m_lockScreen->update(dt);
             nxui::AnimationManager::instance().update(dt);
@@ -8220,6 +8351,8 @@ void WiiUMenuApp::enterSystemSleep() {
     if (m_config.lockScreenEnabled) {
         enterLockView(false);
         if (m_lockViewActive) {
+            if (m_lockScreen)
+                m_lockScreen->refreshNow();
             m_sleepHoldSec = 1.40f;
             DebugLog::log("[lock] sleep: holding Lock view for enter transition (1.4s)");
             return;
@@ -8384,8 +8517,292 @@ void WiiUMenuApp::restoreFocusAfterLock() {
     ensureHomeTitleFocus(m_lockReturnTitleId);
 }
 
+void WiiUMenuApp::syncLockAuthToThemeShop() {
+    if (!m_themeShop) return;
+    m_themeShop->setLockAuthModeState(m_config.lockAuthMode);
+    m_themeShop->setLockAuthGuardState(m_config.lockAuthGuardSettings);
+    m_themeShop->setLockAuthEnabledState(m_lockAuthStore.isEnabled());
+}
+
+bool WiiUMenuApp::beginLockAuthOverlayOrPassword(switchu::lockauth::Mode mode,
+                                                 bool resumeIntent) {
+    m_lockAuthResumeIntent = resumeIntent;
+    m_lockAuthPasswordConfirm = false;
+    m_lockAuthPasswordFirst.clear();
+    if (mode == switchu::lockauth::Mode::Password) {
+        promptLockAuthPassword();
+        return true;
+    }
+    if (!m_lockAuthOverlay)
+        return false;
+    if (m_lockAuthFlow == LockAuthFlow::Enroll)
+        m_lockAuthOverlay->beginEnroll(mode);
+    else if (m_lockAuthFlow == LockAuthFlow::Unlock)
+        m_lockAuthOverlay->beginUnlock(mode, resumeIntent);
+    else
+        m_lockAuthOverlay->beginVerify(mode);
+    focusManager().setFocus(m_lockAuthOverlay.get());
+    return true;
+}
+
+void WiiUMenuApp::promptLockAuthPassword() {
+    auto& i18n = nxui::I18n::instance();
+    std::string title;
+    std::string guide = i18n.tr(
+        "lockauth.hint_password",
+        "Password · at least 4 characters · OK to confirm");
+    if (m_lockAuthPasswordLockout > 0.f) {
+        char buf[64];
+        std::snprintf(buf, sizeof(buf),
+                      i18n.tr("lockauth.try_again_in", "Try again in %.0fs").c_str(),
+                      std::ceil(m_lockAuthPasswordLockout));
+        title = buf;
+        guide = i18n.tr("lockauth.rate_limited", "Wait a moment, then try again.");
+    } else if (m_lockAuthFlow == LockAuthFlow::Enroll) {
+        title = m_lockAuthPasswordConfirm
+            ? i18n.tr("lockauth.confirm_again", "Enter it again")
+            : i18n.tr("lockauth.enroll_password", "Choose a password (4+ characters)");
+        guide = i18n.tr("lockauth.enroll_password_guide",
+                        "Use at least 4 characters, then press OK.");
+    } else if (m_lockAuthFlow == LockAuthFlow::Unlock) {
+        title = i18n.tr("lockauth.unlock", "Sign in");
+    } else {
+        title = i18n.tr("lockauth.verify", "Confirm Sign-in");
+    }
+
+    requestTextEntry(title, guide, "", switchu::lockauth::kMaxPasswordLength, true,
+                     [this](const std::string& value) {
+                         handleLockAuthPasswordAccepted(value);
+                     });
+    // Override cancel so we clear the Sign-in flow instead of only restoring focus.
+    if (m_textEntry) {
+        m_textEntry->onCancel([this]() {
+            handleLockAuthPasswordCancelled();
+        });
+    }
+}
+
+void WiiUMenuApp::handleLockAuthPasswordCancelled() {
+    using PA = switchu::lockauth::LockAuthOverlay::PendingAction;
+    m_lockAuthPasswordConfirm = false;
+    m_lockAuthPasswordFirst.clear();
+    handleLockAuthDone(PA::Cancelled);
+    if (m_themeShop && m_themeShop->isActive())
+        focusManager().setFocus(m_themeShop.get());
+    else if (m_lockViewActive && m_lockScreen)
+        focusManager().setFocus(m_lockScreen.get());
+}
+
+void WiiUMenuApp::handleLockAuthPasswordAccepted(const std::string& value) {
+    using PA = switchu::lockauth::LockAuthOverlay::PendingAction;
+    auto& i18n = nxui::I18n::instance();
+
+    if (m_lockAuthPasswordLockout > 0.f) {
+        promptLockAuthPassword();
+        return;
+    }
+
+    if (m_lockAuthFlow == LockAuthFlow::Enroll) {
+        if (static_cast<int>(value.size()) < switchu::lockauth::kMinPasswordLength) {
+            m_audio.playSfx(Sfx::ModalShow);
+            // Re-prompt with the same enroll title; guide already states 4+.
+            promptLockAuthPassword();
+            return;
+        }
+        if (!m_lockAuthPasswordConfirm) {
+            m_lockAuthPasswordFirst = value;
+            m_lockAuthPasswordConfirm = true;
+            promptLockAuthPassword();
+            return;
+        }
+        if (value != m_lockAuthPasswordFirst) {
+            m_lockAuthPasswordConfirm = false;
+            m_lockAuthPasswordFirst.clear();
+            m_audio.playSfx(Sfx::ModalShow);
+            promptLockAuthPassword();
+            return;
+        }
+        m_lockAuthPasswordConfirm = false;
+        m_lockAuthPasswordFirst.clear();
+        const auto secret = switchu::lockauth::secretFromPassword(value);
+        const bool ok = m_lockAuthStore.enroll(switchu::lockauth::Mode::Password, secret);
+        if (ok) {
+            m_config.lockAuthMode = static_cast<int>(switchu::lockauth::Mode::Password);
+            m_config.save();
+            DebugLog::log("[lockauth] enrolled mode=password");
+        }
+        m_lockAuthFlow = LockAuthFlow::None;
+        m_lockAuthPendingMode = 0;
+        syncLockAuthToThemeShop();
+        m_audio.playSfx(Sfx::Activate);
+        if (m_themeShop && m_themeShop->isActive())
+            focusManager().setFocus(m_themeShop.get());
+        return;
+    }
+
+    const auto secret = switchu::lockauth::secretFromPassword(value);
+    if (!m_lockAuthStore.verify(secret)) {
+        ++m_lockAuthPasswordFails;
+        m_audio.playSfx(Sfx::ModalShow);
+        if (m_lockAuthPasswordFails >= switchu::lockauth::kFailLimit) {
+            m_lockAuthPasswordLockout = switchu::lockauth::kFailLockoutSec;
+            m_lockAuthPasswordFails = 0;
+        }
+        promptLockAuthPassword();
+        return;
+    }
+
+    m_lockAuthPasswordFails = 0;
+    m_lockAuthPasswordLockout = 0.f;
+    m_audio.playSfx(Sfx::Activate);
+    if (m_lockAuthFlow == LockAuthFlow::Unlock) {
+        handleLockAuthDone(m_lockAuthResumeIntent ? PA::UnlockResume : PA::UnlockHome);
+        return;
+    }
+    handleLockAuthDone(PA::VerifyOk);
+    (void)i18n;
+}
+
+void WiiUMenuApp::beginLockAuthEnroll(int mode) {
+    mode = std::clamp(mode, 1, 4);
+    auto startEnroll = [this, mode]() {
+        m_lockAuthFlow = LockAuthFlow::Enroll;
+        m_lockAuthPendingMode = mode;
+        beginLockAuthOverlayOrPassword(switchu::lockauth::modeFromInt(mode), false);
+    };
+    if (m_lockAuthStore.isEnabled() && m_config.lockAuthGuardSettings) {
+        gateLockAuthSettingsChange(std::move(startEnroll));
+        return;
+    }
+    startEnroll();
+}
+
+void WiiUMenuApp::beginLockAuthDisable() {
+    if (!m_lockAuthStore.isEnabled()) {
+        m_config.lockAuthMode = 0;
+        m_config.save();
+        syncLockAuthToThemeShop();
+        return;
+    }
+    auto doDisable = [this]() {
+        m_lockAuthStore.clear();
+        m_config.lockAuthMode = 0;
+        m_config.save();
+        syncLockAuthToThemeShop();
+        DebugLog::log("[lockauth] Sign-in disabled");
+    };
+    if (m_config.lockAuthGuardSettings) {
+        gateLockAuthSettingsChange(std::move(doDisable));
+        return;
+    }
+    doDisable();
+}
+
+bool WiiUMenuApp::gateLockAuthSettingsChange(std::function<void()> afterVerify) {
+    if (!m_lockAuthStore.isEnabled() || !m_config.lockAuthGuardSettings) {
+        if (afterVerify) afterVerify();
+        return true;
+    }
+    m_lockAuthPendingAfterVerify = std::move(afterVerify);
+    m_lockAuthFlow = LockAuthFlow::Disable; // reused as "verify then run pending"
+    if (!beginLockAuthOverlayOrPassword(m_lockAuthStore.mode(), false)) {
+        m_lockAuthPendingAfterVerify = {};
+        m_lockAuthFlow = LockAuthFlow::None;
+        return false;
+    }
+    return false;
+}
+
+void WiiUMenuApp::handleLockAuthDone(switchu::lockauth::LockAuthOverlay::PendingAction action) {
+    using PA = switchu::lockauth::LockAuthOverlay::PendingAction;
+    using Flow = LockAuthFlow;
+
+    if (action == PA::Cancelled) {
+        m_lockAuthFlow = Flow::None;
+        m_lockAuthPendingAfterVerify = {};
+        syncLockAuthToThemeShop();
+        if (m_lockViewActive && m_lockScreen)
+            focusManager().setFocus(m_lockScreen.get());
+        else if (m_themeShop && m_themeShop->isActive())
+            focusManager().setFocus(m_themeShop.get());
+        return;
+    }
+
+    if (m_lockAuthFlow == Flow::Unlock) {
+        const bool resume = (action == PA::UnlockResume);
+        m_lockAuthFlow = Flow::None;
+        if (!m_lockScreen) return;
+        if (resume)
+            m_lockScreen->completeResumeAfterAuth();
+        else
+            m_lockScreen->completeUnlockAfterAuth();
+        return;
+    }
+
+    if (m_lockAuthFlow == Flow::Enroll && action == PA::EnrollDone) {
+        const auto mode = switchu::lockauth::modeFromInt(m_lockAuthPendingMode);
+        const bool ok = m_lockAuthStore.enroll(
+            mode, m_lockAuthOverlay->pendingSecret(),
+            m_lockAuthOverlay->pendingPinLength());
+        if (ok) {
+            m_config.lockAuthMode = m_lockAuthPendingMode;
+            m_config.save();
+            DebugLog::log("[lockauth] enrolled mode=%d", m_lockAuthPendingMode);
+        }
+        m_lockAuthFlow = Flow::None;
+        m_lockAuthPendingMode = 0;
+        syncLockAuthToThemeShop();
+        if (m_themeShop && m_themeShop->isActive())
+            focusManager().setFocus(m_themeShop.get());
+        return;
+    }
+
+    if ((m_lockAuthFlow == Flow::Disable || m_lockAuthFlow == Flow::ChangeGuard)
+        && action == PA::VerifyOk) {
+        auto pending = std::move(m_lockAuthPendingAfterVerify);
+        m_lockAuthPendingAfterVerify = {};
+        m_lockAuthFlow = Flow::None;
+        if (pending) pending();
+        syncLockAuthToThemeShop();
+        if (m_themeShop && m_themeShop->isActive())
+            focusManager().setFocus(m_themeShop.get());
+        return;
+    }
+
+    m_lockAuthFlow = Flow::None;
+    syncLockAuthToThemeShop();
+}
+
+void WiiUMenuApp::requestParentalUnlock(switchu::smi::ParentalAuthMode mode,
+                                        std::uint64_t titleId,
+                                        AccountUid uid) {
+#ifdef SWITCHU_MENU
+    DebugLog::log("[pctl] requesting parental PIN auth mode=%u tid=%016lX",
+                  static_cast<unsigned>(mode), static_cast<unsigned long>(titleId));
+    const Result rc = switchu::menu::smi_cmd::parentalAuthenticate(mode, titleId, uid);
+    if (R_FAILED(rc)) {
+        DebugLog::log("[pctl] ParentalAuthenticate send FAIL: 0x%X", rc);
+        return;
+    }
+    // Daemon closes the menu, runs pctlauth, then MainMenu / resume / launch.
+    app().requestExit();
+#else
+    (void)mode;
+    (void)titleId;
+    (void)uid;
+#endif
+}
+
 void WiiUMenuApp::finishExitLockView(bool resumeSuspended) {
 #ifdef SWITCHU_MENU
+    // Resume while play-timer locked still needs PIN. Unlock→HOME does not.
+    if (m_parentalLockActive && resumeSuspended) {
+        requestParentalUnlock(switchu::smi::ParentalAuthMode::Resume);
+        return;
+    }
+    if (m_parentalLockActive)
+        switchu::menu::smi_cmd::parentalDismissLock();
+    m_parentalLockActive = false;
     if (resumeSuspended) {
         // Stay on Lock until the title claims the foreground — revealing HOME
         // under a hide() caused a one-frame flash before resume.
@@ -9157,6 +9574,9 @@ void WiiUMenuApp::tickFrameTapLightPath(float dt) {
 }
 
 void WiiUMenuApp::onUpdateAwake(float dt) {
+    if (m_lockAuthPasswordLockout > 0.f)
+        m_lockAuthPasswordLockout = std::max(0.f, m_lockAuthPasswordLockout - dt);
+
     if (m_lockExitCursorHoldFrames > 0) {
         --m_lockExitCursorHoldFrames;
         if (m_lockExitCursorHoldFrames == 0) {
@@ -10101,6 +10521,11 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
                 if (m_config.lockScreenEnabled)
                     enterLockView(false);
                 break;
+            case switchu::smi::MenuMessage::ParentalLock:
+                m_parentalLockActive = true;
+                DebugLog::log("[pctl] ParentalLock notification — showing Lock");
+                enterLockView(false);
+                break;
             case switchu::smi::MenuMessage::SleepSequence:
                 // The daemon announces the sleep while the applet can still
                 // react: stop presenting, pause the music and park the frame
@@ -10199,11 +10624,13 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
     if (!debugTouchBlocked && !textEntryActive && dialogActiveNow)
         m_dialog->handleTouch(app().input());
 
-    if (!debugTouchBlocked && !textEntryActive &&
+    const bool lockAuthActive = m_lockAuthOverlay && m_lockAuthOverlay->isActive();
+
+    if (!debugTouchBlocked && !textEntryActive && !lockAuthActive &&
         m_themeShop && m_themeShop->isActive())
         m_themeShop->handleTouch(app().input());
 
-    if (!debugTouchBlocked && !textEntryActive && m_settings && m_settings->isActive()
+    if (!debugTouchBlocked && !textEntryActive && !lockAuthActive && m_settings && m_settings->isActive()
         && !(m_controllerTest && m_controllerTest->isActive())) {
         m_settings->handleTouch(app().input());
     }
@@ -10240,8 +10667,12 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
     if (!debugTouchBlocked && m_progressDialog && m_progressDialog->isActive())
         m_progressDialog->handleTouch(app().input());
 
-    if (!debugTouchBlocked && m_lockViewActive && m_lockScreen)
+    if (!debugTouchBlocked && m_lockAuthOverlay && m_lockAuthOverlay->isActive()) {
+        m_lockAuthOverlay->handleInput(app().input());
+    } else if (!debugTouchBlocked && m_lockViewActive && m_lockScreen
+               && !(m_textEntry && m_textEntry->isActive())) {
         m_lockScreen->handleTouch(app().input());
+    }
 
     if (m_dialogWasActive && !dialogActiveNow) {
         if (isCurrentFocusableWidget(m_dialogReturnFocus)) {
@@ -10259,6 +10690,7 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
         && !(m_dialog && m_dialog->isActive())
         && !(m_quickSettings && m_quickSettings->isActive())
         && !(m_textEntry && m_textEntry->isActive())
+        && !(m_lockAuthOverlay && m_lockAuthOverlay->isActive())
         && !m_launchAnim->isPlaying())
     {
         auto* cur = focusManager().current();

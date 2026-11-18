@@ -94,6 +94,10 @@ struct AppConfig {
     // 1 = Lock only (stay awake)
     // 2 = Lock then Sleep (handoff then sleep)
     int powerButtonAction = 0;
+    // Sign-in on Lock: 0 Off, 1 PIN, 2 Password, 3 Pattern, 4 Combo.
+    int lockAuthMode = 0;
+    // Require current Sign-in secret before changing Sign-in settings.
+    bool lockAuthGuardSettings = true;
     // Lock clock face id (see LockClockFonts.hpp). Empty / "theme" = theme regular.
     std::string lockScreenClockFont;
     // Lock enter/exit motion: 0 = Curtain, 1 = Dissolve, 2 = Zoom, 3 = Wipe.

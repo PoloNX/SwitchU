@@ -180,8 +180,77 @@ ThemeShopScreen::Tab themeshop::tabs::LockScreenTab::build(ThemeShopScreen& scre
         t.items.push_back(std::move(it));
     }
 
+    {
+        SettingItem it;
+        it.label = i18n.tr("themeshop.options.lock_sign_in", "Sign in");
+        it.description = i18n.tr(
+            "themeshop.options.lock_sign_in_desc",
+            "Require a PIN, password, pattern, or button combo to leave Lock.");
+        it.type = ItemType::Selector;
+        it.options = {
+            i18n.tr("lockauth.mode_off", "Off"),
+            i18n.tr("lockauth.mode_pin", "PIN"),
+            i18n.tr("lockauth.mode_password", "Password"),
+            i18n.tr("lockauth.mode_pattern", "Pattern"),
+            i18n.tr("lockauth.mode_combo", "Combo"),
+        };
+        it.intVal = std::clamp(screen.m_lockAuthMode, 0, 4);
+        it.onChange = [&screen](SettingItem& self) {
+            const int next = std::clamp(self.intVal, 0, 4);
+            const int prev = screen.m_lockAuthMode;
+            if (next == prev)
+                return;
+            if (next == 0) {
+                if (screen.m_lockAuthDisableCb)
+                    screen.m_lockAuthDisableCb();
+                return;
+            }
+            // Enroll / change style — overlay owns applying the mode.
+            if (screen.m_lockAuthSetupCb)
+                screen.m_lockAuthSetupCb(next);
+            // Keep selector on previous until enroll succeeds.
+            self.intVal = prev;
+        };
+        t.items.push_back(std::move(it));
+    }
+
+    {
+        SettingItem it;
+        it.label = i18n.tr("themeshop.options.lock_sign_in_change", "Change Sign-in");
+        it.description = i18n.tr(
+            "themeshop.options.lock_sign_in_change_desc",
+            "Re-enter a new secret for the current style.");
+        it.type = ItemType::Action;
+        it.buttonLabel = i18n.tr("lockauth.change", "Change");
+        it.enabled = screen.m_lockAuthEnabled;
+        it.onChange = [&screen](SettingItem&) {
+            if (screen.m_lockAuthMode > 0 && screen.m_lockAuthSetupCb)
+                screen.m_lockAuthSetupCb(screen.m_lockAuthMode);
+        };
+        t.items.push_back(std::move(it));
+    }
+
+    {
+        SettingItem it;
+        it.label = i18n.tr("themeshop.options.lock_sign_in_guard",
+                           "Require Sign-in to change settings");
+        it.description = i18n.tr(
+            "themeshop.options.lock_sign_in_guard_desc",
+            "Ask for your secret before changing or turning off Sign-in.");
+        it.type = ItemType::Toggle;
+        it.boolVal = screen.m_lockAuthGuardSettings;
+        it.anim01 = it.boolVal ? 1.f : 0.f;
+        it.enabled = screen.m_lockAuthEnabled;
+        it.onChange = [&screen](SettingItem& self) {
+            screen.m_lockAuthGuardSettings = self.boolVal;
+            if (screen.m_lockAuthGuardCb)
+                screen.m_lockAuthGuardCb(self.boolVal);
+        };
+        t.items.push_back(std::move(it));
+    }
+
     t.onUpdate = [&screen](Tab& tab, TabbedOverlayScreen&) {
-        if (tab.items.size() < 5)
+        if (tab.items.size() < 8)
             return;
         tab.items[0].boolVal = screen.m_lockScreenEnabled;
         tab.items[0].anim01 = screen.m_lockScreenEnabled ? 1.f : 0.f;
@@ -190,6 +259,11 @@ ThemeShopScreen::Tab themeshop::tabs::LockScreenTab::build(ThemeShopScreen& scre
         tab.items[2].anim01 = screen.m_themeLockClockFontOverride ? 1.f : 0.f;
         tab.items[3].intVal = std::clamp(screen.m_lockScreenTransition, 0, 3);
         LockScreenTab::syncTransitionCompanion(screen, tab.items[4]);
+        tab.items[5].intVal = std::clamp(screen.m_lockAuthMode, 0, 4);
+        tab.items[6].enabled = screen.m_lockAuthEnabled;
+        tab.items[7].boolVal = screen.m_lockAuthGuardSettings;
+        tab.items[7].anim01 = screen.m_lockAuthGuardSettings ? 1.f : 0.f;
+        tab.items[7].enabled = screen.m_lockAuthEnabled;
     };
 
     return t;

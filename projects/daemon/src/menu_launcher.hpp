@@ -157,6 +157,30 @@ inline Result startPrepared(smi::MenuStartMode mode, const smi::SystemStatus& st
         switchu::FileLog::log("[menu_la] PushStatus ok size=%zu", sizeof(status));
     }
 
+    // Menu time:s is often dead on wake→Lock (0x64274 / clocks=0x1159). Pass
+    // the daemon's working POSIX + TZ offset so the menu can seed a local clock.
+    {
+        smi::MenuTimeSeed seed{};
+        Result timeRc = timeGetCurrentTime(TimeType_UserSystemClock, &seed.posix_utc);
+        if (R_FAILED(timeRc))
+            timeRc = timeGetCurrentTime(TimeType_NetworkSystemClock, &seed.posix_utc);
+        if (R_FAILED(timeRc))
+            timeRc = timeGetCurrentTime(TimeType_LocalSystemClock, &seed.posix_utc);
+        if (R_SUCCEEDED(timeRc) && seed.posix_utc != 0) {
+            TimeCalendarTime cal{};
+            TimeCalendarAdditionalInfo info{};
+            if (R_SUCCEEDED(timeToCalendarTimeWithMyRule(seed.posix_utc, &cal, &info)))
+                seed.tz_offset_sec = info.offset;
+            const Result pushRc = libappletPushInData(&g_holder, &seed, sizeof(seed));
+            switchu::FileLog::log(
+                "[menu_la] PushTimeSeed rc=0x%X posix=%llu tz=%d",
+                pushRc, static_cast<unsigned long long>(seed.posix_utc),
+                static_cast<int>(seed.tz_offset_sec));
+        } else {
+            switchu::FileLog::log("[menu_la] PushTimeSeed skipped timeRc=0x%X", timeRc);
+        }
+    }
+
     switchu::FileLog::log("[menu_la] holder start call");
     rc = appletHolderStart(&g_holder);
     if (R_FAILED(rc)) {

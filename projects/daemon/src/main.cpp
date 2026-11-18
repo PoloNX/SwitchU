@@ -8,6 +8,8 @@
 #include <switchu/ns_ext.hpp>
 #include <switchu/file_log.hpp>
 #include <switchu/sd_commit.hpp>
+#include <switchu/pctl_honor.hpp>
+#include <switch/applets/pctlauth.h>
 #include "app_manager.hpp"
 #include "ecs.hpp"
 #include "library_applet_runner.hpp"
@@ -326,6 +328,10 @@ static bool g_pendingForegroundAppletHome = false;
 static bool g_pendingHomeMenuLaunch = false;
 static const char* g_pendingHomeMenuSource = nullptr;
 static uint64_t g_pendingHomeMenuStartedAt = 0;
+// MainMenu for HOME; LockScreen when waking with Lock enabled + suspended game.
+static smi::MenuStartMode g_pendingHomeMenuMode = smi::MenuStartMode::MainMenu;
+// Non-zero when mode is LockScreen (menu startLocked belt).
+static uint8_t g_pendingHomeMenuLockWake = 0;
 static uint8_t g_lastBatteryPercent = 0xFF;
 static PsmChargerType g_lastChargerType = (PsmChargerType)0xFF;
 
@@ -646,11 +652,20 @@ static void cancelViewPolling(const char* reason) {
     g_eventPollsRemaining = 0;
 }
 
+static std::atomic<uint8_t> g_nextStatusLockWake{0};
+static std::atomic<bool> g_parentalLockActive{false};
+static uint64_t g_lastParentalPollTick = 0;
+static constexpr uint64_t kParentalPollNs = 2'000'000'000ULL;
+
+static void requestParentalLock(const char* source);
+
 static smi::SystemStatus buildSystemStatus() {
     smi::SystemStatus st{};
     st.suspended_app_id = daemon::app::suspendedTitleId();
     st.app_running = daemon::app::isRunning();
     st.web_clock_synced = g_webClockSyncedThisBoot ? 1 : 0;
+    st.lock_wake = g_nextStatusLockWake.exchange(0);
+    st.parental_lock = g_parentalLockActive.load() ? 1 : 0;
     st.last_failure = g_lastOperationFailure;
     return st;
 }
@@ -1050,13 +1065,68 @@ static bool takeForegroundFromRunningApp(const char* source) {
         return false;
 
     daemon::app::onHomeSuspend();
+    const Result stopRc = switchu::pctl_honor::stopPlayTimer();
+    if (R_FAILED(stopRc))
+        switchu::FileLog::log("[%s] pctl StopPlayTimer rc=0x%X (non-fatal)", source, stopRc);
     return true;
+}
+
+// PlayGuard / stock pctl: interrupt a foreground game when the play timer blocks.
+// Do NOT re-show Lock every poll while the user is already on HOME — launch/resume
+// gating handles that. Spamming ParentalLock every 2s made Lock fire on its own.
+static void requestParentalLock(const char* source) {
+    const bool gameHasFg = daemon::app::isRunning() && daemon::app::hasForeground();
+    if (!gameHasFg) {
+        g_parentalLockActive.store(true);
+        return;
+    }
+
+    const bool already = g_parentalLockActive.exchange(true);
+    switchu::FileLog::log("[pctl] parental lock from %s (already=%d game_fg=1)",
+                          source ? source : "?", already ? 1 : 0);
+
+    if (!takeForegroundFromRunningApp(source ? source : "pctl"))
+        appletRequestToGetForeground();
+    g_pendingHomeMenuLaunch = true;
+    g_pendingHomeMenuSource = source ? source : "pctl";
+    g_pendingHomeMenuStartedAt = armGetSystemTick();
+    g_pendingHomeMenuMode = smi::MenuStartMode::LockScreen;
+    g_pendingHomeMenuLockWake = 1;
+}
+
+static void honorPlayTimerTick() {
+    if (g_powerSequenceStarted.load())
+        return;
+
+    const uint64_t now = armGetSystemTick();
+    if (g_lastParentalPollTick != 0
+        && armTicksToNs(now - g_lastParentalPollTick) < kParentalPollNs)
+        return;
+    g_lastParentalPollTick = now;
+
+    bool temporary = false;
+    const Result tempRc = switchu::pctl_honor::isTemporaryUnlocked(&temporary);
+    if (R_SUCCEEDED(tempRc) && temporary) {
+        if (g_parentalLockActive.exchange(false))
+            switchu::FileLog::log("[pctl] temporary unlock cleared parental lock");
+        return;
+    }
+
+    if (!switchu::pctl_honor::playCurrentlyBlocked())
+        return;
+
+    // Only yank FG from a playing title. Idle HOME must stay quiet.
+    if (!(daemon::app::isRunning() && daemon::app::hasForeground()))
+        return;
+
+    requestParentalLock("play-timer");
 }
 
 static Result startControlCacheWorker();
 static void stopControlCacheWorker();
 static Result startEventManager();
 static void stopEventManager();
+static void handleGeneralChannel();
 
 static Result launchPendingHomeMenu() {
     if (!g_pendingHomeMenuLaunch)
@@ -1064,23 +1134,34 @@ static Result launchPendingHomeMenu() {
 
     const char* source = g_pendingHomeMenuSource ? g_pendingHomeMenuSource : "home";
     const uint64_t startedAt = g_pendingHomeMenuStartedAt;
+    const smi::MenuStartMode mode = g_pendingHomeMenuMode;
+    const uint8_t lockWakeKind = g_pendingHomeMenuLockWake;
     g_pendingHomeMenuLaunch = false;
     g_pendingHomeMenuSource = nullptr;
     g_pendingHomeMenuStartedAt = 0;
+    g_pendingHomeMenuMode = smi::MenuStartMode::MainMenu;
+    g_pendingHomeMenuLockWake = 0;
 
     // Restore pre-#161 HOME behaviour: suspended homebrew/forwarders stay
     // suspended and can be resumed instead of being force-closed on HOME.
+    if (mode == smi::MenuStartMode::LockScreen)
+        g_nextStatusLockWake.store(lockWakeKind != 0 ? lockWakeKind : 1);
     const auto status = buildSystemStatus();
     switchu::FileLog::log(
-        "[%s] HOME foreground acquired; launching MainMenu status.running=%d suspended=0x%016lX",
-        source, status.app_running ? 1 : 0, status.suspended_app_id);
+        "[%s] HOME foreground acquired; launching mode=%u lock_wake=%u status.running=%d suspended=0x%016lX",
+        source, static_cast<unsigned>(mode), static_cast<unsigned>(status.lock_wake),
+        status.app_running ? 1 : 0, status.suspended_app_id);
     // Give VI a beat after the app loses foreground before Album creates a layer.
     // Keep the happy path snappy; gfx-fail recovery uses a longer settle instead.
-    const uint64_t settleNs = (status.suspended_app_id != 0)
-        ? kHomeMenuSettleNsSuspended
-        : kHomeMenuSettleNsIdle;
-    switchu::FileLog::log("[%s] HOME settle_ms=%lu", source,
-                          static_cast<unsigned long>(settleNs / 1'000'000ULL));
+    // LockScreen: short settle so the game layer is gone before first cover paint.
+    const uint64_t settleNs = (mode == smi::MenuStartMode::LockScreen)
+        ? 80'000'000ULL
+        : ((status.suspended_app_id != 0)
+               ? kHomeMenuSettleNsSuspended
+               : kHomeMenuSettleNsIdle);
+    switchu::FileLog::log("[%s] HOME settle_ms=%lu mode=%u", source,
+                          static_cast<unsigned long>(settleNs / 1'000'000ULL),
+                          static_cast<unsigned>(mode));
     svcSleepThread(settleNs);
     g_menuReadyThisSession = false;
     g_menuGfxRelaunchTries = 0;
@@ -1088,11 +1169,11 @@ static Result launchPendingHomeMenu() {
     g_menuRelaunchCooldown = 0;
     noteMenuLaunch(source);
     const uint64_t launchStartedAt = armGetSystemTick();
-    const Result rc = daemon::menu_la::launch(smi::MenuStartMode::MainMenu, status);
+    const Result rc = daemon::menu_la::launch(mode, status);
     const uint64_t launchDoneAt = armGetSystemTick();
     switchu::FileLog::log(
-        "[%s] HOME MainMenu launch rc=0x%X foreground_wait=%lums launch=%lums total=%lums",
-        source, rc,
+        "[%s] HOME menu launch mode=%u rc=0x%X foreground_wait=%lums launch=%lums total=%lums",
+        source, static_cast<unsigned>(mode), rc,
         static_cast<unsigned long>(armTicksToNs(launchStartedAt - startedAt) / 1'000'000ULL),
         static_cast<unsigned long>(armTicksToNs(launchDoneAt - launchStartedAt) / 1'000'000ULL),
         static_cast<unsigned long>(armTicksToNs(launchDoneAt - startedAt) / 1'000'000ULL));
@@ -1115,10 +1196,13 @@ static void expirePendingHomeHandoff(const char* source) {
         g_pendingHomeMenuLaunch = false;
         g_pendingHomeMenuSource = nullptr;
         g_pendingHomeMenuStartedAt = 0;
+        g_pendingHomeMenuMode = smi::MenuStartMode::MainMenu;
+        g_pendingHomeMenuLockWake = 0;
         return;
     }
-    switchu::FileLog::log("[%s] HOME: no ChangeIntoForeground after %lums; launching MainMenu",
-                          source, static_cast<unsigned long>(waitedMs));
+    switchu::FileLog::log("[%s] HOME: no ChangeIntoForeground after %lums; launching mode=%u",
+                          source, static_cast<unsigned long>(waitedMs),
+                          static_cast<unsigned>(g_pendingHomeMenuMode));
     launchPendingHomeMenu();
 }
 
@@ -1152,15 +1236,59 @@ static std::atomic<bool> g_lockScreenEnabled{false};
 static std::atomic<uint8_t> g_powerButtonAction{0};
 
 static void startSleepSequence(const char* source) {
-    switchu::FileLog::logCommit("[power] sleep requested source=%s menuActive=%d",
-                                source, daemon::menu_la::isActive() ? 1 : 0);
-    pushNotification(smi::MenuMessage::SleepSequence);
+    switchu::FileLog::logCommit(
+        "[power] sleep requested source=%s menuActive=%d pending=%d mode=%u",
+        source, daemon::menu_la::isActive() ? 1 : 0,
+        g_pendingHomeMenuLaunch ? 1 : 0,
+        static_cast<unsigned>(g_pendingHomeMenuMode));
     // Preserve the final state even if the sleep ends in a forced power loss.
     switchu::commitSdCard("sleep");
     // With Lock view on, the menu holds ~1.2s so the panel retains Lock for
     // wake. Without it, a short beat is enough to pause audio / stop presents.
+    // Pump AE during the handoff so a pre-sleep LockScreen launch can land
+    // ChangeIntoForeground (a blind svcSleepThread would miss it).
     const u64 handoffNs = g_lockScreenEnabled.load() ? 1'500'000'000ULL : 50'000'000ULL;
-    svcSleepThread(handoffNs);
+    const u64 deadline = armGetSystemTick() + armNsToTicks(handoffNs);
+    bool sleepNotified = false;
+    auto notifySleepIfMenuUp = [&]() {
+        if (sleepNotified || !daemon::menu_la::isActive())
+            return;
+        pushNotification(smi::MenuMessage::SleepSequence);
+        sleepNotified = true;
+        switchu::FileLog::log("[power] SleepSequence pushed (menu active)");
+    };
+    notifySleepIfMenuUp();
+    while (armGetSystemTick() < deadline) {
+        handleGeneralChannel();
+        u32 msg = 0;
+        while (R_SUCCEEDED(appletGetMessage(&msg))) {
+            if (msg == AppletMessage_OperationModeChanged
+                || msg == AppletMessage_PerformanceModeChanged
+                || msg == AppletMessage_FocusStateChanged) {
+                appletProcessMessage(msg);
+            }
+            if (msg == 1) {
+                switchu::FileLog::log("[ae] handoff ChangeIntoForeground");
+                launchPendingHomeMenu();
+                notifySleepIfMenuUp();
+            } else if (msg == 22 || msg == 29 || msg == 32) {
+                switchu::FileLog::log("[ae] handoff: ignore nested sleep msg=%u", msg);
+            } else if (msg == 26) {
+                switchu::FileLog::log("[ae] handoff: ignore wake msg during sleep prep");
+            }
+            // Other AE messages wait until after sleep — avoid re-entering sleep.
+        }
+        if (g_pendingHomeMenuLaunch
+            && armTicksToNs(armGetSystemTick() - g_pendingHomeMenuStartedAt)
+                >= kHomeForegroundHandoffDeadlineNs) {
+            expirePendingHomeHandoff(source);
+            notifySleepIfMenuUp();
+        }
+        notifySleepIfMenuUp();
+        svcSleepThread(5'000'000ULL);
+    }
+    if (!sleepNotified)
+        pushNotification(smi::MenuMessage::SleepSequence);
     appletStartSleepSequence(true);
 }
 
@@ -1235,6 +1363,8 @@ static void openMenuFromHome(const char* source) {
         g_pendingHomeMenuLaunch = true;
         g_pendingHomeMenuSource = source;
         g_pendingHomeMenuStartedAt = homeStartedAt;
+        g_pendingHomeMenuMode = smi::MenuStartMode::MainMenu;
+        g_pendingHomeMenuLockWake = 0;
         switchu::FileLog::log("[%s] HOME waiting for ChangeIntoForeground", source);
         return;
     }
@@ -1396,6 +1526,28 @@ static void handleAppletMessages() {
             g_pendingHomeMenuLaunch = false;
             g_pendingHomeMenuSource = nullptr;
             g_pendingHomeMenuStartedAt = 0;
+            g_pendingHomeMenuMode = smi::MenuStartMode::MainMenu;
+            g_pendingHomeMenuLockWake = 0;
+        }
+        // With Lock on, steal FG from the game *before* sleep so the wake
+        // framebuffer isn't the game (avoids the flash→leave-splash→Lock path).
+        if (g_lockScreenEnabled.load() && daemon::app::isRunning()
+                && !daemon::menu_la::isActive()) {
+            switchu::FileLog::log(
+                "[ae] pre-sleep Lock: take FG + open LockScreen before sleep");
+            if (daemon::app::hasForeground()) {
+                takeForegroundFromRunningApp("pre-sleep-lock");
+            } else {
+                daemon::app::onHomeSuspend();
+                appletRequestToGetForeground();
+            }
+            g_pendingHomeMenuLaunch = true;
+            g_pendingHomeMenuSource = "pre-sleep-lock";
+            g_pendingHomeMenuStartedAt = armGetSystemTick();
+            g_pendingHomeMenuMode = smi::MenuStartMode::LockScreen;
+            g_pendingHomeMenuLockWake = 1;
+            startSleepSequence("applet-sleep-lock");
+            break;
         }
         // The application keeps its IApplicationAccessor across system sleep,
         // but must reacquire the foreground after wake. Keep our session state
@@ -1409,6 +1561,29 @@ static void handleAppletMessages() {
         case 26:
         switchu::FileLog::log("[ae] -> Wakeup");
         g_batteryRefreshPending.store(true);
+        // True lock: with Lock Screen on (or PlayGuard parental lockout), never
+        // drop straight into a suspended game. Open LockScreen; resume after unlock.
+        if ((g_lockScreenEnabled.load() || g_parentalLockActive.load())
+                && daemon::app::isRunning()
+                && !daemon::menu_la::isActive()) {
+            switchu::FileLog::log(
+                "[ae] wake: Lock/parental — defer game resume, open LockScreen");
+            if (daemon::app::hasForeground()) {
+                if (!takeForegroundFromRunningApp("wake-lock")) {
+                    switchu::FileLog::log("[ae] wake-lock: RequestToGetForeground failed");
+                    appletRequestToGetForeground();
+                }
+            } else {
+                appletRequestToGetForeground();
+            }
+            g_pendingHomeMenuLaunch = true;
+            g_pendingHomeMenuSource = "wake-lock";
+            g_pendingHomeMenuStartedAt = armGetSystemTick();
+            g_pendingHomeMenuMode = smi::MenuStartMode::LockScreen;
+            g_pendingHomeMenuLockWake = 1;
+            switchu::FileLog::log("[ae] wake-lock waiting for ChangeIntoForeground");
+            break;
+        }
         if (daemon::app::isRunning() && !daemon::menu_la::isActive()) {
             Result rc = daemon::app::resume();
             if (R_FAILED(rc)) {
@@ -1680,6 +1855,16 @@ static void handleMenuCommand() {
     switch (msg) {
     case smi::SystemMessage::LaunchApplication: {
         auto args = reader.pop<smi::LaunchAppArgs>();
+        if (switchu::pctl_honor::shouldBlockApplicationStart()) {
+            switchu::FileLog::log(
+                "[smi] launch blocked by pctl play timer tid=0x%016lX", args.title_id);
+            g_parentalLockActive.store(true);
+            recordOperationResult(requestId, msg,
+                                  MAKERESULT(Module_Libnx, LibnxError_BadInput),
+                                  args.title_id);
+            pushNotification(smi::MenuMessage::ParentalLock, args.title_id, 1);
+            return;
+        }
         daemon::SystemAction action{};
         action.type = daemon::SystemActionType::LaunchApplication;
         action.requestId = requestId;
@@ -1693,6 +1878,15 @@ static void handleMenuCommand() {
 
     case smi::SystemMessage::ResumeApplication:
         {
+            if (switchu::pctl_honor::shouldBlockApplicationStart()) {
+                switchu::FileLog::log("[smi] resume blocked by pctl play timer");
+                g_parentalLockActive.store(true);
+                recordOperationResult(requestId, msg,
+                                      MAKERESULT(Module_Libnx, LibnxError_BadInput),
+                                      daemon::app::suspendedTitleId());
+                pushNotification(smi::MenuMessage::ParentalLock, 0, 1);
+                return;
+            }
             daemon::SystemAction action{};
             action.type = daemon::SystemActionType::ResumeApplication;
             action.requestId = requestId;
@@ -1702,6 +1896,30 @@ static void handleMenuCommand() {
         }
         switchu::FileLog::logCommit("[smi] queued resume (actions=%zu)", g_actionQueue.size());
         break;
+
+    case smi::SystemMessage::ParentalAuthenticate: {
+        auto args = reader.pop<smi::ParentalAuthArgs>();
+        daemon::SystemAction action{};
+        action.type = daemon::SystemActionType::ParentalAuthenticate;
+        action.requestId = requestId;
+        action.parentalAuthMode = args.mode;
+        action.titleId = args.title_id;
+        std::memcpy(&action.uid, args.user_uid, sizeof(action.uid));
+        result = g_actionQueue.enqueue(action);
+        recordOperationResult(requestId, msg, result);
+        switchu::FileLog::log(
+            "[smi] queued parental auth mode=%u tid=0x%016lX (actions=%zu)",
+            (unsigned)args.mode, args.title_id, g_actionQueue.size());
+        break;
+    }
+
+    case smi::SystemMessage::ParentalDismissLock: {
+        // Unlock→HOME: allow browsing; launch/resume still gated by pctl.
+        g_parentalLockActive.store(false);
+        g_lastOperationFailure = {};
+        switchu::FileLog::log("[smi] parental dismiss Lock (HOME browse; play still gated)");
+        break;
+    }
 
     case smi::SystemMessage::TerminateApplication:
         {
@@ -1919,6 +2137,16 @@ static bool handleAction(daemon::SystemAction& action) {
     switchu::FileLog::log("[action] handling type=%u", (u32)action.type);
     switch (action.type) {
         case daemon::SystemActionType::LaunchApplication: {
+            if (switchu::pctl_honor::shouldBlockApplicationStart()) {
+                switchu::FileLog::log(
+                    "[action] launch blocked by pctl tid=0x%016lX", action.titleId);
+                g_parentalLockActive.store(true);
+                recordOperationResult(action.requestId, smi::SystemMessage::LaunchApplication,
+                                      MAKERESULT(Module_Libnx, LibnxError_BadInput),
+                                      action.titleId);
+                daemon::menu_la::launch(smi::MenuStartMode::LockScreen, buildSystemStatus());
+                return true;
+            }
             Result rc = daemon::app::launch(action.titleId, action.uid);
             recordOperationResult(action.requestId, smi::SystemMessage::LaunchApplication,
                                   rc, action.titleId);
@@ -1926,11 +2154,23 @@ static bool handleAction(daemon::SystemAction& action) {
                 switchu::FileLog::log("[action] launch 0x%016lX FAIL: 0x%X", action.titleId, rc);
                 daemon::menu_la::launch(smi::MenuStartMode::MainMenu,
                                         buildSystemStatus());
+            } else {
+                const Result startRc = switchu::pctl_honor::startPlayTimer();
+                switchu::FileLog::log("[action] pctl StartPlayTimer rc=0x%X", startRc);
             }
             return true;
         }
 
         case daemon::SystemActionType::ResumeApplication: {
+            if (switchu::pctl_honor::shouldBlockApplicationStart()) {
+                switchu::FileLog::log("[action] resume blocked by pctl");
+                g_parentalLockActive.store(true);
+                recordOperationResult(action.requestId, smi::SystemMessage::ResumeApplication,
+                                      MAKERESULT(Module_Libnx, LibnxError_BadInput),
+                                      daemon::app::suspendedTitleId());
+                daemon::menu_la::launch(smi::MenuStartMode::LockScreen, buildSystemStatus());
+                return true;
+            }
             switchu::FileLog::logCommit("[action] resume: calling app::resume()");
             Result rc = daemon::app::resume();
             switchu::FileLog::logCommit("[action] resume: app::resume() -> 0x%X", rc);
@@ -1940,7 +2180,88 @@ static bool handleAction(daemon::SystemAction& action) {
                 switchu::FileLog::log("[action] resume FAIL: 0x%X", rc);
                 daemon::menu_la::launch(smi::MenuStartMode::MainMenu,
                                         buildSystemStatus());
+            } else {
+                const Result startRc = switchu::pctl_honor::startPlayTimer();
+                switchu::FileLog::log("[action] pctl StartPlayTimer rc=0x%X", startRc);
             }
+            return true;
+        }
+
+        case daemon::SystemActionType::ParentalAuthenticate: {
+            const auto mode = static_cast<smi::ParentalAuthMode>(action.parentalAuthMode);
+            switchu::FileLog::log("[action] parental auth (pctlauth) mode=%u tid=0x%016lX",
+                                  (unsigned)action.parentalAuthMode, action.titleId);
+            // Same foreground dance as launchLibraryApplet: PIN owns the display,
+            // then we must reclaim FG before launch/resume or the title can start
+            // invisible (black screen until HOME / relaunch).
+            {
+                const Result fgRc = appletRequestToGetForeground();
+                switchu::FileLog::log(
+                    "[action] parental auth RequestToGetForeground (pre) rc=0x%X", fgRc);
+            }
+            g_foregroundAppletActive = true;
+            g_pendingForegroundAppletHome = false;
+            // pctlauth needs the privileged session free — no held pctl handle here.
+            Result rc = pctlauthShow(false);
+            g_foregroundAppletActive = false;
+            {
+                const Result fgRc = appletRequestToGetForeground();
+                switchu::FileLog::log(
+                    "[action] parental auth RequestToGetForeground (post) rc=0x%X", fgRc);
+            }
+            handleAppletMessages();
+            switchu::FileLog::log("[action] pctlauthShow rc=0x%X", rc);
+            // 0x690 = library applet canceled (user backed out of PIN). Not a hard failure.
+            constexpr Result kAppletCanceled = 0x690;
+            if (rc == kAppletCanceled) {
+                switchu::FileLog::log(
+                    "[action] parental auth canceled — HOME usable, play still gated");
+                recordOperationResult(action.requestId, smi::SystemMessage::ParentalAuthenticate, 0);
+                g_lastOperationFailure = {};
+                g_parentalLockActive.store(true);
+                daemon::menu_la::launch(smi::MenuStartMode::MainMenu, buildSystemStatus());
+                return true;
+            }
+            recordOperationResult(action.requestId, smi::SystemMessage::ParentalAuthenticate, rc);
+
+            bool temporary = false;
+            const Result tempRc = switchu::pctl_honor::isTemporaryUnlocked(&temporary);
+            const bool unlocked = R_SUCCEEDED(rc)
+                && (R_FAILED(tempRc) || temporary
+                    || !switchu::pctl_honor::playCurrentlyBlocked());
+
+            if (!unlocked) {
+                g_parentalLockActive.store(true);
+                g_nextStatusLockWake.store(1);
+                daemon::menu_la::launch(smi::MenuStartMode::LockScreen, buildSystemStatus());
+                return true;
+            }
+
+            g_parentalLockActive.store(false);
+            if (mode == smi::ParentalAuthMode::Launch && action.titleId != 0) {
+                // Intended title (e.g. PlayGuard) — not whatever was suspended.
+                if (daemon::app::isRunning()
+                    && daemon::app::suspendedTitleId() != action.titleId) {
+                    const Result termRc = daemon::app::terminate();
+                    switchu::FileLog::log(
+                        "[action] parental auth terminate other before launch rc=0x%X", termRc);
+                }
+                Result launchRc = daemon::app::launch(action.titleId, action.uid);
+                switchu::FileLog::log("[action] parental auth → launch 0x%016lX rc=0x%X",
+                                      action.titleId, launchRc);
+                if (R_SUCCEEDED(launchRc)) {
+                    switchu::pctl_honor::startPlayTimer();
+                    return true;
+                }
+            } else if (mode == smi::ParentalAuthMode::Resume && daemon::app::isRunning()) {
+                Result resumeRc = daemon::app::resume();
+                switchu::FileLog::log("[action] parental auth → resume rc=0x%X", resumeRc);
+                if (R_SUCCEEDED(resumeRc)) {
+                    switchu::pctl_honor::startPlayTimer();
+                    return true;
+                }
+            }
+            daemon::menu_la::launch(smi::MenuStartMode::MainMenu, buildSystemStatus());
             return true;
         }
 
@@ -2060,6 +2381,8 @@ static void mainLoop() {
     // cache or logging work after the power request has begun.
     if (g_powerSequenceStarted.load())
         return;
+
+    honorPlayTimerTick();
 
     bool didWork = false;
 
@@ -2325,6 +2648,8 @@ static void mainLoop() {
             g_pendingHomeMenuLaunch = false;
             g_pendingHomeMenuSource = nullptr;
             g_pendingHomeMenuStartedAt = 0;
+            g_pendingHomeMenuMode = smi::MenuStartMode::MainMenu;
+            g_pendingHomeMenuLockWake = 0;
         }
         if (daemon::menu_la::isActive()) {
             pushNotification(smi::MenuMessage::ApplicationExited);

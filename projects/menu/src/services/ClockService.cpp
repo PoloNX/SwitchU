@@ -60,9 +60,13 @@ CalendarSnapshot ClockService::refresh() {
     next.result = rc;
     if (R_FAILED(rc)) {
         // Timezone rule unavailable (busy time:s / missing location) —
-        // still show a clock from POSIX UTC so HOME chrome stays up.
-        if (calendarFromUtcPosix(timestamp, next.calendar)) {
+        // prefer daemon TZ offset so Lock/HOME don't show UTC.
+        const std::int32_t tz = system_time::daemonSeedTzOffsetSec();
+        const std::uint64_t localPosix =
+            timestamp + static_cast<std::uint64_t>(static_cast<std::int64_t>(tz));
+        if (calendarFromUtcPosix(localPosix, next.calendar)) {
             next.valid = true;
+            next.additional.offset = tz;
         } else {
             return m_valid ? extrapolated(rc) : next;
         }

@@ -1695,6 +1695,9 @@ nxui::Widget* WiiUMenuApp::focusRoot() {
     if (leaveSplashActive()) return nullptr;
     if (m_launchAnim && m_launchAnim->isPlaying()) return nullptr;
     if (m_folderCaptureRequested || m_folderClosing) return nullptr;
+    // Sign-in must beat Lock and Theme Shop so D-pad/A never leak behind the pad.
+    if (m_lockAuthOverlay && m_lockAuthOverlay->isActive())
+        return m_lockAuthOverlay.get();
     if (m_lockViewActive && m_lockScreen) return m_lockScreen.get();
     if (m_progressDialog && m_progressDialog->isActive()) return m_progressDialog.get();
     if (m_textEntry && m_textEntry->isActive()) return m_textEntry.get();

@@ -87,6 +87,10 @@ public:
     }
     void onLockScreenZoomDirChange(IntCb cb) { m_lockScreenZoomDirCb = std::move(cb); }
     void onLockScreenWipeDirChange(IntCb cb) { m_lockScreenWipeDirCb = std::move(cb); }
+    void onLockAuthModeChange(IntCb cb) { m_lockAuthModeCb = std::move(cb); }
+    void onLockAuthGuardChange(BoolCb cb) { m_lockAuthGuardCb = std::move(cb); }
+    void onLockAuthSetup(IntCb cb) { m_lockAuthSetupCb = std::move(cb); } // mode to enroll
+    void onLockAuthDisable(VoidCb cb) { m_lockAuthDisableCb = std::move(cb); }
     void onThemeLockClockFontOverrideChange(BoolCb cb) {
         m_themeLockClockFontOverrideCb = std::move(cb);
     }
@@ -168,6 +172,11 @@ public:
     void setLockScreenWipeDirState(int dir) {
         m_lockScreenWipeDir = std::clamp(dir, 0, 3);
     }
+    void setLockAuthModeState(int mode) {
+        m_lockAuthMode = std::clamp(mode, 0, 4);
+    }
+    void setLockAuthGuardState(bool enabled) { m_lockAuthGuardSettings = enabled; }
+    void setLockAuthEnabledState(bool enabled) { m_lockAuthEnabled = enabled; }
     void setThemeLockClockFontOverrideState(bool enabled) {
         m_themeLockClockFontOverride = enabled;
     }
@@ -487,6 +496,10 @@ private:
     IntCb m_lockScreenTransitionCb;
     IntCb m_lockScreenZoomDirCb;
     IntCb m_lockScreenWipeDirCb;
+    IntCb m_lockAuthModeCb;
+    BoolCb m_lockAuthGuardCb;
+    IntCb m_lockAuthSetupCb;
+    VoidCb m_lockAuthDisableCb;
     BoolCb m_themeLockClockFontOverrideCb;
     BoolCb m_themeIconPackOverrideCb;
     BoolCb m_themeMusicOverrideCb;
@@ -530,6 +543,9 @@ private:
     int m_lockScreenTransition = 0;
     int m_lockScreenZoomDir = 0;
     int m_lockScreenWipeDir = 1;
+    int m_lockAuthMode = 0;
+    bool m_lockAuthGuardSettings = true;
+    bool m_lockAuthEnabled = false;
     bool m_themeLockClockFontOverride = true;
     bool m_themeIconPackOverride = true;
     bool m_themeMusicOverride = true;

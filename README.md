@@ -73,7 +73,7 @@ Themesshop with community submitted themes and icon packs
 | **Theme Shop** | Browse, preview, and install community themes + icon packs (with tint modes) |
 | **Theme Studio** | Build and submit themes / icon packs from the web <br> [![Open Theme Studio](https://img.shields.io/badge/Open_Theme_Studio-6364EE?style=for-the-badge)](https://polonx.github.io/SwitchU-Themes/)
 | **SteamGridDB** | Covers, heroes, posters - search missing artwork from Settings |
-| **Lock Screen** | Clock fonts, transitions, resume from suspended game, Lock from Power / Quick Settings |
+| **Lock Screen** | Clock fonts, transitions, optional Sign-in (PIN / password / pattern / combo), resume from suspended game, Lock from Power / Quick Settings |
 | **Music** | Quick Settings player, playlists, fullscreen player - put tracks in `sdmc:/switch/SwitchU/music/` |
 | **Languages** | Full HOME chrome for English + European packs, plus **Japanese / Simplified Chinese / Traditional Chinese / Korean** (shared system fonts for CJK glyphs) |
 | **Frame Tap** | Optional USB HOME capture with [Switch Frame Tap](https://github.com/TomasUribe/switch-frame-tap) (see below) |
@@ -82,6 +82,9 @@ Themesshop with community submitted themes and icon packs
 
 > [!TIP]
 > Correct console time/date matters for SteamGridDB HTTPS. Use Settings timezone / NTP sync if artwork search fails.
+
+> [!NOTE]
+> **Forgot Lock Sign-in?** Delete `sdmc:/config/SwitchU/lock_auth.bin` on the SD card, then reopen HOME. Sign-in is a privacy lock (sibling / shared console), not CFW-hard security — anyone with SD access can clear it.
 
 ## 💿 Installation
 
