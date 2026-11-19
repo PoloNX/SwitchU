@@ -173,7 +173,7 @@ void GameOptionsScreen::buildTabs() {
             };
         }
         customize.description = i18n.tr("game.steamgriddb.customize_hero_desc",
-            "Crop and pan this title's hero for landscape and Flip-Grip.");
+            "Crop and pan this title's hero.");
         customize.indentLevel = 1;
         customize.enabled = m_game.hasHeroArt;
         customize.onChange = [this](SettingItem&) {
@@ -189,13 +189,12 @@ void GameOptionsScreen::buildTabs() {
                       "game.steamgriddb.poster_desc",
                       "Tall art in single-row and 2x3.",
                       ArtworkKind::Poster, m_game.hasPosterArt);
-    // 2x1 / 4x2 tiles can use a landscape SGDB grid instead of Hero+Logo.
-    if (m_game.sizeIndex == 1 || m_game.sizeIndex == 2) {
-        addArtworkActions("game.steamgriddb.poster_wide", "Poster wide",
-                          "game.steamgriddb.poster_wide_desc",
-                          "Landscape grid art for this 2x1 / 4x2 tile.",
-                          ArtworkKind::PosterWide, m_game.hasPosterWideArt);
-    }
+    // Always list Poster wide so it can be set before/after resizing;
+    // art still applies on 2x1 / 4x2 faces.
+    addArtworkActions("game.steamgriddb.poster_wide", "Poster wide",
+                      "game.steamgriddb.poster_wide_desc",
+                      "Landscape grid art for 2x1 / 4x2 tiles.",
+                      ArtworkKind::PosterWide, m_game.hasPosterWideArt);
     addArtworkActions("game.steamgriddb.icon", "Replacement icon",
                       "game.steamgriddb.icon_desc",
                       "Applies to 1x1 and 2x2.",

@@ -93,6 +93,7 @@ bool AppConfig::load() {
             homeOrientation,
             homeOrientationButton);
     }
+    readJsonOpt(j, "separatePortraitLayout", separatePortraitLayout);
     readJsonOpt(j, "actionHintStyle", actionHintStyle);
     readJsonOpt(j, "cursorMotionMode", cursorMotionMode);
     readJsonOpt(j, "pageTransitionMode", pageTransitionMode);
@@ -329,6 +330,7 @@ bool AppConfig::save() const {
     j["homeOrientationButton"] = homeOrientationButton;
     j["homeOrientationCycle"] = static_cast<int>(sanitizeHomeOrientationCycle(
         homeOrientationCycle, homeOrientation, homeOrientationButton));
+    j["separatePortraitLayout"] = separatePortraitLayout;
     j["actionHintStyle"] = actionHintStyle == "panel" ? "panel" : "capsules";
     j["cursorMotionMode"] = std::clamp(cursorMotionMode, 0, 1);
     j["pageTransitionMode"] = std::clamp(pageTransitionMode, 0, 1);

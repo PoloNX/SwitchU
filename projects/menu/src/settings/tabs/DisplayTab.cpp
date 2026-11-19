@@ -175,7 +175,7 @@ SettingsScreen::Tab settings::tabs::DisplayTab::build(SettingsScreen& screen) {
         SettingItem it;
         it.label = i18n.tr("settings.display.orientation", "HOME Orientation");
         it.description = i18n.tr("settings.display.orientation_desc",
-            "Rotate the HOME menu. Useful for TATE-only setups without the HOME button.");
+            "Rotate the HOME menu. Useful for TATE or Flip-Grip setups.");
         it.type = ItemType::Selector;
         it.options = {
             i18n.tr("settings.display.cycle_landscape", "Landscape"),
@@ -218,6 +218,24 @@ SettingsScreen::Tab settings::tabs::DisplayTab::build(SettingsScreen& screen) {
                 screen.m_homeOrientationButtonCb(self.boolVal);
             // No rebuild: indented cycle rows stay put and onUpdate enables them
             // (same pattern as SteamGridDB artwork children).
+        };
+        t.items.push_back(std::move(it));
+    }
+
+    {
+        SettingItem it;
+        it.label = i18n.tr("settings.display.separate_portrait_layout",
+                           "Separate Portrait Layout");
+        it.description = i18n.tr(
+            "settings.display.separate_portrait_layout_desc",
+            "Organize HOME tiles independently in portrait.");
+        it.type = ItemType::Toggle;
+        it.boolVal = screen.m_separatePortraitLayout;
+        it.anim01 = it.boolVal ? 1.f : 0.f;
+        it.onChange = [&screen](SettingItem& self) {
+            screen.m_separatePortraitLayout = self.boolVal;
+            if (screen.m_separatePortraitLayoutCb)
+                screen.m_separatePortraitLayoutCb(self.boolVal);
         };
         t.items.push_back(std::move(it));
     }

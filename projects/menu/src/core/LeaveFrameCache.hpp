@@ -15,6 +15,8 @@ struct LeaveFrameSession {
     // Captured HOME chrome — resume recaptures when these diverge.
     std::uint32_t appLayoutMode = 0;     // AppLayoutMode
     std::uint32_t homeOrientation = 0;  // HomeOrientation
+    // Tile arrangement (slots / sort / sizes). Resume recaptures on mismatch.
+    std::uint64_t layoutFingerprint = 0;
 };
 
 struct LeaveFrameImage {

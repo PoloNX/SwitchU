@@ -33,6 +33,9 @@ struct AppConfig {
     bool homeOrientationButton = false;
     // Bitmask of HomeOrientation values the HOME button may visit (default all).
     std::uint8_t homeOrientationCycle = kHomeOrientationCycleAll;
+    // When false, portrait HOME is a dense projection of the landscape layout
+    // (landscape slots stay untouched). When true, portrait keeps its own slots.
+    bool separatePortraitLayout = false;
     std::string actionHintStyle = "capsules";
     // 0 = animated translation, 1 = immediate jump.
     int cursorMotionMode = 0;

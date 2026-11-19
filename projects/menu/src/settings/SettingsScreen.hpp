@@ -34,12 +34,17 @@ public:
     void onHomeOrientationCycleChange(std::function<void(std::uint8_t)> cb) {
         m_homeOrientationCycleCb = std::move(cb);
     }
+    void onSeparatePortraitLayoutChange(BoolCb cb) {
+        m_separatePortraitLayoutCb = std::move(cb);
+    }
     void setHomeOrientationState(HomeOrientation orientation, bool button,
-                                 std::uint8_t cycle) {
+                                 std::uint8_t cycle,
+                                 bool separatePortraitLayout = false) {
         m_homeOrientation = orientation;
         m_homeOrientationButton = button;
         m_homeOrientationCycle = sanitizeHomeOrientationCycle(
             cycle, orientation, button);
+        m_separatePortraitLayout = separatePortraitLayout;
     }
     void onGridColumnsChange(IntCb cb)  { m_gridColumnsCb = std::move(cb); }
     void onGridRowsChange(IntCb cb)     { m_gridRowsCb = std::move(cb); }
@@ -187,6 +192,7 @@ private:
     std::function<void(HomeOrientation)> m_homeOrientationCb;
     BoolCb m_homeOrientationButtonCb;
     std::function<void(std::uint8_t)> m_homeOrientationCycleCb;
+    BoolCb m_separatePortraitLayoutCb;
     IntCb m_gridColumnsCb;
     IntCb m_gridRowsCb;
     StringCb m_uiLanguageCb;
@@ -224,6 +230,7 @@ private:
     HomeOrientation m_homeOrientation = HomeOrientation::Landscape0;
     bool m_homeOrientationButton = false;
     std::uint8_t m_homeOrientationCycle = kHomeOrientationCycleAll;
+    bool m_separatePortraitLayout = false;
     int m_gridColumns = 5;
     int m_gridRows = 3;
     std::string m_uiLanguageOverride = "auto";

@@ -130,7 +130,7 @@ void FolderOptionsScreen::buildTabs() {
     tileSize.label = i18n.tr("folder.tile_size", "Tile size");
     tileSize.description = i18n.tr(
         "folder.tile_size_desc",
-        "Changes the size of this folder on the HOME grid.");
+        "Change folder tile size on HOME.");
     tileSize.type = ItemType::Selector;
     tileSize.options = {"1x1", "2x1", "4x2", "2x2", "2x3"};
     tileSize.intVal = m_folder.tileSizeIndex;
@@ -239,7 +239,7 @@ void FolderOptionsScreen::buildTabs() {
     }
     customizeHero.description = i18n.tr(
         "folder.customize_hero_desc",
-        "Crop and pan this folder's hero for landscape and Flip-Grip.");
+        "Crop and pan this folder's hero.");
     customizeHero.indentLevel = 1;
     customizeHero.enabled = m_folder.hasCustomHero;
     customizeHero.onChange = [this](SettingItem&) {
@@ -251,7 +251,7 @@ void FolderOptionsScreen::buildTabs() {
     overrideHeroes.label = i18n.tr("folder.override_title_heroes", "Override Title Heroes");
     overrideHeroes.description = i18n.tr(
         "folder.override_title_heroes_desc",
-        "While this folder is open, always show the folder hero instead of each title's hero.");
+        "Use folders hero for all folder items.");
     overrideHeroes.type = ItemType::Toggle;
     overrideHeroes.boolVal = m_folder.overrideTitleHeroes;
     overrideHeroes.anim01 = overrideHeroes.boolVal ? 1.f : 0.f;
@@ -268,21 +268,21 @@ void FolderOptionsScreen::buildTabs() {
     addArtRow("game.steamgriddb.poster", "Poster",
               "game.steamgriddb.poster_desc", "Tall art in single-row and 2x3.",
               m_folder.hasCustomPoster, ArtAction::Poster);
-    if (m_folder.tileSizeIndex == 1 || m_folder.tileSizeIndex == 2) {
-        addArtRow("game.steamgriddb.poster_wide", "Poster wide",
-                  "game.steamgriddb.poster_wide_desc",
-                  "Landscape grid art for this 2x1 / 4x2 tile.",
-                  m_folder.hasCustomPosterWide, ArtAction::PosterWide);
-    }
+    // Always list Poster wide (same as Square cover) so it can be set
+    // before/after resizing; art still applies on 2x1 / 4x2 faces.
+    addArtRow("game.steamgriddb.poster_wide", "Poster wide",
+              "game.steamgriddb.poster_wide_desc",
+              "Landscape grid art for 2x1 / 4x2 tiles.",
+              m_folder.hasCustomPosterWide, ArtAction::PosterWide);
     addArtRow("game.steamgriddb.icon", "Replacement icon",
               "game.steamgriddb.icon_desc", "Applies to 1x1 and 2x2.",
               m_folder.hasCustomIcon, ArtAction::Icon);
-    if (m_folder.tileSizeIndex == 0 || m_folder.tileSizeIndex == 3) {
-        addArtRow("game.steamgriddb.square_cover", "Square cover",
-                  "game.steamgriddb.square_cover_desc",
-                  "Applies to 1x1 and 2x2.",
-                  m_folder.hasCustomSquareCover, ArtAction::SquareCover);
-    }
+    // Always list Square cover (same as titles) so it can be set before/after
+    // resizing; art still applies on 1x1 / 2x2 faces.
+    addArtRow("game.steamgriddb.square_cover", "Square cover",
+              "game.steamgriddb.square_cover_desc",
+              "Applies to 1x1 and 2x2.",
+              m_folder.hasCustomSquareCover, ArtAction::SquareCover);
     m_tabs.push_back(std::move(artwork));
 
     Tab management;

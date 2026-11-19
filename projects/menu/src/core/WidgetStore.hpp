@@ -79,6 +79,20 @@ bool parseType(const std::string& value, WidgetType& type);
 std::vector<WidgetSize> supportedSizes(WidgetType type, AppLayoutMode layout);
 WidgetSize validatedSize(WidgetType type, WidgetSize requested, AppLayoutMode layout);
 
+/// Preferred game/folder tile sizes in demotion order (largest → 1×1).
+/// Starts at `preferred` (legacy 3×2 normalized to 2×2), then steps down the
+/// ladder so a 4×2 can become 2×2 / 2×1 before 1×1. Never writes storage.
+std::vector<WidgetSize> gameTileDemotionChain(WidgetSize preferred);
+
+/// Largest size in the demotion chain that fits inside gridCols×gridRows.
+WidgetSize demoteGameTileToFit(WidgetSize preferred, int gridColumns, int gridRows);
+
+/// Largest supported widget size that fits the grid, preferring `requested`
+/// when it already fits (validated first). Session-only — does not persist.
+WidgetSize demoteWidgetTileToFit(WidgetType type, WidgetSize requested,
+                                 AppLayoutMode layout,
+                                 int gridColumns, int gridRows);
+
 class WidgetStore final {
 public:
     static constexpr const char* kPath = "sdmc:/config/SwitchU/widgets/widgets.json";
