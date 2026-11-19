@@ -730,6 +730,33 @@ static Result readPerformanceConfiguration(Service& apmSys, u32& out) {
     return serviceDispatchOut(&apmSys, 7, out);
 }
 
+// APM PerformanceMode 0/1 tracks docked state (sys-clk reads this via
+// apm GetPerformanceMode). Handheld + dock power → "Official charger".
+static u32 performanceModeForOperationMode() {
+    return (appletGetOperationMode() == AppletOperationMode_Console) ? 1u : 0u;
+}
+
+/// Re-assert Handheld(0) / Docked(1) from OperationMode without clearing CPU
+/// boost (safe while a title is running across dock/undock).
+static void syncPerformanceModeFromOperation(const char* source) {
+    if (hosversionBefore(7, 0, 0))
+        return;
+
+    ScopedService apmSys;
+    const Result openRc = smGetService(&apmSys.value, "apm:sys");
+    if (R_FAILED(openRc)) {
+        switchu::FileLog::log("[perf-config] %s open apm:sys FAIL: 0x%X", source, openRc);
+        return;
+    }
+
+    const u32 perfMode = performanceModeForOperationMode();
+    const Result reqRc = serviceDispatchIn(&apmSys.value, 0, perfMode);
+    const Result loadRc = serviceDispatch(&apmSys.value, 5);
+    switchu::FileLog::log(
+        "[perf-config] %s sync reqMode=%u req=0x%X load=0x%X",
+        source, perfMode, reqRc, loadRc);
+}
+
 static void restoreNormalPerformance(const char* source) {
     if (hosversionBefore(7, 0, 0))
         return;
@@ -749,10 +776,7 @@ static void restoreNormalPerformance(const char* source) {
     // Re-assert Handheld(0) / Docked(1) from OperationMode. Never force mode 0:
     // RequestPerformanceMode(0) while physically docked leaves APM in handheld
     // mode; sys-clk then picks "Official charger" instead of Docked (#222).
-    // (APM PerformanceMode 0/1 tracks docked state here — same signal sys-clk
-    // reads via apm GetPerformanceMode.)
-    const u32 perfMode =
-        (appletGetOperationMode() == AppletOperationMode_Console) ? 1u : 0u;
+    const u32 perfMode = performanceModeForOperationMode();
     const Result reqRc = serviceDispatchIn(&apmSys.value, 0, perfMode);
     const Result loadRc = serviceDispatch(&apmSys.value, 5);
     u32 after = 0;
@@ -1636,6 +1660,9 @@ static void handleAppletMessages() {
             // payload carries Console(1)/Handheld(0) — menu libnx cache is stale.
             const auto mode = static_cast<uint32_t>(appletGetOperationMode());
             switchu::FileLog::log("[ae] -> OperationModeChanged mode=%u", mode);
+            // Undock correctly drops APM to handheld; redock does not always
+            // promote it back to Docked — sys-clk then sticks on Official charger.
+            syncPerformanceModeFromOperation("operation-mode");
             pushNotification(smi::MenuMessage::OperationModeChanged, 0, mode);
             break;
         }
