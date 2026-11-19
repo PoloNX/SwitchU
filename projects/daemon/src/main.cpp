@@ -743,19 +743,27 @@ static void restoreNormalPerformance(const char* source) {
 
     u32 before = 0;
     const Result beforeRc = readPerformanceConfiguration(apmSys.value, before);
-    const u32 mode = static_cast<u32>(ApmCpuBoostMode_Normal);
-    const Result setRc = serviceDispatchIn(&apmSys.value, 6, mode);
-    const u32 perfMode = 0;
+    // Clear FastLoad / Type2 CPU boost only (apm:sys SetCpuBoostMode).
+    const u32 boost = static_cast<u32>(ApmCpuBoostMode_Normal);
+    const Result setRc = serviceDispatchIn(&apmSys.value, 6, boost);
+    // Re-assert Handheld(0) / Docked(1) from OperationMode. Never force mode 0:
+    // RequestPerformanceMode(0) while physically docked leaves APM in handheld
+    // mode; sys-clk then picks "Official charger" instead of Docked (#222).
+    // (APM PerformanceMode 0/1 tracks docked state here — same signal sys-clk
+    // reads via apm GetPerformanceMode.)
+    const u32 perfMode =
+        (appletGetOperationMode() == AppletOperationMode_Console) ? 1u : 0u;
     const Result reqRc = serviceDispatchIn(&apmSys.value, 0, perfMode);
     const Result loadRc = serviceDispatch(&apmSys.value, 5);
     u32 after = 0;
     const Result afterRc = readPerformanceConfiguration(apmSys.value, after);
 
     switchu::FileLog::log(
-        "[perf-config] %s boost reset before=0x%08X(boost=%d rc=0x%X) set=0x%X req=0x%X load=0x%X "
-        "after=0x%08X(boost=%d rc=0x%X)",
+        "[perf-config] %s boost reset before=0x%08X(boost=%d rc=0x%X) set=0x%X "
+        "reqMode=%u req=0x%X load=0x%X after=0x%08X(boost=%d rc=0x%X)",
         source, before, isBoostPerformanceConfiguration(before) ? 1 : 0, beforeRc,
-        setRc, reqRc, loadRc, after, isBoostPerformanceConfiguration(after) ? 1 : 0, afterRc);
+        setRc, perfMode, reqRc, loadRc, after,
+        isBoostPerformanceConfiguration(after) ? 1 : 0, afterRc);
 }
 
 static Result openTimeAdminService(ScopedService& out) {
