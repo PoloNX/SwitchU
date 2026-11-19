@@ -11,8 +11,10 @@ struct LeaveFrameSession {
     bool valid = false;
     int page = 0;
     std::uint32_t openFolderId = 0;
+    // Title focused / launched when this frame was captured. Resume always
+    // recaptures when this diverges from the title being resumed.
     std::uint64_t focusTitleId = 0;
-    // Captured HOME chrome — resume recaptures when these diverge.
+    // Captured HOME chrome — resume also recaptures when these diverge.
     std::uint32_t appLayoutMode = 0;     // AppLayoutMode
     std::uint32_t homeOrientation = 0;  // HomeOrientation
     // Tile arrangement (slots / sort / sizes). Resume recaptures on mismatch.
