@@ -6433,22 +6433,28 @@ void WiiUMenuApp::resumeSuspendedApplication(std::uint64_t titleId,
         });
     };
 
-    // Default: reuse the launch splash. If HOME chrome or tile arrangement
-    // changed while suspended (view / orientation / rearrange / sort), that
-    // frame no longer matches — capture a fresh one before resume.
+    // Default: reuse the launch splash. Recapture when the resume title no
+    // longer matches the cached leave focus (e.g. Min splash stuck while
+    // Sphaira is suspended), or when HOME chrome / tile arrangement changed
+    // while suspended (view / orientation / rearrange / sort).
     LeaveFrameSession cached{};
     const bool haveCached = LeaveFrameCache::loadSessionOnly(cached);
     const std::uint64_t liveFingerprint = leaveLayoutFingerprint();
+    const bool titleChanged = !haveCached || cached.focusTitleId != titleId;
     const bool chromeChanged = !haveCached
         || cached.appLayoutMode != static_cast<std::uint32_t>(m_appLayoutMode)
         || cached.homeOrientation
             != static_cast<std::uint32_t>(m_config.homeOrientation)
         || cached.layoutFingerprint != liveFingerprint;
-    if (chromeChanged) {
+    if (titleChanged || chromeChanged) {
         DebugLog::log(
-            "[leave] recapture on resume tid=%016lX layout=%u→%u orient=%u→%u "
+            "[leave] recapture on resume tid=%016lX cachedFocus=%016lX "
+            "titleChanged=%d chromeChanged=%d layout=%u→%u orient=%u→%u "
             "fp=%016llX→%016llX",
             static_cast<unsigned long>(titleId),
+            static_cast<unsigned long>(haveCached ? cached.focusTitleId : 0ull),
+            titleChanged ? 1 : 0,
+            chromeChanged ? 1 : 0,
             haveCached ? cached.appLayoutMode : 0u,
             static_cast<unsigned>(m_appLayoutMode),
             haveCached ? cached.homeOrientation : 0u,
