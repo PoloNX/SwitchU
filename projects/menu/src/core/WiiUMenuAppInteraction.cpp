@@ -3122,17 +3122,19 @@ void WiiUMenuApp::handleSystemAction(SysAction a) {
             }
             DebugLog::log("[pump] HomeDismiss -> close folder/overlays");
             m_launcher.setAppHasForeground(false);
-            // Like stock HOME: with a suspended title, HOME resumes it even from
-            // inside an open folder. Otherwise dismiss folder/overlays.
+            // Like the stock HOME menu: with nothing left to dismiss, HOME goes
+            // back to the suspended game instead of doing nothing.
+            // Keep folder-open as a dismiss step first — resume from inside a
+            // folder would leave the folder open on return and bake folder UI
+            // into the leave splash.
             const std::uint64_t suspendedId = m_launcher.suspendedTitleId();
-            if (suspendedId != 0 && !m_editMode &&
+            if (suspendedId != 0 && m_openFolderId == 0 && !m_editMode &&
                 m_navigator.route() == switchu::navigation::Route::Home &&
                 focusRoot() == &rootBox() &&
                 !(m_launchAnim && m_launchAnim->isPlaying())) {
                 const AppEntry* suspended = m_model.findByTitleId(suspendedId);
-                DebugLog::log("[pump] HomeDismiss -> resume suspended title 0x%016lX (folder=%u)",
-                              static_cast<unsigned long>(suspendedId),
-                              static_cast<unsigned>(m_openFolderId));
+                DebugLog::log("[pump] HomeDismiss -> resume suspended title 0x%016lX",
+                              static_cast<unsigned long>(suspendedId));
                 resumeSuspendedApplication(suspendedId, suspended ? suspended->title : std::string());
                 break;
             }
