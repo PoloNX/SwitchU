@@ -5994,7 +5994,12 @@ void WiiUMenuApp::openCapturedFolder() {
     applyFolderDefaultViewOnOpen();
     syncHeroBackdropPresentation();
     m_grid->setRect(homeGridRect());
-    // Don't inherit the root page number into the folder grid.
+    // Don't inherit the root page number into the folder grid. Resume the page
+    // the user was last on in this folder (leave-splash title refocus wins).
+    const bool resumeFolderPage = !refocus
+        && m_folderResumePageId == m_openFolderId
+        && m_folderResumePage > 0
+        && m_appLayoutMode == AppLayoutMode::Grid;
     m_grid->setPage(0);
     const bool zoom = !refocus && m_folderZoom && m_folderZoomOriginRect.width > 0.f;
     // A folder opened mid-move may reflow the root grid underneath it, so the
@@ -6085,9 +6090,34 @@ void WiiUMenuApp::openCapturedFolder() {
         m_folderHeaderAnim.setImmediate(1.f);
     }
     syncFolderHeader();
+    // applyDisplayModel may have focused a page-0 title; put the user back on
+    // the page they left, then make that page's tiles visible (appear ran on 0).
+    if (resumeFolderPage && m_grid) {
+        m_grid->setPage(m_folderResumePage);
+        for (GlossyIcon* icon : m_grid->pageIcons()) {
+            if (icon)
+                icon->forceVisible();
+        }
+        if (!m_editMode) {
+            const int perPage = std::max(1, m_grid->iconsPerPage());
+            const int pageStart = m_grid->currentPage() * perPage;
+            const int pageEnd = std::min(pageStart + perPage,
+                                        static_cast<int>(m_grid->allIcons().size()));
+            for (int i = pageStart; i < pageEnd; ++i) {
+                auto& icon = m_grid->allIcons()[static_cast<std::size_t>(i)];
+                if (icon && icon->isFocusable() && m_grid->focusGlobalIndex(i, true)) {
+                    if (auto* cur = m_grid->focusManager().current())
+                        focusManager().setFocus(cur);
+                    break;
+                }
+            }
+            updateCursor();
+        }
+    }
     syncPageIndicator();
     if (m_editMode) {
-        // Always re-anchor: the previous target was a root-grid index.
+        // Prefer empty on the resumed/current page only — never jump to a
+        // later blank page just because the visible page is full.
         syncEditPlacementAfterModelChange(true);
         reattachEditSourceIcon();
     }
@@ -6354,6 +6384,12 @@ void WiiUMenuApp::closeFolder(bool preserveEditMode, bool animated) {
 }
 
 void WiiUMenuApp::finishCloseFolder(std::uint32_t oldId, bool preserveEditMode) {
+    // Remember which page they were on so reopen (incl. mid-move) lands there
+    // instead of always page 0 — or worse, prefer-empty yanking to a blank page.
+    if (m_grid && oldId != 0) {
+        m_folderResumePageId = oldId;
+        m_folderResumePage = m_grid->currentPage();
+    }
     if (preserveEditMode) {
         detachEditSourceIcon();
         unbindEditActions();
