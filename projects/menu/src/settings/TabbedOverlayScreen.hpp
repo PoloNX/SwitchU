@@ -167,7 +167,17 @@ public:
     void refreshTranslations();
     ScreenMode screenMode() const { return m_mode; }
 
-    enum class ItemType { Info, Toggle, Slider, Progress, Selector, Action, Section };
+    enum class ItemType {
+        Info, InfoDeck, Toggle, Slider, Progress, Selector, Action, Section
+    };
+
+    struct InfoDeckEntry {
+        std::string label;
+        std::string value;
+        // Full-width section title inside the deck (optional thin progress bar).
+        bool  header = false;
+        float progress = -1.f; // 0..1 when >= 0 and header
+    };
 
     struct SettingItem {
         std::string label;
@@ -176,6 +186,9 @@ public:
         std::string secondaryButtonLabel;
         ItemType    type = ItemType::Info;
         std::string description;
+        // Compact status grid (System / Storage / Internet). Non-focusable.
+        std::vector<InfoDeckEntry> deckEntries;
+        int deckColumns = 2; // 2 or 3 value cells per row
 
         bool                     boolVal   = false;
         bool                     suppressToggleSfx = false;
@@ -293,6 +306,7 @@ protected:
     void onRender(nxui::Renderer& ren) override;
     void onContentRender(nxui::Renderer& ren) override;
     void onContentUpdate(float dt) override;
+    bool wantsFastNavRepeat() const override;
 
 protected:
     void setupActions();
@@ -353,8 +367,13 @@ protected:
     static constexpr float kPanelMargin   = 32.f;
     static constexpr float kTabWidth      = 260.f;
     float itemHeight(const SettingItem& item, float contentWidth) const;
+    static float infoDeckHeight(const SettingItem& item);
     static constexpr float kRowHeight     = 68.f;
     static constexpr float kSectionHeight = 48.f;
+    static constexpr float kInfoDeckPadY  = 16.f;
+    static constexpr float kInfoDeckCellH = 44.f;
+    static constexpr float kInfoDeckHeaderH = 30.f;
+    static constexpr float kInfoDeckGapY  = 8.f;
     static constexpr float kTabRowHeight  = 58.f;
     static constexpr float kTabRailInset  = 14.f;
     static constexpr float kPanelRadius   = 26.f;

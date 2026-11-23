@@ -152,6 +152,25 @@ inline Result setInternetTimeSync(bool enabled) {
     return waitForCommandResponse(requestId);
 }
 
+// Fire-and-forget by default — slider holds must not stall on IPC wait.
+inline Result setBrightness(float brightness, bool wait = false) {
+    uint8_t buf[sizeof(smi::CommandHeader) + sizeof(smi::BrightnessArgs)]{};
+    auto* hdr = reinterpret_cast<smi::CommandHeader*>(buf);
+    auto* args = reinterpret_cast<smi::BrightnessArgs*>(buf + sizeof(smi::CommandHeader));
+
+    hdr->magic = smi::kCommandMagic;
+    hdr->message = static_cast<uint32_t>(smi::SystemMessage::SetBrightness);
+    const uint64_t requestId = nextRequestId();
+    hdr->request_id = requestId;
+    args->brightness = brightness;
+
+    Result rc = pushOutStorage(buf, sizeof(buf));
+    if (R_FAILED(rc)) return rc;
+    if (!wait)
+        return 0;
+    return waitForCommandResponse(requestId, 15);
+}
+
 // Start or stop the Bluetooth audio device search from the daemon.
 inline Result setAudioDeviceDiscovery(bool start) {
     const uint64_t requestId = nextRequestId();

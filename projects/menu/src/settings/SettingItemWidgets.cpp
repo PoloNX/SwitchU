@@ -429,6 +429,104 @@ private:
     std::string m_cachedValueText;
 };
 
+// Compact status grid — section headers + 2/3-column value rows.
+class InfoDeckWidget final : public nxui::Box {
+public:
+    InfoDeckWidget(SettingsScreen::SettingItem& item, const SettingWidgetContext& ctx)
+        : nxui::Box(nxui::Axis::COLUMN)
+        , m_item(item)
+        , m_ctx(ctx) {
+        setWireframeEnabled(false);
+    }
+
+protected:
+    void onRender(nxui::Renderer& ren) override {
+        if (!isVisible() || opacity() <= 0.01f)
+            return;
+
+        nxui::Font* labelFont = (m_ctx.smallFont && *m_ctx.smallFont) ? *m_ctx.smallFont : nullptr;
+        nxui::Font* valueFont = (m_ctx.font && *m_ctx.font) ? *m_ctx.font : labelFont;
+        const nxui::Theme* theme = (m_ctx.theme && *m_ctx.theme) ? *m_ctx.theme : nullptr;
+        if (!labelFont || !theme || m_item.deckEntries.empty())
+            return;
+
+        const nxui::Rect r = rect();
+        const int cols = std::clamp(m_item.deckColumns, 1, 4);
+        constexpr float kGapX = 16.f;
+        constexpr float kGapY = 8.f;
+        constexpr float kCellH = 44.f;
+        constexpr float kHeaderH = 30.f;
+        const float cellW = std::max(36.f, (r.width - kGapX * (float)(cols - 1)) / (float)cols);
+
+        const nxui::Color labelCol = theme->textSecondary.withAlpha(theme->textSecondary.a * opacity());
+        const nxui::Color valueCol = theme->textPrimary.withAlpha(0.96f * opacity());
+        const nxui::Color hair = theme->panelBorder.withAlpha(
+            (theme->mode == nxui::ThemeMode::Dark ? 0.16f : 0.12f) * opacity());
+        const nxui::Color barTrack = theme->panelBorder.withAlpha(0.18f * opacity());
+        const nxui::Color barFill = theme->cursorNormal.withAlpha(0.72f * opacity());
+
+        float y = r.y;
+        int col = 0;
+        auto flushRowGap = [&]() {
+            if (col > 0) {
+                y += kCellH + kGapY;
+                col = 0;
+            }
+        };
+
+        for (size_t i = 0; i < m_item.deckEntries.size(); ++i) {
+            const auto& entry = m_item.deckEntries[i];
+            if (entry.header) {
+                flushRowGap();
+                constexpr float kHeaderScale = 0.78f;
+                const std::string title = fitTextToWidth(labelFont, entry.label, kHeaderScale, r.width);
+                ren.drawText(title, {r.x, y + 2.f}, labelFont, valueCol, kHeaderScale);
+                y += kHeaderH;
+                if (entry.progress >= 0.f) {
+                    const float p = std::clamp(entry.progress, 0.f, 1.f);
+                    const nxui::Rect track = {r.x, y, r.width, 5.f};
+                    ren.drawRoundedRect(track, barTrack, 2.5f);
+                    ren.drawRoundedRect({track.x, track.y, track.width * p, track.height},
+                                       barFill, 2.5f);
+                    y += 10.f;
+                }
+                y += kGapY;
+                continue;
+            }
+
+            const nxui::Rect cell = {
+                r.x + (float)col * (cellW + kGapX),
+                y,
+                cellW,
+                kCellH
+            };
+            if (col > 0) {
+                ren.drawRect({cell.x - kGapX * 0.5f - 0.5f, cell.y + 6.f, 1.f, cell.height - 12.f},
+                             hair);
+            }
+
+            constexpr float kLabelScale = 0.68f;
+            constexpr float kValueScale = 0.78f;
+            const std::string label = fitTextToWidth(labelFont, entry.label, kLabelScale, cell.width);
+            const std::string value = fitTextToWidth(valueFont, entry.value, kValueScale, cell.width);
+            const float labelH = labelFont->measure(label).y * kLabelScale;
+            const float valueH = valueFont->measure(value).y * kValueScale;
+            const float stackH = labelH + 2.f + valueH;
+            const float ty = cell.y + std::max(0.f, (cell.height - stackH) * 0.5f);
+            ren.drawText(label, {cell.x, ty}, labelFont, labelCol, kLabelScale);
+            ren.drawText(value, {cell.x, ty + labelH + 2.f}, valueFont, valueCol, kValueScale);
+
+            ++col;
+            if (col >= cols)
+                flushRowGap();
+        }
+    }
+
+private:
+    SettingsScreen::SettingItem& m_item;
+    SettingWidgetContext m_ctx;
+};
+
 class ToggleRowWidget final : public SettingRowBase {
 public:
     ToggleRowWidget(SettingsScreen::SettingItem& item, const SettingWidgetContext& ctx)
@@ -896,6 +994,7 @@ std::shared_ptr<nxui::Box> createSettingItemWidget(SettingsScreen::SettingItem& 
     switch (item.type) {
         case IT::Section:     return std::make_shared<SectionRowWidget>(item, ctx);
         case IT::Info:        return std::make_shared<InfoRowWidget>(item, ctx);
+        case IT::InfoDeck:    return std::make_shared<InfoDeckWidget>(item, ctx);
         case IT::Toggle:      return std::make_shared<ToggleRowWidget>(item, ctx);
         case IT::Slider:      return std::make_shared<SliderRowWidget>(item, ctx);
         case IT::Progress:    return std::make_shared<ProgressRowWidget>(item, ctx);

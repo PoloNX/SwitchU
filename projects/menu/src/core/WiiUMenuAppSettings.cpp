@@ -1005,7 +1005,14 @@ void WiiUMenuApp::openQuickSettings() {
         (m_userSelect && m_userSelect->isActive()))
         return;
     m_dialogReturnFocus = focusManager().current();
-    m_quickSettings->setInitialValues(0.5f, m_config.musicVolume,
+    float brightness = 0.5f;
+#ifdef __SWITCH__
+    lblLoadCurrentSetting();
+    if (R_FAILED(lblGetBrightnessSettingAppliedToBacklight(&brightness)))
+        lblGetCurrentBrightnessSetting(&brightness);
+    brightness = std::clamp(brightness, 0.05f, 1.0f);
+#endif
+    m_quickSettings->setInitialValues(brightness, m_config.musicVolume,
                                       m_config.sfxVolume, false, true);
     m_quickSettings->setBatteryStatus(m_consoleBatteryPercent,
                                       m_consoleBatteryCharging);
@@ -4319,39 +4326,44 @@ void WiiUMenuApp::retryPendingBackgroundImage() {
 void WiiUMenuApp::applyHomeChrome() {
     const nxui::Theme& chrome = m_homeChrome;
 
+    // Soft HUD edges — withAlpha replaces the token alpha (dark default ~0.18).
+    const nxui::Color chipBorder = chrome.panelBorder.withAlpha(0.12f);
+    const nxui::Color chipHighlight = chrome.panelHighlight.withAlpha(
+        chrome.mode == nxui::ThemeMode::Dark ? 0.06f : 0.18f);
+
     if (m_clock) {
         m_clock->setBaseColor(chrome.panelBase);
-        m_clock->setBorderColor(chrome.panelBorder);
-        m_clock->setHighlightColor(chrome.panelHighlight);
+        m_clock->setBorderColor(chipBorder);
+        m_clock->setHighlightColor(chipHighlight);
         m_clock->setTextColor(chrome.textPrimary);
         m_clock->setSecondaryTextColor(chrome.textSecondary);
     }
 
     if (m_battery) {
         m_battery->setBaseColor(chrome.panelBase);
-        m_battery->setBorderColor(chrome.panelBorder);
-        m_battery->setHighlightColor(chrome.panelHighlight);
+        m_battery->setBorderColor(chipBorder);
+        m_battery->setHighlightColor(chipHighlight);
         m_battery->setTextColor(chrome.textPrimary);
     }
 
     if (m_titlePill) {
         m_titlePill->setBaseColor(chrome.panelBase.withAlpha(
-            chrome.mode == nxui::ThemeMode::Dark ? 0.90f : 0.86f));
-        m_titlePill->setBorderColor(chrome.panelBorder.withAlpha(0.84f));
-        m_titlePill->setHighlightColor(chrome.panelHighlight.withAlpha(0.42f));
+            chrome.mode == nxui::ThemeMode::Dark ? 0.88f : 0.84f));
+        m_titlePill->setBorderColor(chrome.panelBorder.withAlpha(0.10f));
+        m_titlePill->setHighlightColor(chrome.panelHighlight.withAlpha(0.08f));
         m_titlePill->setTextColor(chrome.textPrimary);
     }
 
     if (m_pageIndicator) {
         m_pageIndicator->setBaseColor(chrome.panelBase);
-        m_pageIndicator->setBorderColor(chrome.panelBorder);
-        m_pageIndicator->setHighlightColor(chrome.panelHighlight);
+        m_pageIndicator->setBorderColor(chipBorder);
+        m_pageIndicator->setHighlightColor(chipHighlight);
         m_pageIndicator->setTheme(&m_homeChrome);
     }
     if (m_folderHeader) {
         m_folderHeader->setBaseColor(chrome.panelBase);
-        m_folderHeader->setBorderColor(chrome.panelBorder);
-        m_folderHeader->setHighlightColor(chrome.panelHighlight);
+        m_folderHeader->setBorderColor(chipBorder);
+        m_folderHeader->setHighlightColor(chipHighlight);
     }
     if (m_folderHeaderLabel)
         m_folderHeaderLabel->setTextColor(chrome.textPrimary);

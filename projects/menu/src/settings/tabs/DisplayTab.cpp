@@ -1,5 +1,6 @@
 #include "TabBuilders.hpp"
 #include "screen_fit.hpp"
+#include "smi_commands.hpp"
 #include <nxui/core/I18n.hpp>
 #include <switch.h>
 #include <algorithm>
@@ -15,11 +16,14 @@ SettingsScreen::Tab settings::tabs::DisplayTab::build(SettingsScreen& screen) {
     {
         SettingItem it; it.label = i18n.tr("settings.display.brightness", "Brightness"); it.type = ItemType::Slider;
         float val = 0.5f;
-        lblGetCurrentBrightnessSetting(&val);
+        lblLoadCurrentSetting();
+        if (R_FAILED(lblGetBrightnessSettingAppliedToBacklight(&val)))
+            lblGetCurrentBrightnessSetting(&val);
         it.floatVal = val;
         it.anim01 = std::clamp(val, 0.f, 1.f);
         it.onChange = [](SettingItem& self) {
-            lblSetCurrentBrightnessSetting(self.floatVal);
+            // Library-applet lbl Apply is unreliable; daemon owns the panel.
+            switchu::menu::smi_cmd::setBrightness(self.floatVal);
         };
         t.items.push_back(std::move(it));
     }

@@ -2147,6 +2147,25 @@ static void handleMenuCommand() {
         return;
     }
 
+    case smi::SystemMessage::SetBrightness: {
+        auto args = reader.pop<smi::BrightnessArgs>();
+        Result rc = MAKERESULT(Module_Libnx, 1);
+        if (g_lblReady) {
+            const float v = args.brightness < 0.05f ? 0.05f
+                : (args.brightness > 1.f ? 1.f : args.brightness);
+            lblDisableAutoBrightnessControl();
+            rc = lblSetCurrentBrightnessSetting(v);
+            if (R_SUCCEEDED(rc))
+                rc = lblApplyCurrentBrightnessSettingToBacklight();
+            if (R_SUCCEEDED(rc))
+                lblSaveCurrentSetting();
+        }
+        switchu::FileLog::log("[smi] SetBrightness %.3f lbl=%d rc=0x%X",
+                              args.brightness, g_lblReady ? 1 : 0, rc);
+        pushCommandResult(requestId, rc, "SetBrightness");
+        return;
+    }
+
     case smi::SystemMessage::MenuReady:
         switchu::FileLog::log("[smi] menu ready");
         g_menuReadyThisSession = true;

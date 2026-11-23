@@ -948,7 +948,7 @@
     "title": "빠른 설정",
     "close_hint": "[B] 닫기",
     "battery": "배터리",
-    "charging": "⚡ 충전 중",
+    "charging": "충전 중",
     "discharging": "방전 중",
     "hardware_temp": "온도",
     "temp_optimal": "적정",

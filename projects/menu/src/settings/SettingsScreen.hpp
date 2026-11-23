@@ -174,6 +174,7 @@ protected:
     void ensureTabLoaded(int tabIndex) override;
     void onContentUpdate(float dt) override;
     bool canApplyStashedFocusRestore() const override;
+    void syncDisplayBrightnessFromSystem();
 
 private:
     friend class settings::tabs::SystemTab;
@@ -278,6 +279,7 @@ private:
     int m_clockVerifyFrames = 0;
     bool m_clockVerifyQuiet = false;
     bool m_clockVerifyAnnounced = false;
+    float m_brightnessSyncTimer = 0.f;
 
     Tab buildTabNow(int tabIndex);
     Tab makeLoadingTab(int tabIndex) const;

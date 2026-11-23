@@ -515,9 +515,10 @@ void IconStreamer::onPageChanged(int currentPage, int iconsPerPage,
     // newly registered descriptor was still being filled produced a black
     // screen on hardware even though the menu process stayed alive.
     int uploads = 0;
+    const int uploadBudget = uploadsPerFrame();
     for (size_t pendingIndex = 0;
          pendingIndex < m_pendingDecodes.size() &&
-         uploads < (inBurst() ? kBurstUploadsPerFrame : kUploadsPerFrame);) {
+         uploads < uploadBudget;) {
         auto& pending = m_pendingDecodes[pendingIndex];
         if (pending.future.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
             ++pendingIndex;
@@ -625,7 +626,7 @@ void IconStreamer::onPageChanged(int currentPage, int iconsPerPage,
             loadOrder.push_back(appIndex);
     }
     for (int appIndex : loadOrder) {
-        if ((int)m_pendingDecodes.size() >= (inBurst() ? kBurstMaxPendingDecodes : kMaxPendingDecodes))
+        if ((int)m_pendingDecodes.size() >= maxPendingDecodes())
             break;
         const bool stale = isArtStale(appIndex);
         if ((m_appToSlot[(size_t)appIndex] >= 0 && !stale) || !hasData(appIndex))
@@ -690,9 +691,7 @@ void IconStreamer::onPageChanged(int currentPage, int iconsPerPage,
             }
         }
         m_pendingDecodes.push_back(std::move(decode));
-        DebugLog::log("[streamer] scheduled title=0x%016lX app=%d pending=%d",
-                      static_cast<unsigned long>(titleId), appIndex,
-                      static_cast<int>(m_pendingDecodes.size()));
+        // Hot-path schedule logs hitch morph / soft-land frames — keep failures only.
     }
 }
 

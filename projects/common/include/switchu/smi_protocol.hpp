@@ -70,6 +70,9 @@ enum class SystemMessage : uint32_t {
 
     // Unlock→HOME while play-timer gated: clear soft Lock flag only (pctl still gates play).
     ParentalDismissLock   = 42,
+
+    // Menu is a library applet — lbl Apply often no-ops there. Daemon owns lbl.
+    SetBrightness         = 43,
 };
 
 enum class MenuStartMode : uint32_t {
@@ -132,6 +135,12 @@ struct InternetTimeSyncArgs {
     uint8_t _pad[7];
 };
 static_assert(sizeof(InternetTimeSyncArgs) == 8);
+
+struct BrightnessArgs {
+    float brightness; // 0..1
+    uint32_t _pad;
+};
+static_assert(sizeof(BrightnessArgs) == 8);
 
 struct OperationOutcome {
     uint64_t request_id;

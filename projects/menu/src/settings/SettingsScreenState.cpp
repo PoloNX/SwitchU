@@ -8,7 +8,9 @@
 #include "services/SystemTime.hpp"
 #include <nxui/core/I18n.hpp>
 #include <switch.h>
+#include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 
 namespace {
@@ -201,12 +203,62 @@ void SettingsScreen::prefetchOneTab() {
     }
 }
 
+void SettingsScreen::syncDisplayBrightnessFromSystem() {
+#ifdef __SWITCH__
+    // Display tab is index 4 (see buildTabs). Brightness is its first slider.
+    constexpr int kDisplayTab = 4;
+    if (m_tabIndex != kDisplayTab || m_tabIndex < 0 || m_tabIndex >= (int)m_tabs.size())
+        return;
+    if (!m_loadedTabs.empty() && m_tabIndex < (int)m_loadedTabs.size()
+        && !m_loadedTabs[(size_t)m_tabIndex])
+        return;
+
+    auto& items = m_tabs[(size_t)m_tabIndex].items;
+    int brightnessRaw = -1;
+    for (int i = 0; i < (int)items.size(); ++i) {
+        if (items[i].type == ItemType::Slider) {
+            brightnessRaw = i;
+            break;
+        }
+    }
+    if (brightnessRaw < 0)
+        return;
+
+    // Skip while the user is adjusting that row.
+    if (m_focusArea == FocusArea::Content && focusableCount() > 0) {
+        const int raw = rawIndexFromFocusable(m_contentIdx);
+        if (raw == brightnessRaw)
+            return;
+    }
+
+    float b = 0.5f;
+    lblLoadCurrentSetting();
+    if (R_FAILED(lblGetBrightnessSettingAppliedToBacklight(&b))) {
+        if (R_FAILED(lblGetCurrentBrightnessSetting(&b)))
+            return;
+    }
+    b = std::clamp(b, 0.05f, 1.0f);
+
+    auto& item = items[brightnessRaw];
+    if (std::fabs(item.floatVal - b) > 0.008f) {
+        item.floatVal = b;
+        item.anim01 = b;
+    }
+#endif
+}
+
 void SettingsScreen::onContentUpdate(float dt) {
     pollTabLoaders();
     pollClockSync();
     pollClockVerify();
-    if (isActive())
+    if (isActive()) {
         prefetchOneTab();
+        m_brightnessSyncTimer += dt;
+        if (m_brightnessSyncTimer >= 0.45f) {
+            m_brightnessSyncTimer = 0.f;
+            syncDisplayBrightnessFromSystem();
+        }
+    }
     TabbedOverlayScreen::onContentUpdate(dt);
     pollTabLoaders();
     pollClockSync();

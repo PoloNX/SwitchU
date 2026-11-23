@@ -12,14 +12,36 @@
 #include <cmath>
 #include <cstdint>
 #include <unordered_map>
+#include <vector>
 static constexpr float kSettingsBlurRadius = 6.0f;
 static constexpr int kSettingsBlurIter = 1;
 
 namespace {
 
 static constexpr float kTabCardGap = 10.f;
-static constexpr float kContentCardInsetX = 18.f;
-static constexpr float kContentCardInsetY = 8.f;
+static constexpr float kContentCardInsetX = 16.f;
+static constexpr float kContentCardInsetY = 1.f;
+
+static bool isListChromeFree(TabbedOverlayScreen::ItemType type) {
+    return type == TabbedOverlayScreen::ItemType::Section
+        || type == TabbedOverlayScreen::ItemType::InfoDeck;
+}
+
+static float contentRowInsetY(TabbedOverlayScreen::ItemType type) {
+    if (type == TabbedOverlayScreen::ItemType::Section)
+        return 1.f;
+    if (type == TabbedOverlayScreen::ItemType::InfoDeck)
+        return 4.f;
+    return kContentCardInsetY;
+}
+
+static float contentRowShrink(TabbedOverlayScreen::ItemType type) {
+    if (type == TabbedOverlayScreen::ItemType::Section)
+        return 2.f;
+    if (type == TabbedOverlayScreen::ItemType::InfoDeck)
+        return 8.f;
+    return 2.f;
+}
 
 constexpr size_t kWrapHeightCacheLimit = 256;
 std::unordered_map<std::string, float> g_wrapHeightCache;
@@ -308,19 +330,20 @@ public:
         }
 
         if (theme) {
+            // Same list language as content rows: wash when selected, no tile outline.
             nxui::Color textColor = selected ? theme->textPrimary : theme->textSecondary;
-            nxui::Color baseColor = theme->panelBase.withAlpha(selected ? 0.94f : 0.88f);
-            nxui::Color borderColor = selected
-                ? theme->cursorNormal.withAlpha(focused ? 0.70f : 0.46f)
-                : theme->panelBorder.withAlpha(focused ? 0.34f : 0.22f);
-            nxui::Color hiColor = theme->panelHighlight.withAlpha(selected ? 0.12f : 0.06f);
+            const bool dark = theme->mode == nxui::ThemeMode::Dark;
+            nxui::Color baseColor = selected
+                ? theme->panelBase.withAlpha(dark ? 0.50f : 0.56f)
+                : theme->panelBase.withAlpha(0.f);
+            nxui::Color hiColor = theme->panelHighlight.withAlpha(selected ? 0.08f : 0.f);
 
             setBaseColor(baseColor);
-            setBorderColor(borderColor);
+            setBorderColor(theme->panelBorder.withAlpha(0.f));
             setHighlightColor(hiColor);
-            setBorderWidth(selected || focused ? 1.2f : 1.f);
-            setCornerRadius(m_iconOnly ? 14.f : 18.f);
-            setScale(selected ? 1.01f : 1.f);
+            setBorderWidth(0.f);
+            setCornerRadius(m_iconOnly ? 14.f : 14.f);
+            setScale(1.f);
 
             m_label->setTextColor(textColor);
         }
@@ -396,30 +419,39 @@ public:
 
     void sync(const nxui::Theme* theme, bool selected, float alpha) {
         const bool isSection = (m_item.type == TabbedOverlayScreen::ItemType::Section);
-        const bool isActionLike = m_item.type == TabbedOverlayScreen::ItemType::Action
-            || m_item.type == TabbedOverlayScreen::ItemType::Selector;
+        const bool isDeck = (m_item.type == TabbedOverlayScreen::ItemType::InfoDeck);
 
-        setCornerRadius(isSection ? 14.f : 18.f);
-        setBorderWidth(isSection ? 0.f : 1.f);
-        setScale(selected ? 1.008f : 1.f);
+        // List rows: no per-item outline. Focus wash only when selected.
+        // Info deck: recessed well vs the content sheet. Sections: invisible.
+        setCornerRadius(isDeck ? 18.f : (isSection ? 14.f : 12.f));
+        setBorderWidth(isDeck ? 1.f : 0.f);
+        setScale(1.f);
 
         if (theme) {
-            float baseAlpha = isSection ? 0.0f
-                : selected ? 0.95f
-                : isActionLike ? 0.91f
-                : m_item.focusable() ? 0.89f : 0.86f;
-            float borderAlpha = isSection ? 0.0f
-                : selected ? 0.58f
-                : isActionLike ? 0.30f : 0.24f;
-            float hiAlpha = selected ? 0.12f : (isSection ? 0.0f : 0.06f);
-
-            setBaseColor(theme->panelBase.withAlpha(baseAlpha));
-            setBorderColor((selected ? theme->cursorNormal : theme->panelBorder).withAlpha(borderAlpha));
-            setHighlightColor(theme->panelHighlight.withAlpha(hiAlpha));
+            if (isDeck) {
+                // Recessed well: readable vs the sheet, without the old black slab.
+                const bool dark = theme->mode == nxui::ThemeMode::Dark;
+                const nxui::Color well = nxui::Color::lerp(
+                    theme->panelBase,
+                    dark ? nxui::Color::black()
+                         : nxui::Color(0.52f, 0.55f, 0.62f, 1.f),
+                    dark ? 0.24f : 0.20f);
+                setBaseColor(well.withAlpha(dark ? 0.80f : 0.84f));
+                setBorderColor(theme->panelBorder.withAlpha(dark ? 0.24f : 0.16f));
+                setHighlightColor(theme->panelHighlight.withAlpha(dark ? 0.08f : 0.22f));
+            } else {
+                float baseAlpha = selected
+                    ? (theme->mode == nxui::ThemeMode::Dark ? 0.42f : 0.50f)
+                    : 0.f;
+                float hiAlpha = selected ? 0.06f : 0.f;
+                setBaseColor(theme->panelBase.withAlpha(baseAlpha));
+                setBorderColor(theme->panelBorder.withAlpha(0.f));
+                setHighlightColor(theme->panelHighlight.withAlpha(hiAlpha));
+            }
         }
 
-        float insetX = isSection ? 6.f : 14.f;
-        float insetY = isSection ? 4.f : 6.f;
+        float insetX = isSection ? 6.f : (isDeck ? 18.f : 10.f);
+        float insetY = isSection ? 4.f : (isDeck ? 16.f : 4.f);
         m_content->setRect({
             rect().x + insetX,
             rect().y + insetY,
@@ -542,9 +574,44 @@ TabbedOverlayScreen::~TabbedOverlayScreen() {
     nxui::I18n::instance().removeLanguageChangedListener(m_i18nListenerId);
 }
 
+float TabbedOverlayScreen::infoDeckHeight(const SettingItem& item) {
+    const int count = (int)item.deckEntries.size();
+    if (count <= 0)
+        return kSectionHeight;
+    const int cols = std::clamp(item.deckColumns, 1, 4);
+    float body = 0.f;
+    int valueInRow = 0;
+    for (int i = 0; i < count; ++i) {
+        const auto& e = item.deckEntries[(size_t)i];
+        if (e.header) {
+            if (valueInRow > 0) {
+                body += kInfoDeckCellH + kInfoDeckGapY;
+                valueInRow = 0;
+            }
+            body += kInfoDeckHeaderH;
+            if (e.progress >= 0.f)
+                body += 10.f;
+            body += kInfoDeckGapY;
+            continue;
+        }
+        ++valueInRow;
+        if (valueInRow >= cols) {
+            body += kInfoDeckCellH + kInfoDeckGapY;
+            valueInRow = 0;
+        }
+    }
+    if (valueInRow > 0)
+        body += kInfoDeckCellH + kInfoDeckGapY;
+    if (body > kInfoDeckGapY)
+        body -= kInfoDeckGapY;
+    // Pad matches SettingsItemCard deck insets; +8 matches contentRowShrink(InfoDeck).
+    return body + kInfoDeckPadY * 2.f + 8.f;
+}
+
 float TabbedOverlayScreen::itemHeight(const SettingItem& item, float contentWidth) const {
     if (item.hidden) return 0.f;
     if (item.type == ItemType::Section) return kSectionHeight;
+    if (item.type == ItemType::InfoDeck) return infoDeckHeight(item);
 
     float height = kRowHeight;
     if (item.wrapLabel) {
@@ -576,8 +643,8 @@ void TabbedOverlayScreen::setTheme(const nxui::Theme* t) {
         return;
 
     setBaseColor(m_theme->panelBase.withAlpha(m_theme->mode == nxui::ThemeMode::Dark ? 0.95f : 0.96f));
-    setBorderColor(m_theme->panelBorder.withAlpha(0.42f));
-    setHighlightColor(m_theme->panelHighlight.withAlpha(0.10f));
+    setBorderColor(m_theme->panelBorder.withAlpha(0.28f));
+    setHighlightColor(m_theme->panelHighlight.withAlpha(0.08f));
     setLiquidGlassShade(m_theme->mode == nxui::ThemeMode::Dark ? 0.08f : -0.03f);
     invalidateBackdropCache();
 
@@ -780,13 +847,12 @@ void TabbedOverlayScreen::activateTopRailSlot(int slot) {
         m_contentIdx = 0;
         m_scrollY = 0.f;
         m_scrollTarget = 0.f;
-        m_tabReveal.setImmediate(0.f);
-        m_tabReveal.set(1.f, 0.24f, nxui::Easing::outCubic);
+        // Keep the tab rail static for L/R / shoulder flicks — no drop/fade/accent bounce.
+        m_tabReveal.setImmediate(1.f);
+        m_tabAccentW.setImmediate(3.f);
         m_contentSlideAnim.setImmediate(0.f);
-        m_contentSlideAnim.set(1.f, 0.28f, nxui::Easing::outCubic);
+        m_contentSlideAnim.set(1.f, 0.20f, nxui::Easing::outCubic);
         m_contentStaggerT = 0.f;
-        m_tabAccentW.setImmediate(1.f);
-        m_tabAccentW.set(3.f, 0.32f, nxui::Easing::outExpo);
         closeDropdown(false);
         rebuildContentItems();
     }
@@ -840,8 +906,8 @@ void TabbedOverlayScreen::rebuildContentItems() {
         float y = 0.f;
         for (int i = 0; i < (int)items.size(); ++i) {
             float h = itemHeight(items[i], cr.width);
-            float insetY = (items[i].type == ItemType::Section) ? 1.f : kContentCardInsetY;
-            float cardH = std::max(0.f, h - (items[i].type == ItemType::Section ? 2.f : 6.f));
+            float insetY = contentRowInsetY(items[i].type);
+            float cardH = std::max(0.f, h - contentRowShrink(items[i].type));
             auto itemBox = makeItemWidget(items[i]);
             itemBox->setTag(items[i].label);
             itemBox->setRect({cr.x + kContentCardInsetX, cr.y + y + insetY,
@@ -888,18 +954,13 @@ void TabbedOverlayScreen::onRender(nxui::Renderer& ren) {
         const nxui::Color border = m_theme
             ? m_theme->panelBorder
             : nxui::Color::white().withAlpha(0.18f);
-        const nxui::Color highlight = m_theme
-            ? m_theme->panelHighlight
-            : nxui::Color::white().withAlpha(0.08f);
         ren.drawRoundedRect({p.x, p.y + 7.f, p.width, p.height},
-                            nxui::Color(0.f, 0.f, 0.f, 0.20f * opacity * chrome),
+                            nxui::Color(0.f, 0.f, 0.f, 0.16f * opacity * chrome),
                             kPanelRadius);
         ren.drawRoundedRect(p, panel.withAlpha(0.98f * opacity * chrome), kPanelRadius);
-        ren.drawRoundedRectOutline(p.shrunk(1.f),
-                                   highlight.withAlpha(0.28f * opacity * chrome),
-                                   std::max(0.f, kPanelRadius - 1.f), 1.f);
-        ren.drawRoundedRectOutline(p, border.withAlpha(0.72f * opacity * chrome),
-                                   kPanelRadius, 1.5f);
+        // Single quiet edge — nested tab/content boxes already frame the interior.
+        ren.drawRoundedRectOutline(p, border.withAlpha(0.42f * opacity * chrome),
+                                   kPanelRadius, 1.15f);
     }
 
     onContentRender(ren);
@@ -954,8 +1015,8 @@ void TabbedOverlayScreen::syncDebugWireframeRects(const nxui::Rect& panel) {
     int n = std::min((int)itemChildren.size(), (int)items.size());
     for (int i = 0; i < n; ++i) {
         float h = itemHeight(items[i], cr.width);
-        float insetY = (items[i].type == ItemType::Section) ? 1.f : kContentCardInsetY;
-        float cardH = std::max(0.f, h - (items[i].type == ItemType::Section ? 2.f : 6.f));
+        float insetY = contentRowInsetY(items[i].type);
+        float cardH = std::max(0.f, h - contentRowShrink(items[i].type));
         itemChildren[i]->setRect({x + kContentCardInsetX, y + insetY,
                                   std::max(0.f, cr.width - kContentCardInsetX * 2.f), cardH});
         y += h;
@@ -983,10 +1044,10 @@ void TabbedOverlayScreen::drawTabs(nxui::Renderer& ren, const nxui::Rect& panel,
     tabPanel->setRect(tr);
     tabPanel->setOpacity(opacity);
     tabPanel->setCornerRadius(topRail ? 20.f : 24.f);
-    tabPanel->setBorderWidth(1.f);
-    tabPanel->setBaseColor(m_theme->panelBase.withAlpha(m_theme->mode == nxui::ThemeMode::Dark ? 0.94f : 0.96f));
-    tabPanel->setBorderColor(m_theme->panelBorder.withAlpha(0.30f));
-    tabPanel->setHighlightColor(m_theme->panelHighlight.withAlpha(0.08f));
+    tabPanel->setBorderWidth(0.f);
+    tabPanel->setBaseColor(m_theme->panelBase.withAlpha(0.f));
+    tabPanel->setBorderColor(m_theme->panelBorder.withAlpha(0.f));
+    tabPanel->setHighlightColor(m_theme->panelHighlight.withAlpha(0.f));
     tabPanel->setPanelOpacity(1.f);
 
     auto& tabChildren = m_tabBar->children();
@@ -1044,14 +1105,14 @@ void TabbedOverlayScreen::drawTabs(nxui::Renderer& ren, const nxui::Rect& panel,
             tabY += tabH + kTabCardGap;
             const float extra = tabBranchExtraHeight(i);
             if (extra > 0.5f) {
-                // Same card height as parent tabs (pitch minus gap), just indented.
+                // Peer row: same width/alignment as parent tabs (Theme Shop / Icon Shop).
                 const float branchH = std::max(0.f, std::min(tabH, extra - kTabCardGap));
                 branchDraws.push_back({
                     i,
                     {
-                        tr.x + kTabRailInset + 20.f,
+                        tr.x + kTabRailInset,
                         tabY + rowYOffset,
-                        std::max(0.f, tabW - 20.f),
+                        tabW,
                         branchH
                     }
                 });
@@ -1073,6 +1134,50 @@ void TabbedOverlayScreen::drawTabs(nxui::Renderer& ren, const nxui::Rect& panel,
     m_tabBar->render(ren);
     for (const auto& branch : branchDraws)
         drawTabBranch(ren, branch.index, branch.rect, rowOpacity);
+
+    // Hairline separators between tabs (same language as content dividers).
+    if (m_theme && tabChildren.size() > 1) {
+        const nxui::Color div = m_theme->panelBorder.withAlpha(
+            (m_theme->mode == nxui::ThemeMode::Dark ? 0.16f : 0.12f) * rowOpacity);
+        const int slotCount = topRail
+            ? std::min((int)tabChildren.size(), topRailSlotCount())
+            : std::min((int)tabChildren.size(), (int)m_tabs.size());
+        if (topRail) {
+            for (int i = 0; i + 1 < slotCount; ++i) {
+                const nxui::Rect a = tabChildren[i]->rect();
+                const nxui::Rect b = tabChildren[i + 1]->rect();
+                if (a.width <= 1.f || b.width <= 1.f)
+                    continue;
+                const float x = (a.right() + b.x) * 0.5f;
+                const float y0 = a.y + 10.f;
+                const float h = std::max(0.f, a.height - 20.f);
+                if (h > 4.f)
+                    ren.drawRect({x - 0.5f, y0, 1.f, h}, div);
+            }
+        } else {
+            // Visual peer rows: parent tabs + any shop branch under Themes/Icons.
+            std::vector<nxui::Rect> rows;
+            rows.reserve((size_t)slotCount + branchDraws.size());
+            for (int i = 0; i < slotCount; ++i) {
+                const nxui::Rect a = tabChildren[i]->rect();
+                if (a.width > 1.f)
+                    rows.push_back(a);
+                for (const auto& branch : branchDraws) {
+                    if (branch.index == i && branch.rect.width > 1.f)
+                        rows.push_back(branch.rect);
+                }
+            }
+            for (size_t i = 0; i + 1 < rows.size(); ++i) {
+                const nxui::Rect& a = rows[i];
+                const nxui::Rect& b = rows[i + 1];
+                const float y = (a.bottom() + b.y) * 0.5f;
+                const float x0 = a.x + 14.f;
+                const float w = std::max(0.f, a.width - 28.f);
+                if (w > 8.f)
+                    ren.drawRect({x0, y - 0.5f, w, 1.f}, div);
+            }
+        }
+    }
     ren.popClipRect();
 
     if (topRail) {
@@ -1099,12 +1204,8 @@ void TabbedOverlayScreen::drawTabs(nxui::Renderer& ren, const nxui::Rect& panel,
                                 m_theme->panelBase.withAlpha(0.94f * opacity), 18.f);
             ren.drawRoundedRectOutline(
                 pill,
-                m_theme->cursorNormal.withAlpha(0.52f * opacity),
-                18.f, 1.2f);
-            ren.drawRoundedRectOutline(
-                pill.shrunk(1.f),
-                m_theme->panelHighlight.withAlpha(0.22f * opacity),
-                17.f, 1.f);
+                m_theme->cursorNormal.withAlpha(0.34f * opacity),
+                18.f, 1.1f);
 
             // Same top-left drawText convention as nxui::Label (not baseline).
             constexpr float kUnderlineReserve = 7.f;
@@ -1150,8 +1251,8 @@ void TabbedOverlayScreen::drawContent(nxui::Renderer& ren, const nxui::Rect& pan
     contentPanel->setBorderWidth(chrome > 0.01f ? 1.f : 0.f);
     contentPanel->setBaseColor(m_theme->panelBase.withAlpha(
         (m_theme->mode == nxui::ThemeMode::Dark ? 0.94f : 0.96f) * chrome));
-    contentPanel->setBorderColor(m_theme->panelBorder.withAlpha(0.30f * chrome));
-    contentPanel->setHighlightColor(m_theme->panelHighlight.withAlpha(0.08f * chrome));
+    contentPanel->setBorderColor(m_theme->panelBorder.withAlpha(0.12f * chrome));
+    contentPanel->setHighlightColor(m_theme->panelHighlight.withAlpha(0.05f * chrome));
     contentPanel->setPanelOpacity(chrome);
 
     if (usesCustomContentLayout()) {
@@ -1173,6 +1274,15 @@ void TabbedOverlayScreen::drawContent(nxui::Renderer& ren, const nxui::Rect& pan
     float x = cr.x;
     int visibleRank = 0;
     int n = std::min((int)itemChildren.size(), (int)items.size());
+    struct DividerLine {
+        float y = 0.f;
+        float x = 0.f;
+        float w = 0.f;
+        float a = 1.f;
+    };
+    std::vector<DividerLine> dividers;
+    dividers.reserve((size_t)std::max(0, n));
+
     for (int i = 0; i < n; ++i) {
         float h = itemHeight(items[i], cr.width);
         if (items[i].hidden || h <= 0.f) {
@@ -1180,8 +1290,8 @@ void TabbedOverlayScreen::drawContent(nxui::Renderer& ren, const nxui::Rect& pan
             itemChildren[i]->setVisible(false);
             continue;
         }
-        float insetY = (items[i].type == ItemType::Section) ? 1.f : kContentCardInsetY;
-        float cardH = std::max(0.f, h - (items[i].type == ItemType::Section ? 2.f : 6.f));
+        float insetY = contentRowInsetY(items[i].type);
+        float cardH = std::max(0.f, h - contentRowShrink(items[i].type));
         nxui::Rect itemRect = {
             x + kContentCardInsetX,
             y + insetY,
@@ -1223,6 +1333,21 @@ void TabbedOverlayScreen::drawContent(nxui::Renderer& ren, const nxui::Rect& pan
             && items[i].hasSecondaryAction();
         card->sync(m_theme, multiButton ? false : selected, rowOpacity);
 
+        // Hairline between list rows (not under decks / sections / last-before-section).
+        if (!isListChromeFree(items[i].type)) {
+            int next = i + 1;
+            while (next < n && items[next].hidden)
+                ++next;
+            if (next < n && !isListChromeFree(items[next].type)) {
+                dividers.push_back({
+                    itemRect.bottom() + 0.5f,
+                    itemRect.x + 8.f,
+                    std::max(0.f, itemRect.width - 16.f),
+                    rowOpacity
+                });
+            }
+        }
+
         if (selected) {
             if (multiButton) {
                 const nxui::Rect& hit = items[i].actionButtonFocus == 1
@@ -1230,10 +1355,10 @@ void TabbedOverlayScreen::drawContent(nxui::Renderer& ren, const nxui::Rect& pan
                 if (hit.width > 1.f && hit.height > 1.f)
                     m_focusCursor.moveTo(hit.expanded(3.f), 12.f, 0.08f);
                 else
-                    m_focusCursor.moveTo(itemChildren[i]->rect().expanded(1.f), 18.f, 0.08f);
+                    m_focusCursor.moveTo(itemChildren[i]->rect().expanded(1.f), 14.f, 0.08f);
             } else {
                 m_focusCursor.moveTo(itemChildren[i]->rect().expanded(1.f),
-                                     items[i].type == ItemType::Section ? 14.f : 18.f,
+                                     items[i].type == ItemType::Section ? 14.f : 12.f,
                                      0.08f);
             }
         }
@@ -1242,6 +1367,15 @@ void TabbedOverlayScreen::drawContent(nxui::Renderer& ren, const nxui::Rect& pan
 
     ren.pushClipRect(cr);
     m_tabContent->render(ren);
+    if (m_theme) {
+        const nxui::Color div = m_theme->panelBorder.withAlpha(
+            (m_theme->mode == nxui::ThemeMode::Dark ? 0.16f : 0.12f));
+        for (const auto& d : dividers) {
+            if (d.w <= 1.f || d.a <= 0.01f)
+                continue;
+            ren.drawRect({d.x, d.y, d.w, 1.f}, div.withAlpha(div.a * d.a * chrome));
+        }
+    }
     ren.popClipRect();
 
     float totalH = contentTotalHeight() + 16.f;

@@ -554,8 +554,8 @@ private:
     void stopEditGhost();
     void updateEditGhost(float dt);
     // Re-anchor move-mode placement after the grid model changes (folder
-    // open/close, rebuild). preferEmptySlot is used when dropping into a
-    // folder so the cursor starts on a free cell instead of a stale root index.
+    // open/close, rebuild). preferEmptySlot picks a free cell on the *current*
+    // page only — never yank the user onto a later blank page when page 0 is full.
     void syncEditPlacementAfterModelChange(bool preferEmptySlot);
     bool commitEditModePlacement();
     bool activateEditModeTarget();
@@ -982,6 +982,9 @@ private:
     std::vector<AppEntry> m_allApps;
     std::uint32_t m_openFolderId = 0;
     std::uint32_t m_requestedFolderId = 0;
+    // Last page the user was on inside a given folder (restored on reopen).
+    std::uint32_t m_folderResumePageId = 0;
+    int m_folderResumePage = 0;
     std::uint64_t m_folderOpenFocusTitleId = 0;
     /// Leave-splash folder restore deferred until HUD/layers exist (frosted capture).
     std::uint32_t m_leaveRestoreFolderId = 0;

@@ -1,5 +1,6 @@
 #include "QuickSettingsOverlay.hpp"
 #include "core/DebugLog.hpp"
+#include "smi_commands.hpp"
 
 #include <nxui/core/Renderer.hpp>
 #include <nxui/core/I18n.hpp>
@@ -570,7 +571,7 @@ QuickSettingsOverlay::QuickSettingsOverlay() {
     setFrameworkTouchEnabled(false);
 
     m_cursor.setBorderWidth(2.6f);
-    m_cursor.setColor(nxui::Color(0.12f, 0.76f, 0.98f, 1.f));
+    m_cursor.setColor(nxui::Color(0.38f, 0.62f, 1.f, 1.f));
 
     setupNavigationActions();
 }
@@ -1334,6 +1335,14 @@ void QuickSettingsOverlay::activateMusicControl() {
         updateCursorTarget();
 }
 
+bool QuickSettingsOverlay::wantsFastNavRepeat() const {
+    if (!m_active)
+        return false;
+    return m_selectedItem == ItemIndex::Brightness
+        || m_selectedItem == ItemIndex::BgmVolume
+        || m_selectedItem == ItemIndex::SfxVolume;
+}
+
 void QuickSettingsOverlay::setupNavigationActions() {
     addDirectionAction(nxui::FocusDirection::UP, [this]() {
         if (!m_active) return;
@@ -1554,6 +1563,12 @@ void QuickSettingsOverlay::setupNavigationActions() {
             case ItemIndex::Brightness:
                 adjustSlider(ItemIndex::Brightness, -0.05f);
                 break;
+            case ItemIndex::BgmVolume:
+                adjustSlider(ItemIndex::BgmVolume, -0.05f);
+                break;
+            case ItemIndex::SfxVolume:
+                adjustSlider(ItemIndex::SfxVolume, -0.05f);
+                break;
             case ItemIndex::MusicTransport:
                 cycleMusicControl(-1);
                 break;
@@ -1565,12 +1580,6 @@ void QuickSettingsOverlay::setupNavigationActions() {
                 if (m_callbacks.onNavigateSfx) m_callbacks.onNavigateSfx();
                 break;
             }
-            case ItemIndex::BgmVolume:
-                adjustSlider(ItemIndex::BgmVolume, -0.05f);
-                break;
-            case ItemIndex::SfxVolume:
-                adjustSlider(ItemIndex::SfxVolume, -0.05f);
-                break;
             case ItemIndex::Wifi:
                 m_selectedItem = ItemIndex::AirplaneMode;
                 updateCursorTarget();
@@ -1632,6 +1641,12 @@ void QuickSettingsOverlay::setupNavigationActions() {
             case ItemIndex::Brightness:
                 adjustSlider(ItemIndex::Brightness, 0.05f);
                 break;
+            case ItemIndex::BgmVolume:
+                adjustSlider(ItemIndex::BgmVolume, 0.05f);
+                break;
+            case ItemIndex::SfxVolume:
+                adjustSlider(ItemIndex::SfxVolume, 0.05f);
+                break;
             case ItemIndex::MusicTransport:
                 cycleMusicControl(1);
                 break;
@@ -1645,12 +1660,6 @@ void QuickSettingsOverlay::setupNavigationActions() {
                 if (m_callbacks.onNavigateSfx) m_callbacks.onNavigateSfx();
                 break;
             }
-            case ItemIndex::BgmVolume:
-                adjustSlider(ItemIndex::BgmVolume, 0.05f);
-                break;
-            case ItemIndex::SfxVolume:
-                adjustSlider(ItemIndex::SfxVolume, 0.05f);
-                break;
             case ItemIndex::AirplaneMode:
                 m_selectedItem = ItemIndex::Wifi;
                 updateCursorTarget();
@@ -1953,11 +1962,35 @@ void QuickSettingsOverlay::hide() {
     DebugLog::log("[quicksettings] hiding");
 }
 
+namespace {
+
+#ifdef __SWITCH__
+// Prefer the value applied to the panel so Tesla / stock overlays stay in sync.
+// CurrentBrightnessSetting alone can lag when another process changed backlight.
+bool readLiveBrightness(float& out) {
+    float b = 0.5f;
+    lblLoadCurrentSetting();
+    if (R_SUCCEEDED(lblGetBrightnessSettingAppliedToBacklight(&b))
+        || R_SUCCEEDED(lblGetCurrentBrightnessSetting(&b))) {
+        out = std::clamp(b, 0.05f, 1.0f);
+        return true;
+    }
+    return false;
+}
+#endif
+
+} // namespace
+
 void QuickSettingsOverlay::refreshHardwareStatus() {
 #ifdef __SWITCH__
-    float b = 0.5f;
-    if (R_SUCCEEDED(lblGetCurrentBrightnessSetting(&b))) {
-        m_brightness = std::clamp(b, 0.05f, 1.0f);
+    // Don't yank the knob while the user is editing it (touch or D-pad).
+    const bool editingBrightness =
+        (m_draggingSlider && m_draggedSlider == ItemIndex::Brightness)
+        || m_brightnessEditCooldown > 0.f;
+    float b = m_brightness;
+    if (!editingBrightness && readLiveBrightness(b)) {
+        if (std::fabs(b - m_brightness) > 0.008f)
+            m_brightness = b;
     }
 
     bool ap = false;
@@ -2044,7 +2077,9 @@ void QuickSettingsOverlay::adjustSlider(ItemIndex item, float delta, bool playSf
 
 #ifdef __SWITCH__
     if (item == ItemIndex::Brightness) {
-        lblSetCurrentBrightnessSetting(*target);
+        // Daemon owns lbl — library-applet Apply does not move the panel.
+        switchu::menu::smi_cmd::setBrightness(*target);
+        m_brightnessEditCooldown = 0.40f;
     }
 #endif
 
@@ -2545,9 +2580,13 @@ void QuickSettingsOverlay::update(float dt) {
             m_coverFsPlaylistAnim = std::max(fsPlTarget, m_coverFsPlaylistAnim - step);
     }
 
+    if (m_brightnessEditCooldown > 0.f)
+        m_brightnessEditCooldown = std::max(0.f, m_brightnessEditCooldown - dt);
+
     if (isFullyVisible()) {
         m_statusPollTimer += dt;
-        if (m_statusPollTimer >= 1.0f) {
+        // Brightness can change under us via Tesla / system overlay — poll often.
+        if (m_statusPollTimer >= 0.45f) {
             m_statusPollTimer = 0.f;
             refreshHardwareStatus();
         }
@@ -2875,38 +2914,41 @@ void QuickSettingsOverlay::render(nxui::Renderer& ren) {
 
     nxui::Rect panel = computePanelRect();
     const bool lightMode = m_theme && m_theme->mode == nxui::ThemeMode::Light;
-    nxui::Color panelFill = lightMode
-        ? nxui::Color(0.96f, 0.97f, 0.99f, 0.97f * alpha)
-        : (m_theme
-            ? m_theme->panelBase.withAlpha(0.92f * alpha)
-            : nxui::Color(0.10f, 0.13f, 0.18f, 0.90f * alpha));
+    const float panelRadius = m_theme ? m_theme->panelCornerRadius : 18.f;
+    nxui::Color panelFill = m_theme
+        ? m_theme->panelBase.withAlpha((lightMode ? 0.97f : 0.94f) * alpha)
+        : nxui::Color(0.12f, 0.13f, 0.16f, 0.94f * alpha);
 
-    const nxui::Color primaryText = lightMode
-        ? nxui::Color(0.06f, 0.07f, 0.09f, alpha)
-        : nxui::Color(1.f, 1.f, 1.f, alpha);
-    const nxui::Color secondaryText = lightMode
-        ? nxui::Color(0.18f, 0.20f, 0.24f, 0.90f * alpha)
-        : nxui::Color(0.92f, 0.94f, 0.98f, 0.90f * alpha);
-    const nxui::Color mutedText = lightMode
-        ? nxui::Color(0.31f, 0.34f, 0.40f, alpha)
-        : nxui::Color(0.65f, 0.72f, 0.82f, alpha);
-    const nxui::Color neutralBorder = lightMode
-        ? nxui::Color(0.08f, 0.10f, 0.14f, 0.14f * alpha)
-        : nxui::Color(1.f, 1.f, 1.f, 0.14f * alpha);
+    const nxui::Color primaryText = m_theme
+        ? m_theme->textPrimary.withAlpha(alpha)
+        : (lightMode ? nxui::Color(0.08f, 0.09f, 0.12f, alpha)
+                     : nxui::Color(0.96f, 0.97f, 0.99f, alpha));
+    const nxui::Color secondaryText = m_theme
+        ? m_theme->textSecondary.withAlpha(0.92f * alpha)
+        : (lightMode ? nxui::Color(0.28f, 0.30f, 0.36f, 0.90f * alpha)
+                     : nxui::Color(0.70f, 0.73f, 0.80f, 0.90f * alpha));
+    const nxui::Color mutedText = m_theme
+        ? m_theme->textSecondary.withAlpha(0.72f * alpha)
+        : (lightMode ? nxui::Color(0.31f, 0.34f, 0.40f, alpha)
+                     : nxui::Color(0.65f, 0.72f, 0.82f, alpha));
+    const nxui::Color neutralBorder = m_theme
+        ? m_theme->panelBorder.withAlpha(m_theme->panelBorder.a * alpha)
+        : (lightMode ? nxui::Color(0.08f, 0.10f, 0.14f, 0.14f * alpha)
+                     : nxui::Color(1.f, 1.f, 1.f, 0.14f * alpha));
     nxui::Color cursorColor = m_theme
         ? m_theme->cursorNormal.withAlpha(alpha)
-        : nxui::Color(0.12f, 0.76f, 0.98f, alpha);
+        : nxui::Color(0.38f, 0.62f, 1.f, alpha);
 
-    nxui::Color cardFill = lightMode
-        ? nxui::Color(1.f, 1.f, 1.f, 0.86f * alpha)
-        : (m_theme
-            ? m_theme->panelHighlight.withAlpha(0.08f * alpha)
-            : nxui::Color(1.f, 1.f, 1.f, 0.07f * alpha));
+    nxui::Color cardFill = m_theme
+        ? (lightMode
+            ? nxui::Color::white().withAlpha(0.86f * alpha)
+            : m_theme->panelHighlight.withAlpha(0.10f * alpha))
+        : nxui::Color(1.f, 1.f, 1.f, 0.07f * alpha);
 
     if (m_playlistAnim > 0.001f) {
         nxui::Rect pl = computePlaylistRect();
-        ren.drawRoundedRect(pl, panelFill, 24.f);
-        ren.drawRoundedRectOutline(pl, neutralBorder, 24.f, 1.2f);
+        ren.drawRoundedRect(pl, panelFill, panelRadius);
+        ren.drawRoundedRectOutline(pl, neutralBorder, panelRadius, 1.2f);
 
         refreshCoverTexture(ren);
         if (m_coverFullscreenPending && m_coverTex.valid()) {
@@ -3080,17 +3122,18 @@ void QuickSettingsOverlay::render(nxui::Renderer& ren) {
         }
     }
 
-    ren.drawRoundedRect(panel, panelFill, 24.f);
+    ren.drawRoundedRect(panel, panelFill, panelRadius);
 
     nxui::Color borderColor = m_theme
         ? m_theme->panelBorder.withAlpha((lightMode ? 0.48f : 0.28f) * alpha)
         : nxui::Color(1.f, 1.f, 1.f, 0.22f * alpha);
-    ren.drawRoundedRectOutline(panel, borderColor, 24.f, 1.2f);
+    ren.drawRoundedRectOutline(panel, borderColor, panelRadius, 1.2f);
 
     nxui::Color highlightColor = m_theme
         ? m_theme->panelHighlight.withAlpha((lightMode ? 0.32f : 0.08f) * alpha)
         : nxui::Color(1.f, 1.f, 1.f, 0.08f * alpha);
-    ren.drawRoundedRectOutline(panel.shrunk(1.f), highlightColor, 23.f, 1.0f);
+    ren.drawRoundedRectOutline(panel.shrunk(1.f), highlightColor,
+                               std::max(0.f, panelRadius - 1.f), 1.0f);
 
     float cx = panel.x + 22.f;
     // Match slider / toggle / music card outer width (cx - 4, cw + 8).
@@ -3133,11 +3176,21 @@ void QuickSettingsOverlay::render(nxui::Renderer& ren) {
         std::string chgText = m_batteryCharging
             ? i18n.tr("quicksettings.charging", "Charging")
             : i18n.tr("quicksettings.discharging", "Discharging");
+        // Legacy "⚡ Charging" double-draws via emoji font fallback on Switch.
+        static constexpr const char* kBoltUtf8 = "\xE2\x9A\xA1";
+        if (chgText.rfind(kBoltUtf8, 0) == 0) {
+            chgText.erase(0, 3);
+            while (!chgText.empty() && chgText.front() == ' ')
+                chgText.erase(chgText.begin());
+        }
         nxui::Color chgCol = m_batteryCharging
             ? nxui::Color(0.25f, 0.90f, 0.45f, alpha)
             : mutedText;
-        ren.drawText(chgText, {statusCard.x + 12.f + pctSz.x * valueScale + 8.f, infoY},
-                     m_smallFont, chgCol, 0.72f);
+        const float chgScale = 0.72f;
+        const float chgX = statusCard.x + 12.f + pctSz.x * valueScale + 8.f;
+        const float chgMaxW = std::max(0.f, (statusCard.x + cardW * 0.5f - 10.f) - chgX);
+        chgText = ellipsize(m_smallFont, chgText, chgMaxW, chgScale);
+        ren.drawText(chgText, {chgX, infoY}, m_smallFont, chgCol, chgScale);
 
         float rx = statusCard.x + cardW * 0.5f + 12.f;
         ren.drawText(i18n.tr("quicksettings.hardware_temp", "THERMALS"),

@@ -22,7 +22,9 @@ std::string itemTypeName(TabbedOverlayScreen::ItemType type) {
         case TabbedOverlayScreen::ItemType::Selector: return i18n.tr("accessibility.roles.selector", "selector");
         case TabbedOverlayScreen::ItemType::Action: return i18n.tr("accessibility.roles.button", "button");
         case TabbedOverlayScreen::ItemType::Progress: return i18n.tr("accessibility.roles.progress", "progress");
-        case TabbedOverlayScreen::ItemType::Info: return i18n.tr("accessibility.roles.info", "information");
+        case TabbedOverlayScreen::ItemType::Info:
+        case TabbedOverlayScreen::ItemType::InfoDeck:
+            return i18n.tr("accessibility.roles.info", "information");
         case TabbedOverlayScreen::ItemType::Section: return i18n.tr("accessibility.roles.section", "section");
     }
     return {};
@@ -52,6 +54,10 @@ std::string itemValueText(const TabbedOverlayScreen::SettingItem& item) {
         case TabbedOverlayScreen::ItemType::Info:
         case TabbedOverlayScreen::ItemType::Progress:
             return item.infoText;
+        case TabbedOverlayScreen::ItemType::InfoDeck:
+            if (item.deckEntries.empty())
+                return {};
+            return item.deckEntries.front().value;
         default:
             return {};
     }
@@ -341,6 +347,20 @@ void TabbedOverlayScreen::onPressX() {
     announceCurrentFocus();
 }
 
+bool TabbedOverlayScreen::wantsFastNavRepeat() const {
+    if (!m_active || m_animating || m_focusArea != FocusArea::Content)
+        return false;
+    if (m_tabIndex < 0 || m_tabIndex >= (int)m_tabs.size())
+        return false;
+    if (m_contentIdx < 0 || m_contentIdx >= focusableCount())
+        return false;
+    const int raw = rawIndexFromFocusable(m_contentIdx);
+    const auto& items = m_tabs[m_tabIndex].items;
+    if (raw < 0 || raw >= (int)items.size())
+        return false;
+    return items[raw].type == ItemType::Slider;
+}
+
 void TabbedOverlayScreen::onNavUp() {
     if (!m_active || m_animating) return;
     // Always offer custom nav first (Theme Shop Icon Shop sits between Icons and
@@ -365,8 +385,7 @@ void TabbedOverlayScreen::onNavUp() {
             m_contentSlideAnim.setImmediate(0.f);
             m_contentSlideAnim.set(1.f, 0.28f, nxui::Easing::outCubic);
             m_contentStaggerT = 0.f;
-            m_tabAccentW.setImmediate(1.f);
-            m_tabAccentW.set(3.f, 0.32f, nxui::Easing::outExpo);
+            m_tabAccentW.setImmediate(3.f);
             closeDropdown(false);
             rebuildContentItems();
             if (m_navSfxCb) m_navSfxCb();
@@ -450,8 +469,7 @@ void TabbedOverlayScreen::onNavDown() {
             m_contentSlideAnim.setImmediate(0.f);
             m_contentSlideAnim.set(1.f, 0.28f, nxui::Easing::outCubic);
             m_contentStaggerT = 0.f;
-            m_tabAccentW.setImmediate(1.f);
-            m_tabAccentW.set(3.f, 0.32f, nxui::Easing::outExpo);
+            m_tabAccentW.setImmediate(3.f);
             closeDropdown(false);
             rebuildContentItems();
             if (m_navSfxCb) m_navSfxCb();
@@ -530,8 +548,7 @@ void TabbedOverlayScreen::onNavLeft() {
             m_contentSlideAnim.setImmediate(0.f);
             m_contentSlideAnim.set(1.f, 0.28f, nxui::Easing::outCubic);
             m_contentStaggerT = 0.f;
-            m_tabAccentW.setImmediate(1.f);
-            m_tabAccentW.set(3.f, 0.32f, nxui::Easing::outExpo);
+            m_tabAccentW.setImmediate(3.f);
             closeDropdown(false);
             rebuildContentItems();
             if (m_navSfxCb) m_navSfxCb();
@@ -588,8 +605,7 @@ void TabbedOverlayScreen::onNavRight() {
                 m_contentSlideAnim.setImmediate(0.f);
                 m_contentSlideAnim.set(1.f, 0.28f, nxui::Easing::outCubic);
                 m_contentStaggerT = 0.f;
-                m_tabAccentW.setImmediate(1.f);
-                m_tabAccentW.set(3.f, 0.32f, nxui::Easing::outExpo);
+                m_tabAccentW.setImmediate(3.f);
                 closeDropdown(false);
                 rebuildContentItems();
                 if (m_navSfxCb) m_navSfxCb();
@@ -666,15 +682,25 @@ void TabbedOverlayScreen::handleTouch(nxui::Input& input) {
         return;
 
     constexpr float kContentTopPad = 16.f;
-    constexpr float kCardInsetX = 18.f;
-    constexpr float kCardInsetY = 8.f;
+    constexpr float kCardInsetX = 16.f;
+    constexpr float kCardInsetY = 1.f;
+    auto rowInsetY = [](ItemType type) {
+        if (type == ItemType::Section) return 1.f;
+        if (type == ItemType::InfoDeck) return 4.f;
+        return kCardInsetY;
+    };
+    auto rowShrink = [](ItemType type) {
+        if (type == ItemType::Section) return 2.f;
+        if (type == ItemType::InfoDeck) return 8.f;
+        return 2.f;
+    };
 
     auto clampScrollTarget = [this, &cr](float value) {
         float maxScroll = std::max(0.f, contentTotalHeight() + kContentTopPad - cr.height + 20.f);
         return std::clamp(value, 0.f, maxScroll);
     };
 
-    auto findContentHit = [this, &cr](float tx, float ty) {
+    auto findContentHit = [this, &cr, &rowInsetY, &rowShrink](float tx, float ty) {
         if (m_tabIndex < 0 || m_tabIndex >= (int)m_tabs.size())
             return -1;
 
@@ -683,8 +709,8 @@ void TabbedOverlayScreen::handleTouch(nxui::Input& input) {
         int focusIdx = 0;
         for (int i = 0; i < (int)items.size(); ++i) {
             float height = itemHeight(items[i], cr.width);
-            float insetY = (items[i].type == ItemType::Section) ? 1.f : kCardInsetY;
-            float cardH = std::max(0.f, height - (items[i].type == ItemType::Section ? 2.f : 6.f));
+            float insetY = rowInsetY(items[i].type);
+            float cardH = std::max(0.f, height - rowShrink(items[i].type));
             nxui::Rect itemRect = {
                 cr.x + kCardInsetX,
                 y + insetY,
@@ -702,7 +728,7 @@ void TabbedOverlayScreen::handleTouch(nxui::Input& input) {
         return -1;
     };
 
-    auto contentRowRect = [this, &cr](int focusIdx) {
+    auto contentRowRect = [this, &cr, &rowInsetY, &rowShrink](int focusIdx) {
         if (focusIdx < 0 || m_tabIndex < 0 || m_tabIndex >= (int)m_tabs.size())
             return nxui::Rect{0.f, 0.f, 0.f, 0.f};
 
@@ -713,8 +739,8 @@ void TabbedOverlayScreen::handleTouch(nxui::Input& input) {
             float height = itemHeight(items[i], cr.width);
             if (itemFocusable(items[i])) {
                 if (currentFocus == focusIdx) {
-                    float insetY = (items[i].type == ItemType::Section) ? 1.f : kCardInsetY;
-                    float cardH = std::max(0.f, height - (items[i].type == ItemType::Section ? 2.f : 6.f));
+                    float insetY = rowInsetY(items[i].type);
+                    float cardH = std::max(0.f, height - rowShrink(items[i].type));
                     nxui::Rect cardRect = {
                         cr.x + kCardInsetX,
                         y + insetY,
@@ -1113,13 +1139,11 @@ void TabbedOverlayScreen::handleTouch(nxui::Input& input) {
                             m_contentIdx = 0;
                             m_scrollY = 0;
                             m_scrollTarget = 0;
-                            m_tabReveal.setImmediate(0.f);
-                            m_tabReveal.set(1.f, 0.24f, nxui::Easing::outCubic);
+                            m_tabReveal.setImmediate(1.f);
+                            m_tabAccentW.setImmediate(3.f);
                             m_contentSlideAnim.setImmediate(0.f);
-                            m_contentSlideAnim.set(1.f, 0.28f, nxui::Easing::outCubic);
+                            m_contentSlideAnim.set(1.f, 0.20f, nxui::Easing::outCubic);
                             m_contentStaggerT = 0.f;
-                            m_tabAccentW.setImmediate(1.f);
-                            m_tabAccentW.set(3.f, 0.32f, nxui::Easing::outExpo);
                             closeDropdown(false);
                             rebuildContentItems();
                         }
@@ -1143,13 +1167,11 @@ void TabbedOverlayScreen::handleTouch(nxui::Input& input) {
                             m_contentIdx = 0;
                             m_scrollY = 0;
                             m_scrollTarget = 0;
-                            m_tabReveal.setImmediate(0.f);
-                            m_tabReveal.set(1.f, 0.24f, nxui::Easing::outCubic);
+                            m_tabReveal.setImmediate(1.f);
+                            m_tabAccentW.setImmediate(3.f);
                             m_contentSlideAnim.setImmediate(0.f);
-                            m_contentSlideAnim.set(1.f, 0.28f, nxui::Easing::outCubic);
+                            m_contentSlideAnim.set(1.f, 0.20f, nxui::Easing::outCubic);
                             m_contentStaggerT = 0.f;
-                            m_tabAccentW.setImmediate(1.f);
-                            m_tabAccentW.set(3.f, 0.32f, nxui::Easing::outExpo);
                             closeDropdown(false);
                             rebuildContentItems();
                         }

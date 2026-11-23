@@ -281,60 +281,95 @@ SettingsScreen::Tab settings::tabs::SystemTab::build(SettingsScreen& screen) {
     t.name = i18n.tr("settings.tabs.system", "System");
 
     {
-        SetSysFirmwareVersion fw{};
-        SettingItem it; it.label = i18n.tr("settings.system.firmware", "Firmware Version"); it.type = ItemType::Info;
-        if (R_SUCCEEDED(setsysGetFirmwareVersion(&fw)))
-            it.infoText = fw.display_version;
-        else
-            it.infoText = i18n.tr("common.na", "N/A");
-        t.items.push_back(std::move(it));
-    }
+        // Non-interactive console facts — one quiet 2-up deck.
+        SettingItem deck;
+        deck.label = i18n.tr("settings.system.status_deck", "Console");
+        deck.type = ItemType::InfoDeck;
+        deck.deckEntries.reserve(7);
 
-    {
-        SettingItem it; it.label = i18n.tr("settings.system.custom_firmware", "Custom Firmware"); it.type = ItemType::Info;
-        u64 cfg = 0;
-        bool isAtmos = R_SUCCEEDED(splGetConfig((SplConfigItem)65000, &cfg));
-        if (isAtmos) {
-            unsigned major = (cfg >> 56) & 0xFF;
-            unsigned minor = (cfg >> 48) & 0xFF;
-            unsigned micro = (cfg >> 40) & 0xFF;
-            char buf[64];
-            std::snprintf(buf, sizeof(buf), "Atmosphere %u.%u.%u", major, minor, micro);
-            it.infoText = buf;
-        } else {
-            it.infoText = i18n.tr("settings.system.not_detected", "Not detected");
+        {
+            SettingsScreen::InfoDeckEntry e;
+            e.label = i18n.tr("settings.system.firmware", "Firmware Version");
+            SetSysFirmwareVersion fw{};
+            if (R_SUCCEEDED(setsysGetFirmwareVersion(&fw)))
+                e.value = fw.display_version;
+            else
+                e.value = i18n.tr("common.na", "N/A");
+            deck.deckEntries.push_back(std::move(e));
         }
-        t.items.push_back(std::move(it));
-    }
-
-    {
-        SettingItem it; it.label = i18n.tr("settings.system.emunand", "EmuNAND"); it.type = ItemType::Info;
-        u64 cfg = 0;
-        if (R_SUCCEEDED(splGetConfig((SplConfigItem)65007, &cfg)) && cfg != 0)
-            it.infoText = i18n.tr("common.active", "Active");
-        else
-            it.infoText = i18n.tr("settings.system.inactive_sysnand", "Inactive / SysNAND");
-        t.items.push_back(std::move(it));
-    }
-
-    {
-        SetSysDeviceNickName nick{};
-        SettingItem it; it.label = i18n.tr("settings.system.console_nickname", "Console Nickname"); it.type = ItemType::Info;
-        if (R_SUCCEEDED(setsysGetDeviceNickname(&nick)))
-            it.infoText = nick.nickname;
-        else
-            it.infoText = i18n.tr("common.na", "N/A");
-        t.items.push_back(std::move(it));
-    }
-
-    {
-        SetSysSerialNumber sn{};
-        SettingItem it; it.label = i18n.tr("settings.system.serial_number", "Serial Number"); it.type = ItemType::Info;
-        if (R_SUCCEEDED(setsysGetSerialNumber(&sn)))
-            it.infoText = sn.number;
-        else
-            it.infoText = i18n.tr("common.na", "N/A");
-        t.items.push_back(std::move(it));
+        {
+            SettingsScreen::InfoDeckEntry e;
+            e.label = i18n.tr("settings.system.custom_firmware", "Custom Firmware");
+            u64 cfg = 0;
+            bool isAtmos = R_SUCCEEDED(splGetConfig((SplConfigItem)65000, &cfg));
+            if (isAtmos) {
+                unsigned major = (cfg >> 56) & 0xFF;
+                unsigned minor = (cfg >> 48) & 0xFF;
+                unsigned micro = (cfg >> 40) & 0xFF;
+                char buf[64];
+                std::snprintf(buf, sizeof(buf), "Atmosphere %u.%u.%u", major, minor, micro);
+                e.value = buf;
+            } else {
+                e.value = i18n.tr("settings.system.not_detected", "Not detected");
+            }
+            deck.deckEntries.push_back(std::move(e));
+        }
+        {
+            SettingsScreen::InfoDeckEntry e;
+            e.label = i18n.tr("settings.system.emunand", "EmuNAND");
+            u64 cfg = 0;
+            if (R_SUCCEEDED(splGetConfig((SplConfigItem)65007, &cfg)) && cfg != 0)
+                e.value = i18n.tr("common.active", "Active");
+            else
+                e.value = i18n.tr("settings.system.inactive_sysnand", "Inactive / SysNAND");
+            deck.deckEntries.push_back(std::move(e));
+        }
+        {
+            SettingsScreen::InfoDeckEntry e;
+            e.label = i18n.tr("settings.system.console_nickname", "Console Nickname");
+            SetSysDeviceNickName nick{};
+            if (R_SUCCEEDED(setsysGetDeviceNickname(&nick)))
+                e.value = nick.nickname;
+            else
+                e.value = i18n.tr("common.na", "N/A");
+            deck.deckEntries.push_back(std::move(e));
+        }
+        {
+            SettingsScreen::InfoDeckEntry e;
+            e.label = i18n.tr("settings.system.serial_number", "Serial Number");
+            SetSysSerialNumber sn{};
+            if (R_SUCCEEDED(setsysGetSerialNumber(&sn)))
+                e.value = sn.number;
+            else
+                e.value = i18n.tr("common.na", "N/A");
+            deck.deckEntries.push_back(std::move(e));
+        }
+        {
+            SettingsScreen::InfoDeckEntry e;
+            e.label = i18n.tr("settings.system.battery_lot", "Battery Lot");
+            SetBatteryLot lot{};
+            if (R_SUCCEEDED(setsysGetBatteryLot(&lot)))
+                e.value = lot.lot;
+            else
+                e.value = i18n.tr("common.na", "N/A");
+            deck.deckEntries.push_back(std::move(e));
+        }
+        {
+            SettingsScreen::InfoDeckEntry e;
+            e.label = i18n.tr("settings.system.console_language", "Console Language");
+            u64 langCode = 0;
+            if (R_SUCCEEDED(setGetSystemLanguage(&langCode))) {
+                SetLanguage lang = SetLanguage_ENUS;
+                if (R_SUCCEEDED(setMakeLanguage(langCode, &lang))) {
+                    std::string tag = nxui::I18n::detectSystemLanguageTag();
+                    e.value = i18n.tr(std::string("languages.") + tag, tag);
+                }
+            }
+            if (e.value.empty())
+                e.value = i18n.tr("common.na", "N/A");
+            deck.deckEntries.push_back(std::move(e));
+        }
+        t.items.push_back(std::move(deck));
     }
 
     {
@@ -497,16 +532,6 @@ SettingsScreen::Tab settings::tabs::SystemTab::build(SettingsScreen& screen) {
     }
 
     {
-        SetBatteryLot lot{};
-        SettingItem it; it.label = i18n.tr("settings.system.battery_lot", "Battery Lot"); it.type = ItemType::Info;
-        if (R_SUCCEEDED(setsysGetBatteryLot(&lot)))
-            it.infoText = lot.lot;
-        else
-            it.infoText = i18n.tr("common.na", "N/A");
-        t.items.push_back(std::move(it));
-    }
-
-    {
         SettingItem it; it.label = i18n.tr("settings.system.ui_language", "UI Language"); it.type = ItemType::Selector;
 
         std::vector<std::string> tags = nxui::I18n::supportedLanguageTags();
@@ -526,20 +551,6 @@ SettingsScreen::Tab settings::tabs::SystemTab::build(SettingsScreen& screen) {
             if (screen.m_uiLanguageCb) screen.m_uiLanguageCb(selected);
         };
 
-        t.items.push_back(std::move(it));
-    }
-
-    {
-        SettingItem it; it.label = i18n.tr("settings.system.console_language", "Console Language"); it.type = ItemType::Info;
-        u64 langCode = 0;
-        if (R_SUCCEEDED(setGetSystemLanguage(&langCode))) {
-            SetLanguage lang = SetLanguage_ENUS;
-            if (R_SUCCEEDED(setMakeLanguage(langCode, &lang))) {
-                std::string tag = nxui::I18n::detectSystemLanguageTag();
-                it.infoText = i18n.tr(std::string("languages.") + tag, tag);
-            }
-        }
-        if (it.infoText.empty()) it.infoText = i18n.tr("common.na", "N/A");
         t.items.push_back(std::move(it));
     }
 

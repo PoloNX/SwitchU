@@ -508,15 +508,16 @@ void SidebarManager::applyTheme(const nxui::Theme& theme) {
     const nxui::Color iconTint = theme.textPrimary.withAlpha(0.92f);
     auto apply = [&](std::shared_ptr<AppletButton>& btn) {
         btn->setBaseColor(theme.iconDefault);
-        btn->setBorderColor(theme.panelBorder);
-        btn->setHighlightColor(theme.panelHighlight);
+        btn->setBorderColor(theme.panelBorder.withAlpha(0.14f));
+        btn->setHighlightColor(theme.panelHighlight.withAlpha(
+            theme.mode == nxui::ThemeMode::Dark ? 0.08f : 0.20f));
         btn->setIconChromeTint(iconTint);
         btn->setColourContrastAdapt(m_colourContrastAdapt);
         btn->setIconCustomTintEnabled(m_hslAdjust.enabled);
         btn->setLiquidGlassEnabled(true);
         btn->setForceLiquidGlass(true);
         btn->setBlurEnabled(false);
-        btn->setBorderWidth(2.2f);
+        btn->setBorderWidth(1.5f);
     };
     for (auto& btn : m_leftButtons)  apply(btn);
     for (auto& btn : m_rightButtons) apply(btn);

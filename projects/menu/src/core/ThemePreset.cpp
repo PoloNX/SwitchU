@@ -658,12 +658,33 @@ nxui::Theme ThemePreset::toTheme() const {
     const float cursorL = hasExplicitCursor ? colors.cursorL : colors.accentL;
 
     t.cursorNormal     = nxui::Color::fromHSL(cursorH, cursorS, cursorL, 1.f);
-    float glowAlpha    = (mode == nxui::ThemeMode::Dark) ? 0.12f : 0.15f;
+    float glowAlpha    = (mode == nxui::ThemeMode::Dark) ? 0.12f : 0.14f;
     t.cursorGlow       = t.cursorNormal.withAlpha(glowAlpha);
 
     t.background       = nxui::Color::fromHSL(colors.bgH, colors.bgS, colors.bgL, 1.f);
     t.backgroundAccent = nxui::Color::fromHSL(colors.bgAccH, colors.bgAccS, colors.bgAccL, 1.f);
-    t.shapeColor       = nxui::Color::fromHSL(colors.shapeH, colors.shapeS, colors.shapeL, 0.10f);
+    t.shapeColor       = nxui::Color::fromHSL(colors.shapeH, colors.shapeS, colors.shapeL, 0.08f);
+
+    // Harmonize existing chrome fields with the theme background.
+    if (mode == nxui::ThemeMode::Dark) {
+        t.panelBase = nxui::Color::lerp(t.background, nxui::Color::white(), 0.12f).withAlpha(0.94f);
+        t.panelBorder = nxui::Color::lerp(t.background, nxui::Color(0.72f, 0.76f, 0.84f, 1.f), 0.55f)
+                            .withAlpha(0.18f);
+        t.panelHighlight = nxui::Color::white().withAlpha(0.08f);
+        t.iconDefault = nxui::Color::lerp(t.background, nxui::Color::white(), 0.06f).withAlpha(0.48f);
+        t.textPrimary = nxui::Color(0.96f, 0.97f, 0.99f, 1.f);
+        t.textSecondary = nxui::Color(0.70f, 0.73f, 0.80f, 0.85f);
+        t.pageIndicator = nxui::Color::white().withAlpha(0.22f);
+    } else {
+        t.panelBase = nxui::Color::lerp(t.background, nxui::Color::white(), 0.55f).withAlpha(0.96f);
+        t.panelBorder = nxui::Color(0.08f, 0.10f, 0.14f, 0.14f);
+        t.panelHighlight = nxui::Color::white().withAlpha(0.40f);
+        t.iconDefault = nxui::Color::white().withAlpha(0.62f);
+        t.textPrimary = nxui::Color(0.08f, 0.09f, 0.12f, 1.f);
+        t.textSecondary = nxui::Color(0.28f, 0.30f, 0.36f, 0.88f);
+        t.pageIndicator = nxui::Color(0.28f, 0.30f, 0.36f, 0.28f);
+    }
+    t.pageIndicatorActive = t.cursorNormal;
 
     return t;
 }

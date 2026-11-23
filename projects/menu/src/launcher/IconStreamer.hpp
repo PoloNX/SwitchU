@@ -213,8 +213,21 @@ private:
     static constexpr int kMaxPendingDecodes = 4;
     static constexpr int kBurstUploadsPerFrame = 4;
     static constexpr int kBurstMaxPendingDecodes = 8;
+    // Soft-land keeps a calm GPU cadence even if a burst window is open.
+    static constexpr int kSoftLandingUploadsPerFrame = 2;
+    static constexpr int kSoftLandingMaxPendingDecodes = 4;
     std::chrono::steady_clock::time_point m_burstUntil{};
     bool inBurst() const { return std::chrono::steady_clock::now() < m_burstUntil; }
+    int uploadsPerFrame() const {
+        if (inSoftLanding())
+            return kSoftLandingUploadsPerFrame;
+        return inBurst() ? kBurstUploadsPerFrame : kUploadsPerFrame;
+    }
+    int maxPendingDecodes() const {
+        if (inSoftLanding())
+            return kSoftLandingMaxPendingDecodes;
+        return inBurst() ? kBurstMaxPendingDecodes : kMaxPendingDecodes;
+    }
     std::chrono::steady_clock::time_point m_softLandingUntil{};
     std::chrono::steady_clock::time_point m_softLandingWidenUntil{};
     int m_softLandingRadius = kPageCacheRadius;

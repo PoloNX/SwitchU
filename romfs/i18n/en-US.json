@@ -1019,7 +1019,7 @@
     "title": "Quick Settings",
     "close_hint": "[B] Close",
     "battery": "BATTERY",
-    "charging": "⚡ Charging",
+    "charging": "Charging",
     "discharging": "Discharging",
     "hardware_temp": "THERMALS",
     "temp_optimal": "Optimal",
