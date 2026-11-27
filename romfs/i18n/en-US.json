@@ -734,7 +734,7 @@
     "sleep": "Sleep",
     "shutdown": "Shutdown",
     "off": "Off",
-    "reboot": "Reboot"
+    "reboot": "Reset"
   },
   "languages": {
     "ja-JP": "Japanese",
@@ -1034,7 +1034,7 @@
     "power_options": "POWER OPTIONS",
     "sleep": "Sleep",
     "lock": "Lock",
-    "reboot": "Reboot",
+    "reboot": "Reset",
     "power_off": "Power Off",
     "hint_adjust": "Adjust",
     "hint_shortcut": "Quick Settings",

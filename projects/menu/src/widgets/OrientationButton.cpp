@@ -1,4 +1,5 @@
 #include "OrientationButton.hpp"
+#include "MaterialIcon.hpp"
 
 #include <nxui/core/I18n.hpp>
 #include <nxui/core/Renderer.hpp>
@@ -155,8 +156,6 @@ void OrientationButton::resolveDrawStyle(nxui::Color& ink,
 }
 
 void OrientationButton::onContentRender(nxui::Renderer& ren) {
-    // Always draw the procedural display glyph — pack “rotate” icons read poorly
-    // at chrome size and cannot show the active orientation.
     nxui::Color ink = nxui::Color::white().withAlpha(0.92f * opacity());
     if (m_theme)
         ink = m_theme->textPrimary.withAlpha(0.92f * opacity());
@@ -166,5 +165,19 @@ void OrientationButton::onContentRender(nxui::Renderer& ren) {
         const float t = std::clamp(m_pulseT / kPulseDuration, 0.f, 1.f);
         scale = 1.f + 0.16f * std::sin(t * 3.14159265f) * (1.f - t * 0.5f);
     }
+
+    nxui::Rect c = glassContentRect();
+    const float edge = std::min(c.width, c.height) * 0.92f * scale;
+    const float cx = c.x + c.width * 0.5f;
+    const float cy = c.y + c.height * 0.5f;
+    // Context: phone-in-landscape vs phone-in-portrait (clearer than rotate arrows).
+    const bool portrait = m_orientation == HomeOrientation::Rot90
+        || m_orientation == HomeOrientation::Rot270;
+    const std::uint32_t cp = portrait
+        ? 0xE0D6  // stay_current_portrait
+        : 0xE0D5; // stay_current_landscape
+    if (switchu::material::drawCentered(ren, m_iconFont, cp,
+                                        {cx, cy}, ink, edge))
+        return;
     drawFallbackIcon(ren, ink, scale);
 }

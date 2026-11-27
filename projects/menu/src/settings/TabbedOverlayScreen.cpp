@@ -53,12 +53,307 @@ std::string wrapHeightCacheKey(nxui::Font* font, const std::string& label, float
          + "\n" + label;
 }
 
-static void drawTabGlyph(nxui::Renderer& ren,
-                         TabbedOverlayScreen::TabGlyph glyph,
-                         nxui::Vec2 c,
-                         const nxui::Color& color,
-                         float scale) {
-    using Glyph = TabbedOverlayScreen::TabGlyph;
+class SettingsTabWidget final : public nxui::GlassBox {
+public:
+    explicit SettingsTabWidget(const std::string& text)
+        : nxui::GlassBox(nxui::Axis::ROW) {
+        setCornerRadius(18.f);
+        setBorderWidth(1.f);
+        setWireframeEnabled(false);
+
+        m_label = std::make_shared<nxui::Label>(text);
+        m_label->setHAlign(nxui::Label::HAlign::Left);
+        m_label->setVAlign(nxui::Label::VAlign::Center);
+        addChild(m_label);
+    }
+
+    void setTopRail(bool topRail) { m_topRail = topRail; }
+    void setIconOnly(bool iconOnly) { m_iconOnly = iconOnly; }
+    void setGlyph(TabbedOverlayScreen::TabGlyph glyph) { m_glyph = glyph; }
+    void setIconFont(nxui::Font* font) { m_iconFont = font; }
+
+    void sync(const std::string& text,
+              nxui::Font* font,
+              const nxui::Theme* theme,
+              bool selected,
+              bool focused,
+              float uiTime,
+              float accentWidth) {
+        (void)uiTime;
+        m_selected = selected;
+        m_focused = focused;
+        m_accentWidth = accentWidth;
+        m_accentColor = theme ? theme->cursorNormal : nxui::Color::white();
+        m_iconColor = theme
+            ? (selected ? theme->textPrimary : theme->textSecondary)
+            : nxui::Color::white();
+
+        if (font != m_cachedFont) {
+            m_cachedFont = font;
+            if (font) {
+                m_label->setFont(font);
+            }
+        }
+        if (m_cachedText != text) {
+            m_cachedText = text;
+            m_label->setText(m_cachedText);
+        }
+
+        if (m_iconOnly) {
+            m_label->setOpacity(0.f);
+            m_label->setRect({rect().x, rect().y, 0.f, 0.f});
+        } else {
+            m_label->setHAlign(m_topRail ? nxui::Label::HAlign::Center
+                                         : nxui::Label::HAlign::Left);
+
+            const bool sideIcon = !m_topRail
+                && m_glyph != TabbedOverlayScreen::TabGlyph::None;
+            // Landscape: icon column + label. Portrait text rail keeps old pad.
+            // Landscape: room for a larger Material icon + gap before the label.
+            const float padLeft = m_topRail ? 10.f : (sideIcon ? 58.f : 22.f);
+            const float padRight = m_topRail ? 10.f : 16.f;
+            const float padTotal = padLeft + padRight;
+            float textScale = selected ? 0.91f : 0.87f;
+            if (font && rect().width > padTotal + 4.f) {
+                const float measured = font->measure(text).x;
+                if (measured > 0.f)
+                    textScale = std::min(textScale, (rect().width - padTotal) / measured);
+                textScale = std::max(0.55f, textScale);
+            }
+            if (std::abs(m_cachedTextScale - textScale) > 0.001f) {
+                m_cachedTextScale = textScale;
+                m_label->setScale(textScale);
+            }
+            m_label->setOpacity(opacity());
+            m_label->setRect({rect().x + padLeft, rect().y,
+                              std::max(0.f, rect().width - padTotal), rect().height});
+        }
+
+        if (theme) {
+            // Same list language as content rows: wash when selected, no tile outline.
+            nxui::Color textColor = selected ? theme->textPrimary : theme->textSecondary;
+            const bool dark = theme->mode == nxui::ThemeMode::Dark;
+            nxui::Color baseColor = selected
+                ? theme->panelBase.withAlpha(dark ? 0.50f : 0.56f)
+                : theme->panelBase.withAlpha(0.f);
+            nxui::Color hiColor = theme->panelHighlight.withAlpha(selected ? 0.08f : 0.f);
+
+            setBaseColor(baseColor);
+            setBorderColor(theme->panelBorder.withAlpha(0.f));
+            setHighlightColor(hiColor);
+            setBorderWidth(0.f);
+            setCornerRadius(m_iconOnly ? 14.f : 14.f);
+            setScale(1.f);
+
+            m_label->setTextColor(textColor);
+        }
+    }
+
+protected:
+    void onRender(nxui::Renderer& ren) override {
+        nxui::GlassBox::onRender(ren);
+
+        nxui::Rect r = rect();
+        if (m_glyph != TabbedOverlayScreen::TabGlyph::None && opacity() > 0.01f) {
+            const nxui::Color iconCol = m_iconColor.withAlpha(m_iconColor.a * opacity());
+            if (m_iconOnly) {
+                const float iconScale = std::clamp(
+                    std::min(r.width, r.height) / 36.f, 0.80f, 1.18f);
+                TabbedOverlayScreen::drawTabGlyph(
+                    ren, m_glyph,
+                    {r.x + r.width * 0.5f, r.y + r.height * 0.48f},
+                    iconCol, iconScale, m_iconFont);
+            } else if (!m_topRail) {
+                // Landscape side rail: icon left of label.
+                const float iconScale = std::clamp(r.height / 42.f, 0.80f, 1.12f);
+                TabbedOverlayScreen::drawTabGlyph(
+                    ren, m_glyph,
+                    {r.x + 30.f, r.y + r.height * 0.48f},
+                    iconCol, iconScale, m_iconFont);
+            }
+        }
+
+        if (!m_selected || opacity() <= 0.01f)
+            return;
+
+        if (m_topRail) {
+            const float underlineW = m_iconOnly
+                ? std::max(14.f, r.width * 0.42f)
+                : std::max(20.f, r.width * 0.55f);
+            nxui::Rect underline = {
+                r.x + (r.width - underlineW) * 0.5f,
+                r.bottom() - 5.f,
+                underlineW,
+                3.f
+            };
+            ren.drawRoundedRect(underline, m_accentColor.withAlpha(0.92f * opacity()), 1.5f);
+            return;
+        }
+
+        float accentH = std::max(16.f, r.height * 0.46f);
+        float accentY = r.y + (r.height - accentH) * 0.5f;
+        float accentW = std::clamp(m_accentWidth, 2.f, std::max(2.f, r.width * 0.12f));
+        nxui::Rect accent = {r.x + 8.f, accentY, accentW, accentH};
+        ren.drawRoundedRect(accent, m_accentColor.withAlpha(0.92f * opacity()), 2.f);
+
+        nxui::Rect underline = {r.x + 16.f, r.bottom() - 5.f, std::max(24.f, r.width - 32.f), 2.f};
+        ren.drawRoundedRect(underline, m_accentColor.withAlpha(0.18f * opacity()), 1.f);
+    }
+
+private:
+    std::shared_ptr<nxui::Label> m_label;
+    bool m_selected = false;
+    bool m_focused = false;
+    bool m_topRail = false;
+    bool m_iconOnly = false;
+    TabbedOverlayScreen::TabGlyph m_glyph = TabbedOverlayScreen::TabGlyph::None;
+    nxui::Font* m_iconFont = nullptr;
+    float m_accentWidth = 3.f;
+    nxui::Color m_accentColor = nxui::Color::white();
+    nxui::Color m_iconColor = nxui::Color::white();
+    nxui::Font* m_cachedFont = nullptr;
+    std::string m_cachedText;
+    float m_cachedTextScale = -1.f;
+};
+
+class SettingsItemCard final : public nxui::GlassBox {
+public:
+    SettingsItemCard(TabbedOverlayScreen::SettingItem& item,
+                     std::shared_ptr<nxui::Box> content)
+        : nxui::GlassBox(nxui::Axis::ROW)
+        , m_item(item)
+        , m_content(std::move(content)) {
+        setAlignItems(nxui::AlignItems::CENTER);
+        setJustifyContent(nxui::JustifyContent::FLEX_START);
+        setWireframeEnabled(false);
+        addChild(m_content);
+    }
+
+    void sync(const nxui::Theme* theme, bool selected, float alpha) {
+        const bool isSection = (m_item.type == TabbedOverlayScreen::ItemType::Section);
+        const bool isDeck = (m_item.type == TabbedOverlayScreen::ItemType::InfoDeck);
+
+        // List rows: no per-item outline. Focus wash only when selected.
+        // Info deck: recessed well vs the content sheet. Sections: invisible.
+        setCornerRadius(isDeck ? 18.f : (isSection ? 14.f : 12.f));
+        setBorderWidth(isDeck ? 1.f : 0.f);
+        setScale(1.f);
+
+        if (theme) {
+            if (isDeck) {
+                // Recessed well: readable vs the sheet, without the old black slab.
+                const bool dark = theme->mode == nxui::ThemeMode::Dark;
+                const nxui::Color well = nxui::Color::lerp(
+                    theme->panelBase,
+                    dark ? nxui::Color::black()
+                         : nxui::Color(0.52f, 0.55f, 0.62f, 1.f),
+                    dark ? 0.24f : 0.20f);
+                setBaseColor(well.withAlpha(dark ? 0.80f : 0.84f));
+                setBorderColor(theme->panelBorder.withAlpha(dark ? 0.24f : 0.16f));
+                setHighlightColor(theme->panelHighlight.withAlpha(dark ? 0.08f : 0.22f));
+            } else {
+                float baseAlpha = selected
+                    ? (theme->mode == nxui::ThemeMode::Dark ? 0.42f : 0.50f)
+                    : 0.f;
+                float hiAlpha = selected ? 0.06f : 0.f;
+                setBaseColor(theme->panelBase.withAlpha(baseAlpha));
+                setBorderColor(theme->panelBorder.withAlpha(0.f));
+                setHighlightColor(theme->panelHighlight.withAlpha(hiAlpha));
+            }
+        }
+
+        float insetX = isSection ? 6.f : (isDeck ? 18.f : 10.f);
+        float insetY = isSection ? 4.f : (isDeck ? 16.f : 4.f);
+        m_content->setRect({
+            rect().x + insetX,
+            rect().y + insetY,
+            std::max(0.f, rect().width - insetX * 2.f),
+            std::max(0.f, rect().height - insetY * 2.f)
+        });
+        m_content->setOpacity(alpha);
+    }
+
+private:
+    TabbedOverlayScreen::SettingItem& m_item;
+    std::shared_ptr<nxui::Box> m_content;
+};
+
+} // namespace
+
+std::uint32_t TabbedOverlayScreen::tabGlyphCodepoint(TabGlyph glyph) {
+    // Material Icons Private Use Area (MaterialIcons-Regular.ttf).
+    switch (glyph) {
+    case TabGlyph::System:        return 0xE8B8; // settings
+    case TabGlyph::Accessibility: return 0xE84E; // accessibility
+    case TabGlyph::Storage:       return 0xE322; // memory (chip)
+    case TabGlyph::Audio:         return 0xE050; // volume_up
+    case TabGlyph::Display:       return 0xE333; // tv
+    case TabGlyph::Internet:      return 0xE63E; // wifi
+    case TabGlyph::SteamGridDb:   return 0xE9B0; // grid_view
+    case TabGlyph::Controllers:   return 0xE30F; // gamepad
+    case TabGlyph::Bluetooth:     return 0xE1A7; // bluetooth
+    case TabGlyph::Sleep:         return 0xE3A8; // brightness_3 (moon)
+    case TabGlyph::About:         return 0xE88E; // info
+    case TabGlyph::Themes:        return 0xE40A; // palette
+    case TabGlyph::ThemeShop:     return 0xEA12; // storefront
+    case TabGlyph::ThemeIcons:    return 0xE1BD; // widgets (was Icon Shop)
+    case TabGlyph::IconShop:      return 0xEA12; // storefront (same shop mark)
+    case TabGlyph::Sounds:        return 0xE3A1; // music_note
+    case TabGlyph::Interface:     return 0xE871; // dashboard
+    case TabGlyph::LockScreen:    return 0xE897; // lock
+    case TabGlyph::None:
+    default:                      return 0;
+    }
+}
+
+static std::string utf8FromCodepoint(std::uint32_t cp) {
+    std::string out;
+    if (cp == 0) return out;
+    if (cp <= 0x7Fu) {
+        out.push_back(static_cast<char>(cp));
+    } else if (cp <= 0x7FFu) {
+        out.push_back(static_cast<char>(0xC0u | (cp >> 6)));
+        out.push_back(static_cast<char>(0x80u | (cp & 0x3Fu)));
+    } else if (cp <= 0xFFFFu) {
+        out.push_back(static_cast<char>(0xE0u | (cp >> 12)));
+        out.push_back(static_cast<char>(0x80u | ((cp >> 6) & 0x3Fu)));
+        out.push_back(static_cast<char>(0x80u | (cp & 0x3Fu)));
+    } else {
+        out.push_back(static_cast<char>(0xF0u | (cp >> 18)));
+        out.push_back(static_cast<char>(0x80u | ((cp >> 12) & 0x3Fu)));
+        out.push_back(static_cast<char>(0x80u | ((cp >> 6) & 0x3Fu)));
+        out.push_back(static_cast<char>(0x80u | (cp & 0x3Fu)));
+    }
+    return out;
+}
+
+void TabbedOverlayScreen::drawTabGlyph(nxui::Renderer& ren,
+                                       TabGlyph glyph,
+                                       nxui::Vec2 c,
+                                       const nxui::Color& color,
+                                       float scale,
+                                       nxui::Font* iconFont) {
+    using Glyph = TabGlyph;
+    if (glyph == Glyph::None)
+        return;
+
+    if (iconFont && iconFont->valid()) {
+        const std::uint32_t cp = tabGlyphCodepoint(glyph);
+        if (cp != 0) {
+            const std::string text = utf8FromCodepoint(cp);
+            const nxui::Vec2 size = iconFont->measure(text);
+            if (size.x > 1.f && size.y > 1.f) {
+                // Slightly larger than the old vector doodles (~24px at scale 1).
+                const float target = 24.f * scale;
+                const float s = std::clamp(target / size.y, 0.55f, 1.45f);
+                ren.drawText(text,
+                             {c.x - size.x * s * 0.5f, c.y - size.y * s * 0.5f},
+                             iconFont, color, s);
+                return;
+            }
+        }
+    }
+
     const float s = scale;
     const float t = 1.7f * s;
     switch (glyph) {
@@ -258,216 +553,6 @@ static void drawTabGlyph(nxui::Renderer& ren,
         break;
     }
 }
-
-class SettingsTabWidget final : public nxui::GlassBox {
-public:
-    explicit SettingsTabWidget(const std::string& text)
-        : nxui::GlassBox(nxui::Axis::ROW) {
-        setCornerRadius(18.f);
-        setBorderWidth(1.f);
-        setWireframeEnabled(false);
-
-        m_label = std::make_shared<nxui::Label>(text);
-        m_label->setHAlign(nxui::Label::HAlign::Left);
-        m_label->setVAlign(nxui::Label::VAlign::Center);
-        addChild(m_label);
-    }
-
-    void setTopRail(bool topRail) { m_topRail = topRail; }
-    void setIconOnly(bool iconOnly) { m_iconOnly = iconOnly; }
-    void setGlyph(TabbedOverlayScreen::TabGlyph glyph) { m_glyph = glyph; }
-
-    void sync(const std::string& text,
-              nxui::Font* font,
-              const nxui::Theme* theme,
-              bool selected,
-              bool focused,
-              float uiTime,
-              float accentWidth) {
-        (void)uiTime;
-        m_selected = selected;
-        m_focused = focused;
-        m_accentWidth = accentWidth;
-        m_accentColor = theme ? theme->cursorNormal : nxui::Color::white();
-        m_iconColor = theme
-            ? (selected ? theme->textPrimary : theme->textSecondary)
-            : nxui::Color::white();
-
-        if (font != m_cachedFont) {
-            m_cachedFont = font;
-            if (font) {
-                m_label->setFont(font);
-            }
-        }
-        if (m_cachedText != text) {
-            m_cachedText = text;
-            m_label->setText(m_cachedText);
-        }
-
-        if (m_iconOnly) {
-            m_label->setOpacity(0.f);
-            m_label->setRect({rect().x, rect().y, 0.f, 0.f});
-        } else {
-            m_label->setHAlign(m_topRail ? nxui::Label::HAlign::Center
-                                         : nxui::Label::HAlign::Left);
-
-            const float padX = m_topRail ? 10.f : 22.f;
-            const float padTotal = padX * 2.f;
-            float textScale = selected ? 0.91f : 0.87f;
-            if (font && rect().width > padTotal + 4.f) {
-                const float measured = font->measure(text).x;
-                if (measured > 0.f)
-                    textScale = std::min(textScale, (rect().width - padTotal) / measured);
-                textScale = std::max(0.55f, textScale);
-            }
-            if (std::abs(m_cachedTextScale - textScale) > 0.001f) {
-                m_cachedTextScale = textScale;
-                m_label->setScale(textScale);
-            }
-            m_label->setOpacity(opacity());
-            m_label->setRect({rect().x + padX, rect().y,
-                              std::max(0.f, rect().width - padTotal), rect().height});
-        }
-
-        if (theme) {
-            // Same list language as content rows: wash when selected, no tile outline.
-            nxui::Color textColor = selected ? theme->textPrimary : theme->textSecondary;
-            const bool dark = theme->mode == nxui::ThemeMode::Dark;
-            nxui::Color baseColor = selected
-                ? theme->panelBase.withAlpha(dark ? 0.50f : 0.56f)
-                : theme->panelBase.withAlpha(0.f);
-            nxui::Color hiColor = theme->panelHighlight.withAlpha(selected ? 0.08f : 0.f);
-
-            setBaseColor(baseColor);
-            setBorderColor(theme->panelBorder.withAlpha(0.f));
-            setHighlightColor(hiColor);
-            setBorderWidth(0.f);
-            setCornerRadius(m_iconOnly ? 14.f : 14.f);
-            setScale(1.f);
-
-            m_label->setTextColor(textColor);
-        }
-    }
-
-protected:
-    void onRender(nxui::Renderer& ren) override {
-        nxui::GlassBox::onRender(ren);
-
-        nxui::Rect r = rect();
-        if (m_iconOnly && m_glyph != TabbedOverlayScreen::TabGlyph::None && opacity() > 0.01f) {
-            const float iconScale = std::clamp(std::min(r.width, r.height) / 42.f, 0.72f, 1.05f);
-            drawTabGlyph(ren, m_glyph,
-                         {r.x + r.width * 0.5f, r.y + r.height * 0.48f},
-                         m_iconColor.withAlpha(m_iconColor.a * opacity()),
-                         iconScale);
-        }
-
-        if (!m_selected || opacity() <= 0.01f)
-            return;
-
-        if (m_topRail) {
-            const float underlineW = m_iconOnly
-                ? std::max(14.f, r.width * 0.42f)
-                : std::max(20.f, r.width * 0.55f);
-            nxui::Rect underline = {
-                r.x + (r.width - underlineW) * 0.5f,
-                r.bottom() - 5.f,
-                underlineW,
-                3.f
-            };
-            ren.drawRoundedRect(underline, m_accentColor.withAlpha(0.92f * opacity()), 1.5f);
-            return;
-        }
-
-        float accentH = std::max(16.f, r.height * 0.46f);
-        float accentY = r.y + (r.height - accentH) * 0.5f;
-        float accentW = std::clamp(m_accentWidth, 2.f, std::max(2.f, r.width * 0.12f));
-        nxui::Rect accent = {r.x + 8.f, accentY, accentW, accentH};
-        ren.drawRoundedRect(accent, m_accentColor.withAlpha(0.92f * opacity()), 2.f);
-
-        nxui::Rect underline = {r.x + 16.f, r.bottom() - 5.f, std::max(24.f, r.width - 32.f), 2.f};
-        ren.drawRoundedRect(underline, m_accentColor.withAlpha(0.18f * opacity()), 1.f);
-    }
-
-private:
-    std::shared_ptr<nxui::Label> m_label;
-    bool m_selected = false;
-    bool m_focused = false;
-    bool m_topRail = false;
-    bool m_iconOnly = false;
-    TabbedOverlayScreen::TabGlyph m_glyph = TabbedOverlayScreen::TabGlyph::None;
-    float m_accentWidth = 3.f;
-    nxui::Color m_accentColor = nxui::Color::white();
-    nxui::Color m_iconColor = nxui::Color::white();
-    nxui::Font* m_cachedFont = nullptr;
-    std::string m_cachedText;
-    float m_cachedTextScale = -1.f;
-};
-
-class SettingsItemCard final : public nxui::GlassBox {
-public:
-    SettingsItemCard(TabbedOverlayScreen::SettingItem& item,
-                     std::shared_ptr<nxui::Box> content)
-        : nxui::GlassBox(nxui::Axis::ROW)
-        , m_item(item)
-        , m_content(std::move(content)) {
-        setAlignItems(nxui::AlignItems::CENTER);
-        setJustifyContent(nxui::JustifyContent::FLEX_START);
-        setWireframeEnabled(false);
-        addChild(m_content);
-    }
-
-    void sync(const nxui::Theme* theme, bool selected, float alpha) {
-        const bool isSection = (m_item.type == TabbedOverlayScreen::ItemType::Section);
-        const bool isDeck = (m_item.type == TabbedOverlayScreen::ItemType::InfoDeck);
-
-        // List rows: no per-item outline. Focus wash only when selected.
-        // Info deck: recessed well vs the content sheet. Sections: invisible.
-        setCornerRadius(isDeck ? 18.f : (isSection ? 14.f : 12.f));
-        setBorderWidth(isDeck ? 1.f : 0.f);
-        setScale(1.f);
-
-        if (theme) {
-            if (isDeck) {
-                // Recessed well: readable vs the sheet, without the old black slab.
-                const bool dark = theme->mode == nxui::ThemeMode::Dark;
-                const nxui::Color well = nxui::Color::lerp(
-                    theme->panelBase,
-                    dark ? nxui::Color::black()
-                         : nxui::Color(0.52f, 0.55f, 0.62f, 1.f),
-                    dark ? 0.24f : 0.20f);
-                setBaseColor(well.withAlpha(dark ? 0.80f : 0.84f));
-                setBorderColor(theme->panelBorder.withAlpha(dark ? 0.24f : 0.16f));
-                setHighlightColor(theme->panelHighlight.withAlpha(dark ? 0.08f : 0.22f));
-            } else {
-                float baseAlpha = selected
-                    ? (theme->mode == nxui::ThemeMode::Dark ? 0.42f : 0.50f)
-                    : 0.f;
-                float hiAlpha = selected ? 0.06f : 0.f;
-                setBaseColor(theme->panelBase.withAlpha(baseAlpha));
-                setBorderColor(theme->panelBorder.withAlpha(0.f));
-                setHighlightColor(theme->panelHighlight.withAlpha(hiAlpha));
-            }
-        }
-
-        float insetX = isSection ? 6.f : (isDeck ? 18.f : 10.f);
-        float insetY = isSection ? 4.f : (isDeck ? 16.f : 4.f);
-        m_content->setRect({
-            rect().x + insetX,
-            rect().y + insetY,
-            std::max(0.f, rect().width - insetX * 2.f),
-            std::max(0.f, rect().height - insetY * 2.f)
-        });
-        m_content->setOpacity(alpha);
-    }
-
-private:
-    TabbedOverlayScreen::SettingItem& m_item;
-    std::shared_ptr<nxui::Box> m_content;
-};
-
-} // namespace
-
 
 void TabbedOverlayScreen::setCanvasSize(float width, float height) {
     m_canvasW = width > 1.f ? width : 1280.f;
@@ -874,6 +959,7 @@ void TabbedOverlayScreen::rebuildTabBar() {
         tabBox->setTag(title);
         tabBox->setTopRail(topRail);
         tabBox->setIconOnly(iconOnly);
+        tabBox->setIconFont(m_iconFont);
         tabBox->setGlyph(topRail ? topRailSlotGlyph(i)
             : (i < (int)m_tabs.size() ? m_tabs[(size_t)i].glyph : TabGlyph::None));
         m_tabBar->addChild(tabBox);
@@ -1072,6 +1158,7 @@ void TabbedOverlayScreen::drawTabs(nxui::Renderer& ren, const nxui::Rect& panel,
             tab->setRect(r);
             tab->setTopRail(true);
             tab->setIconOnly(iconOnly);
+            tab->setIconFont(m_iconFont);
             tab->setGlyph(topRailSlotGlyph(i));
             tab->setOpacity(rowOpacity);
             tab->sync(topRailSlotTitle(i),
@@ -1090,7 +1177,9 @@ void TabbedOverlayScreen::drawTabs(nxui::Renderer& ren, const nxui::Rect& panel,
             auto* tab = static_cast<SettingsTabWidget*>(tabChildren[i].get());
             tab->setTopRail(false);
             tab->setIconOnly(false);
-            tab->setGlyph(TabbedOverlayScreen::TabGlyph::None);
+            tab->setIconFont(m_iconFont);
+            tab->setGlyph(i < (int)m_tabs.size() ? m_tabs[(size_t)i].glyph
+                                                : TabbedOverlayScreen::TabGlyph::None);
             tab->setRect({tr.x + kTabRailInset, tabY + rowYOffset, tabW, tabH});
             tab->setOpacity(rowOpacity);
             const bool branchFocus = (i == m_tabIndex) && tabBranchConsumesFocus();

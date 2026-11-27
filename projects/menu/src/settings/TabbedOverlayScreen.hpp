@@ -43,13 +43,15 @@ public:
 
     void setFont(nxui::Font* f)      { m_font = f; }
     void setSmallFont(nxui::Font* f)  { m_smallFont = f; }
+    // Material Icons (or similar) for Settings / Theme Shop tab glyphs.
+    void setIconFont(nxui::Font* f)  { m_iconFont = f; }
     void setTheme(const nxui::Theme* t);
     void setInstantCursorMotion(bool instant) { m_focusCursor.setInstantMotion(instant); }
     // Logical canvas (1280×720 landscape, 720×1280 portrait). Settings /
     // Game/Folder options use a top tab rail + full-width pages when portrait.
     void setCanvasSize(float width, float height);
 
-    // Compact glyphs for portrait Settings (icon-only top rail).
+    // Tab glyphs: portrait icon-only rail, and landscape icon+label side rail.
     enum class TabGlyph : std::uint8_t {
         None = 0,
         System,
@@ -63,7 +65,7 @@ public:
         Bluetooth,
         Sleep,
         About,
-        // Theme Shop portrait rail (peer icons, including inset shops).
+        // Theme Shop rail (peer icons, including shop slots).
         Themes,
         ThemeShop,
         ThemeIcons,
@@ -72,6 +74,15 @@ public:
         Interface,
         LockScreen,
     };
+
+    // When iconFont is set, draws a Material Icon codepoint; else line-art fallback.
+    static void drawTabGlyph(nxui::Renderer& ren,
+                             TabGlyph glyph,
+                             nxui::Vec2 center,
+                             const nxui::Color& color,
+                             float scale,
+                             nxui::Font* iconFont = nullptr);
+    static std::uint32_t tabGlyphCodepoint(TabGlyph glyph);
 
     virtual void show();
     void hide();
@@ -453,6 +464,7 @@ protected:
     ScreenMode m_mode = ScreenMode::Settings;
     nxui::Font*       m_font      = nullptr;
     nxui::Font*       m_smallFont = nullptr;
+    nxui::Font*       m_iconFont  = nullptr;
     const nxui::Theme* m_theme    = nullptr;
 
     SelectionCursor m_focusCursor;

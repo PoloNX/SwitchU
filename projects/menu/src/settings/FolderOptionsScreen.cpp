@@ -46,6 +46,7 @@ void FolderOptionsScreen::buildTabs() {
 
     Tab appearance;
     appearance.name = i18n.tr("folder.appearance", "Appearance");
+    appearance.glyph = TabGlyph::Themes;
 
     SettingItem defaultView;
     defaultView.label = i18n.tr("folder.default_view", "Default folder view");
@@ -157,6 +158,7 @@ void FolderOptionsScreen::buildTabs() {
 
     Tab artwork;
     artwork.name = i18n.tr("folder.steamgriddb", "SteamGridDB");
+    artwork.glyph = TabGlyph::SteamGridDb;
 
     // Invoke member callbacks at click time — setFolder/buildTabs often runs
     // before showFolderContextMenu rebinds onCustom*Select, and capturing the
@@ -287,6 +289,7 @@ void FolderOptionsScreen::buildTabs() {
 
     Tab management;
     management.name = i18n.tr("folder.management", "Management");
+    management.glyph = TabGlyph::System;
 
     SettingItem open;
     open.label = i18n.tr("folder.open_title", "Open folder");

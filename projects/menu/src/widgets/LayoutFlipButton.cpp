@@ -1,4 +1,5 @@
 #include "LayoutFlipButton.hpp"
+#include "MaterialIcon.hpp"
 
 #include <nxui/core/I18n.hpp>
 #include <nxui/core/Renderer.hpp>
@@ -96,7 +97,7 @@ void LayoutFlipButton::refreshAccessibility() {
     setAccessibilityRole(i18n.tr("accessibility.roles.button", "button"));
     setAccessibilityHint(m_singleRow
         ? i18n.tr("layout.flip_to_grid", "Switch to grid view.")
-        : i18n.tr("layout.flip_to_line", "Switch to single-row view."));
+        : i18n.tr("layout.flip_to_line", "Switch to cover view."));
 }
 
 void LayoutFlipButton::drawFallbackIcon(nxui::Renderer& ren, const nxui::Color& ink,
@@ -172,11 +173,18 @@ void LayoutFlipButton::onContentRender(nxui::Renderer& ren) {
         scale = 1.f + 0.16f * std::sin(t * 3.14159265f) * (1.f - t * 0.5f);
     }
 
+    nxui::Rect c = glassContentRect();
+    const float edge = std::min(c.width, c.height) * 0.92f * scale;
+    const float cx = c.x + c.width * 0.5f;
+    const float cy = c.y + c.height * 0.5f;
+    // Target mode: cover art when in grid (switch to cover), grid when in cover.
+    const std::uint32_t cp = m_singleRow
+        ? 0xE8F0  // view_module → switch to grid
+        : 0xE3F4; // image → switch to cover / single-row
+    if (switchu::material::drawCentered(ren, m_iconFont, cp,
+                                        {cx, cy}, ink, edge))
+        return;
     if (tex && tex->valid()) {
-        nxui::Rect c = glassContentRect();
-        const float edge = std::min(c.width, c.height) * 0.92f * scale;
-        const float cx = c.x + c.width * 0.5f;
-        const float cy = c.y + c.height * 0.5f;
         ren.drawTexture(tex,
                         {cx - edge * 0.5f, cy - edge * 0.5f, edge, edge},
                         ink);

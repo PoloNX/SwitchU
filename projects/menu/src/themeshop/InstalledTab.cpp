@@ -8,6 +8,7 @@ ThemeShopScreen::Tab themeshop::tabs::InstalledTab::build(ThemeShopScreen& scree
 
     Tab t;
     t.name = i18n.tr("themeshop.tabs.themes", "Themes");
+    t.glyph = ThemeShopScreen::TabGlyph::Themes;
     // Themes hosts Installed | Shop; Shop needs the same catalog warm as the
     // former Community tab so covers/names are ready when you flip the shelf.
     t.onUpdate = [&screen](Tab&, TabbedOverlayScreen&) {

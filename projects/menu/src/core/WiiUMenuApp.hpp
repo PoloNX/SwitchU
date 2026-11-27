@@ -618,7 +618,8 @@ private:
 
     nxui::Font  m_fontNormal;
     nxui::Font  m_fontSmall;
-    nxui::Font  m_fontIcons;
+    nxui::Font  m_fontIcons;      // Switch controller glyphs (hints)
+    nxui::Font  m_fontMaterial;   // Material Icons (Settings / Theme Shop tabs)
 
     GridModel    m_model;
     nxui::Theme  m_theme;

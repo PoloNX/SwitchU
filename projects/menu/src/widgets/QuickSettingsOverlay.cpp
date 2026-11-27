@@ -1,4 +1,5 @@
 #include "QuickSettingsOverlay.hpp"
+#include "MaterialIcon.hpp"
 #include "core/DebugLog.hpp"
 #include "smi_commands.hpp"
 
@@ -8,6 +9,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 
@@ -104,9 +106,9 @@ static constexpr float kToggleH = 44.f;
 static constexpr float kPowerBtnH = 52.f;
 static constexpr float kPowerBtnGap = 8.f;
 static constexpr float kPowerTextScale = 0.84f;
-static constexpr float kPowerIconScale = 0.96f;
+static constexpr float kPowerIconScale = 1.08f;
 static constexpr float kPowerMoonScale = 1.18f;
-static constexpr float kPowerIconGap = 7.f;
+static constexpr float kPowerIconGap = 8.f;
 
 static constexpr float kPlaylistRowH = 40.f;
 static constexpr float kPlaylistThumbSize = 28.f;
@@ -500,6 +502,16 @@ void QuickSettingsOverlay::ensureToggleIcons(nxui::Renderer& ren) {
 bool QuickSettingsOverlay::drawToggleGlyph(nxui::Renderer& ren, ItemIndex idx,
                                            nxui::Vec2 center, const nxui::Color& color,
                                            float edge) const {
+    std::uint32_t cp = 0;
+    if (idx == ItemIndex::BatterySaver)
+        cp = 0xEB3E; // eco (leafier battery-saver glyph)
+    else if (idx == ItemIndex::AirplaneMode)
+        cp = 0xE195; // airplanemode_active
+    else if (idx == ItemIndex::Wifi)
+        cp = 0xE63E; // wifi
+    if (cp != 0 && switchu::material::drawCentered(ren, m_iconFont, cp, center, color, edge))
+        return true;
+
     const nxui::Texture* tex = nullptr;
     if (idx == ItemIndex::BatterySaver)
         tex = m_iconLeaf.valid() ? &m_iconLeaf : nullptr;
@@ -534,20 +546,66 @@ void QuickSettingsOverlay::drawMusicControlIcon(nxui::Renderer& ren,
                                                 const MusicUiState& music,
                                                 const nxui::Rect& btn,
                                                 const nxui::Color& color) {
-    ensureMusicControlIcons(ren);
-    const nxui::Texture* tex = musicControlIcon(control, music.playing);
-    if (!tex) {
-        drawMusicControlIconFallback(ren, control, music, btn, color);
-        return;
+    // Prev/next/play larger; playlist mid; curved PNG repeat/shuffle at
+    // the original ~0.52 footprint so they don't overpower the row.
+    float edgeFrac = 0.68f;
+    switch (control) {
+    case MusicControl::Prev:
+    case MusicControl::Next:
+    case MusicControl::PlayPause:
+        edgeFrac = 0.80f;
+        break;
+    case MusicControl::Repeat:
+    case MusicControl::Shuffle:
+        edgeFrac = 0.52f;
+        break;
+    default:
+        break;
     }
-
-    // White+alpha masks tint cleanly: dark themes → light icons, light → dark.
-    const float edge = std::min(btn.width, btn.height) * 0.52f;
+    const float edge = std::min(btn.width, btn.height) * edgeFrac;
     const float cx = btn.x + btn.width * 0.5f;
     const float cy = btn.y + btn.height * 0.5f;
     // Play triangles read optically left-heavy; nudge a hair to the right.
     const float biasX = (control == MusicControl::PlayPause && !music.playing) ? edge * 0.04f : 0.f;
-    ren.drawTexture(tex, {cx - edge * 0.5f + biasX, cy - edge * 0.5f, edge, edge}, color);
+
+    // Repeat/Shuffle keep the curved PNG glyphs — Material's loop/shuffle
+    // read too angular next to them. Other transport stays on Material.
+    bool drew = false;
+    if (control == MusicControl::Repeat || control == MusicControl::Shuffle) {
+        ensureMusicControlIcons(ren);
+        if (const nxui::Texture* tex = musicControlIcon(control, music.playing)) {
+            ren.drawTexture(tex,
+                            {cx - edge * 0.5f + biasX, cy - edge * 0.5f, edge, edge},
+                            color);
+            drew = true;
+        }
+    }
+    if (!drew) {
+        std::uint32_t cp = 0;
+        switch (control) {
+        case MusicControl::Prev: cp = 0xE045; break; // skip_previous
+        case MusicControl::Next: cp = 0xE044; break; // skip_next
+        case MusicControl::PlayPause:
+            cp = music.playing ? 0xE034 : 0xE037; // pause / play_arrow
+            break;
+        case MusicControl::Repeat: cp = 0xE9D6; break; // PNG fallback only
+        case MusicControl::Shuffle: cp = 0xE9E1; break;
+        case MusicControl::Playlist: cp = 0xE03D; break; // queue_music
+        default: break;
+        }
+        if (!switchu::material::drawCentered(ren, m_iconFont, cp,
+                                             {cx + biasX, cy}, color, edge)) {
+            ensureMusicControlIcons(ren);
+            const nxui::Texture* tex = musicControlIcon(control, music.playing);
+            if (!tex) {
+                drawMusicControlIconFallback(ren, control, music, btn, color);
+                return;
+            }
+            ren.drawTexture(tex,
+                            {cx - edge * 0.5f + biasX, cy - edge * 0.5f, edge, edge},
+                            color);
+        }
+    }
 
     // Repeat-one: clean white "1" over the glyph (no badge/shadow).
     if (control == MusicControl::Repeat && music.repeat == MusicRepeatMode::One && m_smallFont) {
@@ -3470,9 +3528,7 @@ void QuickSettingsOverlay::render(nxui::Renderer& ren) {
                 + (idx == ItemIndex::Wifi ? 3.f : 0.f);
             const nxui::Color iconCol = (idx == ItemIndex::BatterySaver)
                 ? labelCol : primaryText;
-            bool drew = false;
-            if (idx == ItemIndex::AirplaneMode || idx == ItemIndex::BatterySaver)
-                drew = drawToggleGlyph(ren, idx, {iconX, iconY}, iconCol, edge);
+            bool drew = drawToggleGlyph(ren, idx, {iconX, iconY}, iconCol, edge);
             if (!drew) {
                 if (idx == ItemIndex::Wifi) {
                     drawWifiIcon(ren, {iconX, iconY}, primaryText,
@@ -3566,51 +3622,45 @@ void QuickSettingsOverlay::render(nxui::Renderer& ren) {
             const float textScale = kPowerTextScale;
             const float iconGap = kPowerIconGap;
 
-            if (pa == PowerAction::Sleep) {
-                const float iconSlot = 18.f;
-                float totalW = iconSlot + iconGap + lsz.x * textScale;
-                float curXBtn = btn.x + (btn.width - totalW) * 0.5f;
-                drawMoonIcon(ren, {curXBtn + iconSlot * 0.5f, btn.y + btn.height * 0.5f},
-                              textColor, kPowerMoonScale);
-                float ty = btn.y + (btn.height - lsz.y * textScale) * 0.5f;
-                ren.drawText(label, {curXBtn + iconSlot + iconGap, ty}, m_smallFont,
-                             textColor, textScale);
-            } else if (pa == PowerAction::Lock) {
-                // Compact padlock so the 4-wide power row stays readable.
-                const float iconSlot = 16.f;
-                float totalW = iconSlot + iconGap + lsz.x * textScale;
-                float curXBtn = btn.x + (btn.width - totalW) * 0.5f;
-                const float cx = curXBtn + iconSlot * 0.5f;
-                const float cy = btn.y + btn.height * 0.5f;
-                ren.drawRoundedRect({cx - 5.5f, cy - 1.5f, 11.f, 9.f}, textColor, 2.2f);
-                ren.drawRoundedRectOutline({cx - 4.f, cy - 8.f, 8.f, 8.f}, textColor, 3.5f, 1.6f);
-                float ty = btn.y + (btn.height - lsz.y * textScale) * 0.5f;
-                ren.drawText(label, {curXBtn + iconSlot + iconGap, ty}, m_smallFont,
-                             textColor, textScale);
+            std::uint32_t cp = 0;
+            float iconSlot = 22.f;
+            if (pa == PowerAction::Lock) {
+                cp = 0xE897; // lock
+                iconSlot = 20.f;
+            } else if (pa == PowerAction::Sleep) {
+                cp = 0xE3A8; // brightness_3
+            } else if (pa == PowerAction::Reboot) {
+                cp = 0xF053; // restart_alt
             } else {
-                std::string iconGlyph = (pa == PowerAction::Reboot)
-                    ? utf8Codepoint(0xE08F) : utf8Codepoint(0xE0B8);
-                nxui::Font* fIcon = m_iconFont ? m_iconFont : m_smallFont;
-                nxui::Vec2 isz = fIcon ? fIcon->measure(iconGlyph) : nxui::Vec2{18.f, 18.f};
-                float actualIconW = isz.x * kPowerIconScale;
-                float totalW = actualIconW + iconGap + lsz.x * textScale;
-                float curXBtn = btn.x + (btn.width - totalW) * 0.5f;
-
-                if (fIcon) {
-                    float iy = btn.y + (btn.height - isz.y * kPowerIconScale) * 0.5f;
-                    ren.drawText(iconGlyph, {curXBtn, iy}, fIcon, textColor, kPowerIconScale);
-                }
-                float ty = btn.y + (btn.height - lsz.y * textScale) * 0.5f;
-                ren.drawText(label, {curXBtn + actualIconW + iconGap, ty}, m_smallFont,
-                             textColor, textScale);
+                cp = 0xE8AC; // power_settings_new
             }
+
+            float totalW = iconSlot + iconGap + lsz.x * textScale;
+            float curXBtn = btn.x + (btn.width - totalW) * 0.5f;
+            const float cy = btn.y + btn.height * 0.5f;
+            if (!switchu::material::drawCentered(
+                    ren, m_iconFont, cp,
+                    {curXBtn + iconSlot * 0.5f, cy},
+                    textColor, iconSlot * kPowerIconScale)) {
+                if (pa == PowerAction::Sleep) {
+                    drawMoonIcon(ren, {curXBtn + iconSlot * 0.5f, cy},
+                                 textColor, kPowerMoonScale);
+                } else if (pa == PowerAction::Lock) {
+                    const float cx = curXBtn + iconSlot * 0.5f;
+                    ren.drawRoundedRect({cx - 5.5f, cy - 1.5f, 11.f, 9.f}, textColor, 2.2f);
+                    ren.drawRoundedRectOutline({cx - 4.f, cy - 8.f, 8.f, 8.f}, textColor, 3.5f, 1.6f);
+                }
+            }
+            float ty = btn.y + (btn.height - lsz.y * textScale) * 0.5f;
+            ren.drawText(label, {curXBtn + iconSlot + iconGap, ty}, m_smallFont,
+                         textColor, textScale);
         }
     };
 
     if (m_lockScreenEnabled)
         drawPowerBtn(PowerAction::Lock, i18n.tr("quicksettings.lock", "Lock"));
     drawPowerBtn(PowerAction::Sleep, i18n.tr("quicksettings.sleep", "Sleep"));
-    drawPowerBtn(PowerAction::Reboot, i18n.tr("quicksettings.reboot", "Reboot"));
+    drawPowerBtn(PowerAction::Reboot, i18n.tr("quicksettings.reboot", "Reset"));
     drawPowerBtn(PowerAction::Shutdown, i18n.tr("quicksettings.off", "Off"));
 
     // Clip playlist-row cursor to the list viewport so it cannot paint over

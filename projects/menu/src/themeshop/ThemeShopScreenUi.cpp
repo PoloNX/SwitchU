@@ -1445,7 +1445,7 @@ void ThemeShopScreen::drawTabBranch(nxui::Renderer& ren,
     const float alpha = opacity;
     const bool dark = m_theme->mode == nxui::ThemeMode::Dark;
 
-    // Peer tab chrome — same wash / accent / pad as SettingsTabWidget.
+    // Peer tab chrome — same wash / accent / icon+label as SettingsTabWidget.
     if (shopActive) {
         ren.drawRoundedRect(
             r,
@@ -1463,16 +1463,26 @@ void ThemeShopScreen::drawTabBranch(nxui::Renderer& ren,
             1.f);
     }
 
+    const auto shopGlyph = (tabIndex == 1)
+        ? TabGlyph::IconShop
+        : TabGlyph::ThemeShop;
+    const nxui::Color iconCol = (shopActive ? m_theme->textPrimary : m_theme->textSecondary)
+        .withAlpha(alpha);
+    const float iconScale = std::clamp(r.height / 42.f, 0.80f, 1.12f);
+    drawTabGlyph(ren, shopGlyph, {r.x + 30.f, r.y + r.height * 0.48f}, iconCol, iconScale,
+                 m_iconFont);
+
     const std::string label = (tabIndex == 1)
         ? i18n.tr("themeshop.icons.shop_item", "Icon Shop")
         : i18n.tr("themeshop.themes.shop_item", "Theme Shop");
-    constexpr float kPadX = 22.f;
+    constexpr float kPadLeft = 58.f;
+    constexpr float kPadRight = 16.f;
     float scale = shopActive ? 0.91f : 0.87f;
     nxui::Vec2 size = measureTextCached(m_font, label);
-    if (size.x > 0.f && r.width > kPadX * 2.f + 4.f)
-        scale = std::max(0.55f, std::min(scale, (r.width - kPadX * 2.f) / size.x));
+    if (size.x > 0.f && r.width > kPadLeft + kPadRight + 4.f)
+        scale = std::max(0.55f, std::min(scale, (r.width - kPadLeft - kPadRight) / size.x));
     ren.drawText(label,
-                 {r.x + kPadX, r.y + (r.height - size.y * scale) * 0.5f},
+                 {r.x + kPadLeft, r.y + (r.height - size.y * scale) * 0.5f},
                  m_font,
                  (shopActive ? m_theme->textPrimary : m_theme->textSecondary).withAlpha(alpha),
                  scale);

@@ -3,9 +3,11 @@
 #include "AdaptiveIconLoad.hpp"
 
 #include <nxui/widgets/GlassWidget.hpp>
+#include <nxui/core/Font.hpp>
 #include <nxui/core/GpuDevice.hpp>
 #include <nxui/core/Texture.hpp>
 #include <nxui/Theme.hpp>
+#include <cstdint>
 #include <string>
 
 namespace nxui { class Renderer; }
@@ -24,6 +26,9 @@ public:
     void reloadIcon(nxui::GpuDevice& gpu, nxui::Renderer& ren, const std::string& path);
     void setColourIconContrast(bool enabled);
     void setIconHslAdjust(const switchu::icons::HslAdjust& adj);
+    // Prefer Material Icons over PNG when set (HOME chrome).
+    void setIconFont(nxui::Font* font) { m_iconFont = font; }
+    void setMaterialCodepoint(std::uint32_t cp) { m_materialCp = cp; }
 
 protected:
     void onContentRender(nxui::Renderer& ren) override;
@@ -40,6 +45,8 @@ private:
     bool  m_pulseArmed = false;
 
     const nxui::Theme* m_theme = nullptr;
+    nxui::Font* m_iconFont = nullptr;
+    std::uint32_t m_materialCp = 0;
     bool m_singleRow = false;
     nxui::Texture m_icon;
     nxui::Texture m_iconContrastMask;

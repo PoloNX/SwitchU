@@ -296,6 +296,7 @@ void WiiUMenuApp::createSettings() {
     }
     m_settings->setFont(&m_fontNormal);
     m_settings->setSmallFont(&m_fontSmall);
+    m_settings->setIconFont(&m_fontMaterial);
     m_settings->setTheme(&m_theme);
     m_settings->setCanvasSize(m_homeLayout.logicalW(), m_homeLayout.logicalH());
     m_settings->setInstantCursorMotion(m_config.cursorMotionMode == 1);
@@ -814,7 +815,7 @@ void WiiUMenuApp::createQuickSettings() {
     m_quickSettings = std::make_shared<QuickSettingsOverlay>();
     m_quickSettings->setFont(&m_fontNormal);
     m_quickSettings->setSmallFont(&m_fontSmall);
-    m_quickSettings->setIconFont(&m_fontIcons);
+    m_quickSettings->setIconFont(&m_fontMaterial);
     m_quickSettings->setTheme(&m_theme);
     m_quickSettings->setCanvasSize(m_homeLayout.logicalW(), m_homeLayout.logicalH());
     m_quickSettings->setInstantCursorMotion(m_config.cursorMotionMode == 1);
@@ -942,7 +943,7 @@ void WiiUMenuApp::createQuickSettings() {
         m_dialog->show(i18n.tr("power.title", "Power"),
             i18n.tr("settings.sleep.reboot_confirm", "Restart the console?"),
             {{i18n.tr("button.cancel", "Cancel"), []() {}, true},
-             {i18n.tr("power.reboot", "Reboot"), [this]() {
+             {i18n.tr("power.reboot", "Reset"), [this]() {
 #ifdef SWITCHU_MENU
                  m_launcher.reboot();
 #else
@@ -2022,6 +2023,7 @@ void WiiUMenuApp::createGameOptions() {
     m_gameOptions = std::make_shared<GameOptionsScreen>();
     if (m_overlayLayer) m_overlayLayer->addChild(m_gameOptions);
     m_gameOptions->setFont(&m_fontNormal);
+    m_gameOptions->setIconFont(&m_fontMaterial);
     m_gameOptions->setSmallFont(&m_fontSmall);
     m_gameOptions->setTheme(&m_theme);
     m_gameOptions->setCanvasSize(m_homeLayout.logicalW(), m_homeLayout.logicalH());
@@ -2055,6 +2057,7 @@ void WiiUMenuApp::createFolderOptions() {
     if (m_overlayLayer) m_overlayLayer->addChild(m_folderOptions);
     m_folderOptions->setFont(&m_fontNormal);
     m_folderOptions->setSmallFont(&m_fontSmall);
+    m_folderOptions->setIconFont(&m_fontMaterial);
     m_folderOptions->setTheme(&m_theme);
     m_folderOptions->setCanvasSize(m_homeLayout.logicalW(), m_homeLayout.logicalH());
     m_folderOptions->setInstantCursorMotion(m_config.cursorMotionMode == 1);
@@ -2374,6 +2377,7 @@ void WiiUMenuApp::createThemeShop() {
     }
     m_themeShop->setFont(&m_fontNormal);
     m_themeShop->setSmallFont(&m_fontSmall);
+    m_themeShop->setIconFont(&m_fontMaterial);
     m_themeShop->setTheme(&m_theme);
     m_themeShop->setCanvasSize(m_homeLayout.logicalW(), m_homeLayout.logicalH());
     m_themeShop->setInstantCursorMotion(m_config.cursorMotionMode == 1);

@@ -1363,6 +1363,9 @@ void WiiUMenuApp::loadResources() {
     }
     DebugLog::log("[init] loadResources: icon font");
     m_fontIcons.load(gpu, ren, std::string(SD_ASSETS) + "/fonts/switch_icons.ttf", 24);
+    DebugLog::log("[init] loadResources: material icons font");
+    m_fontMaterial.load(gpu, ren,
+                        std::string(SD_ASSETS) + "/fonts/MaterialIcons-Regular.ttf", 24);
 
     if (m_fastReturnRequested) {
         m_deferredStaticTextures = true;
@@ -1590,8 +1593,13 @@ void WiiUMenuApp::applyHomeOrientationState(bool saveConfig) {
             if (auto* cur = m_grid->focusManager().current())
                 focusManager().setFocus(cur);
         }
-    } else if (prevFocus && m_orientationBtn && prevFocus == m_orientationBtn.get()
-               && m_orientationBtn->isVisible()) {
+    }
+
+    // Chrome controls first: grid reflow above often parks focus on the
+    // title/first tile, which is disorienting after an orientation flip.
+    wireOrientationButtonNavigation();
+    if (prevFocus && m_orientationBtn && prevFocus == m_orientationBtn.get()
+        && m_orientationBtn->isVisible()) {
         focusManager().setFocus(m_orientationBtn.get());
     } else if (prevFocus && m_layoutFlip && prevFocus == m_layoutFlip.get()
                && m_layoutFlip->isVisible()) {
@@ -1601,7 +1609,8 @@ void WiiUMenuApp::applyHomeOrientationState(bool saveConfig) {
     } else if (prevFocus && m_battery && prevFocus == m_battery.get()
                && m_battery->isVisible()) {
         focusManager().setFocus(m_battery.get());
-    } else if (prevFocus && prevFocus->isFocusable() && prevFocus->isVisible()) {
+    } else if (preserveTitleId == 0 && preserveGridIdx < 0
+               && prevFocus && prevFocus->isFocusable() && prevFocus->isVisible()) {
         focusManager().setFocus(prevFocus);
     }
 
@@ -7716,6 +7725,8 @@ void WiiUMenuApp::buildGrid() {
 
     m_layoutFlip = std::make_shared<LayoutFlipButton>();
     m_layoutFlip->setTheme(&m_theme);
+    m_layoutFlip->setIconFont(&m_fontMaterial);
+    m_layoutFlip->setMaterialCodepoint(0xE8F0); // view_module
     syncLayoutFlipState();
     m_layoutFlip->ensureIcon(app().gpu(), app().renderer(),
                              resolveActiveIconGlyphPath(switchu::icons::kChangeViewFile));
@@ -7734,6 +7745,8 @@ void WiiUMenuApp::buildGrid() {
 
     m_orientationBtn = std::make_shared<OrientationButton>();
     m_orientationBtn->setTheme(&m_theme);
+    m_orientationBtn->setIconFont(&m_fontMaterial);
+    m_orientationBtn->setMaterialCodepoint(0xE577); // screen_rotation
     syncOrientationButtonState();
     m_orientationBtn->ensureIcon(app().gpu(), app().renderer(),
                                  resolveActiveIconGlyphPath(switchu::icons::kScreenRotateFile));
@@ -7826,6 +7839,7 @@ void WiiUMenuApp::buildGrid() {
     m_dialog->cursor().setInstantMotion(m_config.cursorMotionMode == 1);
     m_dialog->setFont(&m_fontNormal);
     m_dialog->setSmallFont(&m_fontSmall);
+    m_dialog->setIconFont(&m_fontMaterial);
     m_dialog->setTheme(&m_theme);
     m_dialog->setAccessibilitySpeechPreferences(m_config.accessibilitySpeakHints,
                                                 m_config.accessibilitySpeakPosition);
@@ -8120,7 +8134,7 @@ void WiiUMenuApp::buildGrid() {
             buttons.push_back({i18n.tr("power.lock", "Lock"), [this]() {
                 m_audio.playSfx(Sfx::ConfirmPositive);
                 enterLockView(false);
-            }, true});
+            }, true, 0xE897}); // lock
         }
         buttons.push_back({i18n.tr("power.sleep", "Sleep"), [this]() {
 #ifdef SWITCHU_MENU
@@ -8130,8 +8144,8 @@ void WiiUMenuApp::buildGrid() {
             m_audio.playSfx(Sfx::ConfirmPositive);
             app().requestExit();
 #endif
-        }, true});
-        buttons.push_back({i18n.tr("power.reboot", "Reboot"), [this]() {
+        }, true, 0xE3A8}); // brightness_3
+        buttons.push_back({i18n.tr("power.reboot", "Reset"), [this]() {
 #ifdef SWITCHU_MENU
             m_audio.playSfx(Sfx::ConfirmPositive);
             m_launcher.reboot();
@@ -8139,7 +8153,7 @@ void WiiUMenuApp::buildGrid() {
             m_audio.playSfx(Sfx::ConfirmPositive);
             app().requestExit();
 #endif
-        }, true});
+        }, true, 0xF053}); // restart_alt
         buttons.push_back({i18n.tr("power.off", "Off"), [this]() {
 #ifdef SWITCHU_MENU
             m_audio.playSfx(Sfx::ConfirmPositive);
@@ -8148,7 +8162,7 @@ void WiiUMenuApp::buildGrid() {
             m_audio.playSfx(Sfx::ConfirmPositive);
             app().requestExit();
 #endif
-        }, true});
+        }, true, 0xE8AC}); // power_settings_new
         m_dialog->show(
             i18n.tr("power.title", "Power"),
             i18n.tr("power.choose_action", "Choose a power action."),
