@@ -1082,7 +1082,9 @@ bool WiiUMenuApp::onCreate() {
         return preferPosterIconData(titleId);
     });
     m_config.load();
+    m_iconStreamer.setPerformanceMode(m_config.uiPerformanceMode);
     m_appLayoutMode = m_config.appLayoutMode;
+    m_iconStreamer.setCarouselWarmFloor(m_appLayoutMode == AppLayoutMode::DynamicLine);
     loadMenuLayout();
     if (!m_folderStore.load())
         DebugLog::log("[folders] store unavailable; continuing with an empty folder list");
@@ -1107,9 +1109,17 @@ bool WiiUMenuApp::onCreate() {
         m_fastReturnRequested = leanBoot;
     const bool fastReturn = leanBoot;
     m_fastReturnStartupTick = fastReturn ? initStartTick : 0;
-    m_appLoader.setPrefetchIcons(!fastReturn);
-    if (fastReturn)
+    // Cold boot used to read every title's .meta + icon (~1.6s for 170 titles)
+    // before the first frame. With the Lock view greeting boot the grid is
+    // covered for a moment anyway, so stream icons in like the fast-return path
+    // does and let the burst warm them under the Lock view. Without Lock (grid
+    // visible straight away) keep the old eager prefetch so posters never pop in.
+    const bool lazyBootIcons = !fastReturn && m_config.lockScreenEnabled && !m_startLocked;
+    m_appLoader.setPrefetchIcons(!fastReturn && !lazyBootIcons);
+    if (fastReturn || lazyBootIcons)
         m_iconStreamer.startBurst(1.5f);
+    if (lazyBootIcons)
+        DebugLog::log("[init] boot icons streamed lazily under Lock view");
 
     const std::string accessibilityVoice = nxui::I18n::instance().activeLanguageTag();
     const int accessibilityRate = m_config.accessibilitySpeechRate;
@@ -1207,7 +1217,14 @@ bool WiiUMenuApp::onCreate() {
 #ifdef SWITCHU_MENU
     m_sysMsg.setCallback([this](SysAction a) { handleSystemAction(a); });
     DebugLog::log("[init] async notifications via AppletStorage only");
-    switchu::menu::smi_cmd::menuReady();
+    {
+        const std::uint64_t readyStartTick = armGetSystemTick();
+        switchu::menu::smi_cmd::menuReady();
+        DebugLog::log("[init] smi menuReady push=%lums tick_ms=%lu",
+                      static_cast<unsigned long>(
+                          armTicksToNs(armGetSystemTick() - readyStartTick) / 1'000'000ULL),
+                      static_cast<unsigned long>(armTicksToNs(armGetSystemTick()) / 1'000'000ULL));
+    }
 #endif
 
     DebugLog::log("[init] DONE total=%lums fastReturn=%d",
@@ -1227,8 +1244,15 @@ bool WiiUMenuApp::onCreate() {
     });
 
 #ifdef SWITCHU_MENU
-    switchu::menu::smi_cmd::setLockScreen(m_config.lockScreenEnabled,
-                                          m_config.powerButtonAction);
+    {
+        const std::uint64_t lockStartTick = armGetSystemTick();
+        switchu::menu::smi_cmd::setLockScreen(m_config.lockScreenEnabled,
+                                              m_config.powerButtonAction);
+        DebugLog::log("[init] smi setLockScreen push=%lums tick_ms=%lu",
+                      static_cast<unsigned long>(
+                          armTicksToNs(armGetSystemTick() - lockStartTick) / 1'000'000ULL),
+                      static_cast<unsigned long>(armTicksToNs(armGetSystemTick()) / 1'000'000ULL));
+    }
     if (m_startLocked) {
         enterLockView(true);
         if (!m_lockViewActive) {
@@ -1938,7 +1962,10 @@ void WiiUMenuApp::reflowHomeShell() {
     }
 
     // Swap landscape ↔ portrait theme wallpaper when Flip-Grip toggles.
-    if (m_background)
+    // Only when the orientation actually differs from what the resources were
+    // applied for: buildGrid() calls this unconditionally after the first
+    // apply, which re-ran the whole font/background pass for nothing.
+    if (m_background && m_themeResourcesPortrait != (portrait ? 1 : 0))
         applyThemeResources(m_effectivePreset);
 
     // Dialogs / lock / launch / context menus use logical canvas bounds.
@@ -4492,10 +4519,9 @@ void WiiUMenuApp::syncWidgetPageAssets() {
     m_widgetAssetsWereSliding = sliding;
 
     if (dynamicLine) {
-        // The carousel renderer keeps roughly four neighbours on each side in
-        // view. One extra item avoids a decode exactly as it enters the clip.
-        const int begin = std::max(0, page - 5);
-        const int end = std::min(static_cast<int>(icons.size()), page + 6);
+        // ~5-up shelf (±2); one extra each side for decode headroom.
+        const int begin = std::max(0, page - 3);
+        const int end = std::min(static_cast<int>(icons.size()), page + 4);
         for (int i = begin; i < end; ++i) {
             keep[static_cast<std::size_t>(i)] = true;
             current[static_cast<std::size_t>(i)] = true;
@@ -5655,15 +5681,19 @@ void WiiUMenuApp::commitPendingLayoutVisuals() {
         std::chrono::steady_clock::now() - rebuildStarted).count();
     // Attach the focused title's prefetched art; everything else streams in.
     m_iconStreamer.installShadowPrefetch(m_grid->allIcons());
-    // applyDisplayModel may have already queued neighbour poster decodes —
-    // drop those so they pop in after the morph instead of mid-transition.
-    m_iconStreamer.cancelPendingExcept(focused);
+    // Entering single-row: keep neighbour poster decodes so ±2 can land with
+    // the morph instead of popping blanks. Grid still cancels extras.
+    if (m_appLayoutMode != AppLayoutMode::DynamicLine)
+        m_iconStreamer.cancelPendingExcept(focused);
     if (editing)
         reattachEditSourceIcon();
 
     // Neighbours stream in after the morph finishes so the focused tile is
     // the only art swap that lands with the transition.
     m_pendingNeighborArtBurst = true;
+    // Single-row: burst the visible ±2 window immediately to cut poster pop-in.
+    if (m_appLayoutMode == AppLayoutMode::DynamicLine)
+        m_iconStreamer.startBurst(0.85f);
 
     syncSteamGridDbLogoArea();
     configureDynamicLineNavigation();
@@ -5745,6 +5775,7 @@ void WiiUMenuApp::setAppLayoutMode(AppLayoutMode mode) {
 
     m_appLayoutMode = mode;
     syncLayoutFlipState();
+    m_iconStreamer.setCarouselWarmFloor(mode == AppLayoutMode::DynamicLine);
     // Inside a folder, layout flips are session-only — HOME stays locked to
     // whatever view was active when the folder opened (config.appLayoutMode).
     if (m_openFolderId == 0) {
@@ -9885,6 +9916,47 @@ void WiiUMenuApp::tickControllerBatteries(float dt) {
 #endif
 }
 
+int WiiUMenuApp::uiPerformanceShapeCount(int authorCount, int mode) {
+    const int count = std::max(1, authorCount);
+    // Balanced: lighter particle density; Off/High keep author count.
+    if (mode >= 2 && count > 4)
+        return std::max(4, (count * 2) / 3);
+    return count;
+}
+
+void WiiUMenuApp::applyUiPerformanceBackgroundDensity() {
+    if (!m_background)
+        return;
+    WaraWaraBackground::Config cfg = m_background->config();
+    const int desired = uiPerformanceShapeCount(
+        m_effectivePreset.background.shapeCount, m_config.uiPerformanceMode);
+    if (cfg.shapeCount == desired)
+        return;
+    cfg.shapeCount = desired;
+    m_background->setConfig(cfg);
+    // Theme config regenerates shapes — re-assert lite suppress if FT/Battery
+    // Saver currently holds the light path.
+    if (m_frameTapLightActive)
+        applyFrameTapLiteBackground(true);
+}
+
+void WiiUMenuApp::applyUiPerformanceMode(int mode, bool saveConfig) {
+    const int clamped = std::clamp(mode, 0, 2);
+    const bool changed = m_config.uiPerformanceMode != clamped;
+    m_config.uiPerformanceMode = clamped;
+    m_config.uiPerformanceModeSchema = 1;
+    m_iconStreamer.setPerformanceMode(clamped);
+    if (changed) {
+        static const char* kNames[] = {"off", "high", "balanced"};
+        DebugLog::log("[perf] uiPerformanceMode=%s", kNames[clamped]);
+        applyUiPerformanceBackgroundDensity();
+    }
+    if (saveConfig && changed)
+        m_config.save();
+    if (m_settings)
+        m_settings->setUiPerformanceModeState(clamped);
+}
+
 void WiiUMenuApp::applyBatterySaver(bool enabled) {
     if (m_config.batterySaver != enabled) {
         m_config.batterySaver = enabled;
@@ -10105,6 +10177,28 @@ void WiiUMenuApp::tickFrameTapLightPath(float dt) {
 }
 
 void WiiUMenuApp::onUpdateAwake(float dt) {
+    // Frame-budget meter → IconStreamer art pacing (chrome quality unchanged).
+    // Normalize by swap interval so idle 30 Hz presents (~33 ms) do not poison
+    // the hitch ring (audit #1). Off (0): leave pacing alone for pre-boost feel.
+    const uint32_t swapInterval = std::max(1u, app().gpu().swapInterval());
+    m_frameHealth.sample(dt / static_cast<float>(swapInterval));
+    if (m_config.uiPerformanceMode <= 0)
+        m_iconStreamer.setFramePace(false, false);
+    else
+        m_iconStreamer.setFramePace(m_frameHealth.soft(), m_frameHealth.stressed());
+    if (m_frameHealth.consumeLogPulse()
+        && (m_frameHealth.hitchInWindow() > 0 || m_frameHealth.soft())) {
+        static const char* kNames[] = {"off", "high", "balanced"};
+        const int mode = std::clamp(m_config.uiPerformanceMode, 0, 2);
+        DebugLog::log(
+            "[perf] avg=%.1fms last=%.1fms hitches=%d/%d soft=%d stressed=%d mode=%s uploads=%d",
+            m_frameHealth.averageMs(), m_frameHealth.lastMs(),
+            m_frameHealth.hitchInWindow(), FrameHealth::kWindow,
+            m_frameHealth.soft() ? 1 : 0, m_frameHealth.stressed() ? 1 : 0,
+            kNames[mode],
+            m_iconStreamer.lastUploadsThisFrame());
+    }
+
     if (m_lockAuthPasswordLockout > 0.f)
         m_lockAuthPasswordLockout = std::max(0.f, m_lockAuthPasswordLockout - dt);
 
@@ -10429,14 +10523,21 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
 
     // Own borrowed folder peeks before IconStreamer overwrites those GPU slots
     // with posters. Prefer spreading decode across the morph; drain any
-    // remainder before the post-morph neighbour burst.
+    // remainder before the post-morph neighbour burst. Never stack peek work
+    // on a stressed frame or after IconStreamer already uploaded this tick.
     if (m_grid && !m_folderPeekBorrowed.empty()
         && (preferSingleRowPosters() || m_appLayoutMode == AppLayoutMode::Grid)) {
         const bool morphing = m_grid->isLayoutMorphing();
-        // Cap post-morph peek promotion so page-flip / soft-land frames stay calm.
-        const int budget = morphing ? 2 : (m_pendingNeighborArtBurst ? 4 : 1);
-        if (promoteBorrowedFolderPeeks(budget) > 0) {
-            applyFolderCoversToIcons(m_grid->focusedGlobalIndex(), 4);
+        int budget = morphing ? 2 : (m_pendingNeighborArtBurst ? 4 : 1);
+        if (m_config.uiPerformanceMode >= 2)
+            budget = std::min(budget, morphing ? 1 : 1);
+        if (m_iconStreamer.frameStressed() || m_iconStreamer.lastUploadsThisFrame() > 0)
+            budget = 0;
+        else if (m_iconStreamer.frameSoft())
+            budget = std::min(budget, 1);
+        if (budget > 0 && promoteBorrowedFolderPeeks(budget) > 0) {
+            applyFolderCoversToIcons(m_grid->focusedGlobalIndex(),
+                                    std::min(4, budget + 1));
         }
     }
 
@@ -10445,10 +10546,15 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
 
     if (m_pendingNeighborArtBurst && m_grid && !m_grid->isLayoutMorphing()) {
         // Last chance: do not let onPageChanged recycle textures still aliased
-        // by folder peek stacks.
+        // by folder peek stacks. Cap the drain so it cannot hitch the land frame.
         if (!m_folderPeekBorrowed.empty()
-            && (preferSingleRowPosters() || m_appLayoutMode == AppLayoutMode::Grid)) {
-            if (promoteBorrowedFolderPeeks(16) > 0)
+            && (preferSingleRowPosters() || m_appLayoutMode == AppLayoutMode::Grid)
+            && !m_iconStreamer.frameStressed()
+            && m_iconStreamer.lastUploadsThisFrame() == 0) {
+            int drain = m_config.uiPerformanceMode >= 2 ? 4 : 8;
+            if (m_iconStreamer.frameSoft())
+                drain = std::min(drain, 2);
+            if (promoteBorrowedFolderPeeks(drain) > 0)
                 applyFolderCoversToIcons(m_grid->focusedGlobalIndex(), 4);
         }
         m_pendingNeighborArtBurst = false;
@@ -10629,6 +10735,11 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
 #ifdef SWITCHU_DEBUG_UI
     if (m_debugOverlay) {
         m_debugOverlay->setDeltaTime(dt);
+        m_debugOverlay->setFrameHealth(m_frameHealth.averageMs(),
+                                       m_frameHealth.lastMs(),
+                                       m_frameHealth.hitchInWindow(),
+                                       m_frameHealth.soft(),
+                                       m_frameHealth.stressed());
     }
 #endif
 

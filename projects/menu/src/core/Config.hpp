@@ -90,6 +90,14 @@ struct AppConfig {
     // Battery Saver = user-forced lite HOME path (same reclaim as Frame Tap
     // coexistence). Quick Settings + Theme Shop → Interface, synced.
     bool batterySaver = false;
+    // HOME Performance Boost preset (art pacing / neighbor fill — not glass LOD):
+    // 0 = Off (pre-boost behavior: no adaptive frame pacing, full caps)
+    // 1 = High (adaptive pacing + full neighbor warming)
+    // 2 = Balanced (adaptive pacing + tighter art/WaraWara)
+    // Default Off so soak can A/B against the original feel.
+    int uiPerformanceMode = 0;
+    // Bumped when mode enum changed (old 0=High/1=Balanced → 1=High/2=Balanced).
+    int uiPerformanceModeSchema = 1;
     // Lock view (Theme Shop → Lock Screen). Gates Power→Lock entries too.
     bool lockScreenEnabled = false;
     // Hardware power short-press when Lock Screen is enabled:

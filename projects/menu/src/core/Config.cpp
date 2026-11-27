@@ -152,6 +152,18 @@ bool AppConfig::load() {
     readJsonOpt(j, "sortLargeTiles", sortLargeTiles);
     readJsonOpt(j, "iconContrastAdapt", iconContrastAdapt);
     readJsonOpt(j, "batterySaver", batterySaver);
+    readJsonOpt(j, "uiPerformanceMode", uiPerformanceMode);
+    int perfSchema = 0;
+    readJsonOpt(j, "uiPerformanceModeSchema", perfSchema);
+    if (perfSchema < 1) {
+        // Legacy: 0=High, 1=Balanced → 1=High, 2=Balanced (0 is now Off).
+        if (uiPerformanceMode == 0)
+            uiPerformanceMode = 1;
+        else if (uiPerformanceMode == 1)
+            uiPerformanceMode = 2;
+    }
+    uiPerformanceMode = std::clamp(uiPerformanceMode, 0, 2);
+    uiPerformanceModeSchema = 1;
     readJsonOpt(j, "lockScreenEnabled", lockScreenEnabled);
     readJsonOpt(j, "powerButtonAction", powerButtonAction);
     powerButtonAction = std::clamp(powerButtonAction, 0, 2);
@@ -365,6 +377,8 @@ bool AppConfig::save() const {
     j["sortLargeTiles"] = sortLargeTiles;
     j["iconContrastAdapt"] = iconContrastAdapt;
     j["batterySaver"] = batterySaver;
+    j["uiPerformanceMode"] = std::clamp(uiPerformanceMode, 0, 2);
+    j["uiPerformanceModeSchema"] = 1;
     j["lockScreenEnabled"] = lockScreenEnabled;
     j["powerButtonAction"] = std::clamp(powerButtonAction, 0, 2);
     j["lockAuthMode"] = std::clamp(lockAuthMode, 0, 4);

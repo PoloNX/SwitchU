@@ -538,7 +538,8 @@ int main(int argc, char* argv[]) {
     DebugLog::log("[hb] main() entry");
     DebugLog::log("[main] applet config...");
 #else
-    DebugLog::log("[menu] main() entry");
+    DebugLog::log("[menu] main() entry tick_ms=%lu",
+                  static_cast<unsigned long>(armTicksToNs(armGetSystemTick()) / 1'000'000ULL));
 
     auto startMode = readStartMode();
     auto sysStatus = readSystemStatus();

@@ -1,6 +1,7 @@
 #pragma once
 #include <nxui/core/Types.hpp>
 #include <switchu/ns_ext.hpp>
+#include <switchu/control_cache.hpp>
 #include <string>
 #include <vector>
 #include <utility>
@@ -29,7 +30,8 @@ inline constexpr std::uint32_t folderIdFromTitleId(std::uint64_t titleId) {
 struct AppEntry {
     std::string id;
     std::string title;
-    std::string englishTitle;
+    mutable std::string englishTitle;
+    mutable bool englishTitleResolved = false;
     uint64_t    titleId = 0;
     int         iconTexIndex = -1;
     nxui::Color       tint = nxui::Color::white();
@@ -53,6 +55,14 @@ struct AppEntry {
     bool isFolder() const { return kind == GridEntryKind::Folder; }
     bool isWidget() const { return kind == GridEntryKind::Widget; }
     const std::string& steamGridDbTitle() const {
+        // The fast HOME-return catalog load leaves englishTitle empty instead of
+        // opening every .meta at startup; resolve it once, on first use.
+        if (englishTitle.empty() && !englishTitleResolved && titleId != 0 && isApplication()) {
+            englishTitleResolved = true;
+            switchu::control_cache::Meta meta{};
+            if (switchu::control_cache::readMeta(titleId, meta) && meta.english_name[0] != '\0')
+                englishTitle = meta.english_name;
+        }
         return englishTitle.empty() ? title : englishTitle;
     }
 

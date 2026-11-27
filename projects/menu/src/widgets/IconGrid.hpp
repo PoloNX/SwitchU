@@ -138,6 +138,9 @@ private:
                                float* outDistance = nullptr) const;
     float pageStride() const;
     float lineItemSpacing() const;
+    // Signed screen X offset from carousel center for scroll distance d
+    // (poster mode uses a tapered pitch: open at focus, tighter outward).
+    float lineCarouselOffsetX(float d) const;
 
     // Carousel render scratch. Reused across frames so drawing the line does
     // not allocate every frame, and each survivor keeps the rect that was
@@ -171,6 +174,9 @@ private:
     int  m_layoutMorphPage = 0;
     static constexpr float kLayoutMorphDuration = 0.40f;
     static constexpr float kLineIconBase = 150.f;
+    // Home NX–style ~5-up shelf: open step beside hero, even pitch for sides.
+    static constexpr float kPosterStepFocus = 302.f; // extra air beside hero
+    static constexpr float kPosterStepSide  = 258.f; // gap between side posters
     nxui::Widget* m_lineUpTarget = nullptr;
     nxui::Widget* m_lineDownTarget = nullptr;
     bool m_linePosterAspect = false;

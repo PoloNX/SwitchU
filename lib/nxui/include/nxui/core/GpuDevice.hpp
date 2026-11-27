@@ -77,6 +77,7 @@ public:
     /// Present every `interval` vblanks (1 = 60 Hz, 2 = a steady 30 Hz for an
     /// idle UI). Free when unchanged; kept across swapchain rebuilds.
     void setSwapInterval(uint32_t interval);
+    uint32_t swapInterval() const { return m_swapInterval; }
 
     /// Rebuild the deko3d swapchain after a console sleep. The vi layer's
     /// buffer queue goes stale across sleep and PresentQueue::acquireImage()

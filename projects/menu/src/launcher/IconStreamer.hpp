@@ -86,10 +86,26 @@ public:
                           float widenSeconds = 0.f, int widenRadius = 3);
     bool softLandingActive() const { return inSoftLanding(); }
 
+    // 0 = Off, 1 = High, 2 = Balanced. Static preset — not FPS-driven glass LOD.
+    void setPerformanceMode(int mode);
+    int performanceMode() const { return m_performanceMode; }
+
+    // Feed rolling frame health from the menu tick so far/off-screen art can
+    // back off while scrolling. Single-row shelf (±2) stays protected.
+    void setFramePace(bool soft, bool stressed);
+    bool frameSoft() const { return m_frameSoft; }
+    bool frameStressed() const { return m_frameStressed; }
+    // GPU uploads performed during the last onPageChanged / pumpShadowPrefetch.
+    int lastUploadsThisFrame() const { return m_lastUploadsThisFrame; }
+
     // Cap neighbor page radius while Frame Tap viewer light path is active.
     // Pass <0 to clear the cap (restore normal kPageCacheRadius behavior).
     void setPageCacheRadiusCap(int radius);
     int pageCacheRadiusCap() const { return m_pageCacheRadiusCap; }
+
+    // Single-row carousel: keep the visible ~5-up shelf (±2) warm even when
+    // adaptive pacing is soft/stressed (Performance Boost High/Balanced).
+    void setCarouselWarmFloor(bool enabled) { m_carouselWarmFloor = enabled; }
 
     // Destroy GPU textures on free pool slots. onPageChanged normally keeps
     // them for reuse; Frame Tap needs the bytes returned to process free.
@@ -206,6 +222,7 @@ private:
     int m_pinnedIndex = -1;
 
     static constexpr int kPageCacheRadius = 4;
+    static constexpr int kBalancedPageCacheRadius = 3;
     static constexpr int kGridPageCacheRadius = 1;
     // Base decode cap per side; portraits may use up to 2× / 3× (see decodeIconData).
     static constexpr int kIconSize        = 160;
@@ -218,16 +235,16 @@ private:
     static constexpr int kSoftLandingMaxPendingDecodes = 4;
     std::chrono::steady_clock::time_point m_burstUntil{};
     bool inBurst() const { return std::chrono::steady_clock::now() < m_burstUntil; }
-    int uploadsPerFrame() const {
-        if (inSoftLanding())
-            return kSoftLandingUploadsPerFrame;
-        return inBurst() ? kBurstUploadsPerFrame : kUploadsPerFrame;
+    int steadyPageCacheRadius() const {
+        return m_performanceMode >= 2 ? kBalancedPageCacheRadius : kPageCacheRadius;
     }
-    int maxPendingDecodes() const {
-        if (inSoftLanding())
-            return kSoftLandingMaxPendingDecodes;
-        return inBurst() ? kBurstMaxPendingDecodes : kMaxPendingDecodes;
-    }
+    int uploadsPerFrame() const;
+    int maxPendingDecodes() const;
+    int m_performanceMode = 0;
+    bool m_frameSoft = false;
+    bool m_frameStressed = false;
+    bool m_carouselWarmFloor = false;
+    mutable int m_lastUploadsThisFrame = 0;
     std::chrono::steady_clock::time_point m_softLandingUntil{};
     std::chrono::steady_clock::time_point m_softLandingWidenUntil{};
     int m_softLandingRadius = kPageCacheRadius;
@@ -238,10 +255,19 @@ private:
     }
     int pageCacheRadius() const {
         const auto now = std::chrono::steady_clock::now();
-        auto clampRadius = [this](int radius) {
+        const int steady = steadyPageCacheRadius();
+        auto clampRadius = [this, steady](int radius) {
             if (radius <= 0)
                 return 0;
-            int capped = radius < kPageCacheRadius ? radius : kPageCacheRadius;
+            int capped = radius < steady ? radius : steady;
+            if (m_frameStressed)
+                capped = capped < 1 ? capped : 1;
+            else if (m_frameSoft)
+                capped = capped < 2 ? capped : 2;
+            // Shelf-protected: never drop below the visible ~5-up (±2), even
+            // when stressed — empty focus neighbors hurt more than a hitch.
+            if (m_carouselWarmFloor)
+                capped = std::max(capped, 2);
             if (m_pageCacheRadiusCap >= 0 && capped > m_pageCacheRadiusCap)
                 capped = m_pageCacheRadiusCap;
             return capped;
@@ -250,7 +276,7 @@ private:
             return clampRadius(m_softLandingRadius);
         if (now < m_softLandingWidenUntil)
             return clampRadius(m_softLandingWidenRadius);
-        return clampRadius(kPageCacheRadius);
+        return clampRadius(steady);
     }
     int m_pageCacheRadiusCap = -1;
     static constexpr std::uint64_t kGpuImageReserve = 4u * 1024u * 1024u;

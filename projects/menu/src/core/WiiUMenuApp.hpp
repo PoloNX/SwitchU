@@ -44,6 +44,7 @@
 #include "settings/TextEntryScreen.hpp"
 #include "themeshop/ThemeShopScreen.hpp"
 #include "core/Config.hpp"
+#include "core/FrameHealth.hpp"
 #include "core/HomeLayoutMetrics.hpp"
 #include "core/FolderStore.hpp"
 #include "core/FolderPeekComposite.hpp"
@@ -488,6 +489,11 @@ private:
     void applyFrameTapLiteBackground(bool lite);
     // Persist + sync QS/Theme Shop; enter/leave lite when FT viewer is not holding it.
     void applyBatterySaver(bool enabled);
+    // Sync IconStreamer + theme density for Settings → Display → Performance.
+    void applyUiPerformanceMode(int mode, bool saveConfig);
+    // Balanced: trim WaraWara shapeCount; Off/High keep author count.
+    static int uiPerformanceShapeCount(int authorCount, int mode);
+    void applyUiPerformanceBackgroundDensity();
     void applyConsoleBatteryStatus(int percent, bool charging);
     void tickControllerBatteries(float dt);
     void tickDisplayMode();
@@ -846,6 +852,7 @@ private:
     AppletLauncher  m_launcher;
     AppListLoader   m_appLoader;
     IconStreamer    m_iconStreamer;
+    FrameHealth     m_frameHealth;
     SystemMessages  m_sysMsg;
     switchu::navigation::MenuNavigator m_navigator;
 
@@ -1098,6 +1105,10 @@ private:
     bool m_suppressNextNavigateSfx    = false;
     bool m_pendingNetConnect          = false;
     int  m_deferredInitialAssetFrames = 0;
+    // Orientation (1=portrait, 0=landscape) the theme wallpaper/resources were
+    // last applied for; -1 until the first applyThemeResources(). Lets
+    // reflowHomeShell() skip a redundant full re-apply when nothing flipped.
+    int  m_themeResourcesPortrait = -1;
     bool m_webClockBootSyncStarted = false;
     int  m_webClockBootSyncDelayFrames = 0;
     int  m_webClockBootSyncFailures = 0;

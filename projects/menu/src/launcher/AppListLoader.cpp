@@ -133,21 +133,25 @@ bool fetchDaemonCatalog(std::vector<PendingApp>& out, bool prefetchIcons) {
         switchu::control_cache::Meta meta{};
         const bool needsMetadata = prefetchIcons || isTitleIdFallback(a.title, ent.titleId)
             || !a.startupUserKnown;
-        if (switchu::control_cache::readMeta(ent.titleId, meta)) {
+        // Fast HOME return: do NOT open one .meta file per installed title
+        // (~170 SD opens, 0.5-1 s of menu init) just to fill englishTitle. That
+        // field is only consumed by SteamGridDB searches, which resolve it
+        // lazily (AppEntry::steamGridDbTitle) from the same .meta file.
+        bool metaRead = false;
+        if (needsMetadata && switchu::control_cache::readMeta(ent.titleId, meta)) {
+            metaRead = true;
             a.englishTitle = meta.english_name;
-            if (needsMetadata && meta.name[0] != '\0')
+            if (meta.name[0] != '\0')
                 a.title = meta.name;
-            if (needsMetadata) {
-                a.startupUserKnown = true;
-                a.startupUserAccount = meta.startup_user_account;
-                a.startupUserAccountOption = meta.startup_user_account_option;
-                a.userRequired = requiresInteractiveUserSelection(a.startupUserAccount,
-                                                                  a.startupUserAccountOption);
-                if (prefetchIcons)
-                    a.iconData = switchu::control_cache::readIcon(ent.titleId);
-            }
+            a.startupUserKnown = true;
+            a.startupUserAccount = meta.startup_user_account;
+            a.startupUserAccountOption = meta.startup_user_account_option;
+            a.userRequired = requiresInteractiveUserSelection(a.startupUserAccount,
+                                                              a.startupUserAccountOption);
+            if (prefetchIcons)
+                a.iconData = switchu::control_cache::readIcon(ent.titleId);
         }
-        if (a.englishTitle.empty()) a.englishTitle = a.title;
+        if (metaRead && a.englishTitle.empty()) a.englishTitle = a.title;
 
         if (!switchu::control_cache::isValidUtf8(a.title.c_str(), a.title.size() + 1)) {
             DebugLog::log("[loader] invalid UTF-8 title; using title id=%016lX",

@@ -177,6 +177,29 @@ SettingsScreen::Tab settings::tabs::DisplayTab::build(SettingsScreen& screen) {
 
     {
         SettingItem it;
+        it.label = i18n.tr("settings.display.performance", "Performance Boost");
+        it.description = i18n.tr("settings.display.performance_desc",
+            "Off matches original art pacing. High adds adaptive frame pacing with full neighbor warming. Balanced also trims background art for steadier scrolling.");
+        it.type = ItemType::Selector;
+        it.options = {
+            i18n.tr("settings.display.performance_off", "Off"),
+            i18n.tr("settings.display.performance_high", "High"),
+            i18n.tr("settings.display.performance_balanced", "Balanced"),
+        };
+        it.intVal = std::clamp(screen.m_uiPerformanceMode, 0, 2);
+        it.onChange = [&screen](SettingItem& self) {
+            const int mode = std::clamp(self.intVal, 0, 2);
+            if (mode == screen.m_uiPerformanceMode)
+                return;
+            screen.m_uiPerformanceMode = mode;
+            if (screen.m_uiPerformanceModeCb)
+                screen.m_uiPerformanceModeCb(mode);
+        };
+        t.items.push_back(std::move(it));
+    }
+
+    {
+        SettingItem it;
         it.label = i18n.tr("settings.display.orientation", "HOME Orientation");
         it.description = i18n.tr("settings.display.orientation_desc",
             "Rotate the HOME menu. Useful for TATE or Flip-Grip setups.");

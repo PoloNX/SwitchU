@@ -301,6 +301,7 @@ void WiiUMenuApp::createSettings() {
     m_settings->setCanvasSize(m_homeLayout.logicalW(), m_homeLayout.logicalH());
     m_settings->setInstantCursorMotion(m_config.cursorMotionMode == 1);
     m_settings->setWireframeState(m_showWireframe);
+    m_settings->setUiPerformanceModeState(m_config.uiPerformanceMode);
     m_settings->setHomeOrientationState(m_config.homeOrientation,
                                         m_config.homeOrientationButton,
                                         m_config.homeOrientationCycle,
@@ -352,6 +353,10 @@ void WiiUMenuApp::createSettings() {
     m_settings->onWireframeChange([this](bool enabled) {
         m_showWireframe = enabled;
         app().renderer().setBoxWireframeEnabled(enabled);
+    });
+    m_settings->onUiPerformanceModeChange([this](int mode) {
+        // applyUiPerformanceMode also trims WaraWara density (audit #3).
+        applyUiPerformanceMode(mode, true);
     });
     m_settings->onHomeOrientationChange([this](HomeOrientation orientation) {
         m_config.homeOrientation = orientation;
@@ -4032,6 +4037,7 @@ void WiiUMenuApp::applyThemeResources(const ThemePreset& preset) {
         ? portraitBackgroundPath
         : landscapeBackgroundPath;
 
+    m_themeResourcesPortrait = m_homeLayout.isPortrait() ? 1 : 0;
     // This application supersedes any retry left by the previous theme.
     m_pendingBackgroundImagePath.clear();
     m_backgroundImageRetryFrames = 0;
@@ -4200,7 +4206,8 @@ void WiiUMenuApp::applyThemeResources(const ThemePreset& preset) {
         backgroundConfig.layout = toBackgroundLayout(preset.background.layout);
         backgroundConfig.shapeSet = toBackgroundShapeSet(preset.background.shapeSet);
         backgroundConfig.symmetry = toBackgroundSymmetry(preset.background.symmetry);
-        backgroundConfig.shapeCount = preset.background.shapeCount;
+        backgroundConfig.shapeCount = uiPerformanceShapeCount(
+            preset.background.shapeCount, m_config.uiPerformanceMode);
         backgroundConfig.gridColumns = preset.background.gridColumns;
         backgroundConfig.gridRows = preset.background.gridRows;
         backgroundConfig.spacingX = preset.background.spacingX;
@@ -4853,7 +4860,11 @@ void WiiUMenuApp::syncColourIconContrast() {
         // Rebake colour glyphs (and Change View) with the new HSL adjust.
         // Do not log the unchanged path — syncColourIconContrast runs every
         // frame from updateHeroAwareChrome; SD log spam soft-locks the console.
-        reloadSidebarIcons();
+        // Fast return: the deferred initial-asset pass (two frames after the
+        // first present) already runs reloadSidebarIcons() with this HSL, so do
+        // not also pay for the full pack reload before the first frame.
+        if (m_deferredInitialAssetFrames == 0)
+            reloadSidebarIcons();
         m_sidebar.setColourIconContrast(adaptColour);
         if (m_layoutFlip)
             m_layoutFlip->setColourIconContrast(adaptColour);

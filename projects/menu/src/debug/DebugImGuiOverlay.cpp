@@ -250,6 +250,14 @@ void DebugImGuiOverlay::drawWindow(nxui::Renderer& ren, bool& open) {
             open = false;
         }
 
+        ImGui::SeparatorText("Frame Health");
+        ImGui::Text("dt %.2f ms | avg %.1f | last %.1f | hitches %d/32",
+                    m_deltaTime * 1000.f, m_frameAvgMs, m_frameLastMs,
+                    m_frameHitchInWindow);
+        ImGui::Text("pace: %s",
+                    m_frameStressed ? "stressed"
+                    : m_frameSoft ? "soft" : "healthy");
+
         ImGui::SeparatorText("Runtime Logs");
         ImGui::TextWrapped("Recent in-memory logs. Full file: %s", DebugLog::LOG_FILE);
 
