@@ -27,6 +27,7 @@
 #include <filesystem>
 #include <fstream>
 #include <system_error>
+#include <unordered_map>
 
 using namespace switchu;
 
@@ -291,7 +292,13 @@ static constexpr uint64_t kMenuEarlyExitNs = 10'000'000'000ULL;
 // Happy-path settle before Album launch. Idle stays snappy; suspended titles
 // get a short vi/layer quiet window. Longer settle is only on soft retry.
 static constexpr uint64_t kHomeMenuSettleNsIdle = 80'000'000ULL;        // ~80ms
-static constexpr uint64_t kHomeMenuSettleNsSuspended = 300'000'000ULL;  // ~300ms
+// Was a fixed 300ms: with ChangeIntoForeground already in hand it is pure
+// latency on every HOME press. 100ms default; sdmc:/config/SwitchU/home_settle_ms
+// (plain integer, 0-1000) overrides it so the value can be A/B tested on device
+// without a rebuild. A bad value only costs the existing gfx-fail relaunch path.
+static constexpr uint64_t kHomeMenuSettleNsSuspendedDefault = 100'000'000ULL;
+static constexpr const char* kHomeSettleOverridePath = "sdmc:/config/SwitchU/home_settle_ms";
+static uint64_t g_homeMenuSettleNsSuspended = kHomeMenuSettleNsSuspendedDefault;
 static constexpr uint64_t kHomeMenuGfxFailSettleNs = 2'500'000'000ULL; // 2.5s before sole relaunch
 // HOME asked for the foreground but AE never sent ChangeIntoForeground (it
 // already arrived just before the request, e.g. right at an app launch). Past
@@ -319,6 +326,25 @@ struct DaemonAppCatalogEntry {
 
 static std::vector<DaemonAppCatalogEntry> g_appCatalog;
 static std::atomic<bool> g_appCatalogRefreshPending{false};
+// Boot: when applist.bin from the previous session is on the SD card the menu
+// can launch immediately from it, and the (multi-second on a cold boot)
+// rebuild runs after MenuReady instead of in front of the menu launch. The
+// deferred rebuild pushes AppRecordsChanged only if the bytes actually differ
+// from the file the menu already loaded.
+static bool g_bootCatalogRebuildPending = false;
+// The menu's boot-time SetLockScreen push blocks until the daemon answers. A
+// rebuild that starts right at MenuReady held that answer for ~4s and kept the
+// first frame grey, so wait for it (or a 15s safety timeout) before rebuilding.
+static bool g_bootLockScreenSeen = false;
+// Same stall on every HOME return: a record-event rebuild that starts right at
+// MenuReady (~200ms hold) was holding the menu's SetLockScreen answer for
+// ~650ms (logged push=673ms, first frame 2.0s vs 1.3s). Keep rebuilds off
+// until the menu has had its SetLockScreen answered, capped at 3s.
+static uint64_t g_menuReadyTick = 0;
+static uint64_t g_menuLockScreenTick = 0;
+static constexpr uint64_t kMenuInitSettleMaxNs = 3'000'000'000ULL;
+static uint64_t g_bootCatalogScheduledTick = 0;
+static constexpr uint64_t kBootRebuildMaxWaitNs = 15'000'000'000ULL;
 // A catalogue rebuild can complete while a full-application homebrew owns the
 // foreground and the menu process is absent. Preserve that edge so the freshly
 // relaunched menu receives one coalesced refresh instead of keeping a stale
@@ -353,14 +379,42 @@ static uint8_t g_lastBatteryPercent = 0xFF;
 static PsmChargerType g_lastChargerType = (PsmChargerType)0xFF;
 
 static bool shouldDeferViewPolling() {
+    // Hold off views/catalog while a HOME handoff is in flight — once the game
+    // yields FG, shouldDefer would otherwise go false and a ~1.6s rebuild can
+    // starve ChangeIntoForeground (AUDIT-SWITCHU-PERF #1).
+    if (g_pendingHomeMenuLaunch)
+        return true;
     return daemon::app::isRunning() &&
            daemon::app::hasForeground() &&
            !daemon::menu_la::isActive() &&
            !g_foregroundAppletActive;
 }
 
+// Catalog rebuild is ~1–2s of SD meta reads. Never overlap it with menu init:
+// the 2s post-launch hold expires before MenuReady, which was starving first
+// frame after #1 deferred the rebuild into the HOME return path.
+static bool shouldDeferCatalogRebuild() {
+    if (shouldDeferViewPolling())
+        return true;
+    if (daemon::menu_la::isActive() && !g_menuReadyThisSession)
+        return true;
+    if (daemon::menu_la::isActive() && g_menuReadyThisSession &&
+        g_menuLockScreenTick < g_menuReadyTick &&
+        armTicksToNs(armGetSystemTick() - g_menuReadyTick) < kMenuInitSettleMaxNs)
+        return true;
+    return false;
+}
+
 static uint64_t elapsedNsSince(uint64_t startTick) {
     return armTicksToNs(armGetSystemTick() - startTick);
+}
+
+static unsigned long tickMsNow() {
+    return static_cast<unsigned long>(armTicksToNs(armGetSystemTick()) / 1'000'000ULL);
+}
+
+static unsigned long elapsedMsSince(uint64_t startTick) {
+    return static_cast<unsigned long>(elapsedNsSince(startTick) / 1'000'000ULL);
 }
 
 static uint64_t catalogHoldRemainingNs() {
@@ -454,11 +508,60 @@ static bool queryApplicationViews(const std::vector<switchu::ns::ExtApplicationR
     return true;
 }
 
+// In-RAM copy of the on-disk control-cache .meta files that the catalog needs
+// (display name + startup-user policy). A rebuild used to open one .meta file
+// per installed title (plus a second open for the hasMeta() check) on the
+// daemon's single main thread: ~1.6-2 s for ~175 titles, long enough to starve
+// the HOME handshake and to fight the menu for the SD card. Only successful
+// reads are cached; the control-cache worker only writes a title's .meta when
+// none exists, so a positive entry never goes stale except on uninstall (see
+// invalidateControlMeta in purgeRemovedControlCache).
+struct CachedControlMeta {
+    bool present = false;
+    uint8_t startupUserAccount = 1;
+    uint8_t startupUserAccountOption = 0;
+    std::string name;
+};
+static std::mutex g_controlMetaCacheMutex;
+static std::unordered_map<uint64_t, CachedControlMeta> g_controlMetaCache;
+
+static CachedControlMeta lookupControlMeta(uint64_t titleId) {
+    {
+        std::lock_guard<std::mutex> lock(g_controlMetaCacheMutex);
+        const auto it = g_controlMetaCache.find(titleId);
+        if (it != g_controlMetaCache.end())
+            return it->second;
+    }
+
+    CachedControlMeta out;
+    switchu::control_cache::Meta meta{};
+    if (!switchu::control_cache::readMeta(titleId, meta))
+        return out;
+
+    out.present = true;
+    out.startupUserAccount = meta.startup_user_account;
+    out.startupUserAccountOption = meta.startup_user_account_option;
+    const std::size_t nameLength = strnlen(meta.name, sizeof(meta.name));
+    if (nameLength > 0 &&
+        switchu::control_cache::isValidUtf8(meta.name, nameLength + 1)) {
+        out.name.assign(meta.name, nameLength);
+    }
+
+    std::lock_guard<std::mutex> lock(g_controlMetaCacheMutex);
+    g_controlMetaCache[titleId] = out;
+    return out;
+}
+
+static void invalidateControlMeta(uint64_t titleId) {
+    std::lock_guard<std::mutex> lock(g_controlMetaCacheMutex);
+    g_controlMetaCache.erase(titleId);
+}
+
 static void enqueueControlCacheRecords(const std::vector<switchu::ns::ExtApplicationRecord>& records) {
     bool queued = false;
     std::lock_guard<std::mutex> lock(g_controlCacheQueueMutex);
     for (const auto& record : records) {
-        if (record.id == 0 || switchu::control_cache::hasMeta(record.id))
+        if (record.id == 0 || lookupControlMeta(record.id).present)
             continue;
         if (std::find(g_controlCacheQueue.begin(), g_controlCacheQueue.end(), record.id) ==
             g_controlCacheQueue.end()) {
@@ -480,8 +583,47 @@ static bool popControlCacheTitle(uint64_t& outTitleId) {
     return true;
 }
 
-static bool writeAppCatalogFile() {
+// Last catalog bytes successfully published to kAppCatalogPath. Record-update
+// events fire on every game launch/close (play-time bookkeeping) without any
+// title or name changing, so most rebuilds produce byte-identical output.
+static std::string g_lastCatalogBytes;
+static bool g_lastCatalogBytesValid = false;
+
+static std::string serializeAppCatalog() {
+    std::string out;
+    out.reserve(sizeof(uint32_t) + g_appCatalog.size() * (sizeof(smi::AppEntryHeader) + 48));
+    const uint32_t count = static_cast<uint32_t>(g_appCatalog.size());
+    out.append(reinterpret_cast<const char*>(&count), sizeof(count));
+    for (const auto& ent : g_appCatalog) {
+        smi::AppEntryHeader eh{};
+        eh.title_id = ent.titleId;
+        eh.name_len = static_cast<uint32_t>(ent.name.size());
+        eh.icon_data_len = 0;
+        eh.view_flags = ent.viewFlags;
+        eh.startup_user_account = ent.startupUserAccount;
+        eh.startup_user_account_option = ent.startupUserAccountOption;
+        eh.startup_user_known = ent.startupUserKnown ? 1 : 0;
+        out.append(reinterpret_cast<const char*>(&eh), sizeof(eh));
+        if (eh.name_len > 0)
+            out.append(ent.name.data(), eh.name_len);
+    }
+    return out;
+}
+
+static bool writeAppCatalogFile(bool* outSkipped = nullptr) {
+    if (outSkipped)
+        *outSkipped = false;
+
     std::error_code fsEc;
+    const std::string bytes = serializeAppCatalog();
+    if (g_lastCatalogBytesValid && bytes == g_lastCatalogBytes &&
+        std::filesystem::exists(kAppCatalogPath, fsEc)) {
+        if (outSkipped)
+            *outSkipped = true;
+        return true;
+    }
+    fsEc.clear();
+
     std::filesystem::create_directory("sdmc:/config", fsEc);
     fsEc.clear();
     std::filesystem::create_directory("sdmc:/config/SwitchU", fsEc);
@@ -492,24 +634,7 @@ static bool writeAppCatalogFile() {
         return false;
     }
 
-    uint32_t count = static_cast<uint32_t>(g_appCatalog.size());
-    bool ok = static_cast<bool>(f.write(reinterpret_cast<const char*>(&count), sizeof(count)));
-    for (const auto& ent : g_appCatalog) {
-        if (!ok) break;
-
-        smi::AppEntryHeader eh{};
-        eh.title_id = ent.titleId;
-        eh.name_len = static_cast<uint32_t>(ent.name.size());
-        eh.icon_data_len = 0;
-        eh.view_flags = ent.viewFlags;
-        eh.startup_user_account = ent.startupUserAccount;
-        eh.startup_user_account_option = ent.startupUserAccountOption;
-        eh.startup_user_known = ent.startupUserKnown ? 1 : 0;
-
-        ok = static_cast<bool>(f.write(reinterpret_cast<const char*>(&eh), sizeof(eh)));
-        if (ok && eh.name_len > 0)
-            ok = static_cast<bool>(f.write(ent.name.data(), static_cast<std::streamsize>(eh.name_len)));
-    }
+    bool ok = static_cast<bool>(f.write(bytes.data(), static_cast<std::streamsize>(bytes.size())));
 
     f.close();
     ok = ok && static_cast<bool>(f);
@@ -553,7 +678,92 @@ static bool writeAppCatalogFile() {
 
     fsEc.clear();
     std::filesystem::remove(kAppCatalogBackupPath, fsEc);
+    g_lastCatalogBytes = bytes;
+    g_lastCatalogBytesValid = true;
     return true;
+}
+
+// Boot fast path: treat the applist.bin left by the previous session as the
+// catalog the menu is about to read, and remember its bytes so the deferred
+// rebuild can tell whether anything really changed.
+static bool seedCatalogFromDisk() {
+    std::ifstream f(kAppCatalogPath, std::ios::binary | std::ios::ate);
+    if (!f.is_open())
+        return false;
+    const std::streamoff size = f.tellg();
+    // Header is a u32 count; entries are >= sizeof(AppEntryHeader) each.
+    if (size < static_cast<std::streamoff>(sizeof(uint32_t)) ||
+        size > 8 * 1024 * 1024)
+        return false;
+    f.seekg(0, std::ios::beg);
+    std::string bytes(static_cast<size_t>(size), '\0');
+    if (!f.read(bytes.data(), size))
+        return false;
+    uint32_t count = 0;
+    std::memcpy(&count, bytes.data(), sizeof(count));
+    if (count == 0 ||
+        bytes.size() < sizeof(count) + static_cast<size_t>(count) * sizeof(smi::AppEntryHeader))
+        return false;
+    // Also seed the in-RAM meta cache from the same file so the deferred
+    // rebuild does not reopen ~170 .meta files on a cold SD. applist.bin was
+    // itself built from those .meta files (name + startup-user policy). Spot
+    // check that the control cache still exists first, otherwise (cache wiped
+    // by hand) fall back to the normal path that regenerates it.
+    struct SeedEntry { uint64_t tid; CachedControlMeta meta; };
+    std::vector<SeedEntry> seeds;
+    seeds.reserve(count);
+    size_t pos = sizeof(count);
+    for (uint32_t i = 0; i < count; ++i) {
+        smi::AppEntryHeader eh{};
+        if (pos + sizeof(eh) > bytes.size())
+            break;
+        std::memcpy(&eh, bytes.data() + pos, sizeof(eh));
+        pos += sizeof(eh);
+        const size_t payload = static_cast<size_t>(eh.name_len) + eh.icon_data_len;
+        if (pos + payload > bytes.size())
+            break;
+        if (eh.title_id != 0 && eh.startup_user_known != 0) {
+            SeedEntry s;
+            s.tid = eh.title_id;
+            s.meta.present = true;
+            s.meta.startupUserAccount = eh.startup_user_account;
+            s.meta.startupUserAccountOption = eh.startup_user_account_option;
+            char fallbackName[17] = {};
+            std::snprintf(fallbackName, sizeof(fallbackName), "%016lX",
+                          static_cast<unsigned long>(eh.title_id));
+            std::string name(bytes.data() + pos, eh.name_len);
+            if (name != fallbackName)
+                s.meta.name = std::move(name);
+            seeds.push_back(std::move(s));
+        }
+        pos += payload;
+    }
+    if (!seeds.empty() && switchu::control_cache::hasMeta(seeds.front().tid) &&
+        switchu::control_cache::hasMeta(seeds.back().tid)) {
+        std::lock_guard<std::mutex> lock(g_controlMetaCacheMutex);
+        for (auto& s : seeds)
+            g_controlMetaCache[s.tid] = std::move(s.meta);
+        switchu::FileLog::log("[catalog] seeded %u meta entries from applist.bin",
+                              static_cast<unsigned>(seeds.size()));
+    }
+
+    g_lastCatalogBytes = std::move(bytes);
+    g_lastCatalogBytesValid = true;
+    return true;
+}
+
+static void loadHomeSettleOverride() {
+    std::ifstream f(kHomeSettleOverridePath);
+    if (!f.is_open())
+        return;
+    long ms = -1;
+    f >> ms;
+    if (ms < 0 || ms > 1000) {
+        switchu::FileLog::log("[settle] ignoring invalid %s", kHomeSettleOverridePath);
+        return;
+    }
+    g_homeMenuSettleNsSuspended = static_cast<uint64_t>(ms) * 1'000'000ULL;
+    switchu::FileLog::log("[settle] suspended-title HOME settle override=%ldms", ms);
 }
 
 static void purgeRemovedControlCache(
@@ -577,6 +787,7 @@ static void purgeRemovedControlCache(
         if (stillInstalled)
             continue;
 
+        invalidateControlMeta(tid);
         if (switchu::control_cache::remove(tid))
             ++purged;
     }
@@ -586,16 +797,47 @@ static void purgeRemovedControlCache(
                               purged);
 }
 
-static bool rebuildAppCatalog(const char* reason, bool* outChanged = nullptr) {
+// A rebuild is: list records + cache bookkeeping (fast), query the per-title
+// application views through ns (1.4s warm, 7.5s on a cold boot for ~170
+// titles), then resolve names/flags and publish applist.bin. The ns query used
+// to run on the daemon's single main thread, freezing HOME / launch / power
+// handling for its whole duration; it can now run on a worker (see
+// startAsyncCatalogRebuild) while the main loop keeps serving requests.
+struct CatalogRebuildCtx {
+    const char* reason = "?";
+    uint64_t startedAt = 0;
+    unsigned long recordsDoneMs = 0;
+    unsigned long metaLoadDoneMs = 0;
+    unsigned long viewsDoneMs = 0;
     std::vector<switchu::ns::ExtApplicationRecord> records;
-    if (!listApplicationRecords(records, "catalog"))
-        return false;
-    purgeRemovedControlCache(records);
-    enqueueControlCacheRecords(records);
-
     std::vector<switchu::ns::ExtApplicationView> views;
-    queryApplicationViews(records, views, "catalog");
+};
 
+static bool beginCatalogRebuild(const char* reason, CatalogRebuildCtx& ctx) {
+    ctx.reason = reason ? reason : "?";
+    ctx.startedAt = armGetSystemTick();
+    switchu::FileLog::log("[catalog] rebuild start reason=%s tick_ms=%lu",
+                          ctx.reason, tickMsNow());
+    if (!listApplicationRecords(ctx.records, "catalog")) {
+        switchu::FileLog::log("[catalog] rebuild abort reason=%s list_failed duration_ms=%lu",
+                              ctx.reason, elapsedMsSince(ctx.startedAt));
+        return false;
+    }
+    ctx.recordsDoneMs = elapsedMsSince(ctx.startedAt);
+    purgeRemovedControlCache(ctx.records);
+    enqueueControlCacheRecords(ctx.records);
+    ctx.metaLoadDoneMs = elapsedMsSince(ctx.startedAt);
+    return true;
+}
+
+static bool finishCatalogRebuild(CatalogRebuildCtx& ctx, bool* outChanged) {
+    const char* reason = ctx.reason;
+    const uint64_t rebuildStartedAt = ctx.startedAt;
+    const unsigned long recordsDoneMs = ctx.recordsDoneMs;
+    const unsigned long metaLoadDoneMs = ctx.metaLoadDoneMs;
+    const unsigned long listViewsDoneMs = ctx.viewsDoneMs;
+    const auto& records = ctx.records;
+    const auto& views = ctx.views;
     const s32 count = static_cast<s32>(records.size());
     g_appCatalog.clear();
     g_appCatalog.reserve(count);
@@ -613,19 +855,17 @@ static bool rebuildAppCatalog(const char* reason, bool* outChanged = nullptr) {
                       static_cast<unsigned long>(tid));
         ent.name = fallbackName;
 
-        switchu::control_cache::Meta meta{};
-        if (switchu::control_cache::readMeta(tid, meta)) {
-            const std::size_t nameLength = strnlen(meta.name, sizeof(meta.name));
-            if (nameLength > 0 &&
-                switchu::control_cache::isValidUtf8(meta.name, nameLength + 1)) {
-                ent.name.assign(meta.name, nameLength);
-            }
-            ent.startupUserAccount = meta.startup_user_account;
-            ent.startupUserAccountOption = meta.startup_user_account_option;
+        const CachedControlMeta meta = lookupControlMeta(tid);
+        if (meta.present) {
+            if (!meta.name.empty())
+                ent.name = meta.name;
+            ent.startupUserAccount = meta.startupUserAccount;
+            ent.startupUserAccountOption = meta.startupUserAccountOption;
             ent.startupUserKnown = true;
         }
         g_appCatalog.push_back(std::move(ent));
     }
+    const unsigned long metaDoneMs = elapsedMsSince(rebuildStartedAt);
 
     const s32 prevCount = g_lastRecordCount;
     bool changed = prevCount != count;
@@ -647,14 +887,55 @@ static bool rebuildAppCatalog(const char* reason, bool* outChanged = nullptr) {
         g_lastViewFlags[i] = 0;
     }
 
-    const bool ok = writeAppCatalogFile();
-    switchu::FileLog::log("[catalog] rebuilt %d/%d apps reason=%s write=%d",
-                          (int)g_appCatalog.size(), (int)count, reason, ok ? 1 : 0);
+    bool writeSkipped = false;
+    const bool ok = writeAppCatalogFile(&writeSkipped);
+    // Deferred boot rebuild: there is no previous in-RAM record list to diff
+    // against, so "changed" means "applist.bin differs from what the menu read".
+    if (reason && std::strcmp(reason, "boot-deferred") == 0)
+        changed = ok && !writeSkipped;
+    switchu::FileLog::log(
+        "[catalog] rebuilt %d/%d apps reason=%s write=%d skipped=%d changed=%d "
+        "duration_ms=%lu records_ms=%lu meta_load_ms=%lu list_views_ms=%lu "
+        "meta_done_ms=%lu tick_ms=%lu",
+        (int)g_appCatalog.size(), (int)count, reason ? reason : "?", ok ? 1 : 0,
+        writeSkipped ? 1 : 0, changed ? 1 : 0, elapsedMsSince(rebuildStartedAt),
+        recordsDoneMs, metaLoadDoneMs, listViewsDoneMs, metaDoneMs, tickMsNow());
     g_appCatalog.clear();
     g_appCatalog.shrink_to_fit();
     if (outChanged)
         *outChanged = changed;
     return ok;
+}
+
+// Synchronous rebuild (first-install boot, or when the worker is unavailable).
+static bool rebuildAppCatalog(const char* reason, bool* outChanged = nullptr) {
+    CatalogRebuildCtx ctx;
+    if (!beginCatalogRebuild(reason, ctx))
+        return false;
+    queryApplicationViews(ctx.records, ctx.views, "catalog");
+    ctx.viewsDoneMs = elapsedMsSince(ctx.startedAt);
+    return finishCatalogRebuild(ctx, outChanged);
+}
+
+static CatalogRebuildCtx g_asyncCatalog;
+static std::atomic<bool> g_asyncCatalogInFlight{false}; // posted .. finished
+static std::atomic<bool> g_asyncCatalogDone{false};     // worker -> main handoff
+static std::atomic<bool> g_catalogViewsRunning{false};
+static bool g_catalogViewsStarted = false;
+static UEvent g_catalogViewsWakeEvent{};
+
+// Main thread: do the cheap prologue, then hand the ns view query to the
+// worker. Returns false if nothing was started.
+static bool startAsyncCatalogRebuild(const char* reason) {
+    if (g_asyncCatalogInFlight.load())
+        return false;
+    g_asyncCatalog = CatalogRebuildCtx{};
+    if (!beginCatalogRebuild(reason, g_asyncCatalog))
+        return false;
+    g_asyncCatalogDone.store(false);
+    g_asyncCatalogInFlight.store(true);
+    ueventSignal(&g_catalogViewsWakeEvent);
+    return true;
 }
 
 static void cancelViewPolling(const char* reason) {
@@ -1141,6 +1422,7 @@ static void requestParentalLock(const char* source) {
     g_pendingHomeMenuStartedAt = armGetSystemTick();
     g_pendingHomeMenuMode = smi::MenuStartMode::LockScreen;
     g_pendingHomeMenuLockWake = 1;
+    armCatalogHold(kCatalogHoldAfterHomeNs);
 }
 
 static void honorPlayTimerTick() {
@@ -1206,7 +1488,7 @@ static Result launchPendingHomeMenu() {
     const uint64_t settleNs = (mode == smi::MenuStartMode::LockScreen)
         ? 80'000'000ULL
         : ((status.suspended_app_id != 0)
-               ? kHomeMenuSettleNsSuspended
+               ? g_homeMenuSettleNsSuspended
                : kHomeMenuSettleNsIdle);
     switchu::FileLog::log("[%s] HOME settle_ms=%lu mode=%u", source,
                           static_cast<unsigned long>(settleNs / 1'000'000ULL),
@@ -1358,6 +1640,8 @@ static void startPowerSequence(const char* source, smi::SystemMessage action) {
     // The menu committed its writers before sending this command. The daemon
     // can still write cache/catalog/log data in the small IPC gap, so join all
     // of its background writers and commit once more from this process.
+    // The views worker only queries ns (no SD writes), so it is not joined here:
+    // an in-flight query must not delay a power request.
     stopEventManager();
     stopControlCacheWorker();
     if (!switchu::commitSdCard("daemon power handoff")) {
@@ -1384,6 +1668,7 @@ static void startPowerSequence(const char* source, smi::SystemMessage action) {
 
 static void openMenuFromHome(const char* source) {
     const uint64_t homeStartedAt = armGetSystemTick();
+    switchu::FileLog::log("[%s] HOME request tick_ms=%lu", source, tickMsNow());
     logHomeState(source, "request");
     cancelViewPolling("home");
 
@@ -1414,7 +1699,12 @@ static void openMenuFromHome(const char* source) {
         g_pendingHomeMenuStartedAt = homeStartedAt;
         g_pendingHomeMenuMode = smi::MenuStartMode::MainMenu;
         g_pendingHomeMenuLockWake = 0;
-        switchu::FileLog::log("[%s] HOME waiting for ChangeIntoForeground", source);
+        // Defer catalog rebuild until after the menu is up (PERF audit #1).
+        armCatalogHold(kCatalogHoldAfterHomeNs);
+        switchu::FileLog::log(
+            "[%s] HOME waiting for ChangeIntoForeground tick_ms=%lu catalog_hold_ms=%lu",
+            source, tickMsNow(),
+            static_cast<unsigned long>(kCatalogHoldAfterHomeNs / 1'000'000ULL));
         return;
     }
 
@@ -1549,7 +1839,13 @@ static void handleAppletMessages() {
 
     switch (msg) {
         case 1:
-        switchu::FileLog::log("[ae] -> ChangeIntoForeground");
+        if (g_pendingHomeMenuLaunch && g_pendingHomeMenuStartedAt != 0) {
+            switchu::FileLog::log(
+                "[ae] -> ChangeIntoForeground pending_wait_ms=%lu tick_ms=%lu",
+                elapsedMsSince(g_pendingHomeMenuStartedAt), tickMsNow());
+        } else {
+            switchu::FileLog::log("[ae] -> ChangeIntoForeground tick_ms=%lu", tickMsNow());
+        }
         launchPendingHomeMenu();
         break;
 
@@ -1595,6 +1891,7 @@ static void handleAppletMessages() {
             g_pendingHomeMenuStartedAt = armGetSystemTick();
             g_pendingHomeMenuMode = smi::MenuStartMode::LockScreen;
             g_pendingHomeMenuLockWake = 1;
+            armCatalogHold(kCatalogHoldAfterHomeNs);
             startSleepSequence("applet-sleep-lock");
             break;
         }
@@ -1630,6 +1927,7 @@ static void handleAppletMessages() {
             g_pendingHomeMenuStartedAt = armGetSystemTick();
             g_pendingHomeMenuMode = smi::MenuStartMode::LockScreen;
             g_pendingHomeMenuLockWake = 1;
+            armCatalogHold(kCatalogHoldAfterHomeNs);
             switchu::FileLog::log("[ae] wake-lock waiting for ChangeIntoForeground");
             break;
         }
@@ -2144,6 +2442,8 @@ static void handleMenuCommand() {
                               args.enabled ? "enabled" : "disabled",
                               (unsigned)pb);
         pushCommandResult(requestId, 0, "SetLockScreen");
+        g_bootLockScreenSeen = true;
+        g_menuLockScreenTick = armGetSystemTick();
         return;
     }
 
@@ -2169,6 +2469,7 @@ static void handleMenuCommand() {
     case smi::SystemMessage::MenuReady:
         switchu::FileLog::log("[smi] menu ready");
         g_menuReadyThisSession = true;
+        g_menuReadyTick = armGetSystemTick();
         g_menuGfxRelaunchTries = 0;
         g_menuGfxRelaunchDelay = 0;
         g_menuGfxRelaunchPending = false;
@@ -2472,19 +2773,60 @@ static void mainLoop() {
         }
     }
 
-    if (g_appCatalogRefreshPending.load() && !shouldDeferViewPolling() &&
-        catalogHoldRemainingNs() == 0) {
+    // Worker finished the ns view query: publish the catalog on this thread.
+    if (g_asyncCatalogDone.load()) {
+        bool catalogChanged = false;
+        const bool ok = finishCatalogRebuild(g_asyncCatalog, &catalogChanged);
+        g_asyncCatalog = CatalogRebuildCtx{};
+        g_asyncCatalogDone.store(false);
+        g_asyncCatalogInFlight.store(false);
+        if (ok && catalogChanged) {
+            if (daemon::menu_la::isActive())
+                pushNotification(smi::MenuMessage::AppRecordsChanged);
+            else
+                g_catalogChangedWhileMenuAway.store(true);
+        }
+        didWork = true;
+    }
+    if (g_appCatalogRefreshPending.load() && !g_asyncCatalogInFlight.load() &&
+        !shouldDeferCatalogRebuild() && catalogHoldRemainingNs() == 0) {
         g_appCatalogRefreshPending.store(false);
         clearCatalogHold();
-        bool catalogChanged = false;
-        if (rebuildAppCatalog("record-event", &catalogChanged)) {
-            if (catalogChanged) {
-                if (daemon::menu_la::isActive())
-                    pushNotification(smi::MenuMessage::AppRecordsChanged);
-                else
-                    g_catalogChangedWhileMenuAway.store(true);
+        if (g_catalogViewsStarted) {
+            if (startAsyncCatalogRebuild("record-event"))
+                didWork = true;
+        } else {
+            bool catalogChanged = false;
+            if (rebuildAppCatalog("record-event", &catalogChanged)) {
+                if (catalogChanged) {
+                    if (daemon::menu_la::isActive())
+                        pushNotification(smi::MenuMessage::AppRecordsChanged);
+                    else
+                        g_catalogChangedWhileMenuAway.store(true);
+                }
+                didWork = true;
             }
-            didWork = true;
+        }
+    }
+    if (g_bootCatalogRebuildPending && !g_asyncCatalogInFlight.load() &&
+        !shouldDeferCatalogRebuild() && catalogHoldRemainingNs() == 0 &&
+        (g_bootLockScreenSeen ||
+         elapsedNsSince(g_bootCatalogScheduledTick) >= kBootRebuildMaxWaitNs)) {
+        g_bootCatalogRebuildPending = false;
+        if (g_catalogViewsStarted) {
+            if (startAsyncCatalogRebuild("boot-deferred"))
+                didWork = true;
+        } else {
+            bool catalogChanged = false;
+            if (rebuildAppCatalog("boot-deferred", &catalogChanged)) {
+                if (catalogChanged) {
+                    if (daemon::menu_la::isActive())
+                        pushNotification(smi::MenuMessage::AppRecordsChanged);
+                    else
+                        g_catalogChangedWhileMenuAway.store(true);
+                }
+                didWork = true;
+            }
         }
     }
     if (g_controlCacheRefreshPending.load() && !controlCacheHoldActive() &&
@@ -2749,7 +3091,9 @@ static bool mainLoopNeedsFastTick() {
             || !g_actionQueue.empty();
     }
     return g_eventPollsRemaining > 0
-        || g_appCatalogRefreshPending.load()
+        || (g_bootCatalogRebuildPending && !g_asyncCatalogInFlight.load())
+        || (g_appCatalogRefreshPending.load() && !g_asyncCatalogInFlight.load())
+        || g_asyncCatalogDone.load()
         || g_controlCacheRefreshPending.load()
         || g_menuRelaunchCooldown > 0
         || g_menuGfxRelaunchDelay > 0
@@ -3019,6 +3363,7 @@ static void controlCacheThreadFunc(void* arg) {
                                   static_cast<unsigned long>(elapsedMs),
                                   ok ? 1 : 0);
             if (ok) {
+                invalidateControlMeta(titleId);
                 if (!g_controlCacheRefreshPending.exchange(true))
                     g_controlCacheHoldStartTick.store(armGetSystemTick());
                 ueventSignal(&g_mainWakeEvent);
@@ -3070,6 +3415,50 @@ static void stopControlCacheWorker() {
     switchu::FileLog::log("[control-cache] thread stopped");
 }
 
+static Thread g_catalogViewsThread = {};
+
+// Runs only the ns application-view query for a posted rebuild; everything
+// that touches shared catalog state stays on the main thread.
+static void catalogViewsThreadFunc(void* arg) {
+    (void)arg;
+    while (g_catalogViewsRunning.load()) {
+        if (!g_asyncCatalogInFlight.load() || g_asyncCatalogDone.load()) {
+            waitSingle(waiterForUEvent(&g_catalogViewsWakeEvent), UINT64_MAX);
+            continue;
+        }
+        queryApplicationViews(g_asyncCatalog.records, g_asyncCatalog.views, "catalog");
+        g_asyncCatalog.viewsDoneMs = elapsedMsSince(g_asyncCatalog.startedAt);
+        g_asyncCatalogDone.store(true);
+        ueventSignal(&g_mainWakeEvent);
+    }
+}
+
+static void startCatalogViewsWorker() {
+    ueventCreate(&g_catalogViewsWakeEvent, true);
+    g_catalogViewsRunning.store(true);
+    Result rc = threadCreate(&g_catalogViewsThread, catalogViewsThreadFunc, nullptr,
+                             nullptr, 0x10000, 0x2D, -2);
+    if (R_SUCCEEDED(rc))
+        rc = threadStart(&g_catalogViewsThread);
+    if (R_FAILED(rc)) {
+        g_catalogViewsRunning.store(false);
+        switchu::FileLog::log("[catalog] views worker FAIL: 0x%X (rebuilds stay synchronous)", rc);
+        return;
+    }
+    g_catalogViewsStarted = true;
+    switchu::FileLog::log("[catalog] views worker started");
+}
+
+static void stopCatalogViewsWorker() {
+    if (!g_catalogViewsStarted)
+        return;
+    g_catalogViewsRunning.store(false);
+    ueventSignal(&g_catalogViewsWakeEvent);
+    threadWaitForExit(&g_catalogViewsThread);
+    threadClose(&g_catalogViewsThread);
+    g_catalogViewsStarted = false;
+}
+
 int main(int argc, char* argv[]) {
     switchu::FileLog::log("[daemon] main() entry");
 
@@ -3082,7 +3471,22 @@ int main(int argc, char* argv[]) {
 
     appletLoadAndApplyIdlePolicySettings();
 
-    rebuildAppCatalog("boot");
+    loadHomeSettleOverride();
+
+    // Cold boot used to block here for 3-6s (per-title ns + SD reads) before the
+    // menu was even launched. If last session's applist.bin is usable, launch
+    // from it and refresh after MenuReady. First install / missing file keeps
+    // the blocking build so the menu never starts with an empty catalog.
+    if (seedCatalogFromDisk()) {
+        g_bootCatalogRebuildPending = true;
+        g_bootCatalogScheduledTick = armGetSystemTick();
+        switchu::FileLog::log("[catalog] boot rebuild deferred until MenuReady tick_ms=%lu",
+                              tickMsNow());
+    } else {
+        rebuildAppCatalog("boot");
+    }
+
+    startCatalogViewsWorker();
 
     Result rc = startControlCacheWorker();
     if (R_FAILED(rc))
@@ -3107,6 +3511,7 @@ int main(int argc, char* argv[]) {
     }
 
     stopEventManager();
+    stopCatalogViewsWorker();
     stopControlCacheWorker();
     stopClockWorker();
     daemon::menu_la::terminate();
