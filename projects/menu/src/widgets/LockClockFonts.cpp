@@ -201,7 +201,31 @@ std::vector<Entry> themePackageEntries(const std::vector<ThemePreset>& presets) 
 
 std::vector<Entry> buildEntries(const std::vector<ThemePreset>& presets) {
     std::vector<Entry> entries = builtinEntries();
-    auto themeFonts = themePackageEntries(presets);
+    // themePackageEntries walks every installed theme folder recursively
+    // looking for font files (140-190 ms on a stocked SD card, once at boot and
+    // again on every Theme Shop refresh). The result only depends on which
+    // themes are installed and which fonts they declare, so reuse it while that
+    // set is unchanged. The menu restarts on every HOME press, which also picks
+    // up fonts dropped into a theme folder by hand.
+    static std::string s_cacheKey;
+    static std::vector<Entry> s_cachedThemeFonts;
+    std::string key;
+    for (const ThemePreset& preset : presets) {
+        key += static_cast<char>('0' + static_cast<int>(preset.source));
+        key += preset.installPath;
+        key += '|';
+        key += preset.fonts.regularPath;
+        key += '|';
+        key += preset.fonts.smallPath;
+        key += '\n';
+    }
+    static bool s_cacheValid = false;
+    if (!s_cacheValid || s_cacheKey != key) {
+        s_cachedThemeFonts = themePackageEntries(presets);
+        s_cacheKey = std::move(key);
+        s_cacheValid = true;
+    }
+    auto themeFonts = s_cachedThemeFonts;
     entries.insert(entries.end(),
                    std::make_move_iterator(themeFonts.begin()),
                    std::make_move_iterator(themeFonts.end()));

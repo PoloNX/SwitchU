@@ -7,6 +7,7 @@
 #include "widgets/LockClockFonts.hpp"
 
 #include "core/DebugLog.hpp"
+#include "core/PerfProbe.hpp"
 
 #include <nxui/core/GpuDevice.hpp>
 #include <nxui/core/I18n.hpp>
@@ -2079,6 +2080,7 @@ void ThemeShopScreen::pauseInstalledPreviewDecodes() {
 }
 
 void ThemeShopScreen::syncCommunityCatalog(const ThemeCatalogClient::Snapshot& snapshot) {
+    PerfProbe probeSync("themeshop.syncCommunityCatalog total", 10);
     m_communityTransferState = snapshot.loading;
     m_allCommunityEntries = snapshot.entries;
     m_communityRevision = snapshot.revision;
@@ -2128,6 +2130,8 @@ void ThemeShopScreen::syncCommunityCatalog(const ThemeCatalogClient::Snapshot& s
 
     // The Icons tab lists catalog packs too, so let the app rebuild it once the
     // icon list actually changed (install/remove/refresh).
-    if (iconsChanged && m_iconCatalogUpdatedCb)
+    if (iconsChanged && m_iconCatalogUpdatedCb) {
+        PerfProbe probeCb("themeshop.iconCatalogUpdatedCb", 8);
         m_iconCatalogUpdatedCb();
+    }
 }

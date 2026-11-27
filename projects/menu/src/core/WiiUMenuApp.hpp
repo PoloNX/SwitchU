@@ -517,7 +517,11 @@ private:
     void createControllerTest();
     void reloadThemePresets();
     // rebuildTab=false: update selection/tints without rebuildCurrentTab (Apply path).
-    void refreshThemeShopState(bool rebuildTab = true);
+    // forceEntries=false (Theme Shop open path) skips the SD-heavy theme / icon-pack
+    // entry scans when nothing they depend on has changed since the last build.
+    void refreshThemeShopState(bool rebuildTab = true, bool forceEntries = true);
+    void refreshThemeShopIconPackEntries();
+    std::string m_themeShopEntriesSig;
     std::vector<ThemeShopScreen::ThemeShopEntry> buildThemeShopEntries();
     std::vector<ThemeShopScreen::ThemeShopEntry> buildIconPackEntries();
     std::string resolvedIconPackId() const;
@@ -1105,6 +1109,7 @@ private:
     bool m_suppressNextNavigateSfx    = false;
     bool m_pendingNetConnect          = false;
     int  m_deferredInitialAssetFrames = 0;
+    bool m_posterPresenceWarmStarted  = false;
     // Orientation (1=portrait, 0=landscape) the theme wallpaper/resources were
     // last applied for; -1 until the first applyThemeResources(). Lets
     // reflowHomeShell() skip a redundant full re-apply when nothing flipped.

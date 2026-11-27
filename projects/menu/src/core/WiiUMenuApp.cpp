@@ -9,6 +9,7 @@
 #include <nxui/core/I18n.hpp>
 #include <nxui/core/SharedFonts.hpp>
 #include "DebugLog.hpp"
+#include "PerfProbe.hpp"
 #include "HeapControl.hpp"
 #include "bluetooth/BluetoothManager.hpp"
 #include "LeaveFrameCache.hpp"
@@ -5528,6 +5529,7 @@ bool WiiUMenuApp::tryCommitInPlaceLayoutMorph(std::uint64_t focused) {
     // Soft art-kind flip; focused poster lands via installShadowPrefetch.
     // Do NOT startBurst / onPageChanged here — neighbours wait for morph end.
     m_iconStreamer.setPreferPosterArt(preferPoster);
+    const long streamerMs = morphStepMs();
 
     m_grid->setLinePosterAspect(preferPoster);
     for (const auto& icon : icons) {
@@ -5551,6 +5553,7 @@ bool WiiUMenuApp::tryCommitInPlaceLayoutMorph(std::uint64_t focused) {
         }
         icon->setPosterFrame(posterTile);
     }
+    const long posterLoopMs = morphStepMs();
 
     int columns = activeGridColumns();
     int rows = activeGridRows();
@@ -5566,10 +5569,15 @@ bool WiiUMenuApp::tryCommitInPlaceLayoutMorph(std::uint64_t focused) {
 
     m_grid->setEdgePaging(false);
     m_grid->setLayoutMode(AppLayoutMode::DynamicLine, true);
+    const long layoutModeMs = morphStepMs();
     m_grid->setRect(homeGridRect());
     m_grid->setup(std::move(icons), columns, rows, metrics.cellW, metrics.cellH,
                   metrics.padX, metrics.padY);
     const long setupMs = morphStepMs();
+    DebugLog::log("[layout-prefetch] build detail streamer=%ldms posterLoop=%ldms "
+                  "layoutMode=%ldms gridSetup=%ldms",
+                  streamerMs - backdropMs, posterLoopMs - streamerMs,
+                  layoutModeMs - posterLoopMs, setupMs - layoutModeMs);
 
     // Focus first so nearby folder covers match the visible carousel window.
     // While the Change View button holds focus, stay on it instead.
@@ -8214,9 +8222,13 @@ void WiiUMenuApp::buildGrid() {
         m_navigator.navigate(switchu::navigation::Route::ThemeShop);
         if (m_settings && m_settings->isActive())
             m_settings->hide();
-        refreshThemeShopState();
-        m_themeShop->setCanvasSize(m_homeLayout.logicalW(), m_homeLayout.logicalH());
-        m_themeShop->show();
+        {
+            PerfProbe probeOpen("themeshop.open (refresh+show)", 15);
+            refreshThemeShopState(true, /*forceEntries=*/false);
+            m_themeShop->setCanvasSize(m_homeLayout.logicalW(), m_homeLayout.logicalH());
+            PerfProbe probeShow("themeshop.open show()", 8);
+            m_themeShop->show();
+        }
         focusManager().setFocus(m_themeShop.get());
     };
 
@@ -10879,6 +10891,23 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
             reloadSidebarIcons();
             DebugLog::log("[init] deferred initial icon/sidebar uploads done");
         }
+    }
+
+    // Warm the poster-presence cache off-thread once the first frames are out,
+    // so the first grid<->row switch doesn't stat every title on the UI thread.
+    if (!m_posterPresenceWarmStarted && m_deferredInitialAssetFrames == 0
+        && !leaveSplashActive() && m_model.count() > 0) {
+        m_posterPresenceWarmStarted = true;
+        std::vector<std::uint64_t> ids;
+        ids.reserve(static_cast<std::size_t>(m_model.count()));
+        for (int i = 0; i < m_model.count(); ++i) {
+            const auto id = m_model.at(i).titleId;
+            if (id != 0)
+                ids.push_back(id);
+        }
+        (void)m_threadPool.submit([ids = std::move(ids)]() {
+            SteamGridDbManager::warmPosterPresence(ids);
+        });
     }
 
     // Public HTTPS clock sync once per console boot (quiet; retry until online).

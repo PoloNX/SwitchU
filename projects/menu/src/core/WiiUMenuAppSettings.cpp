@@ -7,6 +7,7 @@
 #include "widgets/AdaptiveIconLoad.hpp"
 #include "widgets/GlossyIcon.hpp"
 #include "DebugLog.hpp"
+#include "PerfProbe.hpp"
 #ifdef SWITCHU_MENU
 #include "smi_commands.hpp"
 #endif
@@ -2401,13 +2402,19 @@ void WiiUMenuApp::createThemeShop() {
         m_loadedRegularFontPath.empty()
             ? std::string(SD_ASSETS) + "/fonts/DejaVuSans.ttf"
             : m_loadedRegularFontPath);
-    refreshLockClockFontEntries();
+    {
+        PerfProbe probeFonts("themeshop.refreshState lockClockFonts", 8);
+        refreshLockClockFontEntries();
+    }
     m_themeShop->setFrameTapLiteEngaged(m_frameTapStatus.viewerConnected());
     m_themeShop->setIconContrastAdaptState(m_config.iconContrastAdapt);
     m_themeShop->setLockScreenTransitionState(m_config.lockScreenTransition);
     m_themeShop->setLockScreenZoomDirState(m_config.lockScreenZoomDir);
     m_themeShop->setLockScreenWipeDirState(m_config.lockScreenWipeDir);
-    syncLockAuthToThemeShop();
+    {
+        PerfProbe probeAuth("themeshop.refreshState lockAuth", 8);
+        syncLockAuthToThemeShop();
+    }
     m_themeShop->setThemeLockClockFontOverrideState(m_config.themeLockClockFontOverride);
     m_themeShop->setThemeIconPackOverrideState(m_config.themeIconPackOverride);
     m_themeShop->setThemeMusicOverrideState(m_config.themeMusicOverride);
@@ -2724,7 +2731,8 @@ void WiiUMenuApp::createThemeShop() {
         focusManager().setFocus(m_dialog.get());
     });
     m_themeShop->onIconCatalogUpdated([this]() {
-        refreshThemeShopState();
+        // Only the Icons list depends on the catalog; skip the theme scan.
+        refreshThemeShopIconPackEntries();
     });
     m_themeShop->onThemeShopApply([this](const std::string& presetId) {
         DebugLog::log("[theme-apply] request from Theme Shop: preset=%s", presetId.c_str());
@@ -3584,8 +3592,16 @@ void WiiUMenuApp::applyIconPack(const std::string& packId) {
             nxui::I18n::instance().tr("themeshop.icons.applied", "Icon pack applied."), 2.0f);
 }
 
-void WiiUMenuApp::refreshThemeShopState(bool rebuildTab) {
+void WiiUMenuApp::refreshThemeShopIconPackEntries() {
     if (!m_themeShop) return;
+    PerfProbe probe("themeshop.refreshIconPackEntries", 15);
+    m_themeShop->setIconPackState(buildIconPackEntries(), resolvedIconPackId());
+    m_themeShop->rebuildCurrentTab();
+}
+
+void WiiUMenuApp::refreshThemeShopState(bool rebuildTab, bool forceEntries) {
+    if (!m_themeShop) return;
+    PerfProbe probeTotal("themeshop.refreshState total", 15);
 
     ThemePreset* activePreset = findPresetPtr(m_activePresetName);
     std::string activeId = activePreset ? (activePreset->id.empty() ? activePreset->name : activePreset->id)
@@ -3599,7 +3615,10 @@ void WiiUMenuApp::refreshThemeShopState(bool rebuildTab) {
         m_config.save();
     }
 
-    m_themeShop->setTheme(&m_theme);
+    {
+        PerfProbe probeTheme("themeshop.refreshState setTheme", 8);
+        m_themeShop->setTheme(&m_theme);
+    }
     m_themeShop->setMusicState(m_audio.isPlaying(), m_audio.volume(), m_audio.sfxVolume());
     m_themeShop->setGridLayoutState(m_config.gridColumns, m_config.gridRows);
     m_themeShop->setActionHintStyleState(m_config.actionHintStyle);
@@ -3613,13 +3632,19 @@ void WiiUMenuApp::refreshThemeShopState(bool rebuildTab) {
         m_loadedRegularFontPath.empty()
             ? std::string(SD_ASSETS) + "/fonts/DejaVuSans.ttf"
             : m_loadedRegularFontPath);
-    refreshLockClockFontEntries();
+    {
+        PerfProbe probeFonts("themeshop.refreshState lockClockFonts", 8);
+        refreshLockClockFontEntries();
+    }
     m_themeShop->setFrameTapLiteEngaged(m_frameTapStatus.viewerConnected());
     m_themeShop->setIconContrastAdaptState(m_config.iconContrastAdapt);
     m_themeShop->setLockScreenTransitionState(m_config.lockScreenTransition);
     m_themeShop->setLockScreenZoomDirState(m_config.lockScreenZoomDir);
     m_themeShop->setLockScreenWipeDirState(m_config.lockScreenWipeDir);
-    syncLockAuthToThemeShop();
+    {
+        PerfProbe probeAuth("themeshop.refreshState lockAuth", 8);
+        syncLockAuthToThemeShop();
+    }
     m_themeShop->setThemeLockClockFontOverrideState(m_config.themeLockClockFontOverride);
     m_themeShop->setThemeIconPackOverrideState(m_config.themeIconPackOverride);
     m_themeShop->setThemeMusicOverrideState(m_config.themeMusicOverride);
@@ -3646,10 +3671,33 @@ void WiiUMenuApp::refreshThemeShopState(bool rebuildTab) {
         }
         m_themeShop->setIconPackTintState(tints);
     }
-    m_themeShop->setThemeShopState(buildThemeShopEntries(), activeId);
-    m_themeShop->setIconPackState(buildIconPackEntries(), activePackId);
-    if (rebuildTab)
+    // The entry scans stat / parse every installed theme and icon pack on the SD
+    // card (~350 ms). Mutations call this with forceEntries=true; the open path
+    // only rebuilds when the inputs the lists depend on actually changed.
+    std::string entriesSig = m_activePresetName;
+    entriesSig += '|';
+    entriesSig += m_config.iconPack;
+    for (const auto& preset : m_allPresets) {
+        entriesSig += '|';
+        entriesSig += preset.id.empty() ? preset.name : preset.id;
+        entriesSig += '@';
+        entriesSig += preset.installPath;
+    }
+    if (forceEntries || entriesSig != m_themeShopEntriesSig) {
+        {
+            PerfProbe probe("themeshop.refreshState themeEntries", 8);
+            m_themeShop->setThemeShopState(buildThemeShopEntries(), activeId);
+        }
+        {
+            PerfProbe probe("themeshop.refreshState iconPackEntries", 8);
+            m_themeShop->setIconPackState(buildIconPackEntries(), activePackId);
+        }
+        m_themeShopEntriesSig = std::move(entriesSig);
+    }
+    if (rebuildTab) {
+        PerfProbe probe("themeshop.refreshState rebuildCurrentTab", 8);
         m_themeShop->rebuildCurrentTab();
+    }
 }
 
 void WiiUMenuApp::applyActivePackHslToSidebar() {
