@@ -167,7 +167,8 @@ extern "C" void __appInit(void) {
         rc = fsdevMountSdmc();
     }
 
-    switchu::FileLog::open("daemon");
+    // Shareable: keep daemon.log readable over FTP while the daemon runs.
+    switchu::FileLog::open("daemon", /*shareable=*/true);
     switchu::FileLog::log("[daemon] __appInit complete (sd mount: 0x%X)", rc);
 
     // Manager cannot overwrite its own running NRO during an in-app update.
