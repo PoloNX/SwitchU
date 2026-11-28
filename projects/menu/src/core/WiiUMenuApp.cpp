@@ -338,6 +338,8 @@ std::string buttonGlyph(nxui::Button button) {
         case nxui::Button::ZR: return utf8Codepoint(0xE0E7);
         case nxui::Button::Plus: return utf8Codepoint(0xE0F1);
         case nxui::Button::Minus: return utf8Codepoint(0xE0F2);
+        case nxui::Button::LStick: return utf8Codepoint(0xE0C4);
+        case nxui::Button::RStick: return utf8Codepoint(0xE0C5);
         default: return {};
     }
 }
@@ -11705,25 +11707,65 @@ void WiiUMenuApp::renderActionHintBar(nxui::Renderer& ren) {
         return;
     }
 
-    // Landscape: two bottom-anchored columns, first entry on top.
-    auto drawColumn = [&](bool left) {
-        int n = 0;
-        for (const auto& s : slots)
-            if (s.left == left) ++n;
+    // Landscape: left / right controller halves, bottom-anchored, first entry on
+    // top. A long side (it would climb into the sidebar) folds into two columns
+    // so the legend never grows past two columns when only one side is used.
+    int nLeft = 0, nRight = 0;
+    for (const auto& s : slots)
+        (s.left ? nLeft : nRight)++;
+    auto drawSide = [&](bool left, int n, bool otherEmpty) {
         if (n == 0)
             return;
-        float y = canvasH - kHintEdgeY - (n * kHintCapH + (n - 1) * kHintRowGap)
-                + (1.f - reveal) * 4.f;
+        const bool split = n >= (otherEmpty ? 5 : 6);
+        const int perCol = split ? (n + 1) / 2 : n;
+        const int cols = split ? 2 : 1;
+        // Column widths.
+        float colW[2] = {0.f, 0.f};
+        int idx = 0;
         for (const auto& s : slots) {
             if (s.left != left)
                 continue;
-            const float x = left ? kHintEdgeX : canvasW - kHintEdgeX - s.cap->width;
+            const int col = std::min(idx / perCol, cols - 1);
+            colW[col] = std::max(colW[col], s.cap->width);
+            ++idx;
+        }
+        // Column left edges (visual left-to-right order = reading order).
+        float colX[2];
+        if (left) {
+            colX[0] = kHintEdgeX;
+            colX[1] = kHintEdgeX + colW[0] + kHintCapGap;
+        } else {
+            colX[1] = canvasW - kHintEdgeX - colW[1];
+            colX[0] = (cols == 2 ? colX[1] - kHintCapGap - colW[0]
+                                 : canvasW - kHintEdgeX - colW[0]);
+        }
+        int rowInCol[2] = {0, 0};
+        int colCount[2] = {0, 0};
+        idx = 0;
+        for (const auto& s : slots) {
+            if (s.left != left)
+                continue;
+            ++colCount[std::min(idx / perCol, cols - 1)];
+            ++idx;
+        }
+        idx = 0;
+        for (const auto& s : slots) {
+            if (s.left != left)
+                continue;
+            const int col = std::min(idx / perCol, cols - 1);
+            const int rows = colCount[col];
+            const float top = canvasH - kHintEdgeY
+                - (rows * kHintCapH + (rows - 1) * kHintRowGap) + (1.f - reveal) * 4.f;
+            const float y = top + rowInCol[col] * (kHintCapH + kHintRowGap);
+            // Left side hugs the left edge of its column, right side its right edge.
+            const float x = left ? colX[col] : colX[col] + colW[col] - s.cap->width;
             drawChip(*s.cap, x, y);
-            y += kHintCapH + kHintRowGap;
+            ++rowInCol[col];
+            ++idx;
         }
     };
-    drawColumn(true);
-    drawColumn(false);
+    drawSide(true, nLeft, nRight == 0);
+    drawSide(false, nRight, nLeft == 0);
 }
 void WiiUMenuApp::renderActionHintPanel(nxui::Renderer& ren) {
     std::vector<ActionHint> hints = buildActionHints();
