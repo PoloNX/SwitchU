@@ -1,7 +1,13 @@
 #include "DateTimeWidget.hpp"
+#include "core/UiMetrics.hpp"
 #include "services/ClockService.hpp"
 #include <nxui/core/Renderer.hpp>
 #include <cstdio>
+
+namespace {
+// Date line under the clock: caption role from the shared type scale.
+constexpr float kDateScale = ui::fontScale(ui::kCaptionPx, ui::kSmallFontPx);
+} // namespace
 
 void DateTimeWidget::setUse12HourClock(bool enabled) {
     if (m_use12HourClock == enabled)
@@ -55,14 +61,14 @@ void DateTimeWidget::onContentRender(nxui::Renderer& ren) {
 
     nxui::Vec2 timeSz = m_font->measure(m_timeStr);
     nxui::Vec2 dateSz = sf->measure(m_dateStr);
-    float contentH = timeSz.y + 2.f + dateSz.y * 0.7f;
+    float contentH = timeSz.y + 2.f + dateSz.y * kDateScale;
     float tx = cr.x + (cr.width - timeSz.x) * 0.5f;
     float ty = cr.y + (cr.height - contentH) * 0.5f;
     ren.drawText(m_timeStr, {tx, ty}, m_font, m_textColor.withAlpha(m_opacity), 1.f);
 
-    float dx = cr.x + (cr.width - dateSz.x * 0.7f) * 0.5f;
+    float dx = cr.x + (cr.width - dateSz.x * kDateScale) * 0.5f;
     float dy = ty + timeSz.y + 2.f;
-    ren.drawText(m_dateStr, {dx, dy}, sf, m_secondaryColor.withAlpha(m_opacity), 0.7f);
+    ren.drawText(m_dateStr, {dx, dy}, sf, m_secondaryColor.withAlpha(m_opacity), kDateScale);
 }
 
 nxui::Vec2 DateTimeWidget::computeContentSize() const {
@@ -70,7 +76,7 @@ nxui::Vec2 DateTimeWidget::computeContentSize() const {
     nxui::Vec2 timeSz = m_font->measure(m_use12HourClock ? "12:00 PM" : "00:00");
     nxui::Font* sf = m_smallFont ? m_smallFont : m_font;
     nxui::Vec2 dateSz = sf->measure("00/00/0000");
-    float w = std::max(timeSz.x, dateSz.x * 0.7f);
-    float h = timeSz.y + 2.f + dateSz.y * 0.7f;
+    float w = std::max(timeSz.x, dateSz.x * kDateScale);
+    float h = timeSz.y + 2.f + dateSz.y * kDateScale;
     return {w, h};
 }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/HomeOrientation.hpp"
+#include "core/UiMetrics.hpp"
 #include <nxui/core/Types.hpp>
 #include <algorithm>
 #include <cmath>
@@ -19,7 +20,7 @@ struct HomeLayoutMetrics {
     static constexpr float kPageIndicatorBottomPad = 7.f;
     static constexpr float kSidebarBtn = 70.f;
     static constexpr float kSidebarGap = 16.f;
-    static constexpr float kSidebarMargin = 14.f;
+    static constexpr float kSidebarMargin = ui::kMargin;
     static constexpr float kGridSafeSideLandscape = 220.f;
     static constexpr float kGridSafeSidePortrait = 100.f;
     static constexpr float kGridSafeTopBottom = 20.f;

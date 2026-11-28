@@ -1,4 +1,5 @@
 #include "WiiUMenuApp.hpp"
+#include "UiMetrics.hpp"
 #include "icons/IconPackManager.hpp"
 #include <switchu/sd_commit.hpp>
 #include "widgets/GlossyIcon.hpp"
@@ -217,17 +218,17 @@ std::string installedThemePathFromPackagePreset(const std::string& preset) {
 static constexpr float kGridSafeSideMargin = 220.f;
 
 // Contextual action capsules, bottom-right.
-static constexpr float kHintIconScale = 0.67f;
-static constexpr float kHintTextScale = 0.57f;
-static constexpr float kHintCapH      = 25.f;
-static constexpr float kHintCapPadX   = 10.f;
-static constexpr float kHintIconGap   = 5.f;
-static constexpr float kHintCapGap    = 7.f;
+static constexpr float kHintIconScale = ui::fontScale(ui::kHintIconPx, ui::kIconFontPx);
+static constexpr float kHintTextScale = ui::fontScale(ui::kCaptionPx, ui::kSmallFontPx);
+static constexpr float kHintCapH      = 32.f;
+static constexpr float kHintCapPadX   = 12.f;
+static constexpr float kHintIconGap   = 6.f;
+static constexpr float kHintCapGap    = 8.f;
 static constexpr float kHintRowGap    = 6.f;
-static constexpr float kHintEdgeX     = 18.f;
-static constexpr float kHintEdgeY     = 16.f;
+static constexpr float kHintEdgeX     = ui::kMargin;
+static constexpr float kHintEdgeY     = ui::kMargin;
 // Stop short of the page dots, centred and reaching x = 721 at eight pages.
-static constexpr float kHintRowMaxW   = 522.f;
+static constexpr float kHintRowMaxW   = 640.f;
 static constexpr int   kHintMaxItems  = 8;
 static constexpr float kHintWidthDur  = 0.22f;
 static constexpr float kHintSwapDur   = 0.18f;
@@ -7669,7 +7670,7 @@ void WiiUMenuApp::buildGrid() {
 
     m_clock = std::make_shared<DateTimeWidget>();
     m_clock->setSize(150, 62);
-    m_clock->setMarginTop(14.f);
+    m_clock->setMarginTop(ui::kMargin);
     m_clock->setFont(&m_fontNormal);
     m_clock->setSmallFont(&m_fontSmall);
     m_clock->setClockService(&m_clockService);
@@ -7714,8 +7715,8 @@ void WiiUMenuApp::buildGrid() {
     m_orientationBtn->setVisible(false);
 
     m_battery = std::make_shared<BatteryWidget>();
-    m_battery->setMarginTop(14.f);
-    m_battery->setMarginRight(24.f);
+    m_battery->setMarginTop(ui::kMargin);
+    m_battery->setMarginRight(ui::kMargin);
     m_battery->setSize(150, 62);
     m_battery->setFont(&m_fontSmall);
     m_battery->setCornerRadius(m_theme.cellCornerRadius);
@@ -7733,12 +7734,12 @@ void WiiUMenuApp::buildGrid() {
     m_profileLock->setMinWidth(kProfileLockWidth);
     m_profileLock->setMinHeight(kProfileLockHeight);
     m_profileLock->setShrink(0.f);
-    m_profileLock->setMarginTop(14.f);
-    m_profileLock->setMarginLeft(24.f);
+    m_profileLock->setMarginTop(ui::kMargin);
+    m_profileLock->setMarginLeft(ui::kMargin);
     m_profileLock->setCornerRadius(m_theme.cellCornerRadius);
     // The HUD row spreads its items evenly; balance the square tile against the
     // battery widget so the clock lands on the screen's centre line.
-    m_profileLock->setMarginRight((150.f + 24.f) - (kProfileLockWidth + 24.f));
+    m_profileLock->setMarginRight((150.f + ui::kMargin) - (kProfileLockWidth + ui::kMargin));
     m_profileLock->setTheme(&m_theme);
     m_profileLock->setOnActivate([this]() {
         m_audio.playSfx(Sfx::Activate);
@@ -11614,7 +11615,7 @@ void WiiUMenuApp::renderActionHintBar(nxui::Renderer& ren) {
     float y = 720.f - kHintEdgeY - blockH + (1.f - reveal) * 4.f;
 
     const nxui::Color tint = m_homeChrome.panelBase.withAlpha(
-        m_homeChrome.mode == nxui::ThemeMode::Dark ? 0.30f : 0.24f);
+        m_homeChrome.mode == nxui::ThemeMode::Dark ? 0.42f : 0.36f);
 
     for (const auto& [first, last] : rows) {
         float rowW = 0.f;
@@ -11651,7 +11652,7 @@ void WiiUMenuApp::renderActionHintBar(nxui::Renderer& ren) {
                              {textX - 7.f * swap,
                               cap.y + (kHintCapH - os.y * kHintTextScale) * 0.5f},
                              &m_fontSmall,
-                             m_homeChrome.textSecondary.withAlpha(0.90f * reveal * (1.f - swap)),
+                             m_homeChrome.textPrimary.withAlpha(0.92f * reveal * (1.f - swap)),
                              kHintTextScale);
             }
             const nxui::Vec2 ls = m_fontSmall.measure(c.label);
@@ -11659,7 +11660,7 @@ void WiiUMenuApp::renderActionHintBar(nxui::Renderer& ren) {
                          {textX + 7.f * (1.f - swap),
                           cap.y + (kHintCapH - ls.y * kHintTextScale) * 0.5f},
                          &m_fontSmall,
-                         m_homeChrome.textSecondary.withAlpha(0.90f * reveal * swap),
+                         m_homeChrome.textPrimary.withAlpha(0.92f * reveal * swap),
                          kHintTextScale);
             ren.popClipRect();
 
@@ -11674,14 +11675,14 @@ void WiiUMenuApp::renderActionHintPanel(nxui::Renderer& ren) {
     if (hints.empty())
         return;
 
-    constexpr float kIconScale = 0.62f;
-    constexpr float kTextScale = 0.50f;
-    constexpr float kRowH = 20.f;
-    constexpr float kRowGap = 3.f;
-    constexpr float kPadX = 9.f;
-    constexpr float kPadY = 7.f;
-    constexpr float kIconTextGap = 5.f;
-    constexpr float kScreenMargin = 18.f;
+    constexpr float kIconScale = ui::fontScale(ui::kHintIconPx, ui::kIconFontPx);
+    constexpr float kTextScale = ui::fontScale(ui::kCaptionPx, ui::kSmallFontPx);
+    constexpr float kRowH = 26.f;
+    constexpr float kRowGap = 4.f;
+    constexpr float kPadX = 12.f;
+    constexpr float kPadY = 9.f;
+    constexpr float kIconTextGap = 7.f;
+    constexpr float kScreenMargin = ui::kMargin;
 
     const int count = std::min((int)hints.size(), kHintMaxItems);
     float contentW = 0.f;
@@ -11698,7 +11699,7 @@ void WiiUMenuApp::renderActionHintPanel(nxui::Renderer& ren) {
         signature += '\n';
     }
 
-    float panelW = std::clamp(contentW + kPadX * 2.f, 98.f, 196.f);
+    float panelW = std::clamp(contentW + kPadX * 2.f, 132.f, 280.f);
     float panelH = kPadY * 2.f + count * kRowH + (count - 1) * kRowGap;
     if (!m_hintPanelInitialized) {
         m_hintPanelInitialized = true;
@@ -11732,7 +11733,7 @@ void WiiUMenuApp::renderActionHintPanel(nxui::Renderer& ren) {
     ren.drawRoundedRect({panel.x, panel.y + 4.f, panel.width, panel.height},
                         nxui::Color(0.f, 0.f, 0.f, 0.12f), kRadius);
     const nxui::Color tint = m_homeChrome.panelBase.withAlpha(
-        m_homeChrome.mode == nxui::ThemeMode::Dark ? 0.22f : 0.18f);
+        m_homeChrome.mode == nxui::ThemeMode::Dark ? 0.38f : 0.32f);
     ren.drawFrostedInset(panel, tint,
                         m_homeChrome.panelBorder.withAlpha(0.26f),
                         m_homeChrome.panelHighlight.withAlpha(0.09f),
@@ -11752,7 +11753,7 @@ void WiiUMenuApp::renderActionHintPanel(nxui::Renderer& ren) {
         ren.drawText(hint.icon, {iconX, iconY}, &m_fontIcons,
                      m_homeChrome.textPrimary.withAlpha(0.88f * reveal), kIconScale);
         ren.drawText(hint.label, {labelX, labelY}, &m_fontSmall,
-                     m_homeChrome.textSecondary.withAlpha(0.82f * reveal), kTextScale);
+                     m_homeChrome.textPrimary.withAlpha(0.90f * reveal), kTextScale);
         y += kRowH + kRowGap;
     }
     ren.popClipRect();
