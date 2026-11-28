@@ -229,6 +229,9 @@ static constexpr float kHintEdgeX     = ui::kMargin;
 static constexpr float kHintEdgeY     = ui::kMargin;
 // Stop short of the page dots, centred and reaching x = 721 at eight pages.
 static constexpr float kHintRowMaxW   = 640.f;
+// Per-corner width budget when the legend is split left/right (keeps the centre
+// free for the title pill and page dots).
+static constexpr float kHintSideMaxW  = 290.f;
 static constexpr int   kHintMaxItems  = 8;
 static constexpr float kHintWidthDur  = 0.22f;
 static constexpr float kHintSwapDur   = 0.18f;
@@ -11552,124 +11555,163 @@ void WiiUMenuApp::renderActionHintBar(nxui::Renderer& ren) {
     if (count <= 0)
         return;
 
-    // Find the smallest possible number of rows, then choose the contiguous
-    // split whose widest row is the narrowest. With only eight hints there are
-    // at most 128 layouts to inspect, and this avoids an awkward 5+1 split.
     // QS-only (no playlist sheet): always one row — a second row sits on the
     // power buttons. Playlist-open already packs into one row under kHintRowMaxW.
     const bool qsForceOneRow = m_quickSettings && m_quickSettings->isActive()
         && !m_quickSettings->isCoverFullscreen()
         && !m_quickSettings->isPlaylistOpen();
-    const float rowMaxW = qsForceOneRow ? 4096.f : kHintRowMaxW;
-    std::vector<std::pair<int, int>> rows;
-    int bestRowCount = count + 1;
-    float bestScore = std::numeric_limits<float>::max();
-    const unsigned splitLayouts = 1u << std::max(0, count - 1);
-    for (unsigned mask = 0; mask < splitLayouts; ++mask) {
-        std::vector<std::pair<int, int>> candidate;
-        int first = 0;
-        for (int i = 0; i < count; ++i) {
-            if (i == count - 1 || (mask & (1u << i))) {
-                candidate.emplace_back(first, i + 1);
-                first = i + 1;
-            }
-        }
 
-        const int rowCount = static_cast<int>(candidate.size());
-        if (qsForceOneRow && rowCount != 1)
-            continue;
-        if (rowCount > bestRowCount)
-            continue;
-
-        bool valid = true;
-        float widest = 0.f;
-        float narrowest = std::numeric_limits<float>::max();
-        for (const auto& [rowFirst, rowLast] : candidate) {
-            float width = 0.f;
-            for (int i = rowFirst; i < rowLast; ++i)
-                width += m_hintCapsules[(size_t)i].width
-                       + (i > rowFirst ? kHintCapGap : 0.f);
-            if (width > rowMaxW && rowLast - rowFirst > 1) {
-                valid = false;
-                break;
-            }
-            widest = std::max(widest, width);
-            narrowest = std::min(narrowest, width);
-        }
-        if (!valid)
-            continue;
-
-        const float score = widest + (widest - narrowest) * 0.15f;
-        if (rowCount < bestRowCount || score < bestScore) {
-            bestRowCount = rowCount;
-            bestScore = score;
-            rows = std::move(candidate);
-        }
+    // Face buttons (A/B/X/Y) are the actions; everything else (shoulders,
+    // D-pad, sticks, +/-) is navigation / system. Split them into the bottom
+    // corners so the centre stays free for the title pill and page dots. When
+    // one side would be empty there is nothing to balance, so keep one cluster
+    // bottom-right as before.
+    const std::string faceGlyphs[] = {
+        buttonGlyph(nxui::Button::A), buttonGlyph(nxui::Button::B),
+        buttonGlyph(nxui::Button::X), buttonGlyph(nxui::Button::Y)};
+    auto isFace = [&](const std::string& icon) {
+        for (const auto& g : faceGlyphs)
+            if (!g.empty() && icon.compare(0, g.size(), g) == 0)
+                return true;
+        return false;
+    };
+    std::vector<const HintCapsule*> left, right, all;
+    for (const auto& c : m_hintCapsules) {
+        all.push_back(&c);
+        (isFace(c.icon) ? right : left).push_back(&c);
     }
-    // Safety: if packing found nothing (should not), fall back to a single row.
-    if (rows.empty())
-        rows.push_back({0, count});
+    const bool split = !qsForceOneRow && !left.empty() && !right.empty();
+
+    // Find the smallest possible number of rows, then choose the contiguous
+    // split whose widest row is the narrowest. With only eight hints there are
+    // at most 128 layouts to inspect, and this avoids an awkward 5+1 split.
+    auto packRows = [&](const std::vector<const HintCapsule*>& caps, float rowMaxW,
+                        bool forceOneRow) {
+        const int n = (int)caps.size();
+        std::vector<std::pair<int, int>> rows;
+        int bestRowCount = n + 1;
+        float bestScore = std::numeric_limits<float>::max();
+        const unsigned splitLayouts = 1u << std::max(0, n - 1);
+        for (unsigned mask = 0; mask < splitLayouts; ++mask) {
+            std::vector<std::pair<int, int>> candidate;
+            int first = 0;
+            for (int i = 0; i < n; ++i) {
+                if (i == n - 1 || (mask & (1u << i))) {
+                    candidate.emplace_back(first, i + 1);
+                    first = i + 1;
+                }
+            }
+
+            const int rowCount = static_cast<int>(candidate.size());
+            if (forceOneRow && rowCount != 1)
+                continue;
+            if (rowCount > bestRowCount)
+                continue;
+
+            bool valid = true;
+            float widest = 0.f;
+            float narrowest = std::numeric_limits<float>::max();
+            for (const auto& [rowFirst, rowLast] : candidate) {
+                float width = 0.f;
+                for (int i = rowFirst; i < rowLast; ++i)
+                    width += caps[(size_t)i]->width + (i > rowFirst ? kHintCapGap : 0.f);
+                if (width > rowMaxW && rowLast - rowFirst > 1) {
+                    valid = false;
+                    break;
+                }
+                widest = std::max(widest, width);
+                narrowest = std::min(narrowest, width);
+            }
+            if (!valid)
+                continue;
+
+            const float score = widest + (widest - narrowest) * 0.15f;
+            if (rowCount < bestRowCount || score < bestScore) {
+                bestRowCount = rowCount;
+                bestScore = score;
+                rows = std::move(candidate);
+            }
+        }
+        // Safety: if packing found nothing (should not), fall back to a single row.
+        if (rows.empty())
+            rows.push_back({0, n});
+        return rows;
+    };
 
     const float reveal = std::clamp(m_hintContentReveal.value(), 0.f, 1.f);
-    const float blockH = rows.size() * kHintCapH + (rows.size() - 1) * kHintRowGap;
-    float y = 720.f - kHintEdgeY - blockH + (1.f - reveal) * 4.f;
-
     const nxui::Color tint = m_homeChrome.panelBase.withAlpha(
         m_homeChrome.mode == nxui::ThemeMode::Dark ? 0.42f : 0.36f);
 
-    for (const auto& [first, last] : rows) {
-        float rowW = 0.f;
-        for (int i = first; i < last; ++i)
-            rowW += m_hintCapsules[(size_t)i].width + (i > first ? kHintCapGap : 0.f);
+    auto drawGroup = [&](const std::vector<const HintCapsule*>& caps, float rowMaxW,
+                         bool forceOneRow, bool alignRight) {
+        if (caps.empty())
+            return;
+        const auto rows = packRows(caps, rowMaxW, forceOneRow);
+        const float blockH = rows.size() * kHintCapH + (rows.size() - 1) * kHintRowGap;
+        float y = 720.f - kHintEdgeY - blockH + (1.f - reveal) * 4.f;
 
-        float x = 1280.f - kHintEdgeX - rowW;
-        for (int i = first; i < last; ++i) {
-            const HintCapsule& c = m_hintCapsules[(size_t)i];
-            const nxui::Rect cap = {x, y, c.width, kHintCapH};
-            const float radius = kHintCapH * 0.5f;
+        for (const auto& [first, last] : rows) {
+            float rowW = 0.f;
+            for (int i = first; i < last; ++i)
+                rowW += caps[(size_t)i]->width + (i > first ? kHintCapGap : 0.f);
 
-            ren.drawRoundedRect({cap.x, cap.y + 3.f, cap.width, cap.height},
-                                nxui::Color(0.f, 0.f, 0.f, 0.14f * reveal), radius);
-            ren.drawFrostedInset(cap, tint.withAlpha(tint.a * reveal),
-                                 m_homeChrome.panelBorder.withAlpha(0.24f * reveal),
-                                 m_homeChrome.panelHighlight.withAlpha(0.08f * reveal),
-                                 radius, 0.86f);
+            float x = alignRight ? 1280.f - kHintEdgeX - rowW : kHintEdgeX;
+            for (int i = first; i < last; ++i) {
+                const HintCapsule& c = *caps[(size_t)i];
+                const nxui::Rect cap = {x, y, c.width, kHintCapH};
+                const float radius = kHintCapH * 0.5f;
 
-            const nxui::Vec2 iconSize = m_fontIcons.measure(c.icon);
-            const float iconW = iconSize.x * kHintIconScale;
-            ren.drawText(c.icon,
-                         {cap.x + kHintCapPadX,
-                          cap.y + (kHintCapH - iconSize.y * kHintIconScale) * 0.5f},
-                         &m_fontIcons, m_homeChrome.textPrimary.withAlpha(0.94f * reveal), kHintIconScale);
+                ren.drawRoundedRect({cap.x, cap.y + 3.f, cap.width, cap.height},
+                                    nxui::Color(0.f, 0.f, 0.f, 0.14f * reveal), radius);
+                ren.drawFrostedInset(cap, tint.withAlpha(tint.a * reveal),
+                                     m_homeChrome.panelBorder.withAlpha(0.24f * reveal),
+                                     m_homeChrome.panelHighlight.withAlpha(0.08f * reveal),
+                                     radius, 0.86f);
 
-            const float textX = cap.x + kHintCapPadX + iconW + kHintIconGap;
-            const float swap  = nxui::Easing::outCubic(std::clamp(c.swapT, 0.f, 1.f));
+                const nxui::Vec2 iconSize = m_fontIcons.measure(c.icon);
+                const float iconW = iconSize.x * kHintIconScale;
+                ren.drawText(c.icon,
+                             {cap.x + kHintCapPadX,
+                              cap.y + (kHintCapH - iconSize.y * kHintIconScale) * 0.5f},
+                             &m_fontIcons, m_homeChrome.textPrimary.withAlpha(0.94f * reveal),
+                             kHintIconScale);
 
-            ren.pushClipRect(cap);
-            if (!c.outgoing.empty()) {
-                const nxui::Vec2 os = m_fontSmall.measure(c.outgoing);
-                ren.drawText(c.outgoing,
-                             {textX - 7.f * swap,
-                              cap.y + (kHintCapH - os.y * kHintTextScale) * 0.5f},
+                const float textX = cap.x + kHintCapPadX + iconW + kHintIconGap;
+                const float swap  = nxui::Easing::outCubic(std::clamp(c.swapT, 0.f, 1.f));
+
+                ren.pushClipRect(cap);
+                if (!c.outgoing.empty()) {
+                    const nxui::Vec2 os = m_fontSmall.measure(c.outgoing);
+                    ren.drawText(c.outgoing,
+                                 {textX - 7.f * swap,
+                                  cap.y + (kHintCapH - os.y * kHintTextScale) * 0.5f},
+                                 &m_fontSmall,
+                                 m_homeChrome.textPrimary.withAlpha(0.92f * reveal * (1.f - swap)),
+                                 kHintTextScale);
+                }
+                const nxui::Vec2 ls = m_fontSmall.measure(c.label);
+                ren.drawText(c.label,
+                             {textX + 7.f * (1.f - swap),
+                              cap.y + (kHintCapH - ls.y * kHintTextScale) * 0.5f},
                              &m_fontSmall,
-                             m_homeChrome.textPrimary.withAlpha(0.92f * reveal * (1.f - swap)),
+                             m_homeChrome.textPrimary.withAlpha(0.92f * reveal * swap),
                              kHintTextScale);
-            }
-            const nxui::Vec2 ls = m_fontSmall.measure(c.label);
-            ren.drawText(c.label,
-                         {textX + 7.f * (1.f - swap),
-                          cap.y + (kHintCapH - ls.y * kHintTextScale) * 0.5f},
-                         &m_fontSmall,
-                         m_homeChrome.textPrimary.withAlpha(0.92f * reveal * swap),
-                         kHintTextScale);
-            ren.popClipRect();
+                ren.popClipRect();
 
-            x += c.width + kHintCapGap;
+                x += c.width + kHintCapGap;
+            }
+            y += kHintCapH + kHintRowGap;
         }
-        y += kHintCapH + kHintRowGap;
+    };
+
+    if (split) {
+        drawGroup(left, kHintSideMaxW, false, /*alignRight=*/false);
+        drawGroup(right, kHintSideMaxW, false, /*alignRight=*/true);
+    } else {
+        drawGroup(all, qsForceOneRow ? 4096.f : kHintRowMaxW, qsForceOneRow,
+                  /*alignRight=*/true);
     }
 }
-
 void WiiUMenuApp::renderActionHintPanel(nxui::Renderer& ren) {
     std::vector<ActionHint> hints = buildActionHints();
     if (hints.empty())
