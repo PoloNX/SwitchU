@@ -11561,27 +11561,92 @@ void WiiUMenuApp::renderActionHintBar(nxui::Renderer& ren) {
         && !m_quickSettings->isCoverFullscreen()
         && !m_quickSettings->isPlaylistOpen();
 
-    // Face buttons (A/B/X/Y) are the actions; everything else (shoulders,
-    // D-pad, sticks, +/-) is navigation / system. Split them into the bottom
-    // corners so the centre stays free for the title pill and page dots. When
-    // one side would be empty there is nothing to balance, so keep one cluster
-    // bottom-right as before.
+    const float canvasW = m_homeLayout.logicalW();
+    const float canvasH = m_homeLayout.logicalH();
+    const bool portrait = m_homeLayout.isPortrait();
+
+    // Layout policy (landscape):
+    //  - Up to four hints stay together bottom-right.
+    //  - More than that: face buttons (A/B/X/Y) plus any overflow stay
+    //    bottom-right, and a few navigation / system hints (L, R, then +/-)
+    //    go bottom-left, so the right keeps the bulk and the centre stays free
+    //    for the title pill and page dots.
+    // Portrait has no spare corner room next to the dots, so the legend is a
+    // single centred row at the bottom (pageIndicator() reserves the space);
+    // hints that do not fit are dropped, face buttons last.
     const std::string faceGlyphs[] = {
         buttonGlyph(nxui::Button::A), buttonGlyph(nxui::Button::B),
         buttonGlyph(nxui::Button::X), buttonGlyph(nxui::Button::Y)};
-    auto isFace = [&](const std::string& icon) {
-        for (const auto& g : faceGlyphs)
-            if (!g.empty() && icon.compare(0, g.size(), g) == 0)
+    auto startsWithAny = [](const std::string& icon, const std::string* glyphs, size_t n) {
+        for (size_t i = 0; i < n; ++i)
+            if (!glyphs[i].empty() && icon.compare(0, glyphs[i].size(), glyphs[i]) == 0)
                 return true;
         return false;
     };
-    std::vector<const HintCapsule*> left, right, all;
-    for (const auto& c : m_hintCapsules) {
-        all.push_back(&c);
-        (isFace(c.icon) ? right : left).push_back(&c);
-    }
-    const bool split = !qsForceOneRow && !left.empty() && !right.empty();
+    auto isFace = [&](const std::string& icon) {
+        return startsWithAny(icon, faceGlyphs, 4);
+    };
+    const std::string plusGlyph = buttonGlyph(nxui::Button::Plus);
+    const std::string minusGlyph = buttonGlyph(nxui::Button::Minus);
 
+    std::vector<const HintCapsule*> all;
+    for (const auto& c : m_hintCapsules)
+        all.push_back(&c);
+
+    std::vector<const HintCapsule*> left, right;
+    bool split = false;
+    if (!qsForceOneRow && !portrait && count > 4) {
+        std::vector<int> leftIdx, rightIdx;
+        for (int i = 0; i < count; ++i)
+            (isFace(m_hintCapsules[(size_t)i].icon) ? rightIdx : leftIdx).push_back(i);
+        const int leftMax = count <= 6 ? 2 : 3;
+        while ((int)leftIdx.size() > leftMax && !rightIdx.empty()) {
+            // Move the most action-like hint over first: Options (+), then
+            // Switch view (-), then whatever is last.
+            int pick = -1;
+            for (int k = 0; k < (int)leftIdx.size() && pick < 0; ++k)
+                if (m_hintCapsules[(size_t)leftIdx[(size_t)k]].icon == plusGlyph)
+                    pick = k;
+            for (int k = 0; k < (int)leftIdx.size() && pick < 0; ++k)
+                if (m_hintCapsules[(size_t)leftIdx[(size_t)k]].icon == minusGlyph)
+                    pick = k;
+            if (pick < 0)
+                pick = (int)leftIdx.size() - 1;
+            const int moved = leftIdx[(size_t)pick];
+            leftIdx.erase(leftIdx.begin() + pick);
+            rightIdx.insert(std::upper_bound(rightIdx.begin(), rightIdx.end(), moved), moved);
+        }
+        if (!leftIdx.empty() && !rightIdx.empty()) {
+            split = true;
+            for (int i : leftIdx) left.push_back(&m_hintCapsules[(size_t)i]);
+            for (int i : rightIdx) right.push_back(&m_hintCapsules[(size_t)i]);
+        }
+    }
+
+    if (portrait && !qsForceOneRow) {
+        // Keep the face buttons, then fill with the rest in order until the
+        // row is full; draw in the original order.
+        const float rowMax = canvasW - 2.f * kHintEdgeX;
+        std::vector<bool> keep((size_t)count, false);
+        float used = 0.f;
+        auto tryAdd = [&](int i) {
+            const float w = m_hintCapsules[(size_t)i].width + (used > 0.f ? kHintCapGap : 0.f);
+            if (used + w > rowMax)
+                return;
+            used += w;
+            keep[(size_t)i] = true;
+        };
+        for (int i = 0; i < count; ++i)
+            if (isFace(m_hintCapsules[(size_t)i].icon))
+                tryAdd(i);
+        for (int i = 0; i < count; ++i)
+            if (!keep[(size_t)i])
+                tryAdd(i);
+        all.clear();
+        for (int i = 0; i < count; ++i)
+            if (keep[(size_t)i])
+                all.push_back(&m_hintCapsules[(size_t)i]);
+    }
     // Find the smallest possible number of rows, then choose the contiguous
     // split whose widest row is the narrowest. With only eight hints there are
     // at most 128 layouts to inspect, and this avoids an awkward 5+1 split.
@@ -11642,20 +11707,23 @@ void WiiUMenuApp::renderActionHintBar(nxui::Renderer& ren) {
     const nxui::Color tint = m_homeChrome.panelBase.withAlpha(
         m_homeChrome.mode == nxui::ThemeMode::Dark ? 0.42f : 0.36f);
 
+    enum class HintAlign { Left, Right, Center };
     auto drawGroup = [&](const std::vector<const HintCapsule*>& caps, float rowMaxW,
-                         bool forceOneRow, bool alignRight) {
+                         bool forceOneRow, HintAlign align) {
         if (caps.empty())
             return;
         const auto rows = packRows(caps, rowMaxW, forceOneRow);
         const float blockH = rows.size() * kHintCapH + (rows.size() - 1) * kHintRowGap;
-        float y = 720.f - kHintEdgeY - blockH + (1.f - reveal) * 4.f;
+        float y = canvasH - kHintEdgeY - blockH + (1.f - reveal) * 4.f;
 
         for (const auto& [first, last] : rows) {
             float rowW = 0.f;
             for (int i = first; i < last; ++i)
                 rowW += caps[(size_t)i]->width + (i > first ? kHintCapGap : 0.f);
 
-            float x = alignRight ? 1280.f - kHintEdgeX - rowW : kHintEdgeX;
+            float x = align == HintAlign::Right ? canvasW - kHintEdgeX - rowW
+                    : align == HintAlign::Center ? (canvasW - rowW) * 0.5f
+                    : kHintEdgeX;
             for (int i = first; i < last; ++i) {
                 const HintCapsule& c = *caps[(size_t)i];
                 const nxui::Rect cap = {x, y, c.width, kHintCapH};
@@ -11705,11 +11773,15 @@ void WiiUMenuApp::renderActionHintBar(nxui::Renderer& ren) {
     };
 
     if (split) {
-        drawGroup(left, kHintSideMaxW, false, /*alignRight=*/false);
-        drawGroup(right, kHintSideMaxW, false, /*alignRight=*/true);
+        drawGroup(left, kHintSideMaxW, false, HintAlign::Left);
+        drawGroup(right, kHintSideMaxW, false, HintAlign::Right);
+    } else if (portrait && !qsForceOneRow) {
+        drawGroup(all, canvasW - 2.f * kHintEdgeX, /*forceOneRow=*/true, HintAlign::Center);
+    } else if (qsForceOneRow) {
+        drawGroup(all, 4096.f, /*forceOneRow=*/true, HintAlign::Right);
     } else {
-        drawGroup(all, qsForceOneRow ? 4096.f : kHintRowMaxW, qsForceOneRow,
-                  /*alignRight=*/true);
+        // Four or fewer: one cluster bottom-right, wrapped to the corner budget.
+        drawGroup(all, count <= 4 ? kHintSideMaxW : kHintRowMaxW, false, HintAlign::Right);
     }
 }
 void WiiUMenuApp::renderActionHintPanel(nxui::Renderer& ren) {
@@ -11764,8 +11836,8 @@ void WiiUMenuApp::renderActionHintPanel(nxui::Renderer& ren) {
     panelW = std::max(1.f, m_hintPanelW.value());
     panelH = std::max(1.f, m_hintPanelH.value());
     const nxui::Rect panel = {
-        1280.f - kScreenMargin - panelW,
-        720.f - kScreenMargin - panelH,
+        m_homeLayout.logicalW() - kScreenMargin - panelW,
+        m_homeLayout.logicalH() - kScreenMargin - panelH,
         panelW,
         panelH
     };
