@@ -948,7 +948,7 @@
     "title": "クイック設定",
     "close_hint": "[B] 閉じる",
     "battery": "バッテリー",
-    "charging": "⚡ 充電中",
+    "charging": "充電中",
     "discharging": "放電中",
     "hardware_temp": "温度",
     "temp_optimal": "良好",

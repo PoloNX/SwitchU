@@ -34,7 +34,7 @@ constexpr float kCompactSearchWidth = 104.f;
 constexpr float kCompactRefreshWidth = 46.f;
 constexpr float kClearButtonWidth = 46.f;
 constexpr float kHeaderButtonGap = 10.f;
-// Match parent tab pitch (kTabRowHeight) so the Shop pill is the same size.
+// Match parent tab pitch (kTabRowHeight); shop rows share the divider-rail language.
 constexpr float kShopBranchRow = 58.f;
 constexpr float kPageButtonWidth = 124.f;
 constexpr float kPageCounterWidth = 96.f;
@@ -798,13 +798,9 @@ void drawFrostedInsetPanel(nxui::Renderer& ren,
     ren.drawRoundedRect(rect,
                         theme->panelBase.withAlpha(0.96f * opacity), radius);
     ren.drawRoundedRectOutline(
-        rect.shrunk(1.f),
-        theme->panelHighlight.withAlpha(0.20f * opacity),
-        std::max(0.f, radius - 1.f), 1.f);
-    ren.drawRoundedRectOutline(
         rect,
-        theme->panelBorder.withAlpha(0.56f * borderBoost * opacity),
-        radius, 1.4f);
+        theme->panelBorder.withAlpha(0.34f * borderBoost * opacity),
+        radius, 1.15f);
 }
 
 void drawPreviewPlaceholder(nxui::Renderer& ren,
@@ -1102,8 +1098,8 @@ void drawThemePreview(nxui::Renderer& ren,
             // #1c1e25 plate). Glyphs keep alpha and sit on this glass.
             const bool dark = theme->mode == nxui::ThemeMode::Dark;
             const nxui::Color glassBase = theme->panelBase.withAlpha((dark ? 0.58f : 0.78f) * opacity);
-            const nxui::Color glassBorder = theme->panelBorder.withAlpha(0.36f * opacity);
-            const nxui::Color glassHighlight = theme->panelHighlight.withAlpha(0.16f * opacity);
+            const nxui::Color glassBorder = theme->panelBorder.withAlpha(0.20f * opacity);
+            const nxui::Color glassHighlight = theme->panelHighlight.withAlpha(0.10f * opacity);
             ren.drawFrostedInset(rect, glassBase, glassBorder, glassHighlight, 14.f, opacity);
             drawRect = {rect.x + 10.f, rect.y + 10.f, rect.width - 20.f, rect.height - 20.f};
             corner = 10.f;
@@ -1446,40 +1442,47 @@ void ThemeShopScreen::drawTabBranch(nxui::Renderer& ren,
 
     const bool shopActive = (tabIndex == m_tabIndex)
         && activeShelfMode() == ShelfMode::Shop;
-    const bool focused = (tabIndex == m_tabIndex) && tabBranchConsumesFocus();
     const float alpha = opacity;
+    const bool dark = m_theme->mode == nxui::ThemeMode::Dark;
 
-    // Landscape side rail: elbow stem. Portrait top rail: short stub from parent.
-    const nxui::Color stem = focused
-        ? m_theme->cursorNormal.withAlpha(0.72f * alpha)
-        : m_theme->panelBorder.withAlpha(0.36f * alpha);
-    if (useTopTabRail()) {
-        const float stubX = r.x + 10.f;
-        ren.drawLine({stubX, r.y - 5.f}, {stubX, r.y + 1.f}, stem, focused ? 2.0f : 1.5f);
-    } else {
-        const float elbowX = r.x - 12.f;
-        const float elbowMidY = r.y + r.height * 0.5f;
-        ren.drawLine({elbowX, r.y - 6.f}, {elbowX, elbowMidY}, stem, focused ? 2.0f : 1.5f);
-        ren.drawLine({elbowX, elbowMidY}, {r.x + 2.f, elbowMidY}, stem, focused ? 2.0f : 1.5f);
+    // Peer tab chrome — same wash / accent / icon+label as SettingsTabWidget.
+    if (shopActive) {
+        ren.drawRoundedRect(
+            r,
+            m_theme->panelBase.withAlpha((dark ? 0.50f : 0.56f) * alpha),
+            14.f);
+        const float accentH = std::max(16.f, r.height * 0.46f);
+        const float accentY = r.y + (r.height - accentH) * 0.5f;
+        ren.drawRoundedRect(
+            {r.x + 8.f, accentY, 3.f, accentH},
+            m_theme->cursorNormal.withAlpha(0.92f * alpha),
+            2.f);
+        ren.drawRoundedRect(
+            {r.x + 16.f, r.bottom() - 5.f, std::max(24.f, r.width - 32.f), 2.f},
+            m_theme->cursorNormal.withAlpha(0.18f * alpha),
+            1.f);
     }
 
-    // Match parent tab pills: panel fill only. Focus ring comes from SelectionCursor.
-    const nxui::Color fill = m_theme->panelBase.withAlpha((shopActive ? 0.94f : 0.88f) * alpha);
-    const nxui::Color border = shopActive
-        ? m_theme->cursorNormal.withAlpha(0.46f * alpha)
-        : m_theme->panelBorder.withAlpha(0.22f * alpha);
-    ren.drawRoundedRect(r, fill, 18.f);
-    ren.drawRoundedRectOutline(r, border, 18.f, shopActive ? 1.2f : 1.f);
+    const auto shopGlyph = (tabIndex == 1)
+        ? TabGlyph::IconShop
+        : TabGlyph::ThemeShop;
+    const nxui::Color iconCol = (shopActive ? m_theme->textPrimary : m_theme->textSecondary)
+        .withAlpha(alpha);
+    const float iconScale = std::clamp(r.height / 42.f, 0.80f, 1.12f);
+    drawTabGlyph(ren, shopGlyph, {r.x + 30.f, r.y + r.height * 0.48f}, iconCol, iconScale,
+                 m_iconFont);
 
     const std::string label = (tabIndex == 1)
         ? i18n.tr("themeshop.icons.shop_item", "Icon Shop")
         : i18n.tr("themeshop.themes.shop_item", "Theme Shop");
+    constexpr float kPadLeft = 58.f;
+    constexpr float kPadRight = 16.f;
     float scale = shopActive ? 0.91f : 0.87f;
     nxui::Vec2 size = measureTextCached(m_font, label);
-    if (size.x > 0.f && r.width > 44.f)
-        scale = std::max(0.55f, std::min(scale, (r.width - 44.f) / size.x));
+    if (size.x > 0.f && r.width > kPadLeft + kPadRight + 4.f)
+        scale = std::max(0.55f, std::min(scale, (r.width - kPadLeft - kPadRight) / size.x));
     ren.drawText(label,
-                 {r.x + 22.f, r.y + (r.height - size.y * scale) * 0.5f},
+                 {r.x + kPadLeft, r.y + (r.height - size.y * scale) * 0.5f},
                  m_font,
                  (shopActive ? m_theme->textPrimary : m_theme->textSecondary).withAlpha(alpha),
                  scale);
@@ -4273,7 +4276,7 @@ void ThemeShopScreen::drawCustomContent(nxui::Renderer& ren, const nxui::Rect&, 
             50.f
         };
         ren.drawRoundedRect(sheet, m_theme->panelBase.withAlpha(0.22f * detailOpacity), 14.f);
-        ren.drawRoundedRectOutline(sheet, m_theme->panelBorder.withAlpha(0.28f * detailOpacity), 14.f, 1.f);
+        ren.drawRoundedRectOutline(sheet, m_theme->panelBorder.withAlpha(0.16f * detailOpacity), 14.f, 1.f);
 
         nxui::Color statusColor = m_theme->textSecondary;
         if (m_packageTransferState.isRunning())

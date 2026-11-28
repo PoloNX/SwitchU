@@ -88,7 +88,26 @@ bool IconGrid::isDynamicLineScrolling() const {
 }
 
 float IconGrid::lineItemSpacing() const {
+    // Drag/flick: blend focus + side steps so stick travel matches the shelf.
+    if (m_linePosterAspect)
+        return (kPosterStepFocus * 0.45f + kPosterStepSide * 0.55f);
     return kLineIconBase + std::max(8.f, m_padX * 0.4f);
+}
+
+float IconGrid::lineCarouselOffsetX(float d) const {
+    if (!m_linePosterAspect) {
+        return d * lineItemSpacing();
+    }
+    // One open step out of focus, then even shelf pitch (Home NX–like 5-up).
+    const float sign = d >= 0.f ? 1.f : -1.f;
+    float rem = std::abs(d);
+    float x = 0.f;
+    const float take0 = std::min(rem, 1.f);
+    x += take0 * kPosterStepFocus;
+    rem -= take0;
+    if (rem > 0.f)
+        x += rem * kPosterStepSide;
+    return sign * x;
 }
 
 void IconGrid::beginLineDrag() {
@@ -478,25 +497,34 @@ nxui::Rect IconGrid::dynamicIconRect(int index, float* outScale,
     }
     const float baseCellW = poster ? kPosterBaseW : kLineIconBase;
     const float baseCellH = poster ? (kPosterBaseW * 1.5f) : kLineIconBase;
-    // Scroll pitch stays icon-sized so posters can hero-overlap neighbours.
-    const float lineSpacing = lineItemSpacing();
 
     float d = static_cast<float>(index) - offset;
     const float absD = std::abs(d);
     float s = 1.f;
     float a = 1.f;
-    const float sSide = poster ? 0.72f : 0.82f;
-    const float sFocus = poster ? 1.12f : 1.36f;
+    // Home NX–style: near sides flat, outer ±2 taper a bit; modest hero.
+    const float sNear = poster ? 0.84f : 0.82f;
+    const float sFar  = poster ? 0.76f : 0.82f;
+    const float sFocus = poster ? 1.08f : 1.36f;
     float focusBlend = 0.f;
     if (absD <= 1.0f) {
-        // Position drives the visual state: the departing icon now shrinks as
-        // it leaves centre while the incoming icon travels and grows into it.
+        // Only the focused (and transitioning) tile grows into near-side size.
         const float centerBlend = 1.f - absD;
         focusBlend = centerBlend * centerBlend * (3.f - 2.f * centerBlend);
-        s = sSide + focusBlend * (sFocus - sSide);
-        a = 0.76f + focusBlend * 0.24f;
+        s = sNear + focusBlend * (sFocus - sNear);
+        a = 0.88f + focusBlend * 0.12f;
+    } else if (poster) {
+        // ±1 stay full near size; ±2 taper slightly toward the edge.
+        if (absD <= 2.0f) {
+            const float t = std::clamp(absD - 1.0f, 0.f, 1.f);
+            s = sNear + (sFar - sNear) * t;
+            a = 0.88f;
+        } else {
+            s = sFar;
+            a = std::max(0.0f, 0.88f - (absD - 2.0f) * 1.6f);
+        }
     } else {
-        s = std::max(0.54f, sSide - (absD - 1.0f) * 0.12f);
+        s = std::max(0.54f, sNear - (absD - 1.0f) * 0.12f);
         a = std::max(0.0f, 0.76f - (absD - 1.0f) * 0.24f);
     }
 
@@ -515,7 +543,7 @@ nxui::Rect IconGrid::dynamicIconRect(int index, float* outScale,
         const float focusedCenterY = kTopPad + (screenH - kTopPad - kBottomPad) * 0.5f;
         centerY = lineCenterY + (focusedCenterY - lineCenterY) * focusBlend;
     }
-    const float x = centerX + d * lineSpacing - w * 0.5f;
+    const float x = centerX + lineCarouselOffsetX(d) - w * 0.5f;
     const float y = centerY - h * 0.5f;
 
     if (outScale) *outScale = s;

@@ -150,6 +150,7 @@ public:
     void handleTouch(nxui::Input& input);
     void update(float dt) override;
     void render(nxui::Renderer& ren) override;
+    bool wantsFastNavRepeat() const override;
 
 private:
     void setupNavigationActions();
@@ -347,4 +348,6 @@ private:
 
     bool      m_draggingSlider = false;
     ItemIndex m_draggedSlider = ItemIndex::Brightness;
+    // After we write brightness, ignore hardware polls briefly so we don't fight ourselves.
+    float     m_brightnessEditCooldown = 0.f;
 };

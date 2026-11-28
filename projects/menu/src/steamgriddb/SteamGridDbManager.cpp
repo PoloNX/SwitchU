@@ -3,6 +3,8 @@
 #include "ArtworkCache.hpp"
 #include "core/ChunkedIo.hpp"
 #include "core/DebugLog.hpp"
+#include <mutex>
+#include <unordered_map>
 #include "themeshop/ThemeHttp.hpp"
 
 #include <nxui/core/I18n.hpp>
@@ -367,6 +369,46 @@ void writeMetadata(std::uint64_t titleId, const nlohmann::json& metadata) {
         output << metadata.dump(2);
 }
 
+// hasPoster() runs per title in layout-switch / tile-refresh loops; each call
+// was an SD stat. Remember the answers for the life of the process and drop
+// them whenever this manager adds or removes artwork (the menu is also
+// re-launched on every HOME press, so external edits are picked up there).
+// Covers the per-title icon / poster / wide / square checks (one bit each).
+enum PresenceBit : std::uint8_t { kPresIcon = 1, kPresPoster = 2, kPresWide = 4, kPresSquare = 8 };
+struct PresenceBits { std::uint8_t known = 0; std::uint8_t value = 0; };
+std::mutex g_posterPresenceMutex;
+std::unordered_map<std::uint64_t, PresenceBits> g_posterPresence;
+std::uint64_t g_posterPresenceGen = 0;
+
+void invalidatePosterPresence() {
+    std::lock_guard<std::mutex> lock(g_posterPresenceMutex);
+    g_posterPresence.clear();
+    ++g_posterPresenceGen;
+}
+
+template <typename PathFn>
+bool cachedArtPresent(std::uint64_t titleId, std::uint8_t bit, PathFn pathFn) {
+    if (titleId == 0) return false;
+    std::uint64_t gen = 0;
+    {
+        std::lock_guard<std::mutex> lock(g_posterPresenceMutex);
+        const auto it = g_posterPresence.find(titleId);
+        if (it != g_posterPresence.end() && (it->second.known & bit))
+            return (it->second.value & bit) != 0;
+        gen = g_posterPresenceGen;
+    }
+    std::error_code ec;
+    const bool present = std::filesystem::exists(pathFn(titleId), ec);
+    std::lock_guard<std::mutex> lock(g_posterPresenceMutex);
+    // Don't cache an answer that raced with an add/remove.
+    if (gen == g_posterPresenceGen) {
+        auto& entry = g_posterPresence[titleId];
+        entry.known |= bit;
+        if (present) entry.value |= bit; else entry.value &= static_cast<std::uint8_t>(~bit);
+    }
+    return present;
+}
+
 bool saveBytes(const std::string& path, const std::vector<std::uint8_t>& bytes) {
     if (bytes.empty()) return false;
     const std::string tmp = path + ".tmp";
@@ -379,6 +421,7 @@ bool saveBytes(const std::string& path, const std::vector<std::uint8_t>& bytes) 
     std::filesystem::remove(path, ec);
     ec.clear();
     std::filesystem::rename(tmp, path, ec);
+    invalidatePosterPresence();
     return !ec;
 }
 
@@ -759,25 +802,29 @@ bool SteamGridDbManager::hasArtwork(std::uint64_t titleId) {
 }
 
 bool SteamGridDbManager::hasIcon(std::uint64_t titleId) {
-    std::error_code ec;
-    return titleId != 0 && std::filesystem::exists(iconPath(titleId), ec);
+    return cachedArtPresent(titleId, kPresIcon, &SteamGridDbManager::iconPath);
 }
 
 bool SteamGridDbManager::hasPoster(std::uint64_t titleId) {
-    std::error_code ec;
-    return titleId != 0 && std::filesystem::exists(posterPath(titleId), ec);
+    return cachedArtPresent(titleId, kPresPoster, &SteamGridDbManager::posterPath);
+}
+
+void SteamGridDbManager::warmPosterPresence(const std::vector<std::uint64_t>& titleIds) {
+    for (const std::uint64_t id : titleIds) {
+        (void)hasPoster(id);
+        (void)hasIcon(id);
+        (void)hasGridWide(id);
+        (void)hasGridSquare(id);
+    }
 }
 
 bool SteamGridDbManager::hasGridWide(std::uint64_t titleId) {
-    std::error_code ec;
-    return titleId != 0 && std::filesystem::exists(gridWidePath(titleId), ec);
+    return cachedArtPresent(titleId, kPresWide, &SteamGridDbManager::gridWidePath);
 }
 
 bool SteamGridDbManager::hasGridSquare(std::uint64_t titleId) {
-    std::error_code ec;
-    return titleId != 0 && std::filesystem::exists(gridSquarePath(titleId), ec);
+    return cachedArtPresent(titleId, kPresSquare, &SteamGridDbManager::gridSquarePath);
 }
-
 std::string SteamGridDbManager::savedSearchQuery(std::uint64_t titleId) {
     if (titleId == 0) return {};
     return readMetadata(titleId).value("searchQuery", std::string());
@@ -977,6 +1024,7 @@ bool SteamGridDbManager::clearArtwork(std::uint64_t titleId, ArtworkKind kind) {
                       || std::filesystem::exists(gridWidePath(titleId), ec)
                       || std::filesystem::exists(gridSquarePath(titleId), ec);
     ec.clear();
+    invalidatePosterPresence();
     if (!anyLeft) {
         removeFile(titleDirectory(titleId) + "/metadata.json");
         std::filesystem::remove(titleDirectory(titleId), ec);
@@ -1040,6 +1088,7 @@ int SteamGridDbManager::clearUnusedArtwork(
             ++removed;
         ec.clear();
     }
+    invalidatePosterPresence();
     return removed;
 }
 
@@ -1060,6 +1109,7 @@ int SteamGridDbManager::clearAllArtwork() {
             ++removed;
         ec.clear();
     }
+    invalidatePosterPresence();
     return removed;
 }
 

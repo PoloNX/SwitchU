@@ -346,6 +346,70 @@ void IconStreamer::startBurst(float seconds) {
         std::chrono::milliseconds(static_cast<int>(seconds * 1000.f));
 }
 
+void IconStreamer::setPerformanceMode(int mode) {
+    // 0=Off, 1=High, 2=Balanced
+    m_performanceMode = std::clamp(mode, 0, 2);
+}
+
+void IconStreamer::setFramePace(bool soft, bool stressed) {
+    m_frameSoft = soft || stressed;
+    m_frameStressed = stressed;
+}
+
+int IconStreamer::uploadsPerFrame() const {
+    // Soft-land never exceeds its calm caps even if a burst window is open.
+    int cap = kUploadsPerFrame;
+    if (inSoftLanding())
+        cap = kSoftLandingUploadsPerFrame;
+    else if (inBurst())
+        cap = kBurstUploadsPerFrame;
+
+    // Adaptive pacing (High/Balanced): ease far work, but keep the single-row
+    // shelf fed. Off leaves soft/stressed false so this path is a no-op.
+    if (m_carouselWarmFloor) {
+        if (m_frameStressed)
+            cap = std::min(cap, 2);
+        else if (m_frameSoft)
+            cap = std::min(cap, 3);
+    } else if (m_frameStressed) {
+        cap = std::min(cap, 1);
+    } else if (m_frameSoft) {
+        cap = std::min(cap, inSoftLanding() ? kSoftLandingUploadsPerFrame : 1);
+    }
+
+    // Balanced: tighter steady ceiling for grid / non-shelf only.
+    if (m_performanceMode >= 2 && !inSoftLanding() && !m_carouselWarmFloor)
+        cap = std::min(cap, 2);
+
+    return std::max(0, cap);
+}
+
+int IconStreamer::maxPendingDecodes() const {
+    int cap = kMaxPendingDecodes;
+    if (inSoftLanding())
+        cap = kSoftLandingMaxPendingDecodes;
+    else if (inBurst())
+        cap = kBurstMaxPendingDecodes;
+
+    if (m_carouselWarmFloor) {
+        if (m_frameStressed)
+            cap = std::min(cap, 4);
+        else if (m_frameSoft)
+            cap = std::min(cap, 5);
+    } else if (m_frameStressed) {
+        cap = std::min(cap, 2);
+    } else if (m_frameSoft) {
+        cap = std::min(cap, inSoftLanding() ? kSoftLandingMaxPendingDecodes : 2);
+    }
+
+    if (m_performanceMode >= 2 && !inSoftLanding() && !m_carouselWarmFloor)
+        cap = std::min(cap, 4);
+    else if (m_performanceMode >= 2 && !inSoftLanding() && m_carouselWarmFloor)
+        cap = std::max(cap, 4);
+
+    return std::max(0, cap);
+}
+
 void IconStreamer::setPageCacheRadiusCap(int radius) {
     m_pageCacheRadiusCap = radius;
     DebugLog::log("[streamer] page-cache radius cap=%d", radius);
@@ -509,20 +573,24 @@ void IconStreamer::onPageChanged(int currentPage, int iconsPerPage,
     }
 
     // 3. Consume completed background decodes without ever waiting for them.
-    // GPU uploads remain on this thread, but are capped to one per frame so a
-    // page cannot monopolise rendering or starve audio updates. Keep the
-    // established synchronous upload handoff here: presenting a frame while a
-    // newly registered descriptor was still being filled produced a black
-    // screen on hardware even though the menu process stayed alive.
+    // GPU uploads remain on this thread and are budgeted per frame. Prefer the
+    // single-row shelf (focus ±2) so flicking never waits on far-page work.
     int uploads = 0;
-    for (size_t pendingIndex = 0;
-         pendingIndex < m_pendingDecodes.size() &&
-         uploads < (inBurst() ? kBurstUploadsPerFrame : kUploadsPerFrame);) {
+    const int uploadBudget = uploadsPerFrame();
+    m_lastUploadsThisFrame = 0;
+    const int shelfRadius = (iconsPerPage == 1 && m_carouselWarmFloor) ? 2 : -1;
+    auto appOnShelf = [&](int appIndex) {
+        if (shelfRadius < 0 || appIndex < 0)
+            return false;
+        return std::abs(appIndex - visibleStartApp) <= shelfRadius;
+    };
+
+    auto tryUploadPendingAt = [&](size_t pendingIndex) -> bool {
+        if (pendingIndex >= m_pendingDecodes.size() || uploads >= uploadBudget)
+            return false;
         auto& pending = m_pendingDecodes[pendingIndex];
-        if (pending.future.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
-            ++pendingIndex;
-            continue;
-        }
+        if (pending.future.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
+            return false;
 
         // Text uses the same image-memory pool. Leave this completed decode
         // queued until enough room exists instead of triggering Font's
@@ -537,8 +605,7 @@ void IconStreamer::onPageChanged(int currentPage, int iconsPerPage,
         if (!hasReusableTexture &&
             gpu.imageMemoryAvailable() <= kGpuImageReserve +
                                               (kIconSize * 2) * (kIconSize * 3) * 4u) {
-            ++pendingIndex;
-            continue;
+            return false;
         }
 
         try {
@@ -557,17 +624,17 @@ void IconStreamer::onPageChanged(int currentPage, int iconsPerPage,
         m_pendingDecodes.pop_back();
 
         if (state->cancelled.load())
-            continue;
+            return true;
         if (state->failed || state->decoded.rgba.empty()) {
             m_failedTitleIds.push_back(titleId);
             DebugLog::log("[streamer] decode failed title=0x%016lX",
                           static_cast<unsigned long>(titleId));
-            continue;
+            return true;
         }
         const bool stale = isArtStale(appIndex);
         // Keep showing the previous art kind until a swap-in upload lands.
         if (!stillWanted || (m_appToSlot[(size_t)appIndex] >= 0 && !stale))
-            continue;
+            return true;
 
         int poolIdx = m_appToSlot[(size_t)appIndex];
         if (poolIdx < 0 || poolIdx >= (int)m_pool.size() || !m_pool[(size_t)poolIdx]) {
@@ -606,7 +673,33 @@ void IconStreamer::onPageChanged(int currentPage, int iconsPerPage,
                           static_cast<unsigned long>(titleId), appIndex);
         }
         ++uploads;
+        return true;
+    };
+
+    // Pass 1: shelf (focus ±2). Pass 2: remainder of the cache window.
+    for (int pass = 0; pass < 2 && uploads < uploadBudget; ++pass) {
+        for (size_t pendingIndex = 0;
+             pendingIndex < m_pendingDecodes.size() && uploads < uploadBudget;) {
+            const uint64_t titleId = m_pendingDecodes[pendingIndex].titleId;
+            auto titleIt = std::find(m_titleIds.begin(), m_titleIds.end(), titleId);
+            const int appIndex = titleIt == m_titleIds.end()
+                ? -1 : static_cast<int>(titleIt - m_titleIds.begin());
+            const bool onShelf = appOnShelf(appIndex);
+            if (pass == 0 && shelfRadius >= 0 && !onShelf) {
+                ++pendingIndex;
+                continue;
+            }
+            if (pass == 1 && shelfRadius >= 0 && onShelf) {
+                // Already considered in pass 0 (or still not ready).
+                ++pendingIndex;
+                continue;
+            }
+            if (!tryUploadPendingAt(pendingIndex))
+                ++pendingIndex;
+            // On success the slot was swap-removed; do not advance pendingIndex.
+        }
     }
+    m_lastUploadsThisFrame = uploads;
 
     // 4. Fill the bounded decode queue for visible icons. In single-row mode,
     // include the nearest neighbours in cursor-distance order. Both the SD read and
@@ -625,7 +718,7 @@ void IconStreamer::onPageChanged(int currentPage, int iconsPerPage,
             loadOrder.push_back(appIndex);
     }
     for (int appIndex : loadOrder) {
-        if ((int)m_pendingDecodes.size() >= (inBurst() ? kBurstMaxPendingDecodes : kMaxPendingDecodes))
+        if ((int)m_pendingDecodes.size() >= maxPendingDecodes())
             break;
         const bool stale = isArtStale(appIndex);
         if ((m_appToSlot[(size_t)appIndex] >= 0 && !stale) || !hasData(appIndex))
@@ -690,9 +783,7 @@ void IconStreamer::onPageChanged(int currentPage, int iconsPerPage,
             }
         }
         m_pendingDecodes.push_back(std::move(decode));
-        DebugLog::log("[streamer] scheduled title=0x%016lX app=%d pending=%d",
-                      static_cast<unsigned long>(titleId), appIndex,
-                      static_cast<int>(m_pendingDecodes.size()));
+        // Hot-path schedule logs hitch morph / soft-land frames — keep failures only.
     }
 }
 
@@ -847,10 +938,15 @@ void IconStreamer::pumpShadowPrefetch(nxui::GpuDevice& gpu, nxui::Renderer& ren)
         entry.state.reset();
     }
 
-    // Spread GPU uploads across frames so HOME stays responsive during prefetch.
+    // Layout morph waits on shadowPrefetchReady() — never starve these uploads
+    // for frame-pace / neighbor-upload amortization (that caused Change View lag).
+    int shadowBudget = kShadowUploadsPerPump;
+    if (m_performanceMode >= 2)
+        shadowBudget = std::min(shadowBudget, 1);
+
     int uploads = 0;
     for (auto& entry : m_shadowPrefetch) {
-        if (uploads >= kShadowUploadsPerPump)
+        if (uploads >= shadowBudget)
             break;
         if (!entry.decodedReady || entry.failed || entry.uploaded)
             continue;

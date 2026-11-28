@@ -16,6 +16,14 @@ public:
     void shutdown(nxui::GpuDevice& gpu);
 
     void setDeltaTime(float dt) { m_deltaTime = dt; }
+    void setFrameHealth(float avgMs, float lastMs, int hitchInWindow,
+                        bool soft, bool stressed) {
+        m_frameAvgMs = avgMs;
+        m_frameLastMs = lastMs;
+        m_frameHitchInWindow = hitchInWindow;
+        m_frameSoft = soft;
+        m_frameStressed = stressed;
+    }
     bool wantsTouchCapture() const { return m_wantsTouchCapture; }
 
     void render(nxui::Renderer& ren, nxui::Input& input, bool& open);
@@ -42,6 +50,11 @@ private:
     bool m_wantsTouchCapture = false;
     bool m_wasOpen = false;
     float m_deltaTime = 1.0f / 60.0f;
+    float m_frameAvgMs = 0.f;
+    float m_frameLastMs = 0.f;
+    int m_frameHitchInWindow = 0;
+    bool m_frameSoft = false;
+    bool m_frameStressed = false;
     Panel m_activePanel = Panel::Logs;
 
     dk::Shader m_vertexShader;

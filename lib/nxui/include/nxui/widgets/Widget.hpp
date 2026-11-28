@@ -105,6 +105,10 @@ public:
     /// Registers actions for both the D-pad button and the corresponding stick direction.
     void addDirectionAction(FocusDirection dir, std::function<void()> cb);
 
+    /// When true, Application uses a shorter hold-repeat cadence (sliders).
+    /// Discrete taps stay one step; only the held-repeat rate changes.
+    virtual bool wantsFastNavRepeat() const { return false; }
+
     // Legacy activation callback (also triggered by Button::A action)
     void setOnActivate(std::function<void()> cb) { m_onActivate = std::move(cb); }
     virtual bool activate() { if (m_onActivate) { m_onActivate(); return true; } return false; }

@@ -11,6 +11,7 @@
 #include "ActionButton.hpp"
 #include "SelectionCursor.hpp"
 #include <switch.h>
+#include <cstdint>
 #include <vector>
 #include <string>
 #include <functional>
@@ -21,6 +22,7 @@ public:
         std::string label;
         std::function<void()> onPress;
         bool closeOnPress = true;
+        std::uint32_t iconCodepoint = 0; // Material Icons PUA; 0 = text only
     };
 
     using CancelCallback = std::function<void()>;
@@ -39,6 +41,7 @@ public:
 
     void setFont(nxui::Font* f)         { m_font = f; }
     void setSmallFont(nxui::Font* f)    { m_smallFont = f; }
+    void setIconFont(nxui::Font* f)     { m_iconFont = f; }
     void setTheme(const nxui::Theme* t) { m_theme = t; }
     /// Logical canvas (1280×720 landscape, 720×1280 portrait). Centers the panel.
     void setCanvasSize(float width, float height) {
@@ -159,6 +162,7 @@ private:
 
     nxui::Font*        m_font      = nullptr;
     nxui::Font*        m_smallFont = nullptr;
+    nxui::Font*        m_iconFont  = nullptr;
     const nxui::Theme* m_theme     = nullptr;
 
     std::string              m_title;

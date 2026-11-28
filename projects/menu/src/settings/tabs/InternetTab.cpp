@@ -56,15 +56,6 @@ SettingsScreen::Tab settings::tabs::InternetTab::build(SettingsScreen& screen) {
     }
 
     {
-        SettingItem it; it.label = i18n.tr("settings.internet.ip_address", "IP Address"); it.type = ItemType::Info;
-        if (nifmOk && ip != 0)
-            it.infoText = settings_ipToString(ip);
-        else
-            it.infoText = i18n.tr("settings.internet.not_connected", "Not connected");
-        t.items.push_back(std::move(it));
-    }
-
-    {
         SettingItem it; it.label = i18n.tr("settings.internet.wifi", "WiFi"); it.type = ItemType::Toggle;
         it.description = i18n.tr("settings.internet.wifi_desc", "Enable or disable the wireless LAN radio.");
         bool val = true;
@@ -91,22 +82,41 @@ SettingsScreen::Tab settings::tabs::InternetTab::build(SettingsScreen& screen) {
     }
 
     {
-        SettingItem it; it.label = i18n.tr("settings.internet.mac_address", "MAC Address"); it.type = ItemType::Info;
-        SetCalMacAddress mac{};
-        if (R_SUCCEEDED(setcalInitialize())) {
-            if (R_SUCCEEDED(setcalGetWirelessLanMacAddress(&mac)))
-                it.infoText = settings_macToString(mac.addr);
-            setcalExit();
-        }
-        if (it.infoText.empty())
-            it.infoText = i18n.tr("common.na", "N/A");
-        t.items.push_back(std::move(it));
-    }
+        // Read-only network facts — DNS is display-only here (no editor yet).
+        SettingItem deck;
+        deck.label = i18n.tr("settings.internet.status_deck", "Network");
+        deck.type = ItemType::InfoDeck;
+        deck.deckEntries.reserve(3);
 
-    {
-        SettingItem it; it.label = i18n.tr("settings.internet.dns", "DNS"); it.type = ItemType::Info;
-        it.infoText = i18n.tr("settings.internet.dns_auto", "Auto (DHCP)");
-        t.items.push_back(std::move(it));
+        {
+            SettingsScreen::InfoDeckEntry e;
+            e.label = i18n.tr("settings.internet.ip_address", "IP Address");
+            if (nifmOk && ip != 0)
+                e.value = settings_ipToString(ip);
+            else
+                e.value = i18n.tr("settings.internet.not_connected", "Not connected");
+            deck.deckEntries.push_back(std::move(e));
+        }
+        {
+            SettingsScreen::InfoDeckEntry e;
+            e.label = i18n.tr("settings.internet.mac_address", "MAC Address");
+            SetCalMacAddress mac{};
+            if (R_SUCCEEDED(setcalInitialize())) {
+                if (R_SUCCEEDED(setcalGetWirelessLanMacAddress(&mac)))
+                    e.value = settings_macToString(mac.addr);
+                setcalExit();
+            }
+            if (e.value.empty())
+                e.value = i18n.tr("common.na", "N/A");
+            deck.deckEntries.push_back(std::move(e));
+        }
+        {
+            SettingsScreen::InfoDeckEntry e;
+            e.label = i18n.tr("settings.internet.dns", "DNS");
+            e.value = i18n.tr("settings.internet.dns_auto", "Auto (DHCP)");
+            deck.deckEntries.push_back(std::move(e));
+        }
+        t.items.push_back(std::move(deck));
     }
 
     return t;

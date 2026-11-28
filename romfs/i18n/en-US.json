@@ -315,6 +315,11 @@
       "page_teleport": "Teleport",
       "ui_wireframe": "UI Wireframe",
       "ui_wireframe_desc": "Show outlines of all Box widgets for layout debugging.",
+      "performance": "Performance Boost",
+      "performance_desc": "Off matches original art pacing. High/Balanced add adaptive pacing but keep the single-row shelf warm. Balanced also trims farther background art for steadier scrolling.",
+      "performance_off": "Off",
+      "performance_high": "High",
+      "performance_balanced": "Balanced",
       "orientation_button": "HOME Orientation Button",
       "orientation_button_desc": "Cycle orientation button next to Change View on HOME.",
       "cycle_landscape": "Landscape",
@@ -734,7 +739,7 @@
     "sleep": "Sleep",
     "shutdown": "Shutdown",
     "off": "Off",
-    "reboot": "Reboot"
+    "reboot": "Reset"
   },
   "languages": {
     "ja-JP": "Japanese",
@@ -1019,7 +1024,7 @@
     "title": "Quick Settings",
     "close_hint": "[B] Close",
     "battery": "BATTERY",
-    "charging": "⚡ Charging",
+    "charging": "Charging",
     "discharging": "Discharging",
     "hardware_temp": "THERMALS",
     "temp_optimal": "Optimal",
@@ -1034,7 +1039,7 @@
     "power_options": "POWER OPTIONS",
     "sleep": "Sleep",
     "lock": "Lock",
-    "reboot": "Reboot",
+    "reboot": "Reset",
     "power_off": "Power Off",
     "hint_adjust": "Adjust",
     "hint_shortcut": "Quick Settings",

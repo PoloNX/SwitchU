@@ -96,6 +96,7 @@ ThemeShopScreen::Tab themeshop::tabs::LockScreenTab::build(ThemeShopScreen& scre
 
     Tab t;
     t.name = i18n.tr("themeshop.tabs.lock_screen", "Lock Screen");
+    t.glyph = ThemeShopScreen::TabGlyph::LockScreen;
 
     {
         SettingItem it;

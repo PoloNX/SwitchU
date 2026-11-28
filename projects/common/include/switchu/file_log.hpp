@@ -1,6 +1,7 @@
 #pragma once
 #include <cstdio>
 #include <cstdarg>
+#include <chrono>
 #include <condition_variable>
 #include <deque>
 #include <fstream>
@@ -21,7 +22,11 @@ public:
     static constexpr size_t MAX_ARCHIVED_LOGS = MAX_LOG_FILES - 1;
     static constexpr size_t MAX_PENDING_LINES = 2048;
 
-    static void open(const char* tag) {
+    // shareable=true keeps the log readable (e.g. over FTP) while the process
+    // is still running: the file is only held open while a batch is being
+    // appended, then closed again. Lines are coalesced for a short window to
+    // keep SD open/close churn low. Intended for the long-lived daemon.
+    static void open(const char* tag, bool shareable = false) {
         auto& self = inst();
         stop_writer(self);
 
@@ -30,17 +35,22 @@ public:
             std::lock_guard<std::mutex> fileLock(self.m_fileMutex);
             close_current_file(self);
 
+            self.m_shareable = shareable;
             const bool can_truncate = log_detail::rotate_current_log(
                 LOG_DIR, tag, LOG_EXTENSION, MAX_ARCHIVED_LOGS);
 
             char path[256];
             log_detail::build_current_log_path(path, sizeof(path), LOG_DIR, tag, LOG_EXTENSION);
+            self.m_path = path;
             self.m_file.open(path, canTruncateMode(can_truncate));
             if (self.m_file.is_open()) {
+                self.m_hasSession = true;
                 char timestamp[32];
                 log_detail::format_line_timestamp(timestamp, sizeof(timestamp));
                 self.m_file << '[' << timestamp << "] === " << tag << " log start ===\n";
                 self.m_file.flush();
+                if (self.m_shareable)
+                    self.m_file.close();
             }
         }
 
@@ -49,6 +59,7 @@ public:
             self.m_stop = false;
             self.m_acceptLogs = true;
             self.m_writerBusy = false;
+            self.m_flushWanted = false;
             self.m_droppedLines = 0;
         }
         self.m_writer = std::thread([&self]() { writer_loop(self); });
@@ -107,9 +118,13 @@ private:
         auto& self = inst();
         {
             std::unique_lock<std::mutex> queueLock(self.m_queueMutex);
+            // Skip the shareable-mode coalescing delay for explicit commits.
+            self.m_flushWanted = true;
+            self.m_queueCv.notify_all();
             self.m_drainedCv.wait(queueLock, [&self]() {
                 return self.m_pendingLines.empty() && !self.m_writerBusy;
             });
+            self.m_flushWanted = false;
         }
         std::lock_guard<std::mutex> fileLock(self.m_fileMutex);
         if (self.m_file.is_open())
@@ -128,6 +143,13 @@ private:
                 if (self.m_pendingLines.empty() && self.m_stop)
                     break;
 
+                // Shareable mode: let a short burst of lines accumulate so each
+                // open/append/close cycle writes more than one line.
+                if (self.m_shareable && !self.m_stop && !self.m_flushWanted) {
+                    self.m_queueCv.wait_for(queueLock, std::chrono::milliseconds(250),
+                        [&self]() { return self.m_stop || self.m_flushWanted; });
+                }
+
                 self.m_writerBusy = true;
                 droppedLines = self.m_droppedLines;
                 self.m_droppedLines = 0;
@@ -138,8 +160,11 @@ private:
                 }
             }
 
+            bool requeue = false;
             {
                 std::lock_guard<std::mutex> fileLock(self.m_fileMutex);
+                if (self.m_shareable && !self.m_file.is_open() && self.m_hasSession)
+                    self.m_file.open(self.m_path, std::ios::out | std::ios::app);
                 if (self.m_file.is_open()) {
                     if (droppedLines)
                         self.m_file << "[log] dropped " << droppedLines
@@ -147,6 +172,29 @@ private:
                     for (const auto& line : batch)
                         self.m_file << line << '\n';
                     self.m_file.flush();
+                    if (self.m_shareable)
+                        self.m_file.close();
+                } else if (self.m_shareable && self.m_hasSession) {
+                    // Someone (e.g. an FTP client) has the file open right now;
+                    // keep the lines and retry on the next cycle.
+                    requeue = true;
+                }
+            }
+            if (requeue) {
+                std::lock_guard<std::mutex> queueLock(self.m_queueMutex);
+                if (self.m_stop || self.m_flushWanted) {
+                    // Shutting down or committing: don't spin on a locked file.
+                    self.m_droppedLines += droppedLines + batch.size();
+                } else {
+                    // Re-insert at the front, keeping the newest lines if over cap.
+                    for (auto it = batch.rbegin(); it != batch.rend(); ++it) {
+                        if (self.m_pendingLines.size() >= MAX_PENDING_LINES) {
+                            ++self.m_droppedLines;
+                            continue;
+                        }
+                        self.m_pendingLines.emplace_front(std::move(*it));
+                    }
+                    self.m_droppedLines += droppedLines;
                 }
             }
             batch.clear();
@@ -176,6 +224,12 @@ private:
     }
 
     static void close_current_file(FileLog& self) {
+        if (!self.m_hasSession)
+            return;
+        self.m_hasSession = false;
+
+        if (!self.m_file.is_open() && self.m_shareable)
+            self.m_file.open(self.m_path, std::ios::out | std::ios::app);
         if (!self.m_file.is_open())
             return;
 
@@ -194,7 +248,11 @@ private:
     bool m_stop = true;
     bool m_acceptLogs = false;
     bool m_writerBusy = false;
+    bool m_flushWanted = false;
+    bool m_shareable = false;
+    bool m_hasSession = false;
     size_t m_droppedLines = 0;
+    std::string m_path;
     std::ofstream m_file;
 };
 

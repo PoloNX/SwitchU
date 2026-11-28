@@ -250,59 +250,64 @@ SettingsScreen::Tab settings::tabs::StorageTab::build(SettingsScreen& screen) {
     bool internalOk = queryStorageSize(NcmStorageId_BuiltInUser, internalTotal, internalFree);
     uint64_t internalUsed = internalOk ? (internalTotal - internalFree) : 0;
 
-    auto makeStorageSummary = [&](const std::string& totalText, const std::string& freeText, const std::string& usedText) {
-        return fmt::format("{}: {} • {}: {} • {}: {}",
-                           i18n.tr("settings.storage.capacity", "Capacity"), totalText,
-                           i18n.tr("settings.storage.available", "Available"), freeText,
-                           i18n.tr("settings.storage.used", "Used"), usedText);
-    };
-
-    SettingItem internalBar;
-    internalBar.label = i18n.tr("settings.storage.internal", "System Memory");
-    internalBar.type = ItemType::Progress;
-    internalBar.description = internalOk
-        ? i18n.tr("settings.storage.internal_desc", "Shows used system memory and available storage.")
-        : i18n.tr("settings.storage.internal_unavailable", "Unable to query internal storage.");
-    internalBar.floatVal = internalOk && internalTotal > 0 ? float((double)internalUsed / internalTotal) : 0.f;
-    internalBar.anim01 = internalBar.floatVal;
-    internalBar.infoText = internalOk
-        ? fmt::format("{} / {}", formatBytes(internalUsed), formatBytes(internalTotal))
-        : i18n.tr("common.na", "N/A");
-    t.items.push_back(std::move(internalBar));
-
-    SettingItem internalSummary;
-    internalSummary.label = i18n.tr("settings.storage.summary", "Summary");
-    internalSummary.type = ItemType::Info;
-    internalSummary.infoText = internalOk
-        ? makeStorageSummary(formatBytes(internalTotal), formatBytes(internalFree), formatBytes(internalUsed))
-        : i18n.tr("common.na", "N/A");
-    t.items.push_back(std::move(internalSummary));
-
     uint64_t sdTotal = 0;
     uint64_t sdFree  = 0;
     bool sdOk = queryStorageSize(NcmStorageId_SdCard, sdTotal, sdFree);
     uint64_t sdUsed = sdOk ? (sdTotal - sdFree) : 0;
 
-    SettingItem sdBar;
-    sdBar.label = i18n.tr("settings.storage.sd", "microSD Card");
-    sdBar.type  = ItemType::Progress;
-    sdBar.description = sdOk
-        ? i18n.tr("settings.storage.sd_desc", "Shows used microSD storage and available storage.")
-        : i18n.tr("settings.storage.sd_unavailable", "No microSD card detected or access denied.");
-    sdBar.floatVal = sdOk && sdTotal > 0 ? float((double)sdUsed / sdTotal) : 0.f;
-    sdBar.anim01 = sdBar.floatVal;
-    sdBar.infoText = sdOk
-        ? fmt::format("{} / {}", formatBytes(sdUsed), formatBytes(sdTotal))
-        : i18n.tr("common.na", "N/A");
-    t.items.push_back(std::move(sdBar));
+    {
+        // One compact deck: System Memory + microSD, each with Capacity/Available/Used on one row.
+        SettingItem deck;
+        deck.label = i18n.tr("settings.storage.summary", "Storage");
+        deck.type = ItemType::InfoDeck;
+        deck.deckColumns = 3;
+        deck.deckEntries.reserve(8);
 
-    SettingItem sdSummary;
-    sdSummary.label = i18n.tr("settings.storage.summary", "Summary");
-    sdSummary.type = ItemType::Info;
-    sdSummary.infoText = sdOk
-        ? makeStorageSummary(formatBytes(sdTotal), formatBytes(sdFree), formatBytes(sdUsed))
-        : i18n.tr("common.na", "N/A");
-    t.items.push_back(std::move(sdSummary));
+        {
+            SettingsScreen::InfoDeckEntry h;
+            h.label = i18n.tr("settings.storage.internal", "System Memory");
+            h.header = true;
+            h.progress = (internalOk && internalTotal > 0)
+                ? float((double)internalUsed / (double)internalTotal) : -1.f;
+            deck.deckEntries.push_back(std::move(h));
+        }
+        if (internalOk) {
+            deck.deckEntries.push_back({
+                i18n.tr("settings.storage.capacity", "Capacity"), formatBytes(internalTotal)});
+            deck.deckEntries.push_back({
+                i18n.tr("settings.storage.available", "Available"), formatBytes(internalFree)});
+            deck.deckEntries.push_back({
+                i18n.tr("settings.storage.used", "Used"), formatBytes(internalUsed)});
+        } else {
+            deck.deckEntries.push_back({
+                i18n.tr("settings.storage.summary", "Summary"),
+                i18n.tr("settings.storage.internal_unavailable",
+                        "Unable to query internal storage.")});
+        }
+
+        {
+            SettingsScreen::InfoDeckEntry h;
+            h.label = i18n.tr("settings.storage.sd", "microSD Card");
+            h.header = true;
+            h.progress = (sdOk && sdTotal > 0)
+                ? float((double)sdUsed / (double)sdTotal) : -1.f;
+            deck.deckEntries.push_back(std::move(h));
+        }
+        if (sdOk) {
+            deck.deckEntries.push_back({
+                i18n.tr("settings.storage.capacity", "Capacity"), formatBytes(sdTotal)});
+            deck.deckEntries.push_back({
+                i18n.tr("settings.storage.available", "Available"), formatBytes(sdFree)});
+            deck.deckEntries.push_back({
+                i18n.tr("settings.storage.used", "Used"), formatBytes(sdUsed)});
+        } else {
+            deck.deckEntries.push_back({
+                i18n.tr("settings.storage.summary", "Summary"),
+                i18n.tr("settings.storage.sd_unavailable",
+                        "No microSD card detected or access denied.")});
+        }
+        t.items.push_back(std::move(deck));
+    }
 
     struct AppEntry {
         uint64_t titleId;
@@ -377,19 +382,23 @@ SettingsScreen::Tab settings::tabs::StorageTab::build(SettingsScreen& screen) {
         selector.options.push_back(app.title);
     }
 
-    auto& selectedTitle = t.items.emplace_back();
-    selectedTitle.label = i18n.tr("settings.storage.title_id", "Title ID");
-    selectedTitle.type = ItemType::Info;
-    selectedTitle.infoText = fmt::format("{:016X}", (*appsPtr)[0].titleId);
+    auto& selectedDeck = t.items.emplace_back();
+    selectedDeck.label = i18n.tr("settings.storage.details", "Details");
+    selectedDeck.type = ItemType::InfoDeck;
+    selectedDeck.deckEntries = {
+        {
+            i18n.tr("settings.storage.title_id", "Title ID"),
+            fmt::format("{:016X}", (*appsPtr)[0].titleId)
+        },
+        {
+            i18n.tr("settings.storage.details", "Details"),
+            formatAppDetails((*appsPtr)[0].location,
+                             (*appsPtr)[0].sizeText,
+                             appStateLabel(i18n, (*appsPtr)[0].state))
+        }
+    };
 
-    auto& selectedDetails = t.items.emplace_back();
-    selectedDetails.label = i18n.tr("settings.storage.details", "Details");
-    selectedDetails.type = ItemType::Info;
-    selectedDetails.infoText = formatAppDetails((*appsPtr)[0].location,
-                                               (*appsPtr)[0].sizeText,
-                                               appStateLabel(i18n, (*appsPtr)[0].state));
-
-    selector.onChange = [selectedIndex, appsPtr, &i18n, &selector, &selectedTitle, &selectedDetails](SettingItem& self) {
+    selector.onChange = [selectedIndex, appsPtr, &i18n, &selector, &selectedDeck](SettingItem& self) {
         int newIndex = std::clamp(self.intVal, 0, (int)self.options.size() - 1);
         *selectedIndex = newIndex;
         const auto& app = (*appsPtr)[newIndex];
@@ -397,10 +406,10 @@ SettingsScreen::Tab settings::tabs::StorageTab::build(SettingsScreen& screen) {
                                                app.sizeText,
                                                appStateLabel(i18n, app.state));
         selector.description = details;
-        selectedTitle.infoText = fmt::format("{:016X}", app.titleId);
-        selectedDetails.infoText = formatAppDetails(app.location,
-                                                   app.sizeText,
-                                                   appStateLabel(i18n, app.state));
+        if (selectedDeck.deckEntries.size() >= 2) {
+            selectedDeck.deckEntries[0].value = fmt::format("{:016X}", app.titleId);
+            selectedDeck.deckEntries[1].value = details;
+        }
     };
 
     auto& uninstall = t.items.emplace_back();

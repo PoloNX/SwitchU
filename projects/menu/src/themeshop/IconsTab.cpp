@@ -8,6 +8,7 @@ ThemeShopScreen::Tab themeshop::tabs::IconsTab::build(ThemeShopScreen& screen) {
 
     Tab t;
     t.name = i18n.tr("themeshop.tabs.icons", "Icons");
+    t.glyph = ThemeShopScreen::TabGlyph::ThemeIcons;
     // Installed | Shop shelves share the catalog fetch with Themes Shop.
     t.onUpdate = [&screen](Tab&, TabbedOverlayScreen&) {
         if (screen.m_threadPool

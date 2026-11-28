@@ -1,28 +1,18 @@
 {
   "id": "builtin:Default Light",
   "name": "Default Light",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "theme": {
     "mode": "light",
     "colors": {
-      "background": [
-        0.625,
-        0.3333,
-        0.94
-      ],
-      "backgroundAccent": [
-        0.6167,
-        0.7143,
-        0.93
-      ],
-      "shapes": [
-        0.6111,
-        1.0,
-        0.91
-      ]
+      "cursor": [0.60, 0.85, 0.55],
+      "accent": [0.60, 0.85, 0.55],
+      "background": [0.61, 0.22, 0.945],
+      "backgroundAccent": [0.61, 0.28, 0.91],
+      "shapes": [0.61, 0.35, 0.72]
     },
     "background": {
-      "opacity": 0.14
+      "opacity": 0.12
     }
   },
   "audio": {

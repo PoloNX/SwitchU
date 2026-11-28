@@ -104,6 +104,12 @@ public:
     void onRebootRequest(VoidCb cb)     { m_rebootCb = std::move(cb); }
 
     void setWireframeState(bool enabled) { m_wireframeEnabled = enabled; }
+    void setUiPerformanceModeState(int mode) {
+        m_uiPerformanceMode = std::clamp(mode, 0, 2);
+    }
+    void onUiPerformanceModeChange(IntCb cb) {
+        m_uiPerformanceModeCb = std::move(cb);
+    }
     void setGridLayoutState(int columns, int rows) {
         m_gridColumns = std::clamp(columns, 1, 8);
         m_gridRows = std::clamp(rows, 1, 5);
@@ -174,6 +180,7 @@ protected:
     void ensureTabLoaded(int tabIndex) override;
     void onContentUpdate(float dt) override;
     bool canApplyStashedFocusRestore() const override;
+    void syncDisplayBrightnessFromSystem();
 
 private:
     friend class settings::tabs::SystemTab;
@@ -189,6 +196,7 @@ private:
     friend class settings::tabs::AboutTab;
 
     BoolCb m_wireframeCb;
+    IntCb m_uiPerformanceModeCb;
     std::function<void(HomeOrientation)> m_homeOrientationCb;
     BoolCb m_homeOrientationButtonCb;
     std::function<void(std::uint8_t)> m_homeOrientationCycleCb;
@@ -227,6 +235,7 @@ private:
     VoidCb m_rebootCb;
 
     bool m_wireframeEnabled = false;
+    int m_uiPerformanceMode = 0;
     HomeOrientation m_homeOrientation = HomeOrientation::Landscape0;
     bool m_homeOrientationButton = false;
     std::uint8_t m_homeOrientationCycle = kHomeOrientationCycleAll;
@@ -278,6 +287,7 @@ private:
     int m_clockVerifyFrames = 0;
     bool m_clockVerifyQuiet = false;
     bool m_clockVerifyAnnounced = false;
+    float m_brightnessSyncTimer = 0.f;
 
     Tab buildTabNow(int tabIndex);
     Tab makeLoadingTab(int tabIndex) const;

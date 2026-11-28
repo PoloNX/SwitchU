@@ -1,4 +1,5 @@
 #include "OverlayDialog.hpp"
+#include "MaterialIcon.hpp"
 #include <nxui/core/I18n.hpp>
 #include <nxui/core/Renderer.hpp>
 #include <algorithm>
@@ -176,16 +177,26 @@ void OverlayDialog::buildWidgetTree() {
         auto lbl = std::make_shared<nxui::Label>(m_buttons[i].label);
         lbl->setFont(bodyFont ? bodyFont : titleFont);
         lbl->setTextColor(textPrimary);
+        const bool hasIcon = m_buttons[i].iconCodepoint != 0 && m_iconFont
+            && m_iconFont->valid();
+        constexpr float kIconSlot = 22.f;
+        constexpr float kIconGap = 10.f;
         float labelScale = kLabelScale;
-        if (!stackButtons && bodyFont && bodyFont->measure(m_buttons[i].label).x > 0.f)
-            labelScale = std::clamp((btnW - 16.f) /
-                                    bodyFont->measure(m_buttons[i].label).x,
-                                    kLabelMinScale, kLabelScale);
+        const float measured = bodyFont
+            ? bodyFont->measure(m_buttons[i].label).x : 0.f;
+        if (measured > 0.f) {
+            const float reserved = hasIcon ? (kIconSlot + kIconGap + 16.f) : 16.f;
+            const float avail = std::max(8.f, btnW - reserved);
+            labelScale = std::clamp(avail / measured, kLabelMinScale, kLabelScale);
+        }
         lbl->setScale(labelScale);
         lbl->setHAlign(nxui::Label::HAlign::Center);
         lbl->setVAlign(nxui::Label::VAlign::Center);
-        lbl->setRect({0, 0, btnW, kButtonH});
+        lbl->setRect({0.f, 0.f, btnW, kButtonH});
         lbl->setGrow(1.f);
+        // Flex layout would left-smush icon+text; draw the pair in render().
+        if (hasIcon)
+            lbl->setOpacity(0.f);
         btn->addChild(lbl);
 
         m_buttonRow->addChild(btn);
@@ -1364,10 +1375,13 @@ void OverlayDialog::syncChildOpacities() {
 
     if (m_titleLabel)   applyStagger(m_titleLabel.get());
     if (m_messageLabel) applyStagger(m_messageLabel.get());
-    for (auto& btn : m_btnWidgets) {
-        applyStagger(btn.get());
-        for (auto& c : btn->children())
-            c->setOpacity(btn->opacity());
+    for (int bi = 0; bi < (int)m_btnWidgets.size(); ++bi) {
+        applyStagger(m_btnWidgets[(size_t)bi].get());
+        const bool hideLabel = bi < (int)m_buttons.size()
+            && m_buttons[(size_t)bi].iconCodepoint != 0
+            && m_iconFont && m_iconFont->valid();
+        for (auto& c : m_btnWidgets[(size_t)bi]->children())
+            c->setOpacity(hideLabel ? 0.f : m_btnWidgets[(size_t)bi]->opacity());
     }
 
     for (int i = 0; i < (int)m_btnWidgets.size(); ++i) {
@@ -1653,6 +1667,47 @@ void OverlayDialog::render(nxui::Renderer& ren) {
     } else {
         for (auto& c : children())
             c->render(ren);
+        // Centered icon + label group (Label child is hidden when icon is set).
+        if (m_iconFont && m_iconFont->valid()) {
+            constexpr float kIconSlot = 22.f;
+            constexpr float kIconGap = 10.f;
+            constexpr float kLblScale = 0.94f;
+            constexpr float kLblMinScale = 0.85f;
+            nxui::Font* bodyFont = m_smallFont ? m_smallFont : m_font;
+            for (int i = 0; i < (int)m_btnWidgets.size()
+                 && i < (int)m_buttons.size(); ++i) {
+                const std::uint32_t cp = m_buttons[(size_t)i].iconCodepoint;
+                if (cp == 0)
+                    continue;
+                const nxui::Rect br = m_btnWidgets[(size_t)i]->rect();
+                const float op = m_btnWidgets[(size_t)i]->opacity();
+                const nxui::Color ink = (m_theme ? m_theme->textPrimary
+                                                 : nxui::Color::white())
+                    .withAlpha(op);
+                const std::string& label = m_buttons[(size_t)i].label;
+                float labelScale = kLblScale;
+                const nxui::Vec2 tsz = bodyFont ? bodyFont->measure(label)
+                                               : nxui::Vec2{0.f, 0.f};
+                if (tsz.x > 0.f) {
+                    const float avail = std::max(8.f, br.width - kIconSlot - kIconGap - 16.f);
+                    labelScale = std::clamp(avail / tsz.x, kLblMinScale, kLblScale);
+                }
+                const float textW = tsz.x * labelScale;
+                const float textH = tsz.y * labelScale;
+                const float groupW = kIconSlot + kIconGap + textW;
+                const float x0 = br.x + (br.width - groupW) * 0.5f;
+                switchu::material::drawCentered(
+                    ren, m_iconFont, cp,
+                    {x0 + kIconSlot * 0.5f, br.y + br.height * 0.5f},
+                    ink, kIconSlot);
+                if (bodyFont && !label.empty()) {
+                    ren.drawText(label,
+                                 {x0 + kIconSlot + kIconGap,
+                                  br.y + (br.height - textH) * 0.5f},
+                                 bodyFont, ink, labelScale);
+                }
+            }
+        }
     }
 
     m_cursor.render(ren);

@@ -413,13 +413,32 @@ void WiiUMenuApp::syncEditPlacementAfterModelChange(bool preferEmptySlot) {
     if (preferEmptySlot || stale) {
         target = 0;
         if (preferEmptySlot) {
-            for (int i = 0; i < count; ++i) {
+            // Stay on the page the user is looking at. Scanning the whole
+            // model yanked full folders onto a later blank page (jarring).
+            const int perPage = std::max(1, m_grid->iconsPerPage());
+            const int page = m_grid->currentPage();
+            const int pageStart = page * perPage;
+            const int pageEnd = std::min(pageStart + perPage, count);
+            bool foundEmpty = false;
+            for (int i = pageStart; i < pageEnd; ++i) {
                 const auto& entry = m_model.at(i);
                 if (entry.kind == GridEntryKind::Empty ||
                     (entry.titleId == 0 &&
                      entry.kind != GridEntryKind::WidgetContinuation)) {
                     target = i;
+                    foundEmpty = true;
                     break;
+                }
+            }
+            if (!foundEmpty) {
+                target = pageStart;
+                const auto& icons = m_grid->allIcons();
+                for (int i = pageStart; i < pageEnd && i < static_cast<int>(icons.size()); ++i) {
+                    if (icons[static_cast<std::size_t>(i)]
+                        && icons[static_cast<std::size_t>(i)]->isFocusable()) {
+                        target = i;
+                        break;
+                    }
                 }
             }
         } else {
@@ -438,6 +457,14 @@ void WiiUMenuApp::syncEditPlacementAfterModelChange(bool preferEmptySlot) {
         }
     }
 
+    // Prefer-empty (and other retargets) can setPage onto a slot whose page
+    // never received startAppear — GlossyIcons default to opacity 0, so a
+    // reopen-while-moving folder looks empty. Snap the landing page visible.
+    for (GlossyIcon* icon : m_grid->pageIcons()) {
+        if (icon)
+            icon->forceVisible();
+    }
+
     const int spanColumns = m_editGhostIcon
         ? std::max(1, m_editGhostIcon->gridSpanColumns()) : 1;
     const int spanRows = m_editGhostIcon
@@ -447,8 +474,9 @@ void WiiUMenuApp::syncEditPlacementAfterModelChange(bool preferEmptySlot) {
     if (m_editGhostIcon)
         m_editGhostIcon->setRect(m_editGhostTargetRect);
     updateCursor();
-    DebugLog::log("[edit] sync placement target=%d preferEmpty=%d stale=%d",
-                  m_editTargetIndex, preferEmptySlot ? 1 : 0, stale ? 1 : 0);
+    DebugLog::log("[edit] sync placement target=%d preferEmpty=%d stale=%d page=%d",
+                  m_editTargetIndex, preferEmptySlot ? 1 : 0, stale ? 1 : 0,
+                  m_grid->currentPage());
 }
 
 void WiiUMenuApp::updateEditGhost(float dt) {

@@ -12,6 +12,7 @@ ThemeShopScreen::Tab themeshop::tabs::InterfaceTab::build(ThemeShopScreen& scree
 
     Tab t;
     t.name = i18n.tr("themeshop.tabs.interface", "Interface");
+    t.glyph = ThemeShopScreen::TabGlyph::Interface;
 
     {
         SettingItem it;

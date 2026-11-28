@@ -54,7 +54,8 @@ public:
 protected:
     void buildTabs() override;
     float overlayHeaderHeight() const override { return 132.f; }
-    float overlayTabWidth() const override { return 250.f; }
+    // Wide enough for "Data Management" beside its tab icon without shrinking the label.
+    float overlayTabWidth() const override { return 282.f; }
     void drawOverlayHeader(nxui::Renderer& ren, const nxui::Rect& panel, float opacity) override;
 
 private:

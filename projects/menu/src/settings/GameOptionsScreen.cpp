@@ -65,6 +65,7 @@ void GameOptionsScreen::buildTabs() {
 
     Tab data;
     data.name = i18n.tr("game.data_management", "Data Management");
+    data.glyph = TabGlyph::Storage;
 
     if (m_game.canMove) {
         SettingItem move;
@@ -118,6 +119,7 @@ void GameOptionsScreen::buildTabs() {
 
     Tab info;
     info.name = i18n.tr("game.information", "Information");
+    info.glyph = TabGlyph::About;
     SettingItem version;
     version.label = i18n.tr("game.version", "Version");
     version.type = ItemType::Info;
@@ -135,6 +137,7 @@ void GameOptionsScreen::buildTabs() {
 
     Tab artwork;
     artwork.name = "SteamGridDB";
+    artwork.glyph = TabGlyph::SteamGridDb;
     auto addArtworkActions = [this, &artwork, &i18n](const char* labelKey,
                                                      const char* label,
                                                      const char* descriptionKey,

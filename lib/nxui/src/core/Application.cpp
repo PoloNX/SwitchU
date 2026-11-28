@@ -150,7 +150,12 @@ void Application::dispatchInput() {
         // keeps a normal press precise and makes the start of a hold calmer.
         m_navHeldMask = heldMask;
         m_navHeldFrames = 0;
-        m_navRepeatCountdown = 28;
+        {
+            Widget* cur = fm.current();
+            const bool fast = cur && cur->wantsFastNavRepeat();
+            // Sliders: short pause then snappy ticks. Lists keep the calmer cadence.
+            m_navRepeatCountdown = fast ? 8 : 28;
+        }
         dispatchNavigation = true;
     } else {
         ++m_navHeldFrames;
@@ -158,13 +163,20 @@ void Application::dispatchInput() {
             --m_navRepeatCountdown;
         if (m_navRepeatCountdown == 0) {
             dispatchNavigation = true;
-            // Accelerate one step per second from ~5 moves/s to ~10 moves/s.
-            // The cap leaves enough time for artwork streaming to catch up.
-            // A held analog stick is much easier to overshoot with than the
-            // D-pad, so it repeats about 1.6x slower (~4 to ~7 moves/s).
-            m_navRepeatCountdown = (heldMask & ~kStickMask) == 0
-                ? std::clamp(19 - m_navHeldFrames / 60, 10, 19)
-                : std::clamp(12 - m_navHeldFrames / 60, 6, 12);
+            Widget* cur = fm.current();
+            const bool fast = cur && cur->wantsFastNavRepeat();
+            if (fast) {
+                // ~12→30 Hz (D-pad) / ~8→20 Hz (stick) while a slider owns focus.
+                m_navRepeatCountdown = (heldMask & ~kStickMask) == 0
+                    ? std::clamp(8 - m_navHeldFrames / 40, 3, 8)
+                    : std::clamp(5 - m_navHeldFrames / 40, 2, 5);
+            } else {
+                // Accelerate one step per second from ~5 moves/s to ~10 moves/s.
+                // A held analog stick repeats about 1.6x slower (~4 to ~7 moves/s).
+                m_navRepeatCountdown = (heldMask & ~kStickMask) == 0
+                    ? std::clamp(19 - m_navHeldFrames / 60, 10, 19)
+                    : std::clamp(12 - m_navHeldFrames / 60, 6, 12);
+            }
         }
     }
 

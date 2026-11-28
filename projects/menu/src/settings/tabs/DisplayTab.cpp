@@ -1,5 +1,6 @@
 #include "TabBuilders.hpp"
 #include "screen_fit.hpp"
+#include "smi_commands.hpp"
 #include <nxui/core/I18n.hpp>
 #include <switch.h>
 #include <algorithm>
@@ -15,11 +16,14 @@ SettingsScreen::Tab settings::tabs::DisplayTab::build(SettingsScreen& screen) {
     {
         SettingItem it; it.label = i18n.tr("settings.display.brightness", "Brightness"); it.type = ItemType::Slider;
         float val = 0.5f;
-        lblGetCurrentBrightnessSetting(&val);
+        lblLoadCurrentSetting();
+        if (R_FAILED(lblGetBrightnessSettingAppliedToBacklight(&val)))
+            lblGetCurrentBrightnessSetting(&val);
         it.floatVal = val;
         it.anim01 = std::clamp(val, 0.f, 1.f);
         it.onChange = [](SettingItem& self) {
-            lblSetCurrentBrightnessSetting(self.floatVal);
+            // Library-applet lbl Apply is unreliable; daemon owns the panel.
+            switchu::menu::smi_cmd::setBrightness(self.floatVal);
         };
         t.items.push_back(std::move(it));
     }
@@ -167,6 +171,29 @@ SettingsScreen::Tab settings::tabs::DisplayTab::build(SettingsScreen& screen) {
         it.onChange = [&screen](SettingItem& self) {
             screen.m_wireframeEnabled = self.boolVal;
             if (screen.m_wireframeCb) screen.m_wireframeCb(self.boolVal);
+        };
+        t.items.push_back(std::move(it));
+    }
+
+    {
+        SettingItem it;
+        it.label = i18n.tr("settings.display.performance", "Performance Boost");
+        it.description = i18n.tr("settings.display.performance_desc",
+            "Off matches original art pacing. High adds adaptive frame pacing with full neighbor warming. Balanced also trims background art for steadier scrolling.");
+        it.type = ItemType::Selector;
+        it.options = {
+            i18n.tr("settings.display.performance_off", "Off"),
+            i18n.tr("settings.display.performance_high", "High"),
+            i18n.tr("settings.display.performance_balanced", "Balanced"),
+        };
+        it.intVal = std::clamp(screen.m_uiPerformanceMode, 0, 2);
+        it.onChange = [&screen](SettingItem& self) {
+            const int mode = std::clamp(self.intVal, 0, 2);
+            if (mode == screen.m_uiPerformanceMode)
+                return;
+            screen.m_uiPerformanceMode = mode;
+            if (screen.m_uiPerformanceModeCb)
+                screen.m_uiPerformanceModeCb(mode);
         };
         t.items.push_back(std::move(it));
     }

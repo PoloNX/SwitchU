@@ -26,11 +26,22 @@ SettingsScreen::Tab settings::tabs::AudioTab::build(SettingsScreen& screen) {
     }
 
     {
-        SettingItem it; it.label = i18n.tr("settings.audio.headphone_warning", "Headphone Volume Warning"); it.type = ItemType::Info;
+        // OS shows a loud-headphone warning until the user acknowledges it
+        // (count > 0). Expose as a toggle so you can reset it to show again.
+        SettingItem it;
+        it.label = i18n.tr("settings.audio.headphone_warning", "Headphone Volume Warning");
+        it.description = i18n.tr(
+            "settings.audio.headphone_warning_desc",
+            "Warn when headphone volume is high. Turn off after you acknowledge it, or turn on to show the warning again.");
+        it.type = ItemType::Toggle;
         u32 count = 0;
         setsysGetHeadphoneVolumeWarningCount(&count);
-        it.infoText = count > 0 ? i18n.tr("settings.audio.acknowledged", "Acknowledged")
-                                : i18n.tr("common.active", "Active");
+        // On = warning still active (not yet acknowledged).
+        it.boolVal = (count == 0);
+        it.anim01 = it.boolVal ? 1.f : 0.f;
+        it.onChange = [](SettingItem& self) {
+            setsysSetHeadphoneVolumeWarningCount(self.boolVal ? 0u : 1u);
+        };
         t.items.push_back(std::move(it));
     }
 

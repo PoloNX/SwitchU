@@ -200,7 +200,9 @@ bool TabbedOverlayScreen::itemFocusable(const SettingItem& item) const {
     if (item.focusable())
         return true;
     const bool isSection = item.type == ItemType::Section;
-    if (item.type != ItemType::Info && !isSection)
+    const bool isInfoLike = item.type == ItemType::Info
+        || item.type == ItemType::InfoDeck;
+    if (!isInfoLike && !isSection)
         return false;
     if (m_accessibilityVoiceEnabled)
         return true;

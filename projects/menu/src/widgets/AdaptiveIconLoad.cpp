@@ -7,6 +7,11 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <mutex>
+#include <string>
+#include <system_error>
+#include <unordered_map>
 #include <vector>
 
 namespace switchu::icons {
@@ -533,9 +538,40 @@ bool loadMaybeAdaptiveIcon(nxui::Texture& out,
     return ok;
 }
 
+namespace {
+
+// Icon-pack discovery calls probeIconLooksColour for every pack on every Theme
+// Shop refresh, and each call fully decodes a PNG from the SD card (200+ ms in
+// total on a stocked console). The answer only changes when the file does, so
+// remember it keyed by path and validated against file size + mtime.
+struct ColourProbeEntry {
+    std::uintmax_t size = 0;
+    std::filesystem::file_time_type mtime{};
+    bool colour = false;
+};
+std::mutex g_colourProbeMutex;
+std::unordered_map<std::string, ColourProbeEntry> g_colourProbeCache;
+
+} // namespace
+
 bool probeIconLooksColour(const std::string& path) {
     if (path.empty())
         return false;
+
+    std::error_code ec;
+    const std::uintmax_t size = std::filesystem::file_size(path, ec);
+    const bool haveSize = !ec;
+    ec.clear();
+    const auto mtime = std::filesystem::last_write_time(path, ec);
+    const bool haveStamp = haveSize && !ec;
+    if (haveStamp) {
+        std::lock_guard<std::mutex> lock(g_colourProbeMutex);
+        const auto it = g_colourProbeCache.find(path);
+        if (it != g_colourProbeCache.end()
+            && it->second.size == size && it->second.mtime == mtime)
+            return it->second.colour;
+    }
+
     int w = 0, h = 0, ch = 0;
     std::uint8_t* data = stbi_load(path.c_str(), &w, &h, &ch, 4);
     if (!data || w <= 0 || h <= 0) {
@@ -545,7 +581,12 @@ bool probeIconLooksColour(const std::string& path) {
     }
     const MonoStats stats = sampleMonochrome(data, w, h);
     stbi_image_free(data);
-    return !stats.mono;
+    const bool colour = !stats.mono;
+    if (haveStamp) {
+        std::lock_guard<std::mutex> lock(g_colourProbeMutex);
+        g_colourProbeCache[path] = ColourProbeEntry{size, mtime, colour};
+    }
+    return colour;
 }
 
 bool probeIconMeanHsl(const std::string& path, float& outH, float& outS, float& outL) {

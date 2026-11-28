@@ -44,6 +44,7 @@
 #include "settings/TextEntryScreen.hpp"
 #include "themeshop/ThemeShopScreen.hpp"
 #include "core/Config.hpp"
+#include "core/FrameHealth.hpp"
 #include "core/HomeLayoutMetrics.hpp"
 #include "core/FolderStore.hpp"
 #include "core/FolderPeekComposite.hpp"
@@ -326,6 +327,7 @@ private:
         std::string label;
     };
     std::vector<ActionHint> buildActionHints();
+    std::vector<ActionHint> buildScreenActionHints();
 
     struct HintCapsule {
         std::string icon;
@@ -488,6 +490,11 @@ private:
     void applyFrameTapLiteBackground(bool lite);
     // Persist + sync QS/Theme Shop; enter/leave lite when FT viewer is not holding it.
     void applyBatterySaver(bool enabled);
+    // Sync IconStreamer + theme density for Settings → Display → Performance.
+    void applyUiPerformanceMode(int mode, bool saveConfig);
+    // Balanced: trim WaraWara shapeCount; Off/High keep author count.
+    static int uiPerformanceShapeCount(int authorCount, int mode);
+    void applyUiPerformanceBackgroundDensity();
     void applyConsoleBatteryStatus(int percent, bool charging);
     void tickControllerBatteries(float dt);
     void tickDisplayMode();
@@ -511,7 +518,12 @@ private:
     void createControllerTest();
     void reloadThemePresets();
     // rebuildTab=false: update selection/tints without rebuildCurrentTab (Apply path).
-    void refreshThemeShopState(bool rebuildTab = true);
+    // forceEntries=false (Theme Shop open path) skips the SD-heavy theme / icon-pack
+    // entry scans when nothing they depend on has changed since the last build.
+    void refreshThemeShopState(bool rebuildTab = true, bool forceEntries = true);
+    void refreshThemeShopIconPackEntries();
+    void warmThemeShopScan();
+    std::string m_themeShopEntriesSig;
     std::vector<ThemeShopScreen::ThemeShopEntry> buildThemeShopEntries();
     std::vector<ThemeShopScreen::ThemeShopEntry> buildIconPackEntries();
     std::string resolvedIconPackId() const;
@@ -554,8 +566,8 @@ private:
     void stopEditGhost();
     void updateEditGhost(float dt);
     // Re-anchor move-mode placement after the grid model changes (folder
-    // open/close, rebuild). preferEmptySlot is used when dropping into a
-    // folder so the cursor starts on a free cell instead of a stale root index.
+    // open/close, rebuild). preferEmptySlot picks a free cell on the *current*
+    // page only — never yank the user onto a later blank page when page 0 is full.
     void syncEditPlacementAfterModelChange(bool preferEmptySlot);
     bool commitEditModePlacement();
     bool activateEditModeTarget();
@@ -618,7 +630,8 @@ private:
 
     nxui::Font  m_fontNormal;
     nxui::Font  m_fontSmall;
-    nxui::Font  m_fontIcons;
+    nxui::Font  m_fontIcons;      // Switch controller glyphs (hints)
+    nxui::Font  m_fontMaterial;   // Material Icons (Settings / Theme Shop tabs)
 
     GridModel    m_model;
     nxui::Theme  m_theme;
@@ -845,6 +858,7 @@ private:
     AppletLauncher  m_launcher;
     AppListLoader   m_appLoader;
     IconStreamer    m_iconStreamer;
+    FrameHealth     m_frameHealth;
     SystemMessages  m_sysMsg;
     switchu::navigation::MenuNavigator m_navigator;
 
@@ -982,6 +996,9 @@ private:
     std::vector<AppEntry> m_allApps;
     std::uint32_t m_openFolderId = 0;
     std::uint32_t m_requestedFolderId = 0;
+    // Last page the user was on inside a given folder (restored on reopen).
+    std::uint32_t m_folderResumePageId = 0;
+    int m_folderResumePage = 0;
     std::uint64_t m_folderOpenFocusTitleId = 0;
     /// Leave-splash folder restore deferred until HUD/layers exist (frosted capture).
     std::uint32_t m_leaveRestoreFolderId = 0;
@@ -1094,6 +1111,13 @@ private:
     bool m_suppressNextNavigateSfx    = false;
     bool m_pendingNetConnect          = false;
     int  m_deferredInitialAssetFrames = 0;
+    bool m_posterPresenceWarmStarted  = false;
+    bool m_themeShopScanWarmStarted   = false;
+    int  m_themeShopScanWarmDelay     = 150;
+    // Orientation (1=portrait, 0=landscape) the theme wallpaper/resources were
+    // last applied for; -1 until the first applyThemeResources(). Lets
+    // reflowHomeShell() skip a redundant full re-apply when nothing flipped.
+    int  m_themeResourcesPortrait = -1;
     bool m_webClockBootSyncStarted = false;
     int  m_webClockBootSyncDelayFrames = 0;
     int  m_webClockBootSyncFailures = 0;

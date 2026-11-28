@@ -134,6 +134,8 @@ public:
     static int clearAllArtwork();
     static bool hasIcon(std::uint64_t titleId);
     static bool hasPoster(std::uint64_t titleId);
+    // Fill the hasPoster() answer cache for these titles (call off the UI thread).
+    static void warmPosterPresence(const std::vector<std::uint64_t>& titleIds);
     static bool hasGridWide(std::uint64_t titleId);
     static bool hasGridSquare(std::uint64_t titleId);
 

@@ -11,6 +11,7 @@ ThemeShopScreen::Tab themeshop::tabs::SoundsTab::build(ThemeShopScreen& screen) 
 
     Tab t;
     t.name = i18n.tr("themeshop.tabs.sounds", "Sounds");
+    t.glyph = ThemeShopScreen::TabGlyph::Sounds;
 
     {
         SettingItem it;
