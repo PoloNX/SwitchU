@@ -47,6 +47,8 @@ struct AppConfig {
     std::string defaultProfileUid;
     bool  tutorialCompleted = false;
     bool  clockUse12Hour = false;
+    // R3 "Info" toggle: show/hide the controller-button legend (Info stays).
+    bool  actionHintsVisible = true;
     // Alternate to Nintendo auto clock correction: HTTPS Date sync on boot.
     bool  webClockSyncEnabled = false;
     bool  accessibilityEnabled = true;

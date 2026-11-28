@@ -58,9 +58,7 @@ void TitlePillWidget::setText(const std::string& text, float screenWidth) {
     m_hideOnCollapse = false;
     setVisible(true);
     // Portrait 720 canvas: less side chrome inset than landscape 1280.
-    // Landscape: stay clear of the split action-hint clusters in the bottom corners
-    // (kHintEdgeX + kHintSideMaxW each side), so the pill tops out near 640 px.
-    const float sideInset = screenWidth >= 1000.f ? 684.f : 80.f;
+    const float sideInset = screenWidth >= 1000.f ? 420.f : 80.f;
     const float maxContentWidth = std::max(120.f, std::min(736.f, screenWidth - sideInset));
     m_sourceText = text;
     m_text = ellipsize(m_font, text, maxContentWidth);
