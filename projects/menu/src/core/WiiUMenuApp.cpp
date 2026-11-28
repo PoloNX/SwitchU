@@ -11713,10 +11713,11 @@ void WiiUMenuApp::renderActionHintBar(nxui::Renderer& ren) {
     int nLeft = 0, nRight = 0;
     for (const auto& s : slots)
         (s.left ? nLeft : nRight)++;
-    auto drawSide = [&](bool left, int n, bool otherEmpty) {
+    auto drawSide = [&](bool left, int n) {
         if (n == 0)
             return;
-        const bool split = n >= (otherEmpty ? 5 : 6);
+        // Three or more chips fold into two columns (shorter, wider spread).
+        const bool split = n >= 3;
         const int perCol = split ? (n + 1) / 2 : n;
         const int cols = split ? 2 : 1;
         // Column widths.
@@ -11764,8 +11765,8 @@ void WiiUMenuApp::renderActionHintBar(nxui::Renderer& ren) {
             ++idx;
         }
     };
-    drawSide(true, nLeft, nRight == 0);
-    drawSide(false, nRight, nLeft == 0);
+    drawSide(true, nLeft);
+    drawSide(false, nRight);
 }
 void WiiUMenuApp::renderActionHintPanel(nxui::Renderer& ren) {
     std::vector<ActionHint> hints = buildActionHints();
