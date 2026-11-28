@@ -19,6 +19,8 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <mutex>
+#include <optional>
 #include <cmath>
 #include <filesystem>
 #include <fmt/format.h>
@@ -37,6 +39,8 @@ size_t appendMp3TracksFromDir(AudioManager& audio,
                               const std::string& albumFolder);
 
 namespace {
+
+void invalidateThemeShopScanCache();
 
 bool removeDirectoryRecursive(const std::string& path) {
     std::error_code ec;
@@ -3033,6 +3037,7 @@ void WiiUMenuApp::removeIconPack(const std::string& packId) {
 
     m_config.iconPackTints.erase(packId);
     m_config.save();
+    invalidateThemeShopScanCache();
     if (m_themeShop)
         m_themeShop->invalidateIconPackPreviews();
     refreshThemeShopState();
@@ -3102,6 +3107,7 @@ void WiiUMenuApp::extractThemeIconPack(const std::string& packId, const std::str
                 switchu::icons::IconPackInstaller::destinationRootFor(themeFolder);
             if (orphan != existing && pathExists(orphan)) {
                 std::filesystem::remove_all(orphan, ec);
+        invalidateThemeShopScanCache();
                 DebugLog::log("[icon-pack] removed orphan theme clone pack=%s",
                               themeFolder.c_str());
             }
@@ -3159,6 +3165,7 @@ void WiiUMenuApp::extractThemeIconPack(const std::string& packId, const std::str
             switchu::icons::IconPackInstaller::destinationRootFor(themeFolder);
         if (pathExists(orphan))
             std::filesystem::remove_all(orphan, ec);
+        invalidateThemeShopScanCache();
     }
     DebugLog::log("[icon-pack] theme icons extracted: theme=%s pack=%s files=%d",
                   themeFolder.c_str(), targetPackId.c_str(), copied);
@@ -3211,6 +3218,7 @@ void WiiUMenuApp::syncThemePackageTransfer() {
 
     if (!futureReady || revision == m_themePackageTransferHandledRevision)
         return;
+    invalidateThemeShopScanCache();
 
     if (state.isReady() && isIconPack) {
         auto& i18n = nxui::I18n::instance();
@@ -3283,6 +3291,107 @@ void WiiUMenuApp::syncThemePackageTransfer() {
     m_themePackageTransferHandledRevision = revision;
 }
 
+namespace {
+
+// Theme Shop list scans (theme.json parse, sound/sfx dirs, pack discovery,
+// preview mosaics) are SD-bound: ~350 ms the first time. The menu cold-starts
+// on every HOME, so an in-process cache only helps if it is filled before the
+// user opens the shop. warmThemeShopScan() fills it on a worker thread while
+// the HOME screen is idle; the leaf lookups below hold one mutex so a main
+// thread call either hits the cache or waits for the worker's in-flight leaf.
+struct PresetScan {
+    std::string cover;
+    bool hasMusic = false;
+    bool hasSounds = false;
+    std::int64_t sortStamp = 0;
+};
+struct PackScan {
+    std::string cover;
+    std::int64_t sortStamp = 0;
+};
+
+std::mutex g_scanMutex;
+std::unordered_map<std::string, PresetScan> g_presetScan;
+std::unordered_map<std::string, PackScan> g_packScan;
+std::optional<std::vector<switchu::icons::IconPackInfo>> g_sdPacks;
+std::optional<std::vector<switchu::icons::IconPackInfo>> g_themePacks;
+
+// Call whenever themes or icon packs may have changed on disk.
+void invalidateThemeShopScanCache() {
+    std::lock_guard<std::mutex> lk(g_scanMutex);
+    g_presetScan.clear();
+    g_packScan.clear();
+    g_sdPacks.reset();
+    g_themePacks.reset();
+}
+
+PresetScan scanPreset(const ThemePreset& preset) {
+    if (preset.installPath.empty())
+        return {};
+    std::lock_guard<std::mutex> lk(g_scanMutex);
+    auto it = g_presetScan.find(preset.installPath);
+    if (it != g_presetScan.end())
+        return it->second;
+    PresetScan scan;
+    scan.cover = installedThemePreviewPath(preset);
+    const std::string soundBase = resolveThemeSoundBase(preset.installPath);
+    const std::string root = soundBase.empty() ? preset.installPath : soundBase;
+    scan.hasMusic = pathExists(root + "/music");
+    scan.hasSounds = pathExists(root + "/sfx");
+    // Sidecar from Theme Shop install, else theme.json / folder mtime.
+    scan.sortStamp = themeshop::resolveSortStamp(preset.installPath, "theme.json");
+    g_presetScan.emplace(preset.installPath, scan);
+    return scan;
+}
+
+PackScan scanPack(const switchu::icons::IconPackInfo& pack) {
+    const std::string key = pack.id + '|' + pack.directory;
+    std::lock_guard<std::mutex> lk(g_scanMutex);
+    auto it = g_packScan.find(key);
+    if (it != g_packScan.end())
+        return it->second;
+    PackScan scan;
+    scan.cover = switchu::icons::ensurePackPreview(pack.directory, pack.id);
+    if (!pack.directory.empty())
+        scan.sortStamp = themeshop::resolveSortStamp(pack.directory, "pack.json");
+    g_packScan.emplace(key, scan);
+    return scan;
+}
+
+std::vector<switchu::icons::IconPackInfo> cachedSdPacks() {
+    std::lock_guard<std::mutex> lk(g_scanMutex);
+    if (!g_sdPacks)
+        g_sdPacks = switchu::icons::discoverPacks(SD_ASSETS);
+    return *g_sdPacks;
+}
+
+std::vector<switchu::icons::IconPackInfo> cachedThemePacks() {
+    std::lock_guard<std::mutex> lk(g_scanMutex);
+    if (!g_themePacks)
+        g_themePacks = switchu::icons::discoverThemePacks();
+    return *g_themePacks;
+}
+
+} // namespace
+
+void WiiUMenuApp::warmThemeShopScan() {
+    if (m_themeShopScanWarmStarted)
+        return;
+    m_themeShopScanWarmStarted = true;
+    (void)m_threadPool.submit([presets = m_allPresets]() {
+        const auto t0 = std::chrono::steady_clock::now();
+        for (const auto& preset : presets)
+            (void)scanPreset(preset);
+        for (const auto& pack : cachedSdPacks())
+            (void)scanPack(pack);
+        for (const auto& pack : cachedThemePacks())
+            (void)scanPack(pack);
+        DebugLog::log("[themeshop] scan cache warmed in %lldms",
+                      static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                          std::chrono::steady_clock::now() - t0).count()));
+    });
+}
+
 std::vector<ThemeShopScreen::ThemeShopEntry> WiiUMenuApp::buildThemeShopEntries() {
     std::vector<ThemeShopScreen::ThemeShopEntry> entries;
     entries.reserve(m_allPresets.size());
@@ -3304,7 +3413,8 @@ std::vector<ThemeShopScreen::ThemeShopEntry> WiiUMenuApp::buildThemeShopEntries(
             entry.soundPreset = "Wii U";
         else
             entry.soundPreset = preset.soundPreset;
-        entry.coverPath = installedThemePreviewPath(preset);
+        const PresetScan scan = scanPreset(preset);
+        entry.coverPath = scan.cover;
         entry.active = (entry.id == activeId);
         entry.removable = (preset.source != ThemePresetSource::BuiltIn);
         {
@@ -3323,14 +3433,10 @@ std::vector<ThemeShopScreen::ThemeShopEntry> WiiUMenuApp::buildThemeShopEntries(
                 entry.hasIcons = switchu::icons::iconDirLooksUsable(folderPackDir);
             }
         }
-        // Cheap local dir checks — no I/O beyond a couple of is_directory calls.
         if (!preset.installPath.empty()) {
-            const std::string soundBase = resolveThemeSoundBase(preset.installPath);
-            const std::string root = soundBase.empty() ? preset.installPath : soundBase;
-            entry.hasMusic = pathExists(root + "/music");
-            entry.hasSounds = pathExists(root + "/sfx");
-            // Sidecar from Theme Shop install, else theme.json / folder mtime.
-            entry.sortStamp = themeshop::resolveSortStamp(preset.installPath, "theme.json");
+            entry.hasMusic = scan.hasMusic;
+            entry.hasSounds = scan.hasSounds;
+            entry.sortStamp = scan.sortStamp;
         }
         entries.push_back(std::move(entry));
     }
@@ -3411,6 +3517,7 @@ std::vector<ThemeShopScreen::ThemeShopEntry> WiiUMenuApp::buildIconPackEntries()
             continue;
         std::error_code ec;
         std::filesystem::remove_all(orphan, ec);
+        invalidateThemeShopScanCache();
         DebugLog::log("[icon-pack] healed orphan clone pack=%s -> %s",
                       folder.c_str(), companionId.c_str());
         if (m_config.iconPack == folder) {
@@ -3443,23 +3550,23 @@ std::vector<ThemeShopScreen::ThemeShopEntry> WiiUMenuApp::buildIconPackEntries()
         entry.builtin = isBuiltinIconPack(pack.id);
         entry.source = pack.fromTheme ? "Theme"
             : (entry.builtin ? "Built-in" : "Installed");
-        entry.coverPath = switchu::icons::ensurePackPreview(pack.directory, pack.id);
+        const PackScan packScan = scanPack(pack);
+        entry.coverPath = packScan.cover;
         entry.active = (pack.id == activeId);
         // Downloaded / extracted packs on SD can be removed; builtins and
         // in-theme glyphs stay tied to their theme.
         entry.installed = true;
         entry.removable = !pack.fromTheme && !entry.builtin;
         entry.colourPack = pack.colourPack;
-        if (!pack.directory.empty()) {
-            entry.sortStamp = themeshop::resolveSortStamp(pack.directory, "pack.json");
-        }
+        if (!pack.directory.empty())
+            entry.sortStamp = packScan.sortStamp;
         entries.push_back(std::move(entry));
     };
 
-    for (const auto& pack : switchu::icons::discoverPacks(SD_ASSETS))
+    for (const auto& pack : cachedSdPacks())
         addPack(pack);
     // Theme icon folders are discovered from disk the same way as SD packs.
-    for (const auto& pack : switchu::icons::discoverThemePacks())
+    for (const auto& pack : cachedThemePacks())
         addPack(pack);
 
     // Online catalog: list every catalog pack (installed ones stay installed —
@@ -4701,6 +4808,7 @@ void WiiUMenuApp::deletePreset(const std::string& presetId) {
         }
     }
 
+    invalidateThemeShopScanCache();
     refreshThemeShopState();
     // Removing from the product sheet used to leave detail open on the next
     // theme (selection falls through after the list rebuild). Return to shelf.

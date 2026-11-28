@@ -521,6 +521,7 @@ private:
     // entry scans when nothing they depend on has changed since the last build.
     void refreshThemeShopState(bool rebuildTab = true, bool forceEntries = true);
     void refreshThemeShopIconPackEntries();
+    void warmThemeShopScan();
     std::string m_themeShopEntriesSig;
     std::vector<ThemeShopScreen::ThemeShopEntry> buildThemeShopEntries();
     std::vector<ThemeShopScreen::ThemeShopEntry> buildIconPackEntries();
@@ -1110,6 +1111,8 @@ private:
     bool m_pendingNetConnect          = false;
     int  m_deferredInitialAssetFrames = 0;
     bool m_posterPresenceWarmStarted  = false;
+    bool m_themeShopScanWarmStarted   = false;
+    int  m_themeShopScanWarmDelay     = 150;
     // Orientation (1=portrait, 0=landscape) the theme wallpaper/resources were
     // last applied for; -1 until the first applyThemeResources(). Lets
     // reflowHomeShell() skip a redundant full re-apply when nothing flipped.

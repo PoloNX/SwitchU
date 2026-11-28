@@ -10259,6 +10259,7 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
         if (m_wakeMusicResumeFrames == 0) {
             DebugLog::log("[power] wake music resume begin");
             m_audio.setResumePositionEnabled(m_config.musicResumePosition);
+            PerfProbe probeRestore("boot.music restorePlaybackState", 15);
             m_audio.restorePlaybackState(m_config.musicTrackIndex,
                                          m_config.musicPositionSeconds,
                                          true,
@@ -10910,6 +10911,17 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
         });
     }
 
+    // Pre-scan installed themes / icon packs off-thread once HOME has settled
+    // (music restore done) so the first Theme Shop open doesn't walk the SD card.
+    if (!m_themeShopScanWarmStarted && m_posterPresenceWarmStarted
+        && !m_audioPlaybackRestorePending && !m_audioSeekAfterHoldoff
+        && !m_allPresets.empty()) {
+        if (m_themeShopScanWarmDelay > 0)
+            --m_themeShopScanWarmDelay;
+        else
+            warmThemeShopScan();
+    }
+
     // Public HTTPS clock sync once per console boot (quiet; retry until online).
     if (m_config.webClockSyncEnabled && !m_webClockBootSyncStarted) {
         if (leaveSplashActive() || m_deferredInitialAssetFrames > 0) {
@@ -10968,6 +10980,7 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
                 m_config.musicEnabled ? 1 : 0,
                 m_config.musicResumePosition ? 1 : 0);
             m_audio.setResumePositionEnabled(m_config.musicResumePosition);
+            PerfProbe probeRestore("boot.music restorePlaybackState", 15);
             m_audio.restorePlaybackState(m_config.musicTrackIndex,
                                          m_config.musicPositionSeconds,
                                          m_config.musicEnabled,
@@ -11013,6 +11026,7 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
     if (!m_audioStarted && m_audioFuture.valid() &&
         m_audioFuture.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
         DebugLog::log("[boot] audio future ready — applying volume/playlist (playback delayed)");
+        PerfProbe probeAudioReady("boot.audio future apply", 15);
         m_audioFuture.get();
         m_audio.setVolume(m_config.musicVolume);
         m_audio.setSfxVolume(m_config.sfxVolume);
