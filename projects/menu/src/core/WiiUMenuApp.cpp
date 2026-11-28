@@ -11721,53 +11721,41 @@ void WiiUMenuApp::renderActionHintBar(nxui::Renderer& ren) {
         // The column against the screen edge takes the extra chip, so nothing dangles
         // on the inside: left side fills its first column, right side its last.
         const int perCol = split ? (left ? (n + 1) / 2 : n / 2) : n;
-        const int cols = split ? 2 : 1;
-        // Column widths.
-        float colW[2] = {0.f, 0.f};
+        const int edgeCol = left ? 0 : (split ? 1 : 0);
+        std::vector<const Slot*> cols[2];
         int idx = 0;
         for (const auto& s : slots) {
             if (s.left != left)
                 continue;
-            const int col = std::min(idx / perCol, cols - 1);
-            colW[col] = std::max(colW[col], s.cap->width);
+            cols[split ? (idx < perCol ? 0 : 1) : 0].push_back(&s);
             ++idx;
         }
-        // Column left edges (visual left-to-right order = reading order).
-        float colX[2];
-        if (left) {
-            colX[0] = kHintEdgeX;
-            colX[1] = kHintEdgeX + colW[0] + kHintCapGap;
-        } else {
-            colX[1] = canvasW - kHintEdgeX - colW[1];
-            colX[0] = (cols == 2 ? colX[1] - kHintCapGap - colW[0]
-                                 : canvasW - kHintEdgeX - colW[0]);
+        // Rows are bottom-aligned; an inner chip sits right against the edge chip
+        // on its row (no uniform column gap), so each row is one tight clump.
+        auto rowsFromBottom = [&](int col, int i) {
+            return (int)cols[col].size() - 1 - i;
+        };
+        for (int col = 0; col < 2; ++col) {
+            const int rows = (int)cols[col].size();
+            for (int i = 0; i < rows; ++i) {
+                const Slot& s = *cols[col][(size_t)i];
+                const int rb = rowsFromBottom(col, i);
+                const float y = canvasH - kHintEdgeY - kHintCapH
+                    - rb * (kHintCapH + kHintRowGap) + (1.f - reveal) * 4.f;
+                float x;
+                if (col == edgeCol || !split) {
+                    x = left ? kHintEdgeX : canvasW - kHintEdgeX - s.cap->width;
+                } else {
+                    // Width of the edge chip sharing this row (edge column is never shorter).
+                    const int ei = (int)cols[edgeCol].size() - 1 - rb;
+                    const float ew = (ei >= 0) ? cols[edgeCol][(size_t)ei]->cap->width : 0.f;
+                    x = left ? kHintEdgeX + ew + kHintCapGap
+                             : canvasW - kHintEdgeX - ew - kHintCapGap - s.cap->width;
+                }
+                drawChip(*s.cap, x, y);
+            }
         }
-        int rowInCol[2] = {0, 0};
-        int colCount[2] = {0, 0};
-        idx = 0;
-        for (const auto& s : slots) {
-            if (s.left != left)
-                continue;
-            ++colCount[std::min(idx / perCol, cols - 1)];
-            ++idx;
-        }
-        idx = 0;
-        for (const auto& s : slots) {
-            if (s.left != left)
-                continue;
-            const int col = std::min(idx / perCol, cols - 1);
-            const int rows = colCount[col];
-            const float top = canvasH - kHintEdgeY
-                - (rows * kHintCapH + (rows - 1) * kHintRowGap) + (1.f - reveal) * 4.f;
-            const float y = top + rowInCol[col] * (kHintCapH + kHintRowGap);
-            // Left side hugs the left edge of its column, right side its right edge.
-            const float x = left ? colX[col] : colX[col] + colW[col] - s.cap->width;
-            drawChip(*s.cap, x, y);
-            ++rowInCol[col];
-            ++idx;
-        }
-    };
-    drawSide(true, nLeft);
+    };    drawSide(true, nLeft);
     drawSide(false, nRight);
 }
 void WiiUMenuApp::renderActionHintPanel(nxui::Renderer& ren) {
