@@ -1,4 +1,5 @@
 #include "WiiUMenuApp.hpp"
+#include "UiMetrics.hpp"
 #include "icons/IconPackManager.hpp"
 #include <switchu/sd_commit.hpp>
 #include "widgets/GlossyIcon.hpp"
@@ -218,17 +219,16 @@ std::string installedThemePathFromPackagePreset(const std::string& preset) {
 static constexpr float kGridSafeSideMargin = 220.f;
 
 // Contextual action capsules, bottom-right.
-static constexpr float kHintIconScale = 0.67f;
-static constexpr float kHintTextScale = 0.57f;
-static constexpr float kHintCapH      = 25.f;
-static constexpr float kHintCapPadX   = 10.f;
-static constexpr float kHintIconGap   = 5.f;
-static constexpr float kHintCapGap    = 7.f;
-static constexpr float kHintRowGap    = 6.f;
-static constexpr float kHintEdgeX     = 18.f;
-static constexpr float kHintEdgeY     = 16.f;
+static constexpr float kHintIconScale = ui::fontScale(ui::kHintIconPx, ui::kIconFontPx);
+static constexpr float kHintTextScale = ui::fontScale(ui::kCaptionPx, ui::kSmallFontPx);
+static constexpr float kHintCapH      = 30.f;
+static constexpr float kHintCapPadX   = 12.f;
+static constexpr float kHintIconGap   = 6.f;
+static constexpr float kHintCapGap    = 8.f;
+static constexpr float kHintRowGap    = 4.f;
+static constexpr float kHintEdgeX     = ui::kMargin;
+static constexpr float kHintEdgeY     = ui::kMargin;
 // Stop short of the page dots, centred and reaching x = 721 at eight pages.
-static constexpr float kHintRowMaxW   = 522.f;
 static constexpr int   kHintMaxItems  = 8;
 static constexpr float kHintWidthDur  = 0.22f;
 static constexpr float kHintSwapDur   = 0.18f;
@@ -339,6 +339,8 @@ std::string buttonGlyph(nxui::Button button) {
         case nxui::Button::ZR: return utf8Codepoint(0xE0E7);
         case nxui::Button::Plus: return utf8Codepoint(0xE0F1);
         case nxui::Button::Minus: return utf8Codepoint(0xE0F2);
+        case nxui::Button::LStick: return utf8Codepoint(0xE0C4);
+        case nxui::Button::RStick: return utf8Codepoint(0xE0C5);
         default: return {};
     }
 }
@@ -7753,7 +7755,7 @@ void WiiUMenuApp::buildGrid() {
 
     m_clock = std::make_shared<DateTimeWidget>();
     m_clock->setSize(150, 62);
-    m_clock->setMarginTop(14.f);
+    m_clock->setMarginTop(ui::kMargin);
     m_clock->setFont(&m_fontNormal);
     m_clock->setSmallFont(&m_fontSmall);
     m_clock->setClockService(&m_clockService);
@@ -7802,8 +7804,8 @@ void WiiUMenuApp::buildGrid() {
     m_orientationBtn->setVisible(false);
 
     m_battery = std::make_shared<BatteryWidget>();
-    m_battery->setMarginTop(14.f);
-    m_battery->setMarginRight(24.f);
+    m_battery->setMarginTop(ui::kMargin);
+    m_battery->setMarginRight(ui::kMargin);
     m_battery->setSize(150, 62);
     m_battery->setFont(&m_fontSmall);
     m_battery->setCornerRadius(m_theme.cellCornerRadius);
@@ -7821,12 +7823,12 @@ void WiiUMenuApp::buildGrid() {
     m_profileLock->setMinWidth(kProfileLockWidth);
     m_profileLock->setMinHeight(kProfileLockHeight);
     m_profileLock->setShrink(0.f);
-    m_profileLock->setMarginTop(14.f);
-    m_profileLock->setMarginLeft(24.f);
+    m_profileLock->setMarginTop(ui::kMargin);
+    m_profileLock->setMarginLeft(ui::kMargin);
     m_profileLock->setCornerRadius(m_theme.cellCornerRadius);
     // The HUD row spreads its items evenly; balance the square tile against the
     // battery widget so the clock lands on the screen's centre line.
-    m_profileLock->setMarginRight((150.f + 24.f) - (kProfileLockWidth + 24.f));
+    m_profileLock->setMarginRight((150.f + ui::kMargin) - (kProfileLockWidth + ui::kMargin));
     m_profileLock->setTheme(&m_theme);
     m_profileLock->setOnActivate([this]() {
         m_audio.playSfx(Sfx::Activate);
@@ -10922,6 +10924,17 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
             warmThemeShopScan();
     }
 
+    // R3 "Info": show / hide the legend (the Info chip itself always stays).
+    if (app().input().isDown(nxui::Button::RStick) && !leaveSplashActive() && !m_lockViewActive
+        && !(m_textEntry && m_textEntry->isActive())
+        && !(m_controllerTest && m_controllerTest->isActive())
+        && !(m_launchAnim && m_launchAnim->isPlaying())
+        && !m_hintCapsules.empty()) {
+        m_config.actionHintsVisible = !m_config.actionHintsVisible;
+        m_config.save();
+        m_audio.playSfx(Sfx::Navigate);
+    }
+
     // Public HTTPS clock sync once per console boot (quiet; retry until online).
     if (m_config.webClockSyncEnabled && !m_webClockBootSyncStarted) {
         if (leaveSplashActive() || m_deferredInitialAssetFrames > 0) {
@@ -11432,7 +11445,20 @@ void WiiUMenuApp::onUpdateAwake(float dt) {
         m_editGhostIcon->update(dt);
 }
 
+// Legend entries for the current screen, plus the always-visible R3 "Info" chip.
+// With the legend hidden only Info remains.
 std::vector<WiiUMenuApp::ActionHint> WiiUMenuApp::buildActionHints() {
+    std::vector<ActionHint> hints = buildScreenActionHints();
+    if (hints.empty())
+        return hints;
+    if (!m_config.actionHintsVisible)
+        hints.clear();
+    hints.push_back({buttonGlyph(nxui::Button::RStick),
+                     nxui::I18n::instance().tr("hint.info", "Info")});
+    return hints;
+}
+
+std::vector<WiiUMenuApp::ActionHint> WiiUMenuApp::buildScreenActionHints() {
     std::vector<ActionHint> hints;
     auto& i18n = nxui::I18n::instance();
     auto add = [&](const std::string& icon, const std::string& label) {
@@ -11464,8 +11490,6 @@ std::vector<WiiUMenuApp::ActionHint> WiiUMenuApp::buildActionHints() {
             add(buttonGlyph(nxui::Button::ZL), i18n.tr("quicksettings.prev", "Prev"));
             add(buttonGlyph(nxui::Button::ZR), i18n.tr("quicksettings.next", "Next"));
             add(buttonGlyph(nxui::Button::R), i18n.tr("quicksettings.play_pause", "Play/Pause"));
-            add(buttonGlyph(nxui::Button::LStick), i18n.tr("quicksettings.repeat", "Repeat"));
-            add(buttonGlyph(nxui::Button::RStick), i18n.tr("quicksettings.shuffle", "Shuffle"));
             add(buttonGlyph(nxui::Button::Plus),
                 i18n.tr("quicksettings.playlist", "Playlist"));
             add(buttonGlyph(nxui::Button::B) + buttonGlyph(nxui::Button::Minus),
@@ -11487,13 +11511,10 @@ std::vector<WiiUMenuApp::ActionHint> WiiUMenuApp::buildActionHints() {
                 add(buttonGlyph(nxui::Button::Minus), i18n.tr("hint.fullscreen", "Fullscreen"));
             add(buttonGlyph(nxui::Button::B), i18n.tr("hint.back", "Back"));
         } else {
-            // Lean legend: Navigate / Select / Close are obvious here. L3/R3
-            // cycle repeat + toggle shuffle ("Modes").
+            // Lean legend: Navigate / Select / Close are obvious here.
             add(buttonGlyph(nxui::Button::ZL) + buttonGlyph(nxui::Button::ZR),
                 i18n.tr("hint.skip", "Skip"));
             add(buttonGlyph(nxui::Button::R), i18n.tr("quicksettings.play_pause", "Play/Pause"));
-            add(buttonGlyph(nxui::Button::LStick) + buttonGlyph(nxui::Button::RStick),
-                i18n.tr("hint.modes", "Modes"));
             add(buttonGlyph(nxui::Button::Plus), i18n.tr("quicksettings.playlist", "Playlist"));
             add(buttonGlyph(nxui::Button::Minus), i18n.tr("hint.fullscreen", "Fullscreen"));
         }
@@ -11756,137 +11777,205 @@ void WiiUMenuApp::renderActionHintBar(nxui::Renderer& ren) {
     if (count <= 0)
         return;
 
-    // Find the smallest possible number of rows, then choose the contiguous
-    // split whose widest row is the narrowest. With only eight hints there are
-    // at most 128 layouts to inspect, and this avoids an awkward 5+1 split.
     // QS-only (no playlist sheet): always one row — a second row sits on the
-    // power buttons. Playlist-open already packs into one row under kHintRowMaxW.
+    // power buttons.
     const bool qsForceOneRow = m_quickSettings && m_quickSettings->isActive()
         && !m_quickSettings->isCoverFullscreen()
         && !m_quickSettings->isPlaylistOpen();
-    const float rowMaxW = qsForceOneRow ? 4096.f : kHintRowMaxW;
-    std::vector<std::pair<int, int>> rows;
-    int bestRowCount = count + 1;
-    float bestScore = std::numeric_limits<float>::max();
-    const unsigned splitLayouts = 1u << std::max(0, count - 1);
-    for (unsigned mask = 0; mask < splitLayouts; ++mask) {
-        std::vector<std::pair<int, int>> candidate;
-        int first = 0;
-        for (int i = 0; i < count; ++i) {
-            if (i == count - 1 || (mask & (1u << i))) {
-                candidate.emplace_back(first, i + 1);
-                first = i + 1;
+    const float canvasW = m_homeLayout.logicalW();
+    const float canvasH = m_homeLayout.logicalH();
+    const bool portrait = m_homeLayout.isPortrait();
+
+    // The legend mirrors the controller: buttons on the left half of a Switch
+    // controller sit in a column bottom-left, the right half bottom-right, each
+    // ordered top to bottom as on the controller:
+    //   left : ZL, L, -, L3 (D-pad)         right: ZR, R, +, X, Y, A, B, R3
+    // Combined entries (e.g. B+-) sort by their first glyph. Portrait has no
+    // spare corners, so it is one centred row in the same left-to-right order.
+    struct Slot { const HintCapsule* cap; bool left; int rank; };
+    const nxui::Button leftOrder[] = {nxui::Button::ZL, nxui::Button::L,
+                                      nxui::Button::Minus, nxui::Button::LStick};
+    const nxui::Button rightOrder[] = {nxui::Button::ZR, nxui::Button::R, nxui::Button::Plus,
+                                       nxui::Button::X, nxui::Button::Y, nxui::Button::A,
+                                       nxui::Button::B, nxui::Button::RStick};
+    const std::string dpad = dpadGlyph();
+    auto startsWith = [](const std::string& s, const std::string& g) {
+        return !g.empty() && s.compare(0, g.size(), g) == 0;
+    };
+    std::vector<Slot> slots;
+    slots.reserve((size_t)count);
+    for (const auto& c : m_hintCapsules) {
+        Slot s{&c, false, 99};
+        bool found = false;
+        for (int i = 0; i < (int)std::size(leftOrder) && !found; ++i)
+            if (startsWith(c.icon, buttonGlyph(leftOrder[i]))) {
+                s.left = true; s.rank = i; found = true;
             }
+        if (!found && startsWith(c.icon, dpad)) {
+            s.left = true; s.rank = (int)std::size(leftOrder); found = true;
         }
-
-        const int rowCount = static_cast<int>(candidate.size());
-        if (qsForceOneRow && rowCount != 1)
-            continue;
-        if (rowCount > bestRowCount)
-            continue;
-
-        bool valid = true;
-        float widest = 0.f;
-        float narrowest = std::numeric_limits<float>::max();
-        for (const auto& [rowFirst, rowLast] : candidate) {
-            float width = 0.f;
-            for (int i = rowFirst; i < rowLast; ++i)
-                width += m_hintCapsules[(size_t)i].width
-                       + (i > rowFirst ? kHintCapGap : 0.f);
-            if (width > rowMaxW && rowLast - rowFirst > 1) {
-                valid = false;
-                break;
+        for (int i = 0; i < (int)std::size(rightOrder) && !found; ++i)
+            if (startsWith(c.icon, buttonGlyph(rightOrder[i]))) {
+                s.left = false; s.rank = i; found = true;
             }
-            widest = std::max(widest, width);
-            narrowest = std::min(narrowest, width);
-        }
-        if (!valid)
-            continue;
-
-        const float score = widest + (widest - narrowest) * 0.15f;
-        if (rowCount < bestRowCount || score < bestScore) {
-            bestRowCount = rowCount;
-            bestScore = score;
-            rows = std::move(candidate);
-        }
+        slots.push_back(s);
     }
-    // Safety: if packing found nothing (should not), fall back to a single row.
-    if (rows.empty())
-        rows.push_back({0, count});
+    // Stable: equal ranks keep their built order.
+    std::stable_sort(slots.begin(), slots.end(), [](const Slot& a, const Slot& b) {
+        if (a.left != b.left)
+            return a.left;
+        return a.rank < b.rank;
+    });
 
     const float reveal = std::clamp(m_hintContentReveal.value(), 0.f, 1.f);
-    const float blockH = rows.size() * kHintCapH + (rows.size() - 1) * kHintRowGap;
-    float y = 720.f - kHintEdgeY - blockH + (1.f - reveal) * 4.f;
-
     const nxui::Color tint = m_homeChrome.panelBase.withAlpha(
-        m_homeChrome.mode == nxui::ThemeMode::Dark ? 0.30f : 0.24f);
+        m_homeChrome.mode == nxui::ThemeMode::Dark ? 0.42f : 0.36f);
 
-    for (const auto& [first, last] : rows) {
-        float rowW = 0.f;
-        for (int i = first; i < last; ++i)
-            rowW += m_hintCapsules[(size_t)i].width + (i > first ? kHintCapGap : 0.f);
+    auto drawChip = [&](const HintCapsule& c, float x, float y) {
+        const nxui::Rect cap = {x, y, c.width, kHintCapH};
+        const float radius = kHintCapH * 0.5f;
 
-        float x = 1280.f - kHintEdgeX - rowW;
-        for (int i = first; i < last; ++i) {
-            const HintCapsule& c = m_hintCapsules[(size_t)i];
-            const nxui::Rect cap = {x, y, c.width, kHintCapH};
-            const float radius = kHintCapH * 0.5f;
+        ren.drawRoundedRect({cap.x, cap.y + 3.f, cap.width, cap.height},
+                            nxui::Color(0.f, 0.f, 0.f, 0.14f * reveal), radius);
+        ren.drawFrostedInset(cap, tint.withAlpha(tint.a * reveal),
+                             m_homeChrome.panelBorder.withAlpha(0.24f * reveal),
+                             m_homeChrome.panelHighlight.withAlpha(0.08f * reveal),
+                             radius, 0.86f);
 
-            ren.drawRoundedRect({cap.x, cap.y + 3.f, cap.width, cap.height},
-                                nxui::Color(0.f, 0.f, 0.f, 0.14f * reveal), radius);
-            ren.drawFrostedInset(cap, tint.withAlpha(tint.a * reveal),
-                                 m_homeChrome.panelBorder.withAlpha(0.24f * reveal),
-                                 m_homeChrome.panelHighlight.withAlpha(0.08f * reveal),
-                                 radius, 0.86f);
+        const nxui::Vec2 iconSize = m_fontIcons.measure(c.icon);
+        const float iconW = iconSize.x * kHintIconScale;
+        ren.drawText(c.icon,
+                     {cap.x + kHintCapPadX,
+                      cap.y + (kHintCapH - iconSize.y * kHintIconScale) * 0.5f},
+                     &m_fontIcons, m_homeChrome.textPrimary.withAlpha(0.94f * reveal),
+                     kHintIconScale);
 
-            const nxui::Vec2 iconSize = m_fontIcons.measure(c.icon);
-            const float iconW = iconSize.x * kHintIconScale;
-            ren.drawText(c.icon,
-                         {cap.x + kHintCapPadX,
-                          cap.y + (kHintCapH - iconSize.y * kHintIconScale) * 0.5f},
-                         &m_fontIcons, m_homeChrome.textPrimary.withAlpha(0.94f * reveal), kHintIconScale);
+        const float textX = cap.x + kHintCapPadX + iconW + kHintIconGap;
+        const float swap  = nxui::Easing::outCubic(std::clamp(c.swapT, 0.f, 1.f));
 
-            const float textX = cap.x + kHintCapPadX + iconW + kHintIconGap;
-            const float swap  = nxui::Easing::outCubic(std::clamp(c.swapT, 0.f, 1.f));
-
-            ren.pushClipRect(cap);
-            if (!c.outgoing.empty()) {
-                const nxui::Vec2 os = m_fontSmall.measure(c.outgoing);
-                ren.drawText(c.outgoing,
-                             {textX - 7.f * swap,
-                              cap.y + (kHintCapH - os.y * kHintTextScale) * 0.5f},
-                             &m_fontSmall,
-                             m_homeChrome.textSecondary.withAlpha(0.90f * reveal * (1.f - swap)),
-                             kHintTextScale);
-            }
-            const nxui::Vec2 ls = m_fontSmall.measure(c.label);
-            ren.drawText(c.label,
-                         {textX + 7.f * (1.f - swap),
-                          cap.y + (kHintCapH - ls.y * kHintTextScale) * 0.5f},
+        ren.pushClipRect(cap);
+        if (!c.outgoing.empty()) {
+            const nxui::Vec2 os = m_fontSmall.measure(c.outgoing);
+            ren.drawText(c.outgoing,
+                         {textX - 7.f * swap,
+                          cap.y + (kHintCapH - os.y * kHintTextScale) * 0.5f},
                          &m_fontSmall,
-                         m_homeChrome.textSecondary.withAlpha(0.90f * reveal * swap),
+                         m_homeChrome.textPrimary.withAlpha(0.92f * reveal * (1.f - swap)),
                          kHintTextScale);
-            ren.popClipRect();
-
-            x += c.width + kHintCapGap;
         }
-        y += kHintCapH + kHintRowGap;
-    }
-}
+        const nxui::Vec2 ls = m_fontSmall.measure(c.label);
+        ren.drawText(c.label,
+                     {textX + 7.f * (1.f - swap),
+                      cap.y + (kHintCapH - ls.y * kHintTextScale) * 0.5f},
+                     &m_fontSmall,
+                     m_homeChrome.textPrimary.withAlpha(0.92f * reveal * swap),
+                     kHintTextScale);
+        ren.popClipRect();
+    };
 
+    if (portrait || qsForceOneRow) {
+        // One row, controller order. Portrait: keep Info first, then the face
+        // buttons, then whatever else fits; QS has the full width.
+        const float rowMax = qsForceOneRow ? 4096.f : canvasW - 2.f * kHintEdgeX;
+        std::vector<bool> keep(slots.size(), false);
+        float used = 0.f;
+        auto tryAdd = [&](size_t i) {
+            const float w = slots[i].cap->width + (used > 0.f ? kHintCapGap : 0.f);
+            if (keep[i] || used + w > rowMax)
+                return;
+            used += w;
+            keep[i] = true;
+        };
+        const std::string r3 = buttonGlyph(nxui::Button::RStick);
+        for (size_t i = 0; i < slots.size(); ++i)
+            if (startsWith(slots[i].cap->icon, r3))
+                tryAdd(i);
+        for (size_t i = 0; i < slots.size(); ++i)
+            if (!slots[i].left && slots[i].rank >= 3 && slots[i].rank <= 6)
+                tryAdd(i);
+        for (size_t i = 0; i < slots.size(); ++i)
+            tryAdd(i);
+        float rowW = 0.f;
+        bool firstKept = true;
+        for (size_t i = 0; i < slots.size(); ++i) {
+            if (!keep[i]) continue;
+            rowW += slots[i].cap->width + (firstKept ? 0.f : kHintCapGap);
+            firstKept = false;
+        }
+        float x = qsForceOneRow ? canvasW - kHintEdgeX - rowW : (canvasW - rowW) * 0.5f;
+        const float y = canvasH - kHintEdgeY - kHintCapH + (1.f - reveal) * 4.f;
+        for (size_t i = 0; i < slots.size(); ++i) {
+            if (!keep[i]) continue;
+            drawChip(*slots[i].cap, x, y);
+            x += slots[i].cap->width + kHintCapGap;
+        }
+        return;
+    }
+
+    // Landscape: left / right controller halves, bottom-anchored, first entry on
+    // top. A long side (it would climb into the sidebar) folds into two columns
+    // so the legend never grows past two columns when only one side is used.
+    int nLeft = 0, nRight = 0;
+    for (const auto& s : slots)
+        (s.left ? nLeft : nRight)++;
+    auto drawSide = [&](bool left, int n) {
+        if (n == 0)
+            return;
+        // Three or more chips fold into two columns (shorter, wider spread).
+        const bool split = n >= 3;
+        // The column against the screen edge takes the extra chip, so nothing dangles
+        // on the inside: left side fills its first column, right side its last.
+        const int perCol = split ? (left ? (n + 1) / 2 : n / 2) : n;
+        const int edgeCol = left ? 0 : (split ? 1 : 0);
+        std::vector<const Slot*> cols[2];
+        int idx = 0;
+        for (const auto& s : slots) {
+            if (s.left != left)
+                continue;
+            cols[split ? (idx < perCol ? 0 : 1) : 0].push_back(&s);
+            ++idx;
+        }
+        // Rows are bottom-aligned; an inner chip sits right against the edge chip
+        // on its row (no uniform column gap), so each row is one tight clump.
+        auto rowsFromBottom = [&](int col, int i) {
+            return (int)cols[col].size() - 1 - i;
+        };
+        for (int col = 0; col < 2; ++col) {
+            const int rows = (int)cols[col].size();
+            for (int i = 0; i < rows; ++i) {
+                const Slot& s = *cols[col][(size_t)i];
+                const int rb = rowsFromBottom(col, i);
+                const float y = canvasH - kHintEdgeY - kHintCapH
+                    - rb * (kHintCapH + kHintRowGap) + (1.f - reveal) * 4.f;
+                float x;
+                if (col == edgeCol || !split) {
+                    x = left ? kHintEdgeX : canvasW - kHintEdgeX - s.cap->width;
+                } else {
+                    // Width of the edge chip sharing this row (edge column is never shorter).
+                    const int ei = (int)cols[edgeCol].size() - 1 - rb;
+                    const float ew = (ei >= 0) ? cols[edgeCol][(size_t)ei]->cap->width : 0.f;
+                    x = left ? kHintEdgeX + ew + kHintCapGap
+                             : canvasW - kHintEdgeX - ew - kHintCapGap - s.cap->width;
+                }
+                drawChip(*s.cap, x, y);
+            }
+        }
+    };    drawSide(true, nLeft);
+    drawSide(false, nRight);
+}
 void WiiUMenuApp::renderActionHintPanel(nxui::Renderer& ren) {
     std::vector<ActionHint> hints = buildActionHints();
     if (hints.empty())
         return;
 
-    constexpr float kIconScale = 0.62f;
-    constexpr float kTextScale = 0.50f;
-    constexpr float kRowH = 20.f;
-    constexpr float kRowGap = 3.f;
-    constexpr float kPadX = 9.f;
-    constexpr float kPadY = 7.f;
-    constexpr float kIconTextGap = 5.f;
-    constexpr float kScreenMargin = 18.f;
+    constexpr float kIconScale = ui::fontScale(ui::kHintIconPx, ui::kIconFontPx);
+    constexpr float kTextScale = ui::fontScale(ui::kCaptionPx, ui::kSmallFontPx);
+    constexpr float kRowH = 26.f;
+    constexpr float kRowGap = 4.f;
+    constexpr float kPadX = 12.f;
+    constexpr float kPadY = 9.f;
+    constexpr float kIconTextGap = 7.f;
+    constexpr float kScreenMargin = ui::kMargin;
 
     const int count = std::min((int)hints.size(), kHintMaxItems);
     float contentW = 0.f;
@@ -11903,7 +11992,7 @@ void WiiUMenuApp::renderActionHintPanel(nxui::Renderer& ren) {
         signature += '\n';
     }
 
-    float panelW = std::clamp(contentW + kPadX * 2.f, 98.f, 196.f);
+    float panelW = std::clamp(contentW + kPadX * 2.f, 132.f, 280.f);
     float panelH = kPadY * 2.f + count * kRowH + (count - 1) * kRowGap;
     if (!m_hintPanelInitialized) {
         m_hintPanelInitialized = true;
@@ -11926,8 +12015,8 @@ void WiiUMenuApp::renderActionHintPanel(nxui::Renderer& ren) {
     panelW = std::max(1.f, m_hintPanelW.value());
     panelH = std::max(1.f, m_hintPanelH.value());
     const nxui::Rect panel = {
-        1280.f - kScreenMargin - panelW,
-        720.f - kScreenMargin - panelH,
+        m_homeLayout.logicalW() - kScreenMargin - panelW,
+        m_homeLayout.logicalH() - kScreenMargin - panelH,
         panelW,
         panelH
     };
@@ -11937,7 +12026,7 @@ void WiiUMenuApp::renderActionHintPanel(nxui::Renderer& ren) {
     ren.drawRoundedRect({panel.x, panel.y + 4.f, panel.width, panel.height},
                         nxui::Color(0.f, 0.f, 0.f, 0.12f), kRadius);
     const nxui::Color tint = m_homeChrome.panelBase.withAlpha(
-        m_homeChrome.mode == nxui::ThemeMode::Dark ? 0.22f : 0.18f);
+        m_homeChrome.mode == nxui::ThemeMode::Dark ? 0.38f : 0.32f);
     ren.drawFrostedInset(panel, tint,
                         m_homeChrome.panelBorder.withAlpha(0.26f),
                         m_homeChrome.panelHighlight.withAlpha(0.09f),
@@ -11957,7 +12046,7 @@ void WiiUMenuApp::renderActionHintPanel(nxui::Renderer& ren) {
         ren.drawText(hint.icon, {iconX, iconY}, &m_fontIcons,
                      m_homeChrome.textPrimary.withAlpha(0.88f * reveal), kIconScale);
         ren.drawText(hint.label, {labelX, labelY}, &m_fontSmall,
-                     m_homeChrome.textSecondary.withAlpha(0.82f * reveal), kTextScale);
+                     m_homeChrome.textPrimary.withAlpha(0.90f * reveal), kTextScale);
         y += kRowH + kRowGap;
     }
     ren.popClipRect();

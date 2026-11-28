@@ -5,6 +5,7 @@
 #include "core/WidgetStore.hpp"
 #include "BatteryDrawing.hpp"
 #include "core/DebugLog.hpp"
+#include "core/UiMetrics.hpp"
 #include <nxui/core/Renderer.hpp>
 #include <nxui/core/Font.hpp>
 #include <nxui/core/ThreadPool.hpp>
@@ -27,6 +28,17 @@ struct WidgetGifDecodeState {
 };
 
 namespace {
+
+// Widget card caption: caption role from the type scale, shrunk to fit.
+float fitHeaderScale(nxui::Font* font, const std::string& text, float maxWidth, float s) {
+    float scale = ui::fontScale(ui::kCaptionPx, ui::kNormalFontPx) * s;
+    if (font && !text.empty()) {
+        const float w = font->measure(text).x;
+        if (w > 0.f && w * scale > maxWidth)
+            scale = std::max(0.40f * s, maxWidth / w);
+    }
+    return scale;
+}
 
 constexpr int kWidgetAnimationMaximumSide = 192;
 constexpr std::size_t kWidgetAnimationGpuBytes = 1u * 1024u * 1024u;
@@ -876,7 +888,7 @@ void GlossyIcon::onContentRender(nxui::Renderer& ren) {
                                     contentRadius);
             }
             if (m_font && !m_widgetHeader.empty()) {
-                const float headerScale = 0.44f * s;
+                const float headerScale = fitHeaderScale(m_font, m_widgetHeader, card.width - 24.f * s, s);
                 ren.drawText(m_widgetHeader,
                     {card.x + 12.f * s, card.y + 9.f * s}, m_font,
                     nxui::Color::white().withAlpha(0.92f * m_opacity),
@@ -922,7 +934,7 @@ void GlossyIcon::onContentRender(nxui::Renderer& ren) {
                                 std::max(9.f, rad - 5.f));
             if (!m_font) return;
 
-            const float headerScale = 0.48f * s;
+            const float headerScale = fitHeaderScale(m_font, m_widgetHeader, inner.width - 20.f * s, s);
             ren.drawText(m_widgetHeader, {inner.x + 10.f * s, inner.y + 8.f * s},
                          m_font, nxui::Color::white().withAlpha(0.68f * m_opacity),
                          headerScale);
@@ -946,12 +958,12 @@ void GlossyIcon::onContentRender(nxui::Renderer& ren) {
             const float textX = iconRect.right() + 12.f * s;
             const float textWidth = std::max(20.f, inner.right() - textX - 10.f * s);
             const nxui::Vec2 nameMeasure = m_font->measure(m_widgetPrimary);
-            float nameScale = 0.62f * s;
+            float nameScale = 0.70f * s;
             if (nameMeasure.x > 0.f)
                 nameScale = std::min(nameScale, textWidth / nameMeasure.x);
             nameScale = std::max(0.38f * s, nameScale);
             const nxui::Vec2 timeMeasure = m_font->measure(m_widgetSecondary);
-            float timeScale = 0.52f * s;
+            float timeScale = 0.60f * s;
             if (timeMeasure.x > 0.f)
                 timeScale = std::min(timeScale, textWidth / timeMeasure.x);
             const float nameHeight = nameMeasure.y * nameScale;
@@ -984,10 +996,10 @@ void GlossyIcon::onContentRender(nxui::Renderer& ren) {
             const float gap = std::max(10.f, cellH * 0.08f);
             const float usableW = std::max(28.f, cellW - pad * 2.f);
             const float usableH = std::max(28.f, cellH - pad * 2.f);
-            float percentScale = 0.56f;
+            float percentScale = 0.66f;
             if (sample.x > 0.f)
                 percentScale = std::min(percentScale, usableW * 0.70f / sample.x);
-            percentScale = std::clamp(percentScale, 0.46f, 0.64f);
+            percentScale = std::clamp(percentScale, 0.50f, 0.74f);
             const float percentH = sample.y * percentScale;
             const float radius = std::max(18.f, std::min(usableW * 0.48f,
                 (usableH - gap - percentH) * 0.5f));

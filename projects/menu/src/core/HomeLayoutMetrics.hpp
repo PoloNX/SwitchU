@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/HomeOrientation.hpp"
+#include "core/UiMetrics.hpp"
 #include <nxui/core/Types.hpp>
 #include <algorithm>
 #include <cmath>
@@ -17,9 +18,11 @@ struct HomeLayoutMetrics {
     static constexpr float kTopHudH = 90.f;
     static constexpr float kPageIndicatorH = 28.f;
     static constexpr float kPageIndicatorBottomPad = 7.f;
+    // Portrait: the action-hint legend is one centred row under the page dots.
+    static constexpr float kPortraitLegendH = 52.f;
     static constexpr float kSidebarBtn = 70.f;
     static constexpr float kSidebarGap = 16.f;
-    static constexpr float kSidebarMargin = 14.f;
+    static constexpr float kSidebarMargin = ui::kMargin;
     static constexpr float kGridSafeSideLandscape = 220.f;
     static constexpr float kGridSafeSidePortrait = 100.f;
     static constexpr float kGridSafeTopBottom = 20.f;
@@ -58,7 +61,8 @@ struct HomeLayoutMetrics {
     }
 
     nxui::Rect pageIndicator() const {
-        const float y = logicalH() - kPageIndicatorH - kPageIndicatorBottomPad;
+        const float y = logicalH() - kPageIndicatorH - kPageIndicatorBottomPad
+            - (isPortrait() ? kPortraitLegendH : 0.f);
         return {0.f, y, logicalW(), kPageIndicatorH};
     }
 
@@ -70,7 +74,8 @@ struct HomeLayoutMetrics {
         float hardTop = inFolder ? 148.f : kTopHudH;
         if (singleRowStrip && !inFolder)
             hardTop = kTopHudH + 8.f + 56.f + 10.f; // strip under HUD
-        const float hardBottom = pageIndicator().y;
+        // Portrait: the title pill sits 55 px above the dots, so keep the grid clear of it.
+        const float hardBottom = pageIndicator().y - (isPortrait() ? 55.f : 0.f);
         const float mid = logicalH() * 0.5f;
         const float half = std::min(mid - hardTop, hardBottom - mid);
         const float top = mid - half;

@@ -327,6 +327,7 @@ private:
         std::string label;
     };
     std::vector<ActionHint> buildActionHints();
+    std::vector<ActionHint> buildScreenActionHints();
 
     struct HintCapsule {
         std::string icon;

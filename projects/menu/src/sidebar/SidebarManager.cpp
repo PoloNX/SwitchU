@@ -1,4 +1,5 @@
 #include "SidebarManager.hpp"
+#include "core/UiMetrics.hpp"
 #include "core/DebugLog.hpp"
 #include "icons/IconPackManager.hpp"
 #include "widgets/AdaptiveIconLoad.hpp"
@@ -15,7 +16,7 @@ namespace {
 constexpr int kSidebarIconCount = 6;
 constexpr float kSidebarButtonSize = 70.f;
 constexpr float kSidebarColumnGap = 16.f;
-constexpr float kSidebarMarginX = 14.f;
+constexpr float kSidebarMarginX = ui::kMargin;
 constexpr float kDynamicStripButtonSize = 56.f;
 constexpr float kDynamicStripGap = 10.f;
 constexpr float kDynamicStripY = 17.f;

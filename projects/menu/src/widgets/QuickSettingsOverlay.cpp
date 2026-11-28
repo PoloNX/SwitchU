@@ -1939,24 +1939,7 @@ void QuickSettingsOverlay::setupNavigationActions() {
             if (m_callbacks.onActivateSfx) m_callbacks.onActivateSfx();
         }
     });
-
-    // L3 cycles repeat mode; R3 toggles shuffle.
-    addAction(static_cast<uint64_t>(nxui::Button::LStick), [this]() {
-        if (!m_active || m_playlistReorderMode) return;
-        if (m_callbacks.onMusicCycleRepeat) m_callbacks.onMusicCycleRepeat();
-        if (m_callbacks.onActivateSfx) m_callbacks.onActivateSfx();
-        syncMusicFromCallbacks();
-        if (!m_coverFullscreen)
-            updateCursorTarget();
-    });
-    addAction(static_cast<uint64_t>(nxui::Button::RStick), [this]() {
-        if (!m_active || m_playlistReorderMode) return;
-        if (m_callbacks.onMusicToggleShuffle) m_callbacks.onMusicToggleShuffle();
-        if (m_callbacks.onActivateSfx) m_callbacks.onActivateSfx();
-        syncMusicFromCallbacks();
-        if (!m_coverFullscreen)
-            updateCursorTarget();
-    });
+    // L3 / R3 are no longer bound here: R3 is the global legend (Info) toggle.
 }
 
 void QuickSettingsOverlay::setInitialValues(float brightness, float bgmVolume, float sfxVolume,

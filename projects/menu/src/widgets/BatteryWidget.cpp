@@ -1,5 +1,6 @@
 #include "BatteryWidget.hpp"
 #include "BatteryDrawing.hpp"
+#include "core/UiMetrics.hpp"
 #include <nxui/core/I18n.hpp>
 #include <nxui/core/Renderer.hpp>
 #include <switch.h>
@@ -8,6 +9,11 @@
 #include <cmath>
 
 using switchu::battery_drawing::drawLightningBolt;
+
+namespace {
+// Percentage label under the battery (m_font is the 18 px small font).
+constexpr float kPercentScale = ui::fontScale(ui::kLabelPx, ui::kSmallFontPx);
+} // namespace
 
 BatteryWidget::BatteryWidget() {
     setTag("battery");
@@ -73,7 +79,7 @@ void BatteryWidget::onContentRender(nxui::Renderer& ren) {
     // Battery body + terminal (+ bolt when charging). Center this group in the pill.
     float groupW = bw + 2.f + 4.8f + gap + boltSlotW;
     float bx = cr.x + (cr.width - groupW) * 0.5f;
-    float textH = m_font ? m_font->measure("100%").y * 0.75f : 14.f;
+    float textH = m_font ? m_font->measure("100%").y * kPercentScale : 14.f;
     float contentH = bh + 6.f + textH;
     float by = cr.y + (cr.height - contentH) * 0.5f;
     float op = m_opacity;
@@ -144,9 +150,9 @@ void BatteryWidget::onContentRender(nxui::Renderer& ren) {
         else
             std::snprintf(buf, sizeof(buf), "--%%");
         nxui::Vec2 sz = m_font->measure(buf);
-        float tx = cr.x + (cr.width - sz.x * 0.75f) * 0.5f;
+        float tx = cr.x + (cr.width - sz.x * kPercentScale) * 0.5f;
         float ty = by + bh + 6.f;
-        ren.drawText(buf, {tx, ty}, m_font, m_textColor.withAlpha(op), 0.75f);
+        ren.drawText(buf, {tx, ty}, m_font, m_textColor.withAlpha(op), kPercentScale);
     }
 
     // Chevron centered in the free space to the right of the battery group.
@@ -164,6 +170,6 @@ void BatteryWidget::onContentRender(nxui::Renderer& ren) {
 nxui::Vec2 BatteryWidget::computeContentSize() const {
     float bw = 46.f, bh = 22.f;
     float iconExtra = 8.f + 22.f;
-    float textH = m_font ? m_font->measure("100%").y * 0.75f : 14.f;
+    float textH = m_font ? m_font->measure("100%").y * kPercentScale : 14.f;
     return {bw + 4.f + iconExtra, bh + 6.f + textH};
 }
