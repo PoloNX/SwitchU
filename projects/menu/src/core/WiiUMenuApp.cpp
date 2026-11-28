@@ -11718,7 +11718,9 @@ void WiiUMenuApp::renderActionHintBar(nxui::Renderer& ren) {
             return;
         // Three or more chips fold into two columns (shorter, wider spread).
         const bool split = n >= 3;
-        const int perCol = split ? (n + 1) / 2 : n;
+        // The column against the screen edge takes the extra chip, so nothing dangles
+        // on the inside: left side fills its first column, right side its last.
+        const int perCol = split ? (left ? (n + 1) / 2 : n / 2) : n;
         const int cols = split ? 2 : 1;
         // Column widths.
         float colW[2] = {0.f, 0.f};
